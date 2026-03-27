@@ -1,4 +1,4 @@
-import type { Task } from "./task";
+import type { Task, OodaPhase } from "./task";
 import { TaskQueue } from "./queue";
 
 export interface OodaHandlers {
@@ -14,6 +14,7 @@ export async function runLoop(queue: TaskQueue, handlers: OodaHandlers): Promise
 
   let current = task;
   const phases = ["observing", "orienting", "deciding", "acting"] as const;
+  const oodaPhases: OodaPhase[] = ["observe", "orient", "decide", "act"];
   const phaseHandlers = [handlers.observe, handlers.orient, handlers.decide, handlers.act];
 
   for (let i = 0; i < phases.length; i++) {
@@ -21,6 +22,7 @@ export async function runLoop(queue: TaskQueue, handlers: OodaHandlers): Promise
     try {
       current = await phaseHandlers[i](current);
     } catch (error) {
+      queue.addLog(current.id, oodaPhases[i], `[FAILED] ${String(error)}`);
       queue.update(current.id, { status: "failed", context: { ...current.context, error: String(error) } });
       return;
     }

@@ -23,7 +23,7 @@ test("task goes through full OODA cycle", async () => {
   expect(result?.status).toBe("done");
 });
 
-test("task is marked failed on handler error", async () => {
+test("task is marked failed on handler error with phase log", async () => {
   const queue = new TaskQueue();
   const task = createTask("failing task");
   queue.enqueue(task);
@@ -35,8 +35,12 @@ test("task is marked failed on handler error", async () => {
 
   await runLoop(queue, handlers);
 
-  const result = queue.get(task.id);
-  expect(result?.status).toBe("failed");
+  const result = queue.get(task.id)!;
+  expect(result.status).toBe("failed");
+  expect(result.logs).toHaveLength(1);
+  expect(result.logs[0].phase).toBe("orient");
+  expect(result.logs[0].content).toContain("[FAILED]");
+  expect(result.logs[0].content).toContain("orient failed");
 });
 
 test("runLoop does nothing when queue is empty", async () => {
