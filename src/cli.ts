@@ -249,6 +249,13 @@ switch (command) {
     break;
   }
 
+  case "serve": {
+    const port = Number(args[0]) || 3456;
+    const { startServer } = await import("./server");
+    startServer(port);
+    break;
+  }
+
   default:
     console.log(`worqload - OODA task queue for AI agents
 
@@ -265,6 +272,7 @@ Tasks:
   history                        List archived tasks
   show <id>                      Show task details with logs
   context <id> [key] [value]     Show or set task context data
+  serve [port]                   Start web UI (default: 3456)
 
 OODA phases:
   observe <id> [observations]    Start/record observations
