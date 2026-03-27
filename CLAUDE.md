@@ -36,6 +36,7 @@ bun src/cli.ts add "<concrete task>"
 **3. Process one task through OODA**
 ```sh
 bun src/cli.ts next                              # pick next pending task
+bun src/cli.ts source run                        # collect data from registered sources
 bun src/cli.ts observe <id> "<what you found>"   # gather info
 bun src/cli.ts orient <id> "<analysis>"          # analyze
 bun src/cli.ts decide <id> "<plan>"              # decide action

@@ -2,6 +2,7 @@ import { createTask } from "./task";
 import type { TaskStatus } from "./task";
 import { TaskQueue } from "./queue";
 import { loadPrinciples, savePrinciples } from "./principles";
+import { loadSources, addSource, removeSource, runAllSources } from "./sources";
 
 const queue = new TaskQueue();
 await queue.load();
@@ -249,6 +250,53 @@ switch (command) {
     break;
   }
 
+  case "source": {
+    if (args[0] === "add") {
+      const name = args[1];
+      const command = args.slice(2).join(" ");
+      if (!name || !command) {
+        console.error("Usage: worqload source add <name> <command>");
+        process.exit(1);
+      }
+      await addSource({ name, type: "shell", command });
+      console.log(`Source added: ${name} → ${command}`);
+      break;
+    }
+    if (args[0] === "remove") {
+      const name = args[1];
+      if (!name) {
+        console.error("Usage: worqload source remove <name>");
+        process.exit(1);
+      }
+      await removeSource(name);
+      console.log(`Source removed: ${name}`);
+      break;
+    }
+    if (args[0] === "run") {
+      const results = await runAllSources();
+      if (results.length === 0) {
+        console.log("No sources registered.");
+        break;
+      }
+      for (const r of results) {
+        console.log(`--- ${r.name} (exit: ${r.exitCode}) ---`);
+        console.log(r.output);
+        console.log();
+      }
+      break;
+    }
+    const sources = await loadSources();
+    if (sources.length === 0) {
+      console.log("No sources registered.");
+      console.log("Usage: worqload source add <name> <command>");
+      break;
+    }
+    for (const s of sources) {
+      console.log(`  ${s.name}: ${s.command}`);
+    }
+    break;
+  }
+
   case "heartbeat": {
     const intervalSeconds = Number(args[0]) || 300;
     const data = { lastRun: new Date().toISOString(), intervalSeconds };
@@ -282,6 +330,12 @@ Tasks:
   context <id> [key] [value]     Show or set task context data
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)
+
+Sources (observation data):
+  source                         List registered sources
+  source add <name> <command>    Register a data source
+  source remove <name>           Remove a data source
+  source run                     Run all sources and show output
 
 OODA phases:
   observe <id> [observations]    Start/record observations
