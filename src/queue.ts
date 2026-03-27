@@ -1,4 +1,5 @@
-import type { Task, OodaPhase, PhaseLog } from "./task";
+import type { Task, TaskStatus, OodaPhase, PhaseLog } from "./task";
+import { validateTransition } from "./task";
 import { load, save } from "./store";
 
 export class TaskQueue {
@@ -34,6 +35,13 @@ export class TaskQueue {
     const updated = { ...task, ...patch, updatedAt: new Date().toISOString() };
     this.tasks.set(id, updated);
     return updated;
+  }
+
+  transition(id: string, newStatus: TaskStatus): Task | undefined {
+    const task = this.tasks.get(id);
+    if (!task) return undefined;
+    validateTransition(task.status, newStatus);
+    return this.update(id, { status: newStatus });
   }
 
   addLog(id: string, phase: OodaPhase, content: string): Task | undefined {

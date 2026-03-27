@@ -110,30 +110,24 @@ switch (command) {
 
   case "observe": {
     const task = resolveTask(args[0]);
-    requireStatus(task, ["pending", "observing"]);
     const note = args.slice(1).join(" ");
-    if (!note) {
-      queue.update(task.id, { status: "observing" });
-      await queue.save();
-      console.log(`Observing: ${task.title}`);
-      break;
+    queue.transition(task.id, "observing");
+    if (note) {
+      queue.addLog(task.id, "observe", note);
     }
-    queue.update(task.id, { status: "observing" });
-    queue.addLog(task.id, "observe", note);
     await queue.save();
-    console.log(`Observed: ${task.title}`);
+    console.log(note ? `Observed: ${task.title}` : `Observing: ${task.title}`);
     break;
   }
 
   case "orient": {
     const task = resolveTask(args[0]);
-    requireStatus(task, ["observing", "orienting"]);
     const note = args.slice(1).join(" ");
     if (!note) {
       console.error("Usage: worqload orient <id> <analysis>");
       process.exit(1);
     }
-    queue.update(task.id, { status: "orienting" });
+    queue.transition(task.id, "orienting");
     queue.addLog(task.id, "orient", note);
     await queue.save();
     console.log(`Oriented: ${task.title}`);
@@ -142,10 +136,9 @@ switch (command) {
 
   case "decide": {
     const task = resolveTask(args[0]);
-    requireStatus(task, ["orienting", "deciding", "waiting_human"]);
     if (args[1] === "--human") {
       const question = args.slice(2).join(" ") || "Decision required";
-      queue.update(task.id, { status: "waiting_human" });
+      queue.transition(task.id, "waiting_human");
       queue.addLog(task.id, "decide", `[HUMAN REQUIRED] ${question}`);
       await queue.save();
       console.log(`Waiting for human decision: ${question}`);
@@ -157,7 +150,7 @@ switch (command) {
       console.error("       worqload decide <id> --human <question>");
       process.exit(1);
     }
-    queue.update(task.id, { status: "deciding" });
+    queue.transition(task.id, "deciding");
     queue.addLog(task.id, "decide", decision);
     await queue.save();
     console.log(`Decided: ${task.title}`);
@@ -166,12 +159,11 @@ switch (command) {
 
   case "act": {
     const task = resolveTask(args[0]);
-    requireStatus(task, ["deciding", "acting"]);
     const note = args.slice(1).join(" ");
     if (note) {
       queue.addLog(task.id, "act", note);
     }
-    queue.update(task.id, { status: "acting" });
+    queue.transition(task.id, "acting");
     await queue.save();
     console.log(`Acting: ${task.title}`);
     break;
@@ -183,7 +175,7 @@ switch (command) {
     if (note) {
       queue.addLog(task.id, "act", note);
     }
-    queue.update(task.id, { status: "done" });
+    queue.transition(task.id, "done");
     await queue.save();
     console.log(`Done: ${task.title}`);
     break;
@@ -193,7 +185,7 @@ switch (command) {
     const task = resolveTask(args[0]);
     const reason = args.slice(1).join(" ") || "No reason given";
     queue.addLog(task.id, "act", `[FAILED] ${reason}`);
-    queue.update(task.id, { status: "failed" });
+    queue.transition(task.id, "failed");
     await queue.save();
     console.log(`Failed: ${task.title} - ${reason}`);
     break;
@@ -201,9 +193,8 @@ switch (command) {
 
   case "retry": {
     const task = resolveTask(args[0]);
-    requireStatus(task, ["failed"]);
     queue.addLog(task.id, "act", "[RETRY]");
-    queue.update(task.id, { status: "pending" });
+    queue.transition(task.id, "pending");
     await queue.save();
     console.log(`Retrying: ${task.title}`);
     break;
@@ -273,9 +264,3 @@ function resolveTask(idPrefix: string | undefined) {
   return task;
 }
 
-function requireStatus(task: { status: TaskStatus; title: string }, allowed: TaskStatus[]) {
-  if (!allowed.includes(task.status)) {
-    console.error(`Task "${task.title}" is ${task.status}, expected: ${allowed.join(" or ")}`);
-    process.exit(1);
-  }
-}

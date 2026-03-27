@@ -18,6 +18,23 @@ export interface Task {
   updatedAt: string;
 }
 
+const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+  pending: ["observing", "done", "failed"],
+  observing: ["orienting", "done", "failed"],
+  orienting: ["deciding", "done", "failed"],
+  deciding: ["acting", "waiting_human", "done", "failed"],
+  waiting_human: ["deciding", "done", "failed"],
+  acting: ["done", "failed"],
+  done: [],
+  failed: ["pending"],
+};
+
+export function validateTransition(from: TaskStatus, to: TaskStatus): void {
+  if (!ALLOWED_TRANSITIONS[from].includes(to)) {
+    throw new Error(`Invalid status transition: ${from} → ${to}`);
+  }
+}
+
 export function createTask(title: string, context: Record<string, unknown> = {}): Task {
   const trimmed = title.trim();
   if (trimmed === "") {

@@ -113,3 +113,25 @@ test("createTask trims surrounding whitespace from title", () => {
   const task = createTask("  hello world  ");
   expect(task.title).toBe("hello world");
 });
+
+test("transition changes status for valid transition", () => {
+  const queue = new TaskQueue();
+  const task = createTask("transition task");
+  queue.enqueue(task);
+
+  const updated = queue.transition(task.id, "observing");
+  expect(updated?.status).toBe("observing");
+});
+
+test("transition throws on invalid transition", () => {
+  const queue = new TaskQueue();
+  const task = createTask("invalid transition");
+  queue.enqueue(task);
+
+  expect(() => queue.transition(task.id, "acting")).toThrow("Invalid status transition: pending → acting");
+});
+
+test("transition returns undefined for non-existent id", () => {
+  const queue = new TaskQueue();
+  expect(queue.transition("non-existent", "observing")).toBeUndefined();
+});

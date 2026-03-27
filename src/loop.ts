@@ -18,15 +18,16 @@ export async function runLoop(queue: TaskQueue, handlers: OodaHandlers): Promise
   const phaseHandlers = [handlers.observe, handlers.orient, handlers.decide, handlers.act];
 
   for (let i = 0; i < phases.length; i++) {
-    current = queue.update(current.id, { status: phases[i] })!;
+    current = queue.transition(current.id, phases[i])!;
     try {
       current = await phaseHandlers[i](current);
     } catch (error) {
       queue.addLog(current.id, oodaPhases[i], `[FAILED] ${String(error)}`);
-      queue.update(current.id, { status: "failed", context: { ...current.context, error: String(error) } });
+      queue.transition(current.id, "failed");
+      queue.update(current.id, { context: { ...current.context, error: String(error) } });
       return;
     }
   }
 
-  queue.update(current.id, { status: "done" });
+  queue.transition(current.id, "done");
 }
