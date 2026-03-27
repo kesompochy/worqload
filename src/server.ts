@@ -179,7 +179,7 @@ function html(): string {
   <div class="add-form">
     <input type="text" id="new-title" placeholder="New task title...">
     <input type="number" id="new-priority" value="0" title="Priority">
-    <button class="primary" onclick="addTask()">Add</button>
+    <button class="primary" onclick="addTask()" title="Shift+Enter">Add</button>
   </div>
 
   <div class="tabs">
@@ -237,7 +237,7 @@ function html(): string {
         ? '<div class="logs">' + t.logs.map(l => '<div class="log"><span class="log-phase">[' + esc(l.phase) + ']</span> ' + esc(l.content) + '</div>').join('') + '</div>'
         : '';
       const humanAction = t.status === 'waiting_human'
-        ? '<div class="human-action"><input type="text" id="decide-' + t.id + '" placeholder="Your decision..." onkeydown="if(event.key===\\'Enter\\')decide(\\'' + t.id + '\\')"><button class="primary" onclick="decide(\\'' + t.id + '\\')">Decide</button></div>'
+        ? '<div class="human-action"><input type="text" id="decide-' + t.id + '" placeholder="Your decision..." onkeydown="if(event.key===\\'Enter\\'&&event.shiftKey){event.preventDefault();decide(\\'' + t.id + '\\')}"><button class="primary" onclick="decide(\\'' + t.id + '\\')">Decide</button></div>'
         : '';
       const isTerminal = t.status === 'done' || t.status === 'failed';
       let actions = '';
@@ -298,7 +298,7 @@ function html(): string {
 
     function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-    document.getElementById('new-title').addEventListener('keydown', e => { if (e.key === 'Enter') addTask(); });
+    document.getElementById('new-title').addEventListener('keydown', e => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); addTask(); } });
 
     load();
     setInterval(load, 3000);
