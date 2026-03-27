@@ -22,7 +22,7 @@ export interface Task {
 const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   pending: ["observing", "done", "failed"],
   observing: ["orienting", "done", "failed"],
-  orienting: ["deciding", "done", "failed"],
+  orienting: ["deciding", "waiting_human", "done", "failed"],
   deciding: ["acting", "waiting_human", "done", "failed"],
   waiting_human: ["deciding", "done", "failed"],
   acting: ["done", "failed"],
