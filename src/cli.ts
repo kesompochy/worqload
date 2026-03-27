@@ -272,6 +272,54 @@ switch (command) {
     break;
   }
 
+  case "spawn": {
+    const task = resolveTask(args[0]);
+    const owner = args[1] || `spawn-${process.pid}`;
+    queue.claim(task.id, owner);
+    queue.transition(task.id, "observing");
+    await queue.save();
+    console.log(`Spawning: ${task.title} (owner: ${owner})`);
+
+    const prompt = [
+      `You are processing a worqload task. Work in the current directory.`,
+      `Task: ${task.title}`,
+      `Task ID: ${task.id.slice(0, 8)}`,
+      ``,
+      `Instructions:`,
+      `1. Understand the task`,
+      `2. Make the necessary code changes`,
+      `3. Run tests with: bun test`,
+      `4. Report what you did`,
+      ``,
+      `Context: ${JSON.stringify(task.context)}`,
+    ].join("\n");
+
+    const proc = Bun.spawn(["claude", "-p", "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep", "--", prompt], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    await queue.load();
+    const output = (stdout + stderr).trim();
+    const truncated = output.length > 2000 ? output.slice(-2000) : output;
+    queue.addLog(task.id, "act", truncated);
+
+    if (exitCode === 0) {
+      queue.transition(task.id, "done");
+      console.log(`Done: ${task.title}`);
+    } else {
+      queue.addLog(task.id, "act", `[FAILED] exit code ${exitCode}`);
+      queue.transition(task.id, "failed");
+      console.log(`Failed: ${task.title} (exit: ${exitCode})`);
+    }
+    queue.update(task.id, { owner: undefined });
+    await queue.save();
+    break;
+  }
+
   case "source": {
     if (args[0] === "add") {
       const name = args[1];
@@ -352,6 +400,7 @@ Tasks:
   context <id> [key] [value]     Show or set task context data
   claim <id> <owner>             Claim a task (lock for an agent)
   unclaim <id>                   Release a claimed task
+  spawn <id> [owner]             Spawn a Claude agent to process a task
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)
 
