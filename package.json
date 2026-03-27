@@ -1,0 +1,19 @@
+{
+  "name": "worqload",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "worqload": "src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
