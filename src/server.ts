@@ -119,8 +119,7 @@ function html(): string {
   .task { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; }
   .task-header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
   .task-title { font-weight: 600; flex: 1; }
-  .task-id { font-family: monospace; font-size: 0.8rem; color: #666; }
-  .task-priority { font-size: 0.75rem; color: #888; }
+  .task-meta { font-size: 0.75rem; color: #666; white-space: nowrap; }
 
   .status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
   .status-pending { background: #1a1a2e; color: #6c7aed; }
@@ -169,6 +168,7 @@ function html(): string {
   .task-actions button.retry:hover { background: #1a3d1a; }
   .priority-edit { width: 3.5rem; background: #0a0a0a; border: 1px solid #333; border-radius: 4px; padding: 0.2rem 0.4rem; color: #e0e0e0; font-size: 0.75rem; text-align: center; }
   .priority-edit:focus { outline: none; border-color: #6c7aed; }
+  .action-label { font-size: 0.75rem; color: #888; }
 </style>
 </head>
 <body>
@@ -178,7 +178,7 @@ function html(): string {
 
   <div class="add-form">
     <input type="text" id="new-title" placeholder="New task title...">
-    <input type="number" id="new-priority" value="0" title="Priority">
+    <input type="number" id="new-priority" value="0" placeholder="Priority" title="Priority (higher = more urgent)">
     <button class="primary" onclick="addTask()" title="Shift+Enter">Add</button>
   </div>
 
@@ -257,13 +257,14 @@ function html(): string {
       let actions = '';
       if (!isTerminal) {
         actions = '<div class="task-actions">'
-          + '<span style="font-size:0.75rem;color:#888">p:</span><input type="number" class="priority-edit" value="' + t.priority + '" onchange="setPriority(\\'' + t.id + '\\', this.value)">'
+          + '<label class="action-label">Priority</label><input type="number" class="priority-edit" value="' + t.priority + '" onchange="setPriority(\\'' + t.id + '\\', this.value)">'
           + '<button class="danger" onclick="failTask(\\'' + t.id + '\\')">Fail</button>'
           + '</div>';
       } else if (t.status === 'failed') {
         actions = '<div class="task-actions"><button class="retry" onclick="retryTask(\\'' + t.id + '\\')">Retry</button></div>';
       }
-      return '<div class="task"><div class="task-header"><span class="task-title">' + esc(t.title) + '</span><span class="status status-' + t.status + '">' + t.status + '</span><span class="task-id">' + t.id.slice(0, 8) + '</span></div>' + logs + humanAction + actions + '</div>';
+      const age = timeAgo(t.createdAt);
+      return '<div class="task" title="' + t.id.slice(0, 8) + '"><div class="task-header"><span class="task-title">' + esc(t.title) + '</span><span class="status status-' + t.status + '">' + t.status + '</span><span class="task-meta">' + age + '</span></div>' + logs + humanAction + actions + '</div>';
     }
 
     async function addTask() {
@@ -308,6 +309,17 @@ function html(): string {
     async function retryTask(id) {
       await fetch('/api/tasks/' + id.slice(0, 8) + '/retry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       load();
+    }
+
+    function timeAgo(iso) {
+      const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (seconds < 60) return seconds + 's ago';
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return minutes + 'm ago';
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return hours + 'h ago';
+      const days = Math.floor(hours / 24);
+      return days + 'd ago';
     }
 
     function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
