@@ -8,6 +8,7 @@ await queue.load();
 
 const [command, ...args] = process.argv.slice(2);
 
+try {
 switch (command) {
   case "principle": {
     if (args[0] === "remove") {
@@ -274,6 +275,10 @@ OODA phases:
   done    <id> [notes]           Mark as done
   fail    <id> [reason]          Mark as failed
   retry   <id>                   Retry a failed task`);
+}
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
 }
 
 function resolveTask(idPrefix: string | undefined) {
