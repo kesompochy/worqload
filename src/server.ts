@@ -194,6 +194,11 @@ function html(): string {
     let currentTab = 'active';
 
     async function load() {
+      const focused = document.activeElement;
+      const focusId = focused && focused.id ? focused.id : null;
+      const focusValue = focused && focused.value !== undefined ? focused.value : null;
+      const focusCursor = focused && focused.selectionStart !== undefined ? focused.selectionStart : null;
+
       const [tasks, history, principles] = await Promise.all([
         fetch('/api/tasks').then(r => r.json()),
         fetch('/api/history').then(r => r.json()),
@@ -202,6 +207,15 @@ function html(): string {
       renderPrinciples(principles);
       renderTasks(tasks);
       renderHistory(history);
+
+      if (focusId) {
+        const el = document.getElementById(focusId);
+        if (el) {
+          el.focus();
+          if (focusValue !== null) el.value = focusValue;
+          if (focusCursor !== null) el.selectionStart = el.selectionEnd = focusCursor;
+        }
+      }
     }
 
     function renderPrinciples(items) {
