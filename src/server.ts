@@ -52,6 +52,43 @@ export function startServer(port = 3456): void {
         return json(queue.get(task.id));
       }
 
+      const patchMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+      if (req.method === "PATCH" && patchMatch) {
+        await queue.load();
+        const task = queue.findById(patchMatch[1]);
+        if (!task) return json({ error: "Task not found" }, 404);
+        const body = await req.json() as { priority?: number };
+        if (body.priority !== undefined) {
+          queue.update(task.id, { priority: body.priority });
+          await queue.save();
+        }
+        return json(queue.get(task.id));
+      }
+
+      const failMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/fail$/);
+      if (req.method === "POST" && failMatch) {
+        await queue.load();
+        const task = queue.findById(failMatch[1]);
+        if (!task) return json({ error: "Task not found" }, 404);
+        const body = await req.json() as { reason?: string };
+        queue.addLog(task.id, "act", `[FAILED] ${body.reason || "No reason given"}`);
+        queue.transition(task.id, "failed");
+        await queue.save();
+        return json(queue.get(task.id));
+      }
+
+      const retryMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/retry$/);
+      if (req.method === "POST" && retryMatch) {
+        await queue.load();
+        const task = queue.findById(retryMatch[1]);
+        if (!task) return json({ error: "Task not found" }, 404);
+        if (task.status !== "failed") return json({ error: "Task is not failed" }, 400);
+        queue.addLog(task.id, "act", "[RETRY]");
+        queue.transition(task.id, "pending");
+        await queue.save();
+        return json(queue.get(task.id));
+      }
+
       return new Response("Not Found", { status: 404 });
     },
   });
@@ -123,6 +160,15 @@ function html(): string {
   .tabs { display: flex; gap: 0.25rem; margin-bottom: 1rem; }
   .tab { padding: 0.4rem 1rem; border-radius: 4px 4px 0 0; cursor: pointer; font-size: 0.85rem; background: #161616; border: 1px solid #2a2a2a; border-bottom: none; color: #888; }
   .tab.active { background: #0a0a0a; color: #fff; border-color: #333; }
+
+  .task-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; align-items: center; }
+  .task-actions button { font-size: 0.75rem; padding: 0.25rem 0.5rem; }
+  .task-actions button.danger { background: #2e1a1a; color: #d46c6c; border-color: #4a2a2a; }
+  .task-actions button.danger:hover { background: #3d1a1a; }
+  .task-actions button.retry { background: #1a2e1a; color: #6aed6c; border-color: #2a4a2a; }
+  .task-actions button.retry:hover { background: #1a3d1a; }
+  .priority-edit { width: 3.5rem; background: #0a0a0a; border: 1px solid #333; border-radius: 4px; padding: 0.2rem 0.4rem; color: #e0e0e0; font-size: 0.75rem; text-align: center; }
+  .priority-edit:focus { outline: none; border-color: #6c7aed; }
 </style>
 </head>
 <body>
@@ -187,14 +233,23 @@ function html(): string {
     }
 
     function renderTask(t) {
-      const priorityLabel = t.priority !== 0 ? ' <span class="task-priority">p:' + t.priority + '</span>' : '';
       const logs = t.logs.length > 0
         ? '<div class="logs">' + t.logs.map(l => '<div class="log"><span class="log-phase">[' + esc(l.phase) + ']</span> ' + esc(l.content) + '</div>').join('') + '</div>'
         : '';
       const humanAction = t.status === 'waiting_human'
         ? '<div class="human-action"><input type="text" id="decide-' + t.id + '" placeholder="Your decision..." onkeydown="if(event.key===\\'Enter\\')decide(\\'' + t.id + '\\')"><button class="primary" onclick="decide(\\'' + t.id + '\\')">Decide</button></div>'
         : '';
-      return '<div class="task"><div class="task-header"><span class="task-title">' + esc(t.title) + priorityLabel + '</span><span class="status status-' + t.status + '">' + t.status + '</span><span class="task-id">' + t.id.slice(0, 8) + '</span></div>' + logs + humanAction + '</div>';
+      const isTerminal = t.status === 'done' || t.status === 'failed';
+      let actions = '';
+      if (!isTerminal) {
+        actions = '<div class="task-actions">'
+          + '<span style="font-size:0.75rem;color:#888">p:</span><input type="number" class="priority-edit" value="' + t.priority + '" onchange="setPriority(\\'' + t.id + '\\', this.value)">'
+          + '<button class="danger" onclick="failTask(\\'' + t.id + '\\')">Fail</button>'
+          + '</div>';
+      } else if (t.status === 'failed') {
+        actions = '<div class="task-actions"><button class="retry" onclick="retryTask(\\'' + t.id + '\\')">Retry</button></div>';
+      }
+      return '<div class="task"><div class="task-header"><span class="task-title">' + esc(t.title) + '</span><span class="status status-' + t.status + '">' + t.status + '</span><span class="task-id">' + t.id.slice(0, 8) + '</span></div>' + logs + humanAction + actions + '</div>';
     }
 
     async function addTask() {
@@ -222,6 +277,23 @@ function html(): string {
       document.querySelector('.tab:' + (tab === 'active' ? 'first-child' : 'last-child')).classList.add('active');
       document.getElementById('active-tasks').style.display = tab === 'active' ? '' : 'none';
       document.getElementById('history-tasks').style.display = tab === 'history' ? '' : 'none';
+    }
+
+    async function setPriority(id, value) {
+      await fetch('/api/tasks/' + id.slice(0, 8), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ priority: Number(value) || 0 }) });
+      load();
+    }
+
+    async function failTask(id) {
+      const reason = prompt('Fail reason:');
+      if (reason === null) return;
+      await fetch('/api/tasks/' + id.slice(0, 8) + '/fail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+      load();
+    }
+
+    async function retryTask(id) {
+      await fetch('/api/tasks/' + id.slice(0, 8) + '/retry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      load();
     }
 
     function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
