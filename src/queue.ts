@@ -10,12 +10,14 @@ export class TaskQueue {
   }
 
   dequeue(): Task | undefined {
+    let best: Task | undefined;
     for (const [, task] of this.tasks) {
-      if (task.status === "pending") {
-        return task;
+      if (task.status !== "pending") continue;
+      if (!best || task.priority > best.priority || (task.priority === best.priority && task.createdAt < best.createdAt)) {
+        best = task;
       }
     }
-    return undefined;
+    return best;
   }
 
   get(id: string): Task | undefined {

@@ -47,15 +47,29 @@ switch (command) {
   }
 
   case "add": {
-    const title = args.join(" ").trim();
+    let priority = 0;
+    const filtered: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--priority" && i + 1 < args.length) {
+        priority = Number(args[i + 1]);
+        if (!Number.isFinite(priority)) {
+          console.error("Priority must be a number.");
+          process.exit(1);
+        }
+        i++;
+      } else {
+        filtered.push(args[i]);
+      }
+    }
+    const title = filtered.join(" ").trim();
     if (!title) {
-      console.error("Usage: worqload add <title>");
+      console.error("Usage: worqload add <title> [--priority N]");
       process.exit(1);
     }
-    const task = createTask(title);
+    const task = createTask(title, {}, priority);
     queue.enqueue(task);
     await queue.save();
-    console.log(`Added: ${task.title} (${task.id.slice(0, 8)})`);
+    console.log(`Added: ${task.title} (${task.id.slice(0, 8)}) [priority: ${priority}]`);
     break;
   }
 
@@ -73,7 +87,8 @@ switch (command) {
       break;
     }
     for (const task of tasks) {
-      console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, 8)})`);
+      const priorityLabel = task.priority !== 0 ? ` p:${task.priority}` : "";
+      console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, 8)})${priorityLabel}`);
     }
     break;
   }
@@ -233,7 +248,7 @@ Principles:
   principle remove <N>           Remove principle by number
 
 Tasks:
-  add <title>                    Add a new task
+  add <title> [--priority N]     Add a new task (higher N = higher priority)
   list [status]                  List tasks (optionally filter by status)
   next                           Show next pending task
   clean                          Remove done/failed tasks

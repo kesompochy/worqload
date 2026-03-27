@@ -12,6 +12,7 @@ export interface Task {
   id: string;
   title: string;
   status: TaskStatus;
+  priority: number;
   context: Record<string, unknown>;
   logs: PhaseLog[];
   createdAt: string;
@@ -35,7 +36,7 @@ export function validateTransition(from: TaskStatus, to: TaskStatus): void {
   }
 }
 
-export function createTask(title: string, context: Record<string, unknown> = {}): Task {
+export function createTask(title: string, context: Record<string, unknown> = {}, priority = 0): Task {
   const trimmed = title.trim();
   if (trimmed === "") {
     throw new Error("Task title must not be empty");
@@ -45,6 +46,7 @@ export function createTask(title: string, context: Record<string, unknown> = {})
     id: crypto.randomUUID(),
     title: trimmed,
     status: "pending",
+    priority,
     context,
     logs: [],
     createdAt: now,

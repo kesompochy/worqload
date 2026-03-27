@@ -135,3 +135,30 @@ test("transition returns undefined for non-existent id", () => {
   const queue = new TaskQueue();
   expect(queue.transition("non-existent", "observing")).toBeUndefined();
 });
+
+test("dequeue returns highest priority pending task", () => {
+  const queue = new TaskQueue();
+  const low = createTask("low priority", {}, 1);
+  const high = createTask("high priority", {}, 10);
+  const medium = createTask("medium priority", {}, 5);
+  queue.enqueue(low);
+  queue.enqueue(high);
+  queue.enqueue(medium);
+
+  expect(queue.dequeue()?.id).toBe(high.id);
+});
+
+test("dequeue returns earliest task when priorities are equal", () => {
+  const queue = new TaskQueue();
+  const first = createTask("first", {}, 0);
+  const second = createTask("second", {}, 0);
+  queue.enqueue(first);
+  queue.enqueue(second);
+
+  expect(queue.dequeue()?.id).toBe(first.id);
+});
+
+test("createTask defaults priority to 0", () => {
+  const task = createTask("default priority");
+  expect(task.priority).toBe(0);
+});
