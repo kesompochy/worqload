@@ -2,13 +2,17 @@ import { TaskQueue } from "./queue";
 import { createTask } from "./task";
 import { loadPrinciples } from "./principles";
 
-export function startServer(port = 3456): void {
+export function startServer(basePort = 3456): void {
   const queue = new TaskQueue();
+  const maxAttempts = 10;
 
-  Bun.serve({
-    port,
-    async fetch(req) {
-      const url = new URL(req.url);
+  let port = basePort;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      Bun.serve({
+        port,
+        async fetch(req) {
+          const url = new URL(req.url);
 
       if (req.method === "GET" && url.pathname === "/") {
         return new Response(html(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
@@ -93,7 +97,17 @@ export function startServer(port = 3456): void {
     },
   });
 
+  if (port !== basePort) {
+    console.log(`Port ${basePort} in use, using ${port} instead.`);
+  }
   console.log(`worqload UI: http://localhost:${port}`);
+  return;
+    } catch {
+      port++;
+    }
+  }
+  console.error(`Could not find an available port (tried ${basePort}-${basePort + maxAttempts - 1}).`);
+  process.exit(1);
 }
 
 function json(data: unknown, status = 200): Response {
