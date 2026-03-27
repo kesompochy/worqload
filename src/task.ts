@@ -13,6 +13,7 @@ export interface Task {
   title: string;
   status: TaskStatus;
   priority: number;
+  owner?: string;
   context: Record<string, unknown>;
   logs: PhaseLog[];
   createdAt: string;

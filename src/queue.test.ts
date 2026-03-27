@@ -162,3 +162,52 @@ test("createTask defaults priority to 0", () => {
   const task = createTask("default priority");
   expect(task.priority).toBe(0);
 });
+
+test("claim sets owner on pending task", () => {
+  const queue = new TaskQueue();
+  const task = createTask("claimable");
+  queue.enqueue(task);
+
+  const claimed = queue.claim(task.id, "agent-1");
+  expect(claimed?.owner).toBe("agent-1");
+});
+
+test("claim throws if task is not pending", () => {
+  const queue = new TaskQueue();
+  const task = createTask("not pending");
+  queue.enqueue(task);
+  queue.transition(task.id, "observing");
+
+  expect(() => queue.claim(task.id, "agent-1")).toThrow("Cannot claim");
+});
+
+test("claim throws if already claimed", () => {
+  const queue = new TaskQueue();
+  const task = createTask("already claimed");
+  queue.enqueue(task);
+  queue.claim(task.id, "agent-1");
+
+  expect(() => queue.claim(task.id, "agent-2")).toThrow("already claimed");
+});
+
+test("dequeue skips claimed tasks", () => {
+  const queue = new TaskQueue();
+  const claimed = createTask("claimed");
+  const free = createTask("free");
+  queue.enqueue(claimed);
+  queue.enqueue(free);
+  queue.claim(claimed.id, "agent-1");
+
+  expect(queue.dequeue()?.id).toBe(free.id);
+});
+
+test("unclaim releases owner", () => {
+  const queue = new TaskQueue();
+  const task = createTask("unclaim me");
+  queue.enqueue(task);
+  queue.claim(task.id, "agent-1");
+
+  const unclaimed = queue.unclaim(task.id);
+  expect(unclaimed?.owner).toBeUndefined();
+  expect(queue.dequeue()?.id).toBe(task.id);
+});

@@ -13,6 +13,7 @@ export class TaskQueue {
     let best: Task | undefined;
     for (const [, task] of this.tasks) {
       if (task.status !== "pending") continue;
+      if (task.owner) continue;
       if (!best || task.priority > best.priority || (task.priority === best.priority && task.createdAt < best.createdAt)) {
         best = task;
       }
@@ -44,6 +45,27 @@ export class TaskQueue {
     if (!task) return undefined;
     validateTransition(task.status, newStatus);
     return this.update(id, { status: newStatus });
+  }
+
+  claim(id: string, owner: string): Task | undefined {
+    const task = this.tasks.get(id);
+    if (!task) return undefined;
+    if (task.status !== "pending") {
+      throw new Error(`Cannot claim: task is ${task.status}, expected pending`);
+    }
+    if (task.owner) {
+      throw new Error(`Task already claimed by ${task.owner}`);
+    }
+    return this.update(id, { owner });
+  }
+
+  unclaim(id: string): Task | undefined {
+    const task = this.tasks.get(id);
+    if (!task) return undefined;
+    if (!task.owner) {
+      throw new Error("Task is not claimed");
+    }
+    return this.update(id, { owner: undefined });
   }
 
   addLog(id: string, phase: OodaPhase, content: string): Task | undefined {

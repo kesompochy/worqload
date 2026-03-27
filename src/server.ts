@@ -140,6 +140,7 @@ function html(): string {
   .task-header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
   .task-title { font-weight: 600; flex: 1; }
   .task-meta { font-size: 0.75rem; color: #666; white-space: nowrap; }
+  .task-owner { font-size: 0.7rem; color: #6cced4; background: #1a2e2e; padding: 0.1rem 0.4rem; border-radius: 3px; }
 
   .status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
   .status-pending { background: #1a1a2e; color: #6c7aed; }
@@ -305,7 +306,8 @@ function html(): string {
         actions = '<div class="task-actions"><button class="retry" onclick="retryTask(\\'' + t.id + '\\')">Retry</button></div>';
       }
       const age = timeAgo(t.createdAt);
-      return '<div class="task" title="' + t.id.slice(0, 8) + '"><div class="task-header"><span class="task-title">' + esc(t.title) + '</span><span class="status status-' + t.status + '">' + t.status + '</span><span class="task-meta">' + age + '</span></div>' + logs + humanAction + actions + '</div>';
+      const ownerBadge = t.owner ? '<span class="task-owner">@' + esc(t.owner) + '</span>' : '';
+      return '<div class="task" title="' + t.id.slice(0, 8) + '"><div class="task-header"><span class="task-title">' + esc(t.title) + '</span>' + ownerBadge + '<span class="status status-' + t.status + '">' + t.status + '</span><span class="task-meta">' + age + '</span></div>' + logs + humanAction + actions + '</div>';
     }
 
     async function addTask() {

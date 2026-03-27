@@ -90,7 +90,8 @@ switch (command) {
     }
     for (const task of tasks) {
       const priorityLabel = task.priority !== 0 ? ` p:${task.priority}` : "";
-      console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, 8)})${priorityLabel}`);
+      const ownerLabel = task.owner ? ` @${task.owner}` : "";
+      console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, 8)})${priorityLabel}${ownerLabel}`);
     }
     break;
   }
@@ -250,6 +251,27 @@ switch (command) {
     break;
   }
 
+  case "claim": {
+    const task = resolveTask(args[0]);
+    const owner = args[1];
+    if (!owner) {
+      console.error("Usage: worqload claim <id> <owner>");
+      process.exit(1);
+    }
+    queue.claim(task.id, owner);
+    await queue.save();
+    console.log(`Claimed: ${task.title} → ${owner}`);
+    break;
+  }
+
+  case "unclaim": {
+    const task = resolveTask(args[0]);
+    queue.unclaim(task.id);
+    await queue.save();
+    console.log(`Unclaimed: ${task.title}`);
+    break;
+  }
+
   case "source": {
     if (args[0] === "add") {
       const name = args[1];
@@ -328,6 +350,8 @@ Tasks:
   history                        List archived tasks
   show <id>                      Show task details with logs
   context <id> [key] [value]     Show or set task context data
+  claim <id> <owner>             Claim a task (lock for an agent)
+  unclaim <id>                   Release a claimed task
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)
 
