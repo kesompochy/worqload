@@ -1,6 +1,6 @@
 import type { Task, TaskStatus, OodaPhase, PhaseLog } from "./task";
 import { validateTransition } from "./task";
-import { load, save } from "./store";
+import { load, save, loadArchive, appendArchive } from "./store";
 
 export class TaskQueue {
   private tasks: Map<string, Task> = new Map();
@@ -70,5 +70,25 @@ export class TaskQueue {
 
   async save(): Promise<void> {
     await save(this.list());
+  }
+
+  async archive(ids: string[]): Promise<Task[]> {
+    const archived: Task[] = [];
+    for (const id of ids) {
+      const task = this.tasks.get(id);
+      if (task) {
+        archived.push(task);
+        this.tasks.delete(id);
+      }
+    }
+    if (archived.length > 0) {
+      await appendArchive(archived);
+      await save(this.list());
+    }
+    return archived;
+  }
+
+  async history(): Promise<Task[]> {
+    return await loadArchive();
   }
 }

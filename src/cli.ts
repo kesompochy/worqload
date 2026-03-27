@@ -221,11 +221,20 @@ switch (command) {
       console.log("No done/failed tasks to clean.");
       break;
     }
-    for (const task of terminated) {
-      queue.remove(task.id);
+    const archived = await queue.archive(terminated.map(t => t.id));
+    console.log(`Archived ${archived.length} task(s).`);
+    break;
+  }
+
+  case "history": {
+    const archived = await queue.history();
+    if (archived.length === 0) {
+      console.log("No archived tasks.");
+      break;
     }
-    await queue.save();
-    console.log(`Cleaned ${terminated.length} task(s).`);
+    for (const task of archived) {
+      console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, 8)})`);
+    }
     break;
   }
 
@@ -251,7 +260,8 @@ Tasks:
   add <title> [--priority N]     Add a new task (higher N = higher priority)
   list [status]                  List tasks (optionally filter by status)
   next                           Show next pending task
-  clean                          Remove done/failed tasks
+  clean                          Archive done/failed tasks
+  history                        List archived tasks
   show <id>                      Show task details with logs
   context <id> [key] [value]     Show or set task context data
 
