@@ -19,10 +19,14 @@ export interface Task {
 }
 
 export function createTask(title: string, context: Record<string, unknown> = {}): Task {
+  const trimmed = title.trim();
+  if (trimmed === "") {
+    throw new Error("Task title must not be empty");
+  }
   const now = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
-    title,
+    title: trimmed,
     status: "pending",
     context,
     logs: [],

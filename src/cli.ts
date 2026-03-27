@@ -47,7 +47,7 @@ switch (command) {
   }
 
   case "add": {
-    const title = args.join(" ");
+    const title = args.join(" ").trim();
     if (!title) {
       console.error("Usage: worqload add <title>");
       process.exit(1);

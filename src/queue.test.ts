@@ -100,3 +100,16 @@ test("dequeue skips removed tasks", () => {
   const dequeued = queue.dequeue();
   expect(dequeued?.id).toBe(task2.id);
 });
+
+test("createTask throws on empty title", () => {
+  expect(() => createTask("")).toThrow("Task title must not be empty");
+});
+
+test("createTask throws on whitespace-only title", () => {
+  expect(() => createTask("   ")).toThrow("Task title must not be empty");
+});
+
+test("createTask trims surrounding whitespace from title", () => {
+  const task = createTask("  hello world  ");
+  expect(task.title).toBe("hello world");
+});
