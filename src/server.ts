@@ -28,6 +28,12 @@ export function startServer(basePort = 3456): void {
         return json(history);
       }
 
+      if (req.method === "GET" && url.pathname === "/api/heartbeat") {
+        const file = Bun.file(".worqload/heartbeat.json");
+        if (!(await file.exists())) return json(null);
+        return json(await file.json());
+      }
+
       if (req.method === "GET" && url.pathname === "/api/principles") {
         const content = await loadPrinciples();
         const lines = content.split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2));
@@ -186,7 +192,10 @@ function html(): string {
 </style>
 </head>
 <body>
-  <h1>worqload</h1>
+  <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem">
+    <h1 style="margin:0">worqload</h1>
+    <span id="heartbeat" style="font-size:0.85rem;color:#666"></span>
+  </div>
 
   <div class="principles" id="principles"></div>
 
@@ -213,14 +222,16 @@ function html(): string {
       const focusValue = focused && focused.value !== undefined ? focused.value : null;
       const focusCursor = focused && focused.selectionStart !== undefined ? focused.selectionStart : null;
 
-      const [tasks, history, principles] = await Promise.all([
+      const [tasks, history, principles, heartbeat] = await Promise.all([
         fetch('/api/tasks').then(r => r.json()),
         fetch('/api/history').then(r => r.json()),
         fetch('/api/principles').then(r => r.json()),
+        fetch('/api/heartbeat').then(r => r.json()),
       ]);
       renderPrinciples(principles);
       renderTasks(tasks);
       renderHistory(history);
+      renderHeartbeat(heartbeat);
 
       if (focusId) {
         const el = document.getElementById(focusId);
@@ -229,6 +240,22 @@ function html(): string {
           if (focusValue !== null) el.value = focusValue;
           if (focusCursor !== null) el.selectionStart = el.selectionEnd = focusCursor;
         }
+      }
+    }
+
+    function renderHeartbeat(hb) {
+      const el = document.getElementById('heartbeat');
+      if (!hb) { el.textContent = ''; return; }
+      const elapsed = Math.floor((Date.now() - new Date(hb.lastRun).getTime()) / 1000);
+      const remaining = Math.max(0, hb.intervalSeconds - elapsed);
+      if (remaining === 0) {
+        el.textContent = 'Loop: running...';
+        el.style.color = '#6cced4';
+      } else {
+        const m = Math.floor(remaining / 60);
+        const s = remaining % 60;
+        el.textContent = 'Next loop: ' + (m > 0 ? m + 'm ' : '') + s + 's';
+        el.style.color = '#888';
       }
     }
 

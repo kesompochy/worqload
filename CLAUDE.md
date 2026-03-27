@@ -18,6 +18,7 @@ Use `/loop` to keep this cycle running.
 
 **1. Check principles and queue**
 ```sh
+bun src/cli.ts heartbeat 300                     # record loop heartbeat (interval in seconds)
 bun src/cli.ts principle
 bun src/cli.ts list
 ```
@@ -54,3 +55,4 @@ bun src/cli.ts decide <id> --human "<question>"
 - Small, incremental changes. Each task = one commit-sized unit of work.
 - When uncertain, escalate with `--human`.
 - After acting, verify with `bun test`.
+- `principle` の追加・変更・削除はユーザーの明示的な指示がある場合のみ行う。Agentが独自判断で原則を操作してはならない。

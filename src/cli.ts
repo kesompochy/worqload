@@ -249,6 +249,14 @@ switch (command) {
     break;
   }
 
+  case "heartbeat": {
+    const intervalSeconds = Number(args[0]) || 300;
+    const data = { lastRun: new Date().toISOString(), intervalSeconds };
+    await Bun.write(".worqload/heartbeat.json", JSON.stringify(data));
+    console.log(`Heartbeat: interval=${intervalSeconds}s`);
+    break;
+  }
+
   case "serve": {
     const port = Number(args[0]) || 3456;
     const { startServer } = await import("./server");
@@ -273,6 +281,7 @@ Tasks:
   show <id>                      Show task details with logs
   context <id> [key] [value]     Show or set task context data
   serve [port]                   Start web UI (default: 3456)
+  heartbeat [seconds]            Record loop heartbeat (default: 300s)
 
 OODA phases:
   observe <id> [observations]    Start/record observations
