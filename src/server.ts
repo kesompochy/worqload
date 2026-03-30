@@ -603,7 +603,7 @@ function TaskCard({ task, onUpdate }) {
         ref=\${(el) => el && el.focus()}
         style="width:100%; font-size:inherit; font-weight:inherit; padding:2px 4px; box-sizing:border-box;"
       />
-    </div>\` : html\`<div class="task-title" onClick=\${task.missionId ? undefined : startEdit} style=\${task.missionId ? '' : 'cursor:pointer'}>
+    </div>\` : html\`<div class="task-title">
       \${task.title}
       \${task.status === 'waiting_human' && html\` <span class="badge badge-waiting">waiting</span>\`}
       \${task.status === 'failed' && html\` <span class="badge badge-failed">failed</span>\`}
