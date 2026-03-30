@@ -5,15 +5,29 @@ import type { Task, OodaPhase } from "./task";
 import { createTask } from "./task";
 import { updateTask, load, save } from "./store";
 import { runOnDoneHooks } from "./hooks";
+import { recordSpawnStart, recordSpawnFinish } from "./spawns";
 
 export interface MissionRunnerOptions {
   pollIntervalMs?: number;
   idleTimeoutMs?: number;
   storePath?: string;
   missionsPath?: string;
+  spawnCommand?: string[];
+  spawnsPath?: string;
 }
 
-export type IterationResult = "processed" | "idle" | "mission_completed";
+export type IterationResult = "processed" | "idle" | "mission_completed" | "spawned";
+
+export interface SpawnCompletion {
+  exitCode: number;
+  output: string;
+}
+
+export interface SpawnResult {
+  spawnId: string;
+  pid: number;
+  completion: Promise<SpawnCompletion>;
+}
 
 export function findNextMissionTask(queue: TaskQueue, missionId: string): Task | undefined {
   const tasks = queue.getByMission(missionId);
@@ -105,6 +119,79 @@ export async function processPlanTask(task: Task, mission: Mission, storePath?: 
   }
 }
 
+export async function spawnTask(
+  task: Task,
+  mission: Mission,
+  command: string[],
+  options: { storePath?: string; spawnsPath?: string } = {},
+): Promise<SpawnResult> {
+  const { storePath, spawnsPath } = options;
+  const owner = `mission:${mission.name}`;
+
+  const claimed = await updateTask(task.id, (current) => {
+    if (current.owner) throw new Error(`Already claimed by ${current.owner}`);
+    if (current.status !== "observing") throw new Error(`Cannot spawn: status is ${current.status}`);
+    return { owner };
+  }, storePath);
+  if (!claimed) throw new Error(`Task not found: ${task.id}`);
+
+  const taskEnv: Record<string, string> = {
+    WORQLOAD_TASK_ID: task.id,
+    WORQLOAD_TASK_TITLE: task.title,
+    WORQLOAD_TASK_CONTEXT: JSON.stringify(task.context),
+  };
+
+  if (mission.principles.length > 0) {
+    taskEnv.WORQLOAD_MISSION_PRINCIPLES = mission.principles.join("\n");
+  }
+
+  const proc = Bun.spawn(command, {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, ...taskEnv },
+  });
+
+  const spawnRecord = await recordSpawnStart(task.id, task.title, owner, proc.pid, spawnsPath);
+
+  const completion = (async (): Promise<SpawnCompletion> => {
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    await recordSpawnFinish(spawnRecord.id, exitCode, spawnsPath);
+
+    const output = (stdout + stderr).trim();
+    const truncated = output.length > 2000 ? output.slice(-2000) : output;
+
+    await updateTask(task.id, (current) => {
+      const logs = [...current.logs, {
+        phase: "act" as OodaPhase,
+        content: truncated,
+        timestamp: new Date().toISOString(),
+      }];
+
+      if (exitCode === 0) {
+        return { status: "done" as const, logs, owner: undefined };
+      } else {
+        const failLogs = [...logs, {
+          phase: "act" as OodaPhase,
+          content: `[FAILED] exit code ${exitCode}`,
+          timestamp: new Date().toISOString(),
+        }];
+        return { status: "failed" as const, logs: failLogs, owner: undefined };
+      }
+    }, storePath);
+
+    if (exitCode === 0) {
+      await runOnDoneHooks(task.id, task.title);
+    }
+
+    return { exitCode, output };
+  })();
+
+  return { spawnId: spawnRecord.id, pid: proc.pid, completion };
+}
+
 export async function processTask(task: Task, mission: Mission, storePath?: string): Promise<void> {
   // Read current state from store to check plan flag
   const tasks = await load(storePath);
@@ -171,7 +258,7 @@ export async function processTask(task: Task, mission: Mission, storePath?: stri
 
 export async function iterate(
   missionId: string,
-  options: { storePath?: string; missionsPath?: string } = {},
+  options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string } = {},
 ): Promise<IterationResult> {
   const mission = await resolveMission(missionId, options.missionsPath);
   if (mission.status === "completed") return "mission_completed";
@@ -181,6 +268,14 @@ export async function iterate(
 
   const task = findNextMissionTask(queue, mission.id);
   if (!task) return "idle";
+
+  if (options.spawnCommand && !isPlanTask(task)) {
+    await spawnTask(task, mission, options.spawnCommand, {
+      storePath: options.storePath,
+      spawnsPath: options.spawnsPath,
+    });
+    return "spawned";
+  }
 
   await processTask(task, mission, options.storePath);
   return "processed";
@@ -192,6 +287,8 @@ export async function runMission(missionId: string, options: MissionRunnerOption
     idleTimeoutMs = 300_000,
     storePath,
     missionsPath,
+    spawnCommand,
+    spawnsPath,
   } = options;
 
   const mission = await resolveMission(missionId, missionsPath);
@@ -205,7 +302,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
   while (true) {
     let result: IterationResult;
     try {
-      result = await iterate(mission.id, { storePath, missionsPath });
+      result = await iterate(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath });
     } catch {
       // Transient error (e.g., claim race condition) — retry next iteration
       continue;
@@ -216,7 +313,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
       return;
     }
 
-    if (result === "processed") {
+    if (result === "processed" || result === "spawned") {
       idleSince = null;
       continue;
     }

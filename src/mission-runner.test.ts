@@ -3,9 +3,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
-import { createMission, completeMission, addMissionPrinciple, loadMissions } from "./mission";
-import { findNextMissionTask, processTask, processPlanTask, iterate } from "./mission-runner";
+import { createMission, completeMission, addMissionPrinciple, loadMissions, type Mission } from "./mission";
+import { findNextMissionTask, processTask, processPlanTask, iterate, spawnTask } from "./mission-runner";
 import { load } from "./store";
+import { loadSpawns } from "./spawns";
 
 function tmpPath(label: string): string {
   return join(tmpdir(), `worqload-mrunner-${label}-${crypto.randomUUID()}.json`);
@@ -382,5 +383,180 @@ describe("processPlanTask", () => {
     const subtasks = tasks.filter(t => t.id !== task.id);
     expect(subtasks).toHaveLength(2);
     expect(subtasks.every(s => s.missionId === mission.id)).toBe(true);
+  });
+});
+
+describe("spawnTask", () => {
+  test("claims task and marks done on successful subprocess", async () => {
+    const storePath = tmpPath("spawn-basic");
+    const missionPath = tmpPath("spawn-basic-m");
+    const spawnsPath = tmpPath("spawn-basic-s");
+    const mission = await createMission("spawn-mission", {}, missionPath);
+    const task = createTask("spawn me");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["echo", "hello"], { storePath, spawnsPath });
+    expect(result.pid).toBeGreaterThan(0);
+
+    const completion = await result.completion;
+    expect(completion.exitCode).toBe(0);
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+    expect(updated?.owner).toBeUndefined();
+  });
+
+  test("marks task as failed on non-zero exit", async () => {
+    const storePath = tmpPath("spawn-fail");
+    const missionPath = tmpPath("spawn-fail-m");
+    const spawnsPath = tmpPath("spawn-fail-s");
+    const mission = await createMission("fail-mission", {}, missionPath);
+    const task = createTask("fail me");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["sh", "-c", "exit 1"], { storePath, spawnsPath });
+    const completion = await result.completion;
+    expect(completion.exitCode).toBe(1);
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("failed");
+  });
+
+  test("passes task env variables to subprocess", async () => {
+    const storePath = tmpPath("spawn-env");
+    const missionPath = tmpPath("spawn-env-m");
+    const spawnsPath = tmpPath("spawn-env-s");
+    const mission = await createMission("env-mission", {}, missionPath);
+    const task = createTask("env task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["sh", "-c", "echo $WORQLOAD_TASK_ID"], { storePath, spawnsPath });
+    const completion = await result.completion;
+    expect(completion.output).toContain(task.id);
+  });
+
+  test("passes mission principles as env variable", async () => {
+    const storePath = tmpPath("spawn-principles");
+    const missionPath = tmpPath("spawn-principles-m");
+    const spawnsPath = tmpPath("spawn-principles-s");
+    const mission = await createMission("principle-mission", {}, missionPath);
+    await addMissionPrinciple(mission.id, "test first", missionPath);
+    const missions = await loadMissions(missionPath);
+    const updatedMission = missions[0];
+
+    const task = createTask("principle spawn");
+    await setupQueue(storePath, [{ ...task, missionId: updatedMission.id }]);
+
+    const result = await spawnTask(task, updatedMission, ["sh", "-c", "echo $WORQLOAD_MISSION_PRINCIPLES"], { storePath, spawnsPath });
+    const completion = await result.completion;
+    expect(completion.output).toContain("test first");
+  });
+
+  test("records spawn in spawns store", async () => {
+    const storePath = tmpPath("spawn-record");
+    const missionPath = tmpPath("spawn-record-m");
+    const spawnsPath = tmpPath("spawn-record-s");
+    const mission = await createMission("record-mission", {}, missionPath);
+    const task = createTask("record task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["echo", "hi"], { storePath, spawnsPath });
+    await result.completion;
+
+    const spawns = await loadSpawns(spawnsPath);
+    const spawnRecord = spawns.find(s => s.id === result.spawnId);
+    expect(spawnRecord).toBeDefined();
+    expect(spawnRecord?.status).toBe("done");
+    expect(spawnRecord?.taskId).toBe(task.id);
+  });
+
+  test("throws when task is already claimed", async () => {
+    const storePath = tmpPath("spawn-claimed");
+    const missionPath = tmpPath("spawn-claimed-m");
+    const spawnsPath = tmpPath("spawn-claimed-s");
+    const mission = await createMission("claimed-mission", {}, missionPath);
+    const task = createTask("already claimed");
+    const queue = new TaskQueue(storePath);
+    queue.enqueue(task);
+    queue.update(task.id, { missionId: mission.id, owner: "other" });
+    await queue.save();
+
+    expect(spawnTask(task, mission, ["echo"], { storePath, spawnsPath })).rejects.toThrow("Already claimed");
+  });
+});
+
+describe("iterate with spawn", () => {
+  test("returns spawned when spawnCommand is provided", async () => {
+    const missionPath = tmpPath("iter-spawn-m");
+    const storePath = tmpPath("iter-spawn");
+    const spawnsPath = tmpPath("iter-spawn-s");
+    const mission = await createMission("spawn-iterate", {}, missionPath);
+    const task = createTask("spawn iterate task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await iterate(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      spawnCommand: ["echo", "processing"],
+      spawnsPath,
+    });
+    expect(result).toBe("spawned");
+  });
+
+  test("returns idle when no tasks with spawnCommand", async () => {
+    const missionPath = tmpPath("iter-spawn-idle-m");
+    const storePath = tmpPath("iter-spawn-idle");
+    const mission = await createMission("idle-spawn", {}, missionPath);
+    const queue = new TaskQueue(storePath);
+    await queue.save();
+
+    const result = await iterate(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      spawnCommand: ["echo"],
+    });
+    expect(result).toBe("idle");
+  });
+
+  test("returns mission_completed with spawnCommand", async () => {
+    const missionPath = tmpPath("iter-spawn-done-m");
+    const storePath = tmpPath("iter-spawn-done");
+    const mission = await createMission("done-spawn", {}, missionPath);
+    await completeMission(mission.id, missionPath);
+
+    const result = await iterate(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      spawnCommand: ["echo"],
+    });
+    expect(result).toBe("mission_completed");
+  });
+
+  test("still processes plan tasks inline with spawnCommand", async () => {
+    const missionPath = tmpPath("iter-spawn-plan-m");
+    const storePath = tmpPath("iter-spawn-plan");
+    const mission = await createMission("plan-spawn", {}, missionPath);
+    const task = createTask("plan with spawn");
+    const planTask = {
+      ...task,
+      missionId: mission.id,
+      context: { plan: true, subtasks: ["child1"] },
+    };
+    await setupQueue(storePath, [planTask]);
+
+    const result = await iterate(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      spawnCommand: ["echo", "should not run"],
+    });
+    expect(result).toBe("processed");
+
+    const tasks = await load(storePath);
+    const parent = tasks.find(t => t.id === task.id);
+    expect(parent?.status).toBe("done");
+    const children = tasks.filter(t => t.id !== task.id);
+    expect(children).toHaveLength(1);
   });
 });
