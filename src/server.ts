@@ -485,10 +485,10 @@ function AddForm({ onAdd }) {
     prioRef.current.value = '0';
     onAdd();
   };
-  const onKey = (e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); submit(); } };
+  const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); if (e.shiftKey) submit(); } };
   return html\`<div class="add-form">
     <input type="text" ref=\${titleRef} placeholder="New task title..." onKeyDown=\${onKey} />
-    <input type="number" ref=\${prioRef} defaultValue="0" placeholder="Pri" title="Priority (higher = more urgent)" />
+    <input type="number" ref=\${prioRef} defaultValue="0" placeholder="Pri" title="Priority (higher = more urgent)" onKeyDown=\${onKey} />
     <button class="primary" onClick=\${submit} title="Shift+Enter">Add</button>
   </div>\`;
 }
@@ -535,7 +535,7 @@ function TaskCard({ task, onUpdate }) {
     onUpdate();
   };
   const onEditKeyDown = (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
+    if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); saveEdit(); }
     if (e.key === 'Escape') cancelEdit();
   };
 
