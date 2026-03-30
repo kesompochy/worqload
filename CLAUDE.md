@@ -56,7 +56,6 @@ bun src/cli.ts spawn <id> <command...>           # delegate to a spawned agent
 ```
 
 Spawn prompts must instruct agents to write tests first and run `bun test` after implementation.
-Spawn prompts must instruct agents to always create a report summarizing what they did upon completion using `worqload report add <task-id> "<title>" "<content>"`.
 Spawn prompts must instruct agents to write report titles and content in Japanese when using `worqload report add`.
 
 If a decision is difficult or architectural:
