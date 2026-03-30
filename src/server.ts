@@ -192,6 +192,17 @@ export function startServer(basePort = 3456): void {
         });
       }
 
+      if (req.method === "POST" && url.pathname === "/api/clean") {
+        await queue.load();
+        const terminatedIds = queue.list()
+          .filter(t => t.status === "done" || t.status === "failed")
+          .map(t => t.id);
+        if (terminatedIds.length === 0) return json({ archived: [] });
+        const archived = await queue.archive(terminatedIds);
+        await queue.save();
+        return json({ archived: archived.map(t => t.id) });
+      }
+
       const retryMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/retry$/);
       if (req.method === "POST" && retryMatch) {
         return withTask(queue, retryMatch[1], async (task) => {
@@ -500,20 +511,38 @@ function TaskCard({ task, onUpdate }) {
     await fetch('/api/tasks/' + task.id.slice(0, 8), { method: 'DELETE' });
     onUpdate();
   };
-  const editTitle = async () => {
-    const newTitle = prompt('Edit title:', task.title);
-    if (newTitle === null || newTitle.trim() === '' || newTitle === task.title) return;
-    await api.patch('/api/tasks/' + task.id.slice(0, 8), { title: newTitle.trim() });
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(task.title);
+  const startEdit = () => { setEditValue(task.title); setEditing(true); };
+  const cancelEdit = () => setEditing(false);
+  const saveEdit = async () => {
+    setEditing(false);
+    const trimmed = editValue.trim();
+    if (!trimmed || trimmed === task.title) return;
+    await api.patch('/api/tasks/' + task.id.slice(0, 8), { title: trimmed });
     onUpdate();
+  };
+  const onEditKeyDown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
+    if (e.key === 'Escape') cancelEdit();
   };
 
   return html\`<div class="task" title=\${task.id.slice(0, 8)}>
-    <div class="task-title" onClick=\${editTitle} style="cursor:pointer">
+    ${editing ? html\`<div class="task-title">
+      <input
+        value=\${editValue}
+        onInput=\${(e) => setEditValue(e.target.value)}
+        onKeyDown=\${onEditKeyDown}
+        onBlur=\${saveEdit}
+        ref=\${(el) => el && el.focus()}
+        style="width:100%; font-size:inherit; font-weight:inherit; padding:2px 4px; box-sizing:border-box;"
+      />
+    </div>\` : html\`<div class="task-title" onClick=\${startEdit} style="cursor:pointer">
       \${task.title}
       \${task.status === 'waiting_human' && html\` <span class="badge badge-waiting">waiting</span>\`}
       \${task.status === 'failed' && html\` <span class="badge badge-failed">failed</span>\`}
       \${task.owner && html\` <span class="task-owner">@\${task.owner}</span>\`}
-    </div>
+    </div>\`}
     <div class="task-meta">
       \${timeAgo(task.createdAt)} · p\${task.priority}
       \${task.createdBy && html\` <span class="task-created-by">by \${task.createdBy}</span>\`}
@@ -546,6 +575,10 @@ function TaskCard({ task, onUpdate }) {
 function Board({ tasks, onUpdate }) {
   const [showAllDone, setShowAllDone] = useState(false);
   const DONE_LIMIT = 5;
+  const cleanDone = async () => {
+    await api.post('/api/clean', {});
+    onUpdate();
+  };
   return html\`<div class="board">
     \${COLUMNS.map(col => {
       const colTasks = tasks.filter(t => col.statuses.includes(t.status));
@@ -553,7 +586,7 @@ function Board({ tasks, onUpdate }) {
       const truncated = isDone && !showAllDone && colTasks.length > DONE_LIMIT;
       const visibleTasks = truncated ? colTasks.slice(0, DONE_LIMIT) : colTasks;
       return html\`<div class="column col-\${col.key}" key=\${col.key}>
-        <div class="column-header">\${col.label} <span class="count">\${colTasks.length}</span></div>
+        <div class="column-header">\${col.label} <span style="display:inline-flex;align-items:center;gap:0.35rem"><span class="count">\${colTasks.length}</span>\${isDone && colTasks.length > 0 && html\`<button style="font-size:0.6rem;padding:0.1rem 0.35rem;background:#1a1a1a;border:1px solid #333;border-radius:3px;color:#888;cursor:pointer" onClick=\${cleanDone}>Clean</button>\`}</span></div>
         <div class="column-body">
           \${colTasks.length === 0
             ? html\`<div class="empty">-</div>\`
