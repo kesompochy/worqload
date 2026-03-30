@@ -55,3 +55,10 @@ export async function resolveFeedback(id: string, path: string = DEFAULT_FEEDBAC
   item.status = "resolved";
   await saveFeedback(items, path);
 }
+
+export async function removeFeedback(id: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
+  const items = await loadFeedback(path);
+  const filtered = items.filter(f => f.id !== id && !f.id.startsWith(id));
+  if (filtered.length === items.length) throw new Error(`Feedback not found: ${id}`);
+  await saveFeedback(filtered, path);
+}

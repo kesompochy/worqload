@@ -3,7 +3,7 @@ import type { Task } from "./task";
 import { createTask } from "./task";
 import { loadPrinciples } from "./principles";
 import { loadSpawns } from "./spawns";
-import { loadFeedback, addFeedback } from "./feedback";
+import { loadFeedback, addFeedback, removeFeedback } from "./feedback";
 import { loadProjects } from "./projects";
 
 const TASK_NOT_FOUND = { error: "Task not found" } as const;
@@ -89,6 +89,12 @@ export function startServer(basePort = 3456): void {
         return json(fb, 201);
       }
 
+      const feedbackDeleteMatch = url.pathname.match(/^\/api\/feedback\/([^/]+)$/);
+      if (req.method === "DELETE" && feedbackDeleteMatch) {
+        await removeFeedback(feedbackDeleteMatch[1]);
+        return json({ deleted: feedbackDeleteMatch[1] });
+      }
+
       const projectFeedbackMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/feedback$/);
       if (req.method === "POST" && projectFeedbackMatch) {
         const projectName = decodeURIComponent(projectFeedbackMatch[1]);
@@ -122,15 +128,26 @@ export function startServer(basePort = 3456): void {
         });
       }
 
-      const patchMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
-      if (req.method === "PATCH" && patchMatch) {
-        return withTask(queue, patchMatch[1], async (task) => {
-          const body = await req.json() as { priority?: number };
-          if (body.priority !== undefined) {
-            queue.update(task.id, { priority: body.priority });
+      const taskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+      if (req.method === "PATCH" && taskMatch) {
+        return withTask(queue, taskMatch[1], async (task) => {
+          const body = await req.json() as { priority?: number; title?: string };
+          const patch: Record<string, unknown> = {};
+          if (body.priority !== undefined) patch.priority = body.priority;
+          if (body.title !== undefined) patch.title = body.title.trim();
+          if (Object.keys(patch).length > 0) {
+            queue.update(task.id, patch);
             await queue.save();
           }
           return json(queue.get(task.id));
+        });
+      }
+
+      if (req.method === "DELETE" && taskMatch) {
+        return withTask(queue, taskMatch[1], async (task) => {
+          queue.remove(task.id);
+          await queue.save();
+          return json({ deleted: task.id });
         });
       }
 
@@ -401,9 +418,20 @@ function TaskCard({ task, onUpdate }) {
     await api.post('/api/tasks/' + task.id.slice(0, 8) + '/retry', {});
     onUpdate();
   };
+  const deleteTask = async () => {
+    if (!confirm('Delete task: ' + task.title + '?')) return;
+    await fetch('/api/tasks/' + task.id.slice(0, 8), { method: 'DELETE' });
+    onUpdate();
+  };
+  const editTitle = async () => {
+    const newTitle = prompt('Edit title:', task.title);
+    if (newTitle === null || newTitle.trim() === '' || newTitle === task.title) return;
+    await api.patch('/api/tasks/' + task.id.slice(0, 8), { title: newTitle.trim() });
+    onUpdate();
+  };
 
   return html\`<div class="task" title=\${task.id.slice(0, 8)}>
-    <div class="task-title">
+    <div class="task-title" onClick=\${editTitle} style="cursor:pointer">
       \${task.title}
       \${task.status === 'waiting_human' && html\` <span class="badge badge-waiting">waiting</span>\`}
       \${task.status === 'failed' && html\` <span class="badge badge-failed">failed</span>\`}
@@ -429,9 +457,11 @@ function TaskCard({ task, onUpdate }) {
       <label class="action-label">Pri</label>
       <input type="number" class="priority-edit" defaultValue=\${task.priority} key=\${task.id + '-p-' + task.priority} onChange=\${setPriority} />
       <button class="danger" onClick=\${failTask}>Fail</button>
+      <button class="danger" onClick=\${deleteTask}>Del</button>
     </div>\`}
     \${task.status === 'failed' && html\`<div class="task-actions">
       <button class="retry" onClick=\${retryTask}>Retry</button>
+      <button class="danger" onClick=\${deleteTask}>Del</button>
     </div>\`}
   </div>\`;
 }
@@ -482,9 +512,15 @@ function FeedbackSection({ projects, onSend }) {
       <button class="primary" onClick=\${submit}>Send</button>
     </div>
     \${allFeedback.length > 0
-      ? allFeedback.map(fb => html\`<div class="task" key=\${fb.id} style="border-left:3px solid #ed6c6c">
-          <div class="task-title">\${fb.message}</div>
-          <div class="task-meta">from \${fb.from} · \${fb.projectName} · \${timeAgo(fb.createdAt)}</div>
+      ? allFeedback.map(fb => html\`<div class="task" key=\${fb.id} style="border-left:3px solid #ed6c6c;display:flex;align-items:start;gap:0.5rem">
+          <div style="flex:1">
+            <div class="task-title">\${fb.message}</div>
+            <div class="task-meta">from \${fb.from} · \${fb.projectName} · \${timeAgo(fb.createdAt)}</div>
+          </div>
+          <button class="danger" style="font-size:0.65rem;padding:0.15rem 0.3rem" onClick=\${async () => {
+            await fetch('/api/feedback/' + fb.id.slice(0, 8), { method: 'DELETE' });
+            onSend();
+          }}>×</button>
         </div>\`)
       : html\`<div class="empty">No new feedback.</div>\`}
   </div>\`;
