@@ -91,7 +91,25 @@ export async function init(_queue: TaskQueue, args: string[]) {
     }
   }
 
-  const config = await loadConfig(projectPath + "/.worqload/config.json");
+  const configPath = projectPath + "/.worqload/config.json";
+  const configFile = Bun.file(configPath);
+  if (!(await configFile.exists())) {
+    const isGit = await Bun.file(projectPath + "/.git/HEAD").exists();
+    const defaultConfig = isGit ? {
+      spawn: {
+        pre: [
+          "branch=worqload/$WORQLOAD_TASK_ID && dir=.worqload/worktrees/$WORQLOAD_TASK_ID && git worktree add -b $branch $dir 2>/dev/null && echo WORQLOAD_SPAWN_CWD=$dir"
+        ],
+        post: [
+          "[ \"$WORQLOAD_SPAWN_EXIT_CODE\" = \"0\" ] && [ -n \"$WORQLOAD_SPAWN_CWD\" ] && git merge worqload/$WORQLOAD_TASK_ID --no-edit 2>&1 || true"
+        ]
+      }
+    } : {};
+    await Bun.write(configPath, JSON.stringify(defaultConfig, null, 2));
+    console.log(`Created: ${configPath}${isGit ? " (with worktree hooks)" : ""}`);
+  }
+
+  const config = await loadConfig(configPath);
   const agentPath = projectPath + "/" + (config.init?.agentPath || DEFAULT_AGENT_PATH);
   const agentTemplate = config.init?.agentTemplate
     ? await Bun.file(config.init.agentTemplate).text()
