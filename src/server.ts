@@ -2,6 +2,7 @@ import { TaskQueue } from "./queue";
 import { createTask } from "./task";
 import { loadPrinciples } from "./principles";
 import { loadSpawns } from "./spawns";
+import { loadFeedback, addFeedback } from "./feedback";
 
 export function startServer(basePort = 3456): void {
   const queue = new TaskQueue();
@@ -44,6 +45,17 @@ export function startServer(basePort = 3456): void {
       if (req.method === "GET" && url.pathname === "/api/spawns") {
         const spawns = await loadSpawns();
         return json(spawns);
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/feedback") {
+        const items = await loadFeedback();
+        return json(items);
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/feedback") {
+        const body = await req.json() as { message: string; from?: string };
+        const fb = await addFeedback(body.message, body.from || "web-ui");
+        return json(fb, 201);
       }
 
       if (req.method === "POST" && url.pathname === "/api/tasks") {

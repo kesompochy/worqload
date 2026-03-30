@@ -5,6 +5,7 @@ import { loadPrinciples, savePrinciples } from "./principles";
 import { loadSources, addSource, removeSource, runAllSources } from "./sources";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
 import { createWorktree, removeWorktree, mergeWorktreeBranch } from "./worktree";
+import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from "./feedback";
 
 const queue = new TaskQueue();
 await queue.load();
@@ -362,6 +363,48 @@ switch (command) {
     break;
   }
 
+  case "feedback": {
+    if (args[0] === "list") {
+      const items = await loadFeedback();
+      if (items.length === 0) {
+        console.log("No feedback.");
+        break;
+      }
+      for (const f of items) {
+        console.log(`[${f.status.padEnd(12)}] ${f.message} (from: ${f.from}, ${f.id.slice(0, 8)})`);
+      }
+      break;
+    }
+    if (args[0] === "ack") {
+      await acknowledgeFeedback(args[1]);
+      console.log("Acknowledged.");
+      break;
+    }
+    if (args[0] === "resolve") {
+      await resolveFeedback(args[1]);
+      console.log("Resolved.");
+      break;
+    }
+    let from = "anonymous";
+    const msgParts: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--from" && i + 1 < args.length) {
+        from = args[i + 1];
+        i++;
+      } else {
+        msgParts.push(args[i]);
+      }
+    }
+    const message = msgParts.join(" ").trim();
+    if (!message) {
+      console.error("Usage: worqload feedback <message> [--from <sender>]");
+      process.exit(1);
+    }
+    const fb = await addFeedback(message, from);
+    console.log(`Feedback added: ${fb.message} (from: ${fb.from}, ${fb.id.slice(0, 8)})`);
+    break;
+  }
+
   case "source": {
     if (args[0] === "add") {
       const name = args[1];
@@ -445,6 +488,12 @@ Tasks:
   spawn <id> [owner]             Spawn a Claude agent to process a task
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)
+
+Feedback:
+  feedback <message> [--from <sender>]  Send feedback
+  feedback list                         List all feedback
+  feedback ack <id>                     Acknowledge feedback
+  feedback resolve <id>                 Mark feedback resolved
 
 Sources (observation data):
   source                         List registered sources

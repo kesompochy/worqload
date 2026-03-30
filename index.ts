@@ -9,3 +9,5 @@ export { loadSources, addSource, removeSource, runAllSources } from "./src/sourc
 export type { Source, SourceResult } from "./src/sources";
 export { loadSpawns, recordSpawnStart, recordSpawnFinish } from "./src/spawns";
 export type { SpawnRecord } from "./src/spawns";
+export { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from "./src/feedback";
+export type { Feedback, FeedbackStatus } from "./src/feedback";
