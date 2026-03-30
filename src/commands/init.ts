@@ -101,19 +101,8 @@ export async function init(_queue: TaskQueue, args: string[]) {
   const configPath = projectPath + "/.worqload/config.json";
   const configFile = Bun.file(configPath);
   if (!(await configFile.exists())) {
-    const isGit = await Bun.file(projectPath + "/.git/HEAD").exists();
-    const defaultConfig = isGit ? {
-      spawn: {
-        pre: [
-          "branch=worqload/$WORQLOAD_TASK_ID && dir=.worqload/worktrees/$WORQLOAD_TASK_ID && git worktree add -b $branch $dir 2>/dev/null && echo WORQLOAD_SPAWN_CWD=$dir"
-        ],
-        post: [
-          "[ -n \"$WORQLOAD_SPAWN_CWD\" ] && git worktree remove \"$WORQLOAD_SPAWN_CWD\" --force 2>/dev/null; true"
-        ]
-      }
-    } : {};
-    await Bun.write(configPath, JSON.stringify(defaultConfig, null, 2));
-    console.log(`Created: ${configPath}${isGit ? " (with worktree hooks)" : ""}`);
+    await Bun.write(configPath, JSON.stringify({}, null, 2));
+    console.log(`Created: ${configPath}`);
   }
 
   const config = await loadConfig(configPath);
