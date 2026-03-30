@@ -1,5 +1,6 @@
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
+import { HUMAN_REQUIRED_PREFIX } from "../task";
 import { resolveTask } from "./resolve";
 
 export async function observe(queue: TaskQueue, args: string[]) {
@@ -30,7 +31,7 @@ export async function decide(queue: TaskQueue, args: string[]) {
   if (args[1] === "--human") {
     const question = args.slice(2).join(" ") || "Decision required";
     queue.transition(task.id, "waiting_human");
-    queue.addLog(task.id, "decide", `[HUMAN REQUIRED] ${question}`);
+    queue.addLog(task.id, "decide", `${HUMAN_REQUIRED_PREFIX}${question}`);
     await queue.save();
     console.log(`Waiting for human decision: ${question}`);
     return;

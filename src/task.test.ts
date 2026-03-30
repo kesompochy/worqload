@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { createTask, validateTransition } from "./task";
+import { test, expect, describe } from "bun:test";
+import { createTask, validateTransition, getHumanQuestion } from "./task";
 import type { TaskStatus } from "./task";
 
 test("createTask returns a valid task with defaults", () => {
@@ -64,4 +64,72 @@ test("validateTransition rejects invalid transitions", () => {
   for (const [from, to] of invalid) {
     expect(() => validateTransition(from, to)).toThrow("Invalid status transition");
   }
+});
+
+describe("getHumanQuestion", () => {
+  test("returns question from waiting_human task with HUMAN REQUIRED log", () => {
+    const task = createTask("test task");
+    task.status = "waiting_human";
+    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] Should we proceed?", timestamp: "2025-01-01T00:00:00Z" });
+
+    expect(getHumanQuestion(task)).toBe("Should we proceed?");
+  });
+
+  test("returns null for non-waiting_human task", () => {
+    const task = createTask("test task");
+    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] question", timestamp: "2025-01-01T00:00:00Z" });
+
+    expect(getHumanQuestion(task)).toBeNull();
+  });
+
+  test("returns null for waiting_human task without HUMAN REQUIRED log", () => {
+    const task = createTask("test task");
+    task.status = "waiting_human";
+    task.logs.push({ phase: "decide", content: "some decision", timestamp: "2025-01-01T00:00:00Z" });
+
+    expect(getHumanQuestion(task)).toBeNull();
+  });
+
+  test("returns latest HUMAN REQUIRED question when multiple exist", () => {
+    const task = createTask("test task");
+    task.status = "waiting_human";
+    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] First question?", timestamp: "2025-01-01T00:00:00Z" });
+    task.logs.push({ phase: "decide", content: "user answered", timestamp: "2025-01-01T00:01:00Z" });
+    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] Second question?", timestamp: "2025-01-01T00:02:00Z" });
+
+    expect(getHumanQuestion(task)).toBe("Second question?");
+  });
+
+  test("extracts question from A2A-created task", () => {
+    const task = createTask("A2A task", {
+      a2a_context_id: "ctx-123",
+      a2a_original_message: {
+        message_id: "msg-1",
+        role: "user",
+        parts: [{ kind: "text", text: "investigate bug" }],
+        kind: "message",
+      },
+    }, 0, "a2a");
+    task.status = "waiting_human";
+    task.logs.push({ phase: "observe", content: "found the issue", timestamp: "2025-01-01T00:00:00Z" });
+    task.logs.push({ phase: "orient", content: "needs human input", timestamp: "2025-01-01T00:01:00Z" });
+    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] Approve this change?", timestamp: "2025-01-01T00:02:00Z" });
+
+    expect(getHumanQuestion(task)).toBe("Approve this change?");
+  });
+
+  test("returns null for A2A-created task without HUMAN REQUIRED log", () => {
+    const task = createTask("A2A task", {
+      a2a_context_id: "ctx-123",
+      a2a_original_message: {
+        message_id: "msg-1",
+        role: "user",
+        parts: [{ kind: "text", text: "do something" }],
+        kind: "message",
+      },
+    }, 0, "a2a");
+    task.status = "waiting_human";
+
+    expect(getHumanQuestion(task)).toBeNull();
+  });
 });

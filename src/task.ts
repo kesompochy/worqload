@@ -40,6 +40,17 @@ export function validateTransition(from: TaskStatus, to: TaskStatus): void {
   }
 }
 
+export const HUMAN_REQUIRED_PREFIX = "[HUMAN REQUIRED] ";
+
+export function getHumanQuestion(task: Task): string | null {
+  if (task.status !== "waiting_human") return null;
+  for (let i = task.logs.length - 1; i >= 0; i--) {
+    const log = task.logs[i];
+    if (log.content.startsWith(HUMAN_REQUIRED_PREFIX)) return log.content.slice(HUMAN_REQUIRED_PREFIX.length);
+  }
+  return null;
+}
+
 export function createTask(title: string, context: Record<string, unknown> = {}, priority = 0, createdBy?: string): Task {
   const trimmed = title.trim();
   if (trimmed === "") {

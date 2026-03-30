@@ -1,5 +1,5 @@
 import type { Task, TaskStatus } from "./task";
-import { createTask } from "./task";
+import { createTask, getHumanQuestion, HUMAN_REQUIRED_PREFIX } from "./task";
 import { TaskQueue } from "./queue";
 
 // A2A Protocol types (spec v0.2.1)
@@ -159,18 +159,17 @@ export function toA2ATask(task: Task): A2ATask {
     timestamp: task.updatedAt,
   };
 
-  if (task.status === "waiting_human") {
+  const humanQuestion = getHumanQuestion(task);
+  if (humanQuestion) {
     const humanLog = [...task.logs].reverse().find(
-      (log) => log.content.startsWith("[HUMAN REQUIRED] ")
-    );
-    if (humanLog) {
-      status.message = {
-        message_id: `log-${humanLog.timestamp}`,
-        role: "agent",
-        parts: [{ kind: "text", text: humanLog.content.slice("[HUMAN REQUIRED] ".length) }],
-        kind: "message",
-      };
-    }
+      (log) => log.content.startsWith(HUMAN_REQUIRED_PREFIX)
+    )!;
+    status.message = {
+      message_id: `log-${humanLog.timestamp}`,
+      role: "agent",
+      parts: [{ kind: "text", text: humanQuestion }],
+      kind: "message",
+    };
   }
 
   const a2aTask: A2ATask = {
