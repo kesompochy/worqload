@@ -12,6 +12,7 @@ import { heartbeat, serve, sleep, wake } from "./commands/serve";
 import { report } from "./commands/report";
 import { mission } from "./commands/mission";
 import { resume } from "./commands/resume";
+import { iterate } from "./commands/iterate";
 
 type CommandHandler = (queue: TaskQueueType, args: string[]) => Promise<void>;
 
@@ -27,6 +28,7 @@ const commands: Record<string, CommandHandler> = {
   report,
   mission,
   resume,
+  iterate,
   heartbeat, serve, sleep, wake,
 };
 
@@ -106,6 +108,9 @@ Sources (observation data):
   source add <name> <command>    Register a data source
   source remove <name>           Remove a data source
   source run                     Run all sources and show output
+
+Iteration:
+  iterate                        Run one managed OODA iteration as a tracked task
 
 OODA phases:
   observe <id> [observations]    Start/record observations

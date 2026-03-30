@@ -16,44 +16,36 @@ Use `/loop` to keep this cycle running.
 
 ### Each iteration:
 
-**1. Check sleep state, principles, and queue**
+**1. Pre-checks**
 ```sh
 bun src/cli.ts sleep                             # check if paused
 bun src/cli.ts heartbeat 300                     # record loop heartbeat (interval in seconds)
 bun src/cli.ts spawn-cleanup                     # recover stuck spawns
-bun src/cli.ts principle
-bun src/cli.ts list
 ```
 
 If the loop is sleeping, **silently skip to the next iteration** — produce no chat output at all.
 
-If `waiting_human` tasks exist, present the question to the user and **skip to the next iteration**. Do NOT stop the loop.
-
-**2. If queue has no pending tasks**
-
-Observe the project state in light of the principles.
-Propose what to do next and ask the user for approval:
+**2. Run managed iteration**
 ```sh
-bun src/cli.ts add "<proposed task>"
-bun src/cli.ts observe <id> "<observations>"
-bun src/cli.ts orient <id> "<analysis>"
-bun src/cli.ts decide <id> --human "<proposal and question>"
+bun src/cli.ts iterate
 ```
-This creates a `waiting_human` task. The loop continues polling until the user responds.
-Do NOT generate tasks and process them autonomously when the queue is empty.
 
-**3. Process pending tasks via spawn**
+`iterate` creates a tracked OODA task that:
+- **Observe**: collects feedback summary, source data, missions, principles, task list
+- **Orient**: analyzes queue state (queue_empty / waiting_human / has_pending)
+- **Decide**: determines action based on analysis
+- **Act**: outputs the decision and marks the iteration done
 
-Delegate task execution to spawned agents. The main loop should focus on queue management, not direct implementation.
+The output tells you what to do next:
+- **waiting_human**: present the listed questions to the user, skip to next iteration
+- **queue empty**: propose next action to the user via `add` + `decide --human`
+- **pending tasks**: spawn agents to process them
 
+**3. Act on the iteration result**
+
+If `iterate` reports pending tasks, spawn them:
 ```sh
-bun src/cli.ts next                              # pick next pending task
-bun src/cli.ts source run                        # collect data from registered sources (includes feedback)
-bun src/cli.ts feedback list                     # check for new feedback from external projects
-bun src/cli.ts observe <id> "<what you found>"   # gather info
-bun src/cli.ts orient <id> "<analysis>"          # analyze
-bun src/cli.ts decide <id> "<plan>"              # decide action
-bun src/cli.ts spawn <id> <command...>           # delegate to a spawned agent
+bun src/cli.ts spawn <id> <command...>
 ```
 
 Spawn prompts must instruct agents to write tests first and run `bun test` after implementation.
