@@ -2,7 +2,8 @@ import { loadMissions } from "./mission";
 import type { Mission } from "./mission";
 import { TaskQueue } from "./queue";
 import type { Task, OodaPhase } from "./task";
-import { updateTask } from "./store";
+import { createTask } from "./task";
+import { updateTask, load, save } from "./store";
 import { runOnDoneHooks } from "./hooks";
 
 export interface MissionRunnerOptions {
@@ -38,7 +39,79 @@ async function resolveMission(missionId: string, path?: string): Promise<Mission
   return mission;
 }
 
+function isPlanTask(task: Task): boolean {
+  return task.context.plan === true;
+}
+
+export async function processPlanTask(task: Task, mission: Mission, storePath?: string): Promise<void> {
+  const owner = `mission:${mission.name}`;
+
+  // Claim and read current context from store
+  const claimed = await updateTask(task.id, (current) => {
+    if (current.owner) throw new Error(`Already claimed by ${current.owner}`);
+    if (current.status !== "observing") throw new Error(`Cannot process: status is ${current.status}`);
+    return { owner };
+  }, storePath);
+  if (!claimed) throw new Error(`Task not found: ${task.id}`);
+
+  const subtasks = claimed.context.subtasks;
+  if (!Array.isArray(subtasks) || subtasks.length === 0) {
+    await updateTask(task.id, () => ({ owner: undefined }), storePath);
+    throw new Error(`Plan task ${task.id} has no subtasks`);
+  }
+
+  try {
+    await updateTask(task.id, (current) => ({
+      logs: [...current.logs, phaseLog("observe", `Plan: ${current.title}. Subtasks: ${subtasks.length}`)],
+    }), storePath);
+
+    await updateTask(task.id, (current) => ({
+      status: "orienting" as const,
+      logs: [...current.logs, phaseLog("orient", `Delegating to ${subtasks.length} subtasks for mission "${mission.name}"`)],
+    }), storePath);
+
+    await updateTask(task.id, (current) => ({
+      status: "deciding" as const,
+      logs: [...current.logs, phaseLog("decide", "Creating subtasks")],
+    }), storePath);
+
+    // Create subtasks and persist them atomically
+    const newTasks = (subtasks as string[]).map(title => {
+      const sub = createTask(title);
+      sub.missionId = mission.id;
+      return sub;
+    });
+
+    const allTasks = await load(storePath);
+    allTasks.push(...newTasks);
+    await save(allTasks, storePath);
+
+    await updateTask(task.id, (current) => ({
+      status: "done" as const,
+      owner: undefined,
+      logs: [...current.logs, phaseLog("act", `Delegated ${newTasks.length} subtask(s)`)],
+    }), storePath);
+
+    console.log(`Delegated: ${task.title} → ${newTasks.length} subtask(s)`);
+    await runOnDoneHooks(task.id, task.title);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await updateTask(task.id, (current) => ({
+      status: "failed" as const,
+      owner: undefined,
+      logs: [...current.logs, phaseLog("act", `[FAILED] ${message}`)],
+    }), storePath);
+    console.error(`Failed: ${task.title} - ${message}`);
+  }
+}
+
 export async function processTask(task: Task, mission: Mission, storePath?: string): Promise<void> {
+  // Read current state from store to check plan flag
+  const tasks = await load(storePath);
+  const currentTask = tasks.find(t => t.id === task.id);
+  if (currentTask && isPlanTask(currentTask)) {
+    return processPlanTask(task, mission, storePath);
+  }
   const principles = mission.principles.length > 0
     ? mission.principles.join("; ")
     : "none";

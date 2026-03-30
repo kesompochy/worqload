@@ -7,21 +7,24 @@ import { parseFlags } from "../utils/args";
 import { resolveTask } from "./resolve";
 
 export async function add(queue: TaskQueue, args: string[]) {
-  const { flags, rest } = parseFlags(args, ["--priority", "--by"]);
+  const { flags, rest } = parseFlags(args, ["--priority", "--by"], ["--plan"]);
   const priority = flags["--priority"] ? Number(flags["--priority"]) : 0;
   if (flags["--priority"] && !Number.isFinite(priority)) {
     exitWithError("Priority must be a number.");
   }
   const createdBy = flags["--by"];
+  const isPlan = flags["--plan"] === "true";
   const title = rest.join(" ").trim();
   if (!title) {
-    exitWithError("Usage: worqload add <title> [--priority N] [--by <creator>]");
+    exitWithError("Usage: worqload add <title> [--priority N] [--by <creator>] [--plan]");
   }
-  const task = createTask(title, {}, priority, createdBy);
+  const context: Record<string, unknown> = isPlan ? { plan: true } : {};
+  const task = createTask(title, context, priority, createdBy);
   queue.enqueue(task);
   await queue.save();
   const byLabel = createdBy ? ` by:${createdBy}` : "";
-  console.log(`Added: ${task.title} (${task.id.slice(0, SHORT_ID_LENGTH)}) [priority: ${priority}]${byLabel}`);
+  const planLabel = isPlan ? " [plan]" : "";
+  console.log(`Added: ${task.title} (${task.id.slice(0, SHORT_ID_LENGTH)}) [priority: ${priority}]${byLabel}${planLabel}`);
 }
 
 export async function list(queue: TaskQueue, args: string[]) {

@@ -8,6 +8,7 @@ import { validateTransition } from "../task";
 import { resolveTask } from "./resolve";
 import { loadMissions } from "../mission";
 import { runOnDoneHooks } from "../hooks";
+import { autoCommit } from "../auto-commit";
 
 async function runHook(command: string, env: Record<string, string>): Promise<{ output: string; exitCode: number }> {
   const proc = Bun.spawn(["sh", "-c", command], {
@@ -134,6 +135,7 @@ export async function spawn(queue: TaskQueue, args: string[]) {
   });
 
   if (updated?.status === "done") {
+    await autoCommit(task.title, spawnCwd);
     await runOnDoneHooks(task.id, task.title);
   }
 }

@@ -4,7 +4,7 @@ import { join } from "path";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import { createMission, completeMission, addMissionPrinciple, loadMissions } from "./mission";
-import { findNextMissionTask, processTask, iterate } from "./mission-runner";
+import { findNextMissionTask, processTask, processPlanTask, iterate } from "./mission-runner";
 import { load } from "./store";
 
 function tmpPath(label: string): string {
@@ -256,5 +256,131 @@ describe("iterate", () => {
 
     const result = await iterate(mission.id.slice(0, 8), { storePath, missionsPath: missionPath });
     expect(result).toBe("idle");
+  });
+});
+
+describe("processPlanTask", () => {
+  test("creates subtasks from context.subtasks and marks plan as done", async () => {
+    const storePath = tmpPath("plan-subtasks");
+    const missionPath = tmpPath("plan-subtasks-m");
+    const mission = await createMission("plan-mission", {}, missionPath);
+    const task = createTask("parent plan");
+    const planTask = {
+      ...task,
+      missionId: mission.id,
+      context: { plan: true, subtasks: ["subtask A", "subtask B", "subtask C"] },
+    };
+    await setupQueue(storePath, [planTask]);
+
+    await processPlanTask(task, mission, storePath);
+
+    const tasks = await load(storePath);
+    const parent = tasks.find(t => t.id === task.id);
+    expect(parent?.status).toBe("done");
+    expect(parent?.owner).toBeUndefined();
+
+    const subtasks = tasks.filter(t => t.id !== task.id);
+    expect(subtasks).toHaveLength(3);
+    expect(subtasks.map(s => s.title).sort()).toEqual(["subtask A", "subtask B", "subtask C"]);
+    for (const sub of subtasks) {
+      expect(sub.missionId).toBe(mission.id);
+      expect(sub.status).toBe("observing");
+    }
+  });
+
+  test("logs delegation in observe phase", async () => {
+    const storePath = tmpPath("plan-log");
+    const missionPath = tmpPath("plan-log-m");
+    const mission = await createMission("log-mission", {}, missionPath);
+    const task = createTask("plan with log");
+    const planTask = {
+      ...task,
+      missionId: mission.id,
+      context: { plan: true, subtasks: ["sub1"] },
+    };
+    await setupQueue(storePath, [planTask]);
+
+    await processPlanTask(task, mission, storePath);
+
+    const tasks = await load(storePath);
+    const parent = tasks.find(t => t.id === task.id);
+    const observeLog = parent?.logs.find(l => l.phase === "observe");
+    expect(observeLog?.content).toContain("plan with log");
+    const actLog = parent?.logs.find(l => l.content.includes("Delegated"));
+    expect(actLog).toBeDefined();
+  });
+
+  test("throws when subtasks array is empty", async () => {
+    const storePath = tmpPath("plan-empty");
+    const missionPath = tmpPath("plan-empty-m");
+    const mission = await createMission("empty-mission", {}, missionPath);
+    const task = createTask("empty plan");
+    const planTask = {
+      ...task,
+      missionId: mission.id,
+      context: { plan: true, subtasks: [] },
+    };
+    await setupQueue(storePath, [planTask]);
+
+    expect(processPlanTask(task, mission, storePath)).rejects.toThrow("no subtasks");
+  });
+
+  test("throws when subtasks is missing from context", async () => {
+    const storePath = tmpPath("plan-missing");
+    const missionPath = tmpPath("plan-missing-m");
+    const mission = await createMission("missing-mission", {}, missionPath);
+    const task = createTask("no subtasks plan");
+    const planTask = {
+      ...task,
+      missionId: mission.id,
+      context: { plan: true },
+    };
+    await setupQueue(storePath, [planTask]);
+
+    expect(processPlanTask(task, mission, storePath)).rejects.toThrow("no subtasks");
+  });
+
+  test("processTask delegates to processPlanTask for plan tasks", async () => {
+    const storePath = tmpPath("plan-delegate");
+    const missionPath = tmpPath("plan-delegate-m");
+    const mission = await createMission("delegate-mission", {}, missionPath);
+    const task = createTask("delegated plan");
+    const planTask = {
+      ...task,
+      missionId: mission.id,
+      context: { plan: true, subtasks: ["child1", "child2"] },
+    };
+    await setupQueue(storePath, [planTask]);
+
+    await processTask(task, mission, storePath);
+
+    const tasks = await load(storePath);
+    const parent = tasks.find(t => t.id === task.id);
+    expect(parent?.status).toBe("done");
+    const children = tasks.filter(t => t.id !== task.id);
+    expect(children).toHaveLength(2);
+  });
+
+  test("iterate processes plan tasks and creates subtasks", async () => {
+    const storePath = tmpPath("plan-iterate");
+    const missionPath = tmpPath("plan-iterate-m");
+    const mission = await createMission("iterate-plan", {}, missionPath);
+    const task = createTask("iter plan");
+    const planTask = {
+      ...task,
+      missionId: mission.id,
+      context: { plan: true, subtasks: ["step1", "step2"] },
+    };
+    await setupQueue(storePath, [planTask]);
+
+    const result = await iterate(mission.id, { storePath, missionsPath: missionPath });
+    expect(result).toBe("processed");
+
+    const tasks = await load(storePath);
+    const parent = tasks.find(t => t.id === task.id);
+    expect(parent?.status).toBe("done");
+    const subtasks = tasks.filter(t => t.id !== task.id);
+    expect(subtasks).toHaveLength(2);
+    expect(subtasks.every(s => s.missionId === mission.id)).toBe(true);
   });
 });

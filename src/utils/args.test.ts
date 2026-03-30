@@ -33,3 +33,25 @@ test("parseFlags returns empty result for empty args", () => {
   expect(flags).toEqual({});
   expect(rest).toEqual([]);
 });
+
+test("parseFlags recognizes boolean flags", () => {
+  const { flags, rest } = parseFlags(["--plan", "title"], ["--priority"], ["--plan"]);
+  expect(flags).toEqual({ "--plan": "true" });
+  expect(rest).toEqual(["title"]);
+});
+
+test("parseFlags handles boolean and value flags together", () => {
+  const { flags, rest } = parseFlags(
+    ["--plan", "--priority", "5", "my", "task"],
+    ["--priority"],
+    ["--plan"],
+  );
+  expect(flags).toEqual({ "--plan": "true", "--priority": "5" });
+  expect(rest).toEqual(["my", "task"]);
+});
+
+test("parseFlags boolean flag absent yields no entry", () => {
+  const { flags, rest } = parseFlags(["title"], ["--priority"], ["--plan"]);
+  expect(flags).toEqual({});
+  expect(rest).toEqual(["title"]);
+});
