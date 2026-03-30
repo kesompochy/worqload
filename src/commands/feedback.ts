@@ -1,5 +1,6 @@
 import type { TaskQueue } from "../queue";
 import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from "../feedback";
+import { parseFlags } from "../utils/args";
 
 export async function feedback(_queue: TaskQueue, args: string[]) {
   if (args[0] === "list") {
@@ -23,17 +24,9 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
     console.log("Resolved.");
     return;
   }
-  let from = "anonymous";
-  const msgParts: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--from" && i + 1 < args.length) {
-      from = args[i + 1];
-      i++;
-    } else {
-      msgParts.push(args[i]);
-    }
-  }
-  const message = msgParts.join(" ").trim();
+  const { flags, rest } = parseFlags(args, ["--from"]);
+  const from = flags["--from"] || "anonymous";
+  const message = rest.join(" ").trim();
   if (!message) {
     console.error("Usage: worqload feedback <message> [--from <sender>]");
     process.exit(1);

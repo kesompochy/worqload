@@ -1,16 +1,12 @@
 import type { TaskQueue } from "../queue";
 import { loadProjects, registerProject, removeProject } from "../projects";
+import { parseFlags } from "../utils/args";
 
 export async function project(_queue: TaskQueue, args: string[]) {
   if (args[0] === "register") {
-    const projectPath = args[1] || process.cwd();
-    let name: string | undefined;
-    for (let i = 1; i < args.length; i++) {
-      if (args[i] === "--name" && i + 1 < args.length) {
-        name = args[i + 1];
-        break;
-      }
-    }
+    const { flags, rest } = parseFlags(args.slice(1), ["--name"]);
+    const projectPath = rest[0] || process.cwd();
+    const name = flags["--name"];
     const p = await registerProject(projectPath, name);
     console.log(`Registered: ${p.name} → ${p.path}`);
     return;

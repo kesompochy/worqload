@@ -1,28 +1,18 @@
 import { createTask } from "../task";
 import type { TaskStatus } from "../task";
 import type { TaskQueue } from "../queue";
+import { parseFlags } from "../utils/args";
 import { resolveTask } from "./resolve";
 
 export async function add(queue: TaskQueue, args: string[]) {
-  let priority = 0;
-  let createdBy: string | undefined;
-  const filtered: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--priority" && i + 1 < args.length) {
-      priority = Number(args[i + 1]);
-      if (!Number.isFinite(priority)) {
-        console.error("Priority must be a number.");
-        process.exit(1);
-      }
-      i++;
-    } else if (args[i] === "--by" && i + 1 < args.length) {
-      createdBy = args[i + 1];
-      i++;
-    } else {
-      filtered.push(args[i]);
-    }
+  const { flags, rest } = parseFlags(args, ["--priority", "--by"]);
+  const priority = flags["--priority"] ? Number(flags["--priority"]) : 0;
+  if (flags["--priority"] && !Number.isFinite(priority)) {
+    console.error("Priority must be a number.");
+    process.exit(1);
   }
-  const title = filtered.join(" ").trim();
+  const createdBy = flags["--by"];
+  const title = rest.join(" ").trim();
   if (!title) {
     console.error("Usage: worqload add <title> [--priority N] [--by <creator>]");
     process.exit(1);

@@ -2,14 +2,12 @@ import { mkdir } from "node:fs/promises";
 import { resolve, basename } from "path";
 import { registerProject } from "../projects";
 import type { TaskQueue } from "../queue";
+import { parseFlags } from "../utils/args";
 
 export async function init(_queue: TaskQueue, args: string[]) {
-  const projectPath = resolve(args[0] || ".");
-  let name: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--name" && i + 1 < args.length) { name = args[i + 1]; break; }
-  }
-  const projectName = name || basename(projectPath);
+  const { flags, rest } = parseFlags(args, ["--name"]);
+  const projectPath = resolve(rest[0] || ".");
+  const projectName = flags["--name"] || basename(projectPath);
 
   await mkdir(projectPath + "/.worqload", { recursive: true });
   console.log(`Created: ${projectPath}/.worqload/`);
