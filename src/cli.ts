@@ -4,7 +4,7 @@ import { init } from "./commands/init";
 import { principle } from "./commands/principle";
 import { add, list, show, context, next, clean, history, claim, unclaim } from "./commands/task";
 import { observe, orient, decide, act, done, fail, retry } from "./commands/ooda";
-import { spawn } from "./commands/spawn";
+import { spawn, spawnCleanup } from "./commands/spawn";
 import { project } from "./commands/project";
 import { feedback } from "./commands/feedback";
 import { source } from "./commands/source";
@@ -18,6 +18,7 @@ const commands: Record<string, CommandHandler> = {
   add, list, show, context, next, clean, history, claim, unclaim,
   observe, orient, decide, act, done, fail, retry,
   spawn,
+  "spawn-cleanup": spawnCleanup,
   project,
   feedback,
   source,
@@ -63,6 +64,7 @@ Tasks:
   claim <id> <owner>             Claim a task (lock for an agent)
   unclaim <id>                   Release a claimed task
   spawn <id> <command...>        Spawn a process to handle a task
+  spawn-cleanup                  Clean up stuck spawned tasks
   init [path] [--name N]         Initialize worqload in a project
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)

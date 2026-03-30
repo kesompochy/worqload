@@ -1,6 +1,6 @@
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { recordSpawnStart, recordSpawnFinish } from "../spawns";
+import { loadSpawns, recordSpawnStart, recordSpawnFinish } from "../spawns";
 import { loadConfig } from "../config";
 import { resolveTask } from "./resolve";
 
@@ -121,4 +121,45 @@ export async function spawn(queue: TaskQueue, args: string[]) {
 
   queue.update(task.id, { owner: undefined });
   await queue.save();
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?: string): Promise<void> {
+  const spawns = await loadSpawns(spawnsPath);
+  const stuckTasks = queue.list().filter(
+    t => (t.status === "observing" || t.status === "acting") && t.owner
+  );
+
+  let cleaned = 0;
+  for (const task of stuckTasks) {
+    const spawnRecord = spawns.find(s => s.taskId === task.id && s.status === "running");
+
+    if (spawnRecord && isProcessRunning(spawnRecord.pid)) {
+      continue;
+    }
+
+    queue.addLog(task.id, "act", "[FAILED] Spawn process killed (timeout)");
+    queue.transition(task.id, "failed");
+    queue.update(task.id, { owner: undefined });
+
+    if (spawnRecord) {
+      await recordSpawnFinish(spawnRecord.id, -1, spawnsPath);
+    }
+
+    cleaned++;
+    console.log(`Cleaned: ${task.title} (was ${task.status}, owner: ${task.owner})`);
+  }
+
+  if (cleaned > 0) {
+    await queue.save();
+  }
+  console.log(`Cleaned ${cleaned} stuck task(s)`);
 }
