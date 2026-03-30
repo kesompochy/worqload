@@ -263,7 +263,8 @@ function html(): string {
   h1 { font-size: 1.5rem; color: #fff; }
   h2 { font-size: 1rem; margin: 1rem 0 0.5rem; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; }
 
-  .task { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem; }
+  .task { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem; transition: all 0.3s ease; animation: card-enter 0.3s ease; }
+  @keyframes card-enter { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   .task-title { font-weight: 600; font-size: 0.85rem; word-break: break-word; }
   .task-meta { font-size: 0.7rem; color: #666; margin-top: 0.25rem; }
   .task-owner { font-size: 0.65rem; color: #6cced4; background: #1a2e2e; padding: 0.1rem 0.4rem; border-radius: 3px; }
