@@ -123,6 +123,16 @@ describe("toA2ATask", () => {
 
     expect(a2a.status.message).toBeUndefined();
   });
+
+  test("no status message when waiting_human but no HUMAN REQUIRED log exists", () => {
+    const task = createTask("test task");
+    task.status = "waiting_human";
+    task.logs.push({ phase: "decide", content: "plain log without prefix", timestamp: "2025-01-01T00:00:00Z" });
+    const a2a = toA2ATask(task);
+
+    expect(a2a.status.state).toBe("input-required");
+    expect(a2a.status.message).toBeUndefined();
+  });
 });
 
 describe("generateAgentCard", () => {

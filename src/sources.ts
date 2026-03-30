@@ -1,3 +1,5 @@
+import { loadJsonFile, saveJsonFile } from "./utils/json-store";
+
 export interface Source {
   name: string;
   type: "shell";
@@ -13,13 +15,11 @@ export interface SourceResult {
 const DEFAULT_SOURCES_PATH = ".worqload/sources.json";
 
 export async function loadSources(path: string = DEFAULT_SOURCES_PATH): Promise<Source[]> {
-  const file = Bun.file(path);
-  if (!(await file.exists())) return [];
-  return await file.json();
+  return loadJsonFile<Source[]>(path, []);
 }
 
 export async function saveSources(sources: Source[], path: string = DEFAULT_SOURCES_PATH): Promise<void> {
-  await Bun.write(path, JSON.stringify(sources, null, 2));
+  await saveJsonFile(path, sources);
 }
 
 export async function addSource(source: Source, path: string = DEFAULT_SOURCES_PATH): Promise<void> {

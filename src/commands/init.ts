@@ -30,22 +30,24 @@ If \\\`waiting_human\\\` tasks exist, present the question to the user and stop.
 
 **2. If queue has no pending tasks**
 
-Observe the project state in light of the principles.
+Check for new feedback from the human, then observe the project state in light of the principles.
 Propose what to do next and ask the user:
 \\\`\\\`\\\`sh
+worqload feedback list
 worqload add "<proposed task>"
 worqload observe <id> "<observations>"
 worqload orient <id> "<analysis>"
 worqload decide <id> --human "<proposal and question>"
 \\\`\\\`\\\`
 This creates a \\\`waiting_human\\\` task. Stop and wait for the user to respond.
+Humans send feedback via the dashboard; only agents create tasks.
 Do NOT generate tasks and process them autonomously when the queue is empty.
 
 **3. Process one task through OODA**
 \\\`\\\`\\\`sh
 worqload next                              # pick next pending task
 worqload source run                        # collect data from registered sources
-worqload feedback list                     # check for new feedback
+worqload feedback list                     # check for new human feedback
 worqload observe <id> "<what you found>"   # gather info
 worqload orient <id> "<analysis>"          # analyze
 worqload decide <id> "<plan>"              # decide action

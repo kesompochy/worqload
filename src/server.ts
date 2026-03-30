@@ -298,8 +298,6 @@ function html(): string {
   .add-form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
   .add-form input[type="text"] { flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.6rem; color: #e0e0e0; font-size: 0.9rem; }
   .add-form input[type="text"]:focus { outline: none; border-color: #6c7aed; }
-  .add-form input[type="number"] { width: 4.5rem; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.6rem; color: #e0e0e0; font-size: 0.9rem; text-align: center; }
-  .add-form input[type="number"]:focus { outline: none; border-color: #6c7aed; }
 
   .principles { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; }
   .principles li { margin: 0.2rem 0; padding-left: 0.5rem; font-size: 0.85rem; }
@@ -511,22 +509,19 @@ function SpawnRow({ s }) {
   </div>\`;
 }
 
-function AddForm({ onAdd }) {
-  const titleRef = useRef(null);
-  const prioRef = useRef(null);
+function FeedbackForm({ onSend }) {
+  const msgRef = useRef(null);
   const submit = async () => {
-    const title = titleRef.current.value.trim();
-    if (!title) return;
-    await api.post('/api/tasks', { title, priority: Number(prioRef.current.value) || 0 });
-    titleRef.current.value = '';
-    prioRef.current.value = '0';
-    onAdd();
+    const msg = msgRef.current.value.trim();
+    if (!msg) return;
+    await api.post('/api/feedback', { message: msg, from: 'dashboard' });
+    msgRef.current.value = '';
+    onSend();
   };
   const onKey = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (e.shiftKey) submit(); } };
   return html\`<div class="add-form">
-    <input type="text" ref=\${titleRef} placeholder="New task title..." onKeyDown=\${onKey} />
-    <input type="number" ref=\${prioRef} defaultValue="0" placeholder="Pri" title="Priority (higher = more urgent)" onKeyDown=\${onKey} />
-    <button class="primary" onClick=\${submit} title="Shift+Enter">Add</button>
+    <input type="text" ref=\${msgRef} placeholder="Send feedback to the agent..." onKeyDown=\${onKey} />
+    <button class="primary" onClick=\${submit} title="Shift+Enter">Send feedback</button>
   </div>\`;
 }
 
@@ -812,7 +807,7 @@ function App() {
     <\${SpawnList} spawns=\${data.spawns} />
     \${data.reports.length > 0 && html\`<\${ReportsSection} reports=\${data.reports} onUpdate=\${refresh} />\`}
     \${data.projects.length > 0 && html\`<\${FeedbackSection} projects=\${data.projects} onSend=\${refresh} />\`}
-    <\${AddForm} onAdd=\${refresh} />
+    <\${FeedbackForm} onSend=\${refresh} />
     <div class="tabs">
       <div class=\${"tab" + (tab === 'active' ? ' active' : '')} onClick=\${() => setTab('active')}>Active</div>
       <div class=\${"tab" + (tab === 'history' ? ' active' : '')} onClick=\${() => setTab('history')}>History</div>

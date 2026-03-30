@@ -163,13 +163,15 @@ export function toA2ATask(task: Task): A2ATask {
   if (humanQuestion) {
     const humanLog = [...task.logs].reverse().find(
       (log) => log.content.startsWith(HUMAN_REQUIRED_PREFIX)
-    )!;
-    status.message = {
-      message_id: `log-${humanLog.timestamp}`,
-      role: "agent",
-      parts: [{ kind: "text", text: humanQuestion }],
-      kind: "message",
-    };
+    );
+    if (humanLog) {
+      status.message = {
+        message_id: `log-${humanLog.timestamp}`,
+        role: "agent",
+        parts: [{ kind: "text", text: humanQuestion }],
+        kind: "message",
+      };
+    }
   }
 
   const a2aTask: A2ATask = {

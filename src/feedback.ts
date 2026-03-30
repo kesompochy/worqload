@@ -1,4 +1,4 @@
-import { withLock } from "./lock";
+import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 
 const DEFAULT_FEEDBACK_PATH = ".worqload/feedback.json";
 
@@ -13,17 +13,11 @@ export interface Feedback {
 }
 
 export async function loadFeedback(path: string = DEFAULT_FEEDBACK_PATH): Promise<Feedback[]> {
-  return withLock(path, async () => {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return [];
-    return await file.json();
-  });
+  return loadJsonFile<Feedback[]>(path, []);
 }
 
 export async function saveFeedback(items: Feedback[], path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
-  await withLock(path, async () => {
-    await Bun.write(path, JSON.stringify(items, null, 2));
-  });
+  await saveJsonFile(path, items);
 }
 
 export async function addFeedback(message: string, from: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<Feedback> {

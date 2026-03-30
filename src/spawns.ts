@@ -1,4 +1,4 @@
-import { withLock } from "./lock";
+import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 
 const DEFAULT_SPAWNS_PATH = ".worqload/spawns.json";
 
@@ -15,17 +15,11 @@ export interface SpawnRecord {
 }
 
 export async function loadSpawns(path: string = DEFAULT_SPAWNS_PATH): Promise<SpawnRecord[]> {
-  return withLock(path, async () => {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return [];
-    return await file.json();
-  });
+  return loadJsonFile<SpawnRecord[]>(path, []);
 }
 
 export async function saveSpawns(spawns: SpawnRecord[], path: string = DEFAULT_SPAWNS_PATH): Promise<void> {
-  await withLock(path, async () => {
-    await Bun.write(path, JSON.stringify(spawns, null, 2));
-  });
+  await saveJsonFile(path, spawns);
 }
 
 export async function recordSpawnStart(taskId: string, taskTitle: string, owner: string, pid: number, path: string = DEFAULT_SPAWNS_PATH): Promise<SpawnRecord> {

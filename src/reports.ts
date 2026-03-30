@@ -1,4 +1,4 @@
-import { withLock } from "./lock";
+import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 
 const DEFAULT_REPORTS_PATH = ".worqload/reports.json";
 
@@ -14,17 +14,11 @@ export interface Report {
 }
 
 export async function loadReports(path: string = DEFAULT_REPORTS_PATH): Promise<Report[]> {
-  return withLock(path, async () => {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return [];
-    return await file.json();
-  });
+  return loadJsonFile<Report[]>(path, []);
 }
 
 export async function saveReports(reports: Report[], path: string = DEFAULT_REPORTS_PATH): Promise<void> {
-  await withLock(path, async () => {
-    await Bun.write(path, JSON.stringify(reports, null, 2));
-  });
+  await saveJsonFile(path, reports);
 }
 
 export async function addReport(title: string, content: string, createdBy: string, path: string = DEFAULT_REPORTS_PATH): Promise<Report> {
