@@ -59,6 +59,18 @@ function isPlanTask(task: Task): boolean {
   return task.context.plan === true;
 }
 
+function buildActPrompt(task: Task, mission: Mission): string {
+  const parts = [`Task: ${task.title}`];
+  if (Object.keys(task.context).length > 0) {
+    parts.push(`Context: ${JSON.stringify(task.context)}`);
+  }
+  parts.push(`Mission: ${mission.name}`);
+  if (mission.principles.length > 0) {
+    parts.push(`Principles:\n${mission.principles.map(p => `- ${p}`).join("\n")}`);
+  }
+  return parts.join("\n");
+}
+
 export async function processPlanTask(task: Task, mission: Mission, storePath?: string): Promise<void> {
   const owner = `mission:${mission.name}`;
 
@@ -194,7 +206,9 @@ export async function spawnTask(
   return { spawnId: spawnRecord.id, pid: proc.pid, completion };
 }
 
-export async function processTask(task: Task, mission: Mission, storePath?: string): Promise<void> {
+export async function processTask(task: Task, mission: Mission, options: ProcessTaskOptions = {}): Promise<void> {
+  const { storePath, actCommand } = options;
+
   // Read current state from store to check plan flag
   const tasks = await load(storePath);
   const currentTask = tasks.find(t => t.id === task.id);
@@ -232,21 +246,45 @@ export async function processTask(task: Task, mission: Mission, storePath?: stri
       logs: [...current.logs, phaseLog("decide", "Proceeding with execution")],
     }), storePath);
 
-    // Act
+    // Act — spawn agent process
+    const prompt = buildActPrompt(claimed, mission);
+    const command = [...(actCommand ?? ["claude", "-p"]), prompt];
+
     await updateTask(task.id, (current) => ({
       status: "acting" as const,
-      logs: [...current.logs, phaseLog("act", "Executing")],
+      logs: [...current.logs, phaseLog("act", `Spawning: ${command[0]}`)],
     }), storePath);
 
-    // Done
-    await updateTask(task.id, (current) => ({
-      status: "done" as const,
-      owner: undefined,
-      logs: [...current.logs, phaseLog("act", "Completed by mission agent")],
-    }), storePath);
+    const proc = Bun.spawn(command, {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-    console.log(`Completed: ${task.title}`);
-    await runOnDoneHooks(task.id, task.title);
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    const output = (stdout + stderr).trim();
+    const truncated = output.length > 2000 ? output.slice(-2000) : output;
+
+    if (exitCode === 0) {
+      await updateTask(task.id, (current) => ({
+        status: "done" as const,
+        owner: undefined,
+        logs: [...current.logs, phaseLog("act", truncated)],
+      }), storePath);
+      console.log(`Completed: ${task.title}`);
+      await runOnDoneHooks(task.id, task.title);
+    } else {
+      await updateTask(task.id, (current) => ({
+        status: "failed" as const,
+        owner: undefined,
+        logs: [...current.logs,
+          phaseLog("act", truncated),
+          phaseLog("act", `[FAILED] exit code ${exitCode}`),
+        ],
+      }), storePath);
+      console.error(`Failed: ${task.title} - exit code ${exitCode}`);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await updateTask(task.id, (current) => ({
@@ -264,7 +302,7 @@ export async function processTask(task: Task, mission: Mission, storePath?: stri
 // that surveys all tasks across all missions.
 export async function iterateMission(
   missionId: string,
-  options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string } = {},
+  options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string; actCommand?: string[] } = {},
 ): Promise<IterationResult> {
   const mission = await resolveMission(missionId, options.missionsPath);
   if (mission.status === "completed") return "mission_completed";
@@ -292,7 +330,7 @@ export async function iterateMission(
     return "spawned";
   }
 
-  await processTask(task, mission, options.storePath);
+  await processTask(task, mission, { storePath: options.storePath, actCommand: options.actCommand });
   return "processed";
 }
 
@@ -306,6 +344,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
     missionsPath,
     spawnCommand,
     spawnsPath,
+    actCommand,
   } = options;
 
   const mission = await resolveMission(missionId, missionsPath);
@@ -321,7 +360,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
   while (true) {
     let result: IterationResult;
     try {
-      result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath });
+      result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand });
       consecutiveErrors = 0;
     } catch (error) {
       consecutiveErrors++;

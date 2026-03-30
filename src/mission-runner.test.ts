@@ -97,7 +97,7 @@ describe("processTask", () => {
     const taskWithMission = { ...task, missionId: mission.id };
     await setupQueue(storePath, [taskWithMission]);
 
-    await processTask(task, mission, storePath);
+    await processTask(task, mission, { storePath, actCommand: ["echo"] });
 
     const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
@@ -116,7 +116,7 @@ describe("processTask", () => {
     const task = createTask("principle task");
     await setupQueue(storePath, [{ ...task, missionId: updatedMission.id }]);
 
-    await processTask(task, updatedMission, storePath);
+    await processTask(task, updatedMission, { storePath, actCommand: ["echo"] });
 
     const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
@@ -131,7 +131,7 @@ describe("processTask", () => {
     const task = createTask("all phases task");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
-    await processTask(task, mission, storePath);
+    await processTask(task, mission, { storePath, actCommand: ["echo"] });
 
     const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
@@ -152,7 +152,7 @@ describe("processTask", () => {
     queue.update(task.id, { missionId: mission.id, owner: "other-agent" });
     await queue.save();
 
-    expect(processTask(task, mission, storePath)).rejects.toThrow("Already claimed");
+    expect(processTask(task, mission, { storePath, actCommand: ["echo"] })).rejects.toThrow("Already claimed");
 
     const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
@@ -167,15 +167,81 @@ describe("processTask", () => {
     const task = createTask("owner task");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
-    await processTask(task, mission, storePath);
+    await processTask(task, mission, { storePath, actCommand: ["echo"] });
 
     const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
     // Owner cleared after done
     expect(updated?.owner).toBeUndefined();
-    // But logs should show the mission agent processed it
-    const doneLog = updated?.logs.find(l => l.content.includes("Completed by mission agent"));
-    expect(doneLog).toBeDefined();
+    // Act log should contain spawn output with task title
+    const actLog = updated?.logs.find(l => l.phase === "act" && l.content.includes(task.title));
+    expect(actLog).toBeDefined();
+  });
+
+  test("spawns process in act phase and captures output", async () => {
+    const storePath = tmpPath("spawn-act");
+    const missionPath = tmpPath("spawn-act-m");
+    const mission = await createMission("spawn-act", {}, missionPath);
+    const task = createTask("spawn act task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["echo"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+    const actLog = updated?.logs.find(l => l.phase === "act" && l.content.includes(task.title));
+    expect(actLog).toBeDefined();
+  });
+
+  test("marks task as failed when act spawn exits non-zero", async () => {
+    const storePath = tmpPath("act-fail");
+    const missionPath = tmpPath("act-fail-m");
+    const mission = await createMission("act-fail", {}, missionPath);
+    const task = createTask("fail act task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("failed");
+    const failLog = updated?.logs.find(l => l.content.includes("[FAILED]"));
+    expect(failLog).toBeDefined();
+  });
+
+  test("includes mission principles in act prompt", async () => {
+    const storePath = tmpPath("act-principles");
+    const missionPath = tmpPath("act-principles-m");
+    const mission = await createMission("act-principle", {}, missionPath);
+    await addMissionPrinciple(mission.id, "TDD always", missionPath);
+    const missions = await loadMissions(missionPath);
+    const principledMission = missions[0];
+
+    const task = createTask("act with principles");
+    await setupQueue(storePath, [{ ...task, missionId: principledMission.id }]);
+
+    await processTask(task, principledMission, { storePath, actCommand: ["echo"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const actLog = updated?.logs.find(l => l.phase === "act" && l.content.includes("TDD always"));
+    expect(actLog).toBeDefined();
+  });
+
+  test("includes task context in act prompt", async () => {
+    const storePath = tmpPath("act-context");
+    const missionPath = tmpPath("act-context-m");
+    const mission = await createMission("act-context", {}, missionPath);
+    const task = createTask("context task", { detail: "important info" });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["echo"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const actLog = updated?.logs.find(l => l.phase === "act" && l.content.includes("important info"));
+    expect(actLog).toBeDefined();
   });
 });
 
@@ -186,7 +252,7 @@ describe("iterateMission", () => {
     const mission = await createMission("completed", {}, missionPath);
     await completeMission(mission.id, missionPath);
 
-    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("mission_completed");
   });
 
@@ -197,7 +263,7 @@ describe("iterateMission", () => {
     const queue = new TaskQueue(storePath);
     await queue.save();
 
-    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("idle");
   });
 
@@ -208,7 +274,7 @@ describe("iterateMission", () => {
     const task = createTask("to process");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
-    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("processed");
 
     const tasks = await load(storePath);
@@ -220,7 +286,7 @@ describe("iterateMission", () => {
     const missionPath = tmpPath("iter-notfound-m");
     const storePath = tmpPath("iter-notfound");
 
-    expect(iterateMission("nonexistent", { storePath, missionsPath: missionPath }))
+    expect(iterateMission("nonexistent", { storePath, missionsPath: missionPath, actCommand: ["echo"] }))
       .rejects.toThrow("Mission not found");
   });
 
@@ -235,14 +301,14 @@ describe("iterateMission", () => {
       { ...task2, missionId: mission.id },
     ]);
 
-    const result1 = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result1 = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result1).toBe("processed");
 
-    const result2 = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result2 = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result2).toBe("processed");
 
     // All tasks done → auto-complete triggers
-    const result3 = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result3 = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result3).toBe("mission_completed");
 
     const tasks = await load(storePath);
@@ -256,7 +322,7 @@ describe("iterateMission", () => {
     const queue = new TaskQueue(storePath);
     await queue.save();
 
-    const result = await iterateMission(mission.id.slice(0, 8), { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id.slice(0, 8), { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("idle");
   });
 });
@@ -354,7 +420,7 @@ describe("processPlanTask", () => {
     };
     await setupQueue(storePath, [planTask]);
 
-    await processTask(task, mission, storePath);
+    await processTask(task, mission, { storePath, actCommand: ["echo"] });
 
     const tasks = await load(storePath);
     const parent = tasks.find(t => t.id === task.id);
@@ -375,7 +441,7 @@ describe("processPlanTask", () => {
     };
     await setupQueue(storePath, [planTask]);
 
-    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("processed");
 
     const tasks = await load(storePath);
@@ -500,10 +566,10 @@ describe("mission auto-complete", () => {
       { ...task2, missionId: mission.id },
     ]);
 
-    await iterateMission(mission.id, { storePath, missionsPath: missionPath });
-    await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
+    await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
 
-    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("mission_completed");
 
     const missions = await loadMissions(missionPath);
@@ -520,7 +586,7 @@ describe("mission auto-complete", () => {
     queue.transition(task.id, "failed");
     await queue.save();
 
-    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("mission_completed");
 
     const missions = await loadMissions(missionPath);
@@ -540,7 +606,7 @@ describe("mission auto-complete", () => {
     queue.transition(failed.id, "failed");
     await queue.save();
 
-    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("mission_completed");
   });
 
@@ -558,7 +624,7 @@ describe("mission auto-complete", () => {
     queue.update(acting.id, { owner: "someone" });
     await queue.save();
 
-    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("idle");
 
     const missions = await loadMissions(missionPath);
@@ -572,7 +638,7 @@ describe("mission auto-complete", () => {
     const queue = new TaskQueue(storePath);
     await queue.save();
 
-    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
     expect(result).toBe("idle");
 
     const missions = await loadMissions(missionPath);
@@ -653,6 +719,7 @@ describe("runMission error handling", () => {
       retryBaseMs: 1,
       pollIntervalMs: 10,
       idleTimeoutMs: 500,
+      actCommand: ["echo"],
     })).rejects.toThrow(/retry limit.*2/i);
   });
 
@@ -755,5 +822,50 @@ describe("iterateMission with spawn", () => {
     expect(parent?.status).toBe("done");
     const children = tasks.filter(t => t.id !== task.id);
     expect(children).toHaveLength(1);
+  });
+});
+
+describe("processTask auto-complete", () => {
+  test("auto-completes mission when last task finishes", async () => {
+    const storePath = tmpPath("pt-autocomplete");
+    const missionPath = tmpPath("pt-autocomplete-m");
+    const mission = await createMission("auto-pt", {}, missionPath);
+    const task = createTask("last task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["echo", "ok"], missionsPath: missionPath });
+
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("completed");
+  });
+
+  test("does not auto-complete when other tasks remain pending", async () => {
+    const storePath = tmpPath("pt-no-autocomplete");
+    const missionPath = tmpPath("pt-no-autocomplete-m");
+    const mission = await createMission("partial-pt", {}, missionPath);
+    const task1 = createTask("first");
+    const task2 = createTask("second");
+    await setupQueue(storePath, [
+      { ...task1, missionId: mission.id },
+      { ...task2, missionId: mission.id },
+    ]);
+
+    await processTask(task1, mission, { storePath, actCommand: ["echo", "ok"], missionsPath: missionPath });
+
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("active");
+  });
+
+  test("auto-completes when last task fails", async () => {
+    const storePath = tmpPath("pt-autocomplete-fail");
+    const missionPath = tmpPath("pt-autocomplete-fail-m");
+    const mission = await createMission("auto-fail-pt", {}, missionPath);
+    const task = createTask("will fail");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"], missionsPath: missionPath });
+
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("completed");
   });
 });
