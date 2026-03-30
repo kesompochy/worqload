@@ -522,7 +522,7 @@ function AddForm({ onAdd }) {
     prioRef.current.value = '0';
     onAdd();
   };
-  const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); if (e.shiftKey) submit(); } };
+  const onKey = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (e.shiftKey) submit(); } };
   return html\`<div class="add-form">
     <input type="text" ref=\${titleRef} placeholder="New task title..." onKeyDown=\${onKey} />
     <input type="number" ref=\${prioRef} defaultValue="0" placeholder="Pri" title="Priority (higher = more urgent)" onKeyDown=\${onKey} />
@@ -602,7 +602,7 @@ function TaskCard({ task, onUpdate }) {
     </div>\`}
     \${task.status === 'waiting_human' && html\`<div class="human-action">
       <input type="text" ref=\${decideRef} placeholder="Your answer..."
-        onKeyDown=\${(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); submitDecide(); }}} />
+        onKeyDown=\${(e) => { if (e.key === 'Enter' && e.shiftKey && !e.isComposing) { e.preventDefault(); submitDecide(); }}} />
       <button class="primary" onClick=\${submitDecide}>Answer</button>
     </div>\`}
     \${task.logs.length > 0 && html\`<div class="logs">
@@ -743,7 +743,7 @@ function FeedbackSection({ projects, onSend }) {
         \${projects.map(p => html\`<option key=\${p.name} value=\${p.name}>\${p.name}</option>\`)}
       </select>
       <input type="text" ref=\${msgRef} placeholder="Send feedback..." style="flex:1;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.4rem;color:#e0e0e0;font-size:0.85rem"
-        onKeyDown=\${(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); submit(); }}} />
+        onKeyDown=\${(e) => { if (e.key === 'Enter' && e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }}} />
       <button class="primary" onClick=\${submit}>Send</button>
     </div>
     \${allFeedback.length > 0
