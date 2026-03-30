@@ -47,6 +47,7 @@ function printUsage() {
 Principles:
   principle                      List principles with numbers
   principle <text>               Append a principle
+  principle edit <N> <text>      Replace principle by number
   principle remove <N>           Remove principle by number
 
 Tasks:
@@ -60,6 +61,7 @@ Tasks:
   claim <id> <owner>             Claim a task (lock for an agent)
   unclaim <id>                   Release a claimed task
   spawn <id> [owner]             Spawn a Claude agent to process a task
+  init [path] [--name N]         Initialize worqload in a project
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)
 

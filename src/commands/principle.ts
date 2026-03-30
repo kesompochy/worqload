@@ -16,6 +16,24 @@ export async function principle(_queue: TaskQueue, args: string[]) {
     console.log(`Principle removed (#${index}).`);
     return;
   }
+  if (args[0] === "edit") {
+    const index = Number(args[1]);
+    const content = await loadPrinciples();
+    const lines = content.split("\n").filter(l => l.startsWith("- "));
+    if (!Number.isInteger(index) || index < 1 || index > lines.length) {
+      console.error(`Invalid index: ${args[1]}. Valid range: 1-${lines.length}`);
+      process.exit(1);
+    }
+    const newText = args.slice(2).join(" ").trim();
+    if (!newText) {
+      console.error("Usage: worqload principle edit <N> <new text>");
+      process.exit(1);
+    }
+    lines[index - 1] = `- ${newText}`;
+    await savePrinciples(`# Principles\n\n${lines.join("\n")}`);
+    console.log(`Principle updated (#${index}): ${newText}`);
+    return;
+  }
   if (args.length === 0) {
     const content = await loadPrinciples();
     if (!content) {
