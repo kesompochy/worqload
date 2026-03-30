@@ -134,7 +134,6 @@ export async function spawn(queue: TaskQueue, args: string[]) {
   });
 
   if (updated?.status === "done") {
-    await autoCommit(task.title, spawnCwd);
     await runOnDoneHooks(task.id, task.title);
   }
 }
