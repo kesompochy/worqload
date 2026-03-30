@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage } from "./feedback";
+import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback } from "./feedback";
 
 function tmpPath(): string {
   return join(tmpdir(), `worqload-feedback-test-${crypto.randomUUID()}.json`);
