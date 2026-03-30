@@ -2,12 +2,14 @@ import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
 import { TaskQueue } from "../queue";
-import { createTask } from "../task";
+import { createTask, SHORT_ID_LENGTH } from "../task";
 import { addFeedback } from "../feedback";
+import { addReport } from "../reports";
 import {
   collectObservation,
   analyzeObservation,
   formatObserveLog,
+  auditRecentCompletions,
   type IterateContext,
 } from "./iterate";
 
@@ -258,5 +260,157 @@ describe("analyzeObservation", () => {
     expect(analysis).toContain("mission_run");
     expect(analysis).toContain("Alpha");
     expect(analysis).toContain("unassigned: 1 task");
+  });
+
+  test("includes suspicious tasks in analysis when audit finds issues", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Suspect task");
+    queue.enqueue(t1);
+    queue.transition(t1.id, "done");
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("suspicious");
+    expect(analysis).toContain("Suspect task");
+  });
+
+  test("includes suspicious count in observe log", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Suspect task");
+    queue.enqueue(t1);
+    queue.transition(t1.id, "done");
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+
+    const log = formatObserveLog(obs);
+
+    expect(log).toContain("suspicious: 1");
+  });
+
+  test("shows suspicious: 0 when no issues found", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+
+    const log = formatObserveLog(obs);
+
+    expect(log).toContain("suspicious: 0");
+  });
+});
+
+describe("auditRecentCompletions", () => {
+  test("returns empty when no done tasks", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Active task");
+    queue.enqueue(t1);
+    const ctx = makeContext();
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toEqual([]);
+  });
+
+  test("flags done task with no act log", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Quick done");
+    queue.enqueue(t1);
+    queue.transition(t1.id, "done");
+    const ctx = makeContext();
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].taskId).toBe(t1.id);
+    expect(suspicious[0].reasons).toContain("no act log");
+  });
+
+  test("flags done task with placeholder act log", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Placeholder done");
+    queue.enqueue(t1);
+    queue.addLog(t1.id, "act", "done");
+    queue.transition(t1.id, "done");
+    const ctx = makeContext();
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].reasons).toContain("act log lacks substance");
+  });
+
+  test("does not flag task with substantive act log", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Good task");
+    queue.enqueue(t1);
+    queue.addLog(t1.id, "act", "Implemented the new feature with full test coverage");
+    queue.transition(t1.id, "done");
+    const ctx = makeContext({ reportsPath: undefined });
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toEqual([]);
+  });
+
+  test("ignores tasks completed more than 10 minutes ago", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Old done");
+    queue.enqueue(t1);
+    queue.transition(t1.id, "done");
+    // Manually backdate updatedAt to 15 minutes ago
+    const task = queue.get(t1.id)!;
+    task.updatedAt = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const ctx = makeContext();
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toEqual([]);
+  });
+
+  test("flags task without report when reportsPath configured", async () => {
+    const reportsPath = tmpPath("reports");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("No report task");
+    queue.enqueue(t1);
+    queue.addLog(t1.id, "act", "Implemented the full feature correctly");
+    queue.transition(t1.id, "done");
+    const ctx = makeContext({ reportsPath });
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].reasons).toContain("no report found");
+  });
+
+  test("does not flag task with matching report", async () => {
+    const reportsPath = tmpPath("reports");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Has report");
+    queue.enqueue(t1);
+    queue.addLog(t1.id, "act", "Implemented the full feature correctly");
+    queue.transition(t1.id, "done");
+    await addReport("Report", `Completed task ${t1.id.slice(0, SHORT_ID_LENGTH)}`, "agent", reportsPath);
+    const ctx = makeContext({ reportsPath });
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toEqual([]);
+  });
+
+  test("can flag multiple reasons for one task", async () => {
+    const reportsPath = tmpPath("reports");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Bad task");
+    queue.enqueue(t1);
+    queue.transition(t1.id, "done");
+    const ctx = makeContext({ reportsPath });
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].reasons).toContain("no act log");
+    expect(suspicious[0].reasons).toContain("no report found");
   });
 });

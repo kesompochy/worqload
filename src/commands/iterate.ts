@@ -19,6 +19,12 @@ export interface IterateContext {
   principlesPath?: string;
 }
 
+export interface SuspiciousTask {
+  taskId: string;
+  title: string;
+  reasons: string[];
+}
+
 export interface Observation {
   feedbackSummary: FeedbackSummary;
   activeMissions: Mission[];
@@ -26,6 +32,55 @@ export interface Observation {
   principles: string;
   tasks: Task[];
   waitingHumanTasks: Task[];
+  suspiciousTasks: SuspiciousTask[];
+}
+
+const MIN_ACT_CONTENT_LENGTH = 10;
+const DEFAULT_AUDIT_WINDOW_MINUTES = 10;
+
+export async function auditRecentCompletions(
+  queue: TaskQueue,
+  ctx: IterateContext,
+  windowMinutes: number = DEFAULT_AUDIT_WINDOW_MINUTES,
+): Promise<SuspiciousTask[]> {
+  const now = Date.now();
+  const windowMs = windowMinutes * 60 * 1000;
+  const recentDone = queue.list().filter(t => {
+    if (t.status !== "done") return false;
+    return now - new Date(t.updatedAt).getTime() <= windowMs;
+  });
+
+  const reports = ctx.reportsPath
+    ? await loadReports(ctx.reportsPath).catch(() => [] as { id: string; title: string; content: string }[])
+    : [];
+
+  const suspicious: SuspiciousTask[] = [];
+  for (const task of recentDone) {
+    const reasons: string[] = [];
+
+    const actLogs = task.logs.filter(l => l.phase === "act");
+    if (actLogs.length === 0) {
+      reasons.push("no act log");
+    } else if (!actLogs.some(l => l.content.length >= MIN_ACT_CONTENT_LENGTH)) {
+      reasons.push("act log lacks substance");
+    }
+
+    if (ctx.reportsPath) {
+      const shortId = task.id.slice(0, SHORT_ID_LENGTH);
+      const hasReport = reports.some(
+        r => r.content.includes(task.id) || r.content.includes(shortId)
+          || r.title.includes(task.id) || r.title.includes(shortId),
+      );
+      if (!hasReport) {
+        reasons.push("no report found");
+      }
+    }
+
+    if (reasons.length > 0) {
+      suspicious.push({ taskId: task.id, title: task.title, reasons });
+    }
+  }
+  return suspicious;
 }
 
 export async function collectObservation(queue: TaskQueue, ctx: IterateContext, excludeTaskId?: string): Promise<Observation> {
@@ -33,11 +88,12 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
   const waitingHumanTasks = allTasks.filter(t => t.status === "waiting_human");
   const activeTasks = allTasks.filter(t => t.status !== "done" && t.status !== "failed" && t.status !== "waiting_human");
 
-  const [feedbackItems, missions, sourceResults, principles] = await Promise.all([
+  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks] = await Promise.all([
     loadFeedback(ctx.feedbackPath),
     loadMissions(ctx.missionsPath),
     runAllSources(ctx.sourcesPath).catch(() => [] as SourceResult[]),
     loadPrinciples(ctx.principlesPath),
+    auditRecentCompletions(queue, ctx),
   ]);
 
   return {
@@ -47,6 +103,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     principles,
     tasks: activeTasks,
     waitingHumanTasks,
+    suspiciousTasks,
   };
 }
 
@@ -116,6 +173,11 @@ export function analyzeObservation(obs: Observation): string {
     if (sr.output) {
       lines.push(`source[${sr.name}]: ${sr.output.slice(0, 200)}`);
     }
+  }
+
+  for (const st of obs.suspiciousTasks) {
+    const shortId = st.taskId.slice(0, SHORT_ID_LENGTH);
+    lines.push(`suspicious: [${shortId}] ${st.title} (${st.reasons.join(", ")})`);
   }
 
   return `[${tags.join(",")}] ${lines.join("; ")}`;
@@ -232,5 +294,6 @@ export function formatObserveLog(obs: Observation): string {
   parts.push(`sources: ${obs.sourceResults.length} ran`);
   const principleCount = obs.principles ? obs.principles.split("\n").filter(l => l.startsWith("- ")).length : 0;
   parts.push(`principles: ${principleCount}`);
+  parts.push(`suspicious: ${obs.suspiciousTasks.length}`);
   return parts.join("; ");
 }
