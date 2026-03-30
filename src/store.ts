@@ -4,12 +4,16 @@ import { withLock } from "./lock";
 const DEFAULT_STORE_PATH = ".worqload/tasks.json";
 const DEFAULT_ARCHIVE_PATH = ".worqload/archive.json";
 
+function ensureDefaults(task: Task): Task {
+  return { priority: 0, ...task };
+}
+
 export async function load(path: string = DEFAULT_STORE_PATH): Promise<Task[]> {
   return withLock(path, async () => {
     const file = Bun.file(path);
     if (!(await file.exists())) return [];
     const tasks: Task[] = await file.json();
-    return tasks.map(task => ({ priority: 0, ...task }));
+    return tasks.map(ensureDefaults);
   });
 }
 
@@ -24,7 +28,7 @@ export async function loadArchive(path: string = DEFAULT_ARCHIVE_PATH): Promise<
     const file = Bun.file(path);
     if (!(await file.exists())) return [];
     const tasks: Task[] = await file.json();
-    return tasks.map(task => ({ priority: 0, ...task }));
+    return tasks.map(ensureDefaults);
   });
 }
 
@@ -39,5 +43,5 @@ async function loadArchiveUnlocked(path: string): Promise<Task[]> {
   const file = Bun.file(path);
   if (!(await file.exists())) return [];
   const tasks: Task[] = await file.json();
-  return tasks.map(task => ({ priority: 0, ...task }));
+  return tasks.map(ensureDefaults);
 }

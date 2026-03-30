@@ -1,9 +1,26 @@
 import { TaskQueue } from "./queue";
+import type { Task } from "./task";
 import { createTask } from "./task";
 import { loadPrinciples } from "./principles";
 import { loadSpawns } from "./spawns";
 import { loadFeedback, addFeedback } from "./feedback";
 import { loadProjects } from "./projects";
+
+const TASK_NOT_FOUND = { error: "Task not found" } as const;
+const NOT_WAITING_HUMAN = { error: "Task is not waiting for human" } as const;
+const NOT_FAILED = { error: "Task is not failed" } as const;
+const PROJECT_NOT_FOUND = { error: "Project not found" } as const;
+
+async function withTask(
+  queue: TaskQueue,
+  shortId: string,
+  handler: (task: Task) => Response | Promise<Response>,
+): Promise<Response> {
+  await queue.load();
+  const task = queue.findById(shortId);
+  if (!task) return json(TASK_NOT_FOUND, 404);
+  return handler(task);
+}
 
 export function startServer(basePort = 3456): void {
   const queue = new TaskQueue();
@@ -77,7 +94,7 @@ export function startServer(basePort = 3456): void {
         const projectName = decodeURIComponent(projectFeedbackMatch[1]);
         const projects = await loadProjects();
         const project = projects.find(p => p.name === projectName);
-        if (!project) return json({ error: "Project not found" }, 404);
+        if (!project) return json(PROJECT_NOT_FOUND, 404);
         const feedbackPath = project.path + "/.worqload/feedback.json";
         const body = await req.json() as { message: string; from?: string };
         const fb = await addFeedback(body.message, body.from || "dashboard", feedbackPath);
@@ -95,52 +112,48 @@ export function startServer(basePort = 3456): void {
 
       const decideMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/decide$/);
       if (req.method === "POST" && decideMatch) {
-        await queue.load();
-        const task = queue.findById(decideMatch[1]);
-        if (!task) return json({ error: "Task not found" }, 404);
-        if (task.status !== "waiting_human") return json({ error: "Task is not waiting for human" }, 400);
-        const body = await req.json() as { decision: string };
-        queue.transition(task.id, "deciding");
-        queue.addLog(task.id, "decide", body.decision);
-        await queue.save();
-        return json(queue.get(task.id));
+        return withTask(queue, decideMatch[1], async (task) => {
+          if (task.status !== "waiting_human") return json(NOT_WAITING_HUMAN, 400);
+          const body = await req.json() as { decision: string };
+          queue.transition(task.id, "deciding");
+          queue.addLog(task.id, "decide", body.decision);
+          await queue.save();
+          return json(queue.get(task.id));
+        });
       }
 
       const patchMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
       if (req.method === "PATCH" && patchMatch) {
-        await queue.load();
-        const task = queue.findById(patchMatch[1]);
-        if (!task) return json({ error: "Task not found" }, 404);
-        const body = await req.json() as { priority?: number };
-        if (body.priority !== undefined) {
-          queue.update(task.id, { priority: body.priority });
-          await queue.save();
-        }
-        return json(queue.get(task.id));
+        return withTask(queue, patchMatch[1], async (task) => {
+          const body = await req.json() as { priority?: number };
+          if (body.priority !== undefined) {
+            queue.update(task.id, { priority: body.priority });
+            await queue.save();
+          }
+          return json(queue.get(task.id));
+        });
       }
 
       const failMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/fail$/);
       if (req.method === "POST" && failMatch) {
-        await queue.load();
-        const task = queue.findById(failMatch[1]);
-        if (!task) return json({ error: "Task not found" }, 404);
-        const body = await req.json() as { reason?: string };
-        queue.addLog(task.id, "act", `[FAILED] ${body.reason || "No reason given"}`);
-        queue.transition(task.id, "failed");
-        await queue.save();
-        return json(queue.get(task.id));
+        return withTask(queue, failMatch[1], async (task) => {
+          const body = await req.json() as { reason?: string };
+          queue.addLog(task.id, "act", `[FAILED] ${body.reason || "No reason given"}`);
+          queue.transition(task.id, "failed");
+          await queue.save();
+          return json(queue.get(task.id));
+        });
       }
 
       const retryMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/retry$/);
       if (req.method === "POST" && retryMatch) {
-        await queue.load();
-        const task = queue.findById(retryMatch[1]);
-        if (!task) return json({ error: "Task not found" }, 404);
-        if (task.status !== "failed") return json({ error: "Task is not failed" }, 400);
-        queue.addLog(task.id, "act", "[RETRY]");
-        queue.transition(task.id, "pending");
-        await queue.save();
-        return json(queue.get(task.id));
+        return withTask(queue, retryMatch[1], async (task) => {
+          if (task.status !== "failed") return json(NOT_FAILED, 400);
+          queue.addLog(task.id, "act", "[RETRY]");
+          queue.transition(task.id, "pending");
+          await queue.save();
+          return json(queue.get(task.id));
+        });
       }
 
       return new Response("Not Found", { status: 404 });
