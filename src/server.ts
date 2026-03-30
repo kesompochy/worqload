@@ -315,11 +315,26 @@ function html(): string {
   .spawn-done { background: #1a2e1a; color: #6aed6c; }
   .spawn-failed { background: #2e1a1a; color: #d46c6c; }
   .spawn-duration { font-size: 0.75rem; color: #666; white-space: nowrap; }
+  .report-content h1, .report-content h2, .report-content h3, .report-content h4 { color: #e0e0e0; margin: 0.8em 0 0.4em; }
+  .report-content h1 { font-size: 1.2em; } .report-content h2 { font-size: 1.1em; } .report-content h3 { font-size: 1em; }
+  .report-content p { margin: 0.4em 0; }
+  .report-content ul, .report-content ol { margin: 0.4em 0; padding-left: 1.5em; }
+  .report-content code { background: #1a1a2e; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+  .report-content pre { background: #1a1a2e; padding: 0.8em; border-radius: 6px; overflow-x: auto; }
+  .report-content pre code { background: none; padding: 0; }
+  .report-content table { border-collapse: collapse; width: 100%; margin: 0.5em 0; }
+  .report-content th, .report-content td { border: 1px solid #333; padding: 0.4em 0.6em; text-align: left; }
+  .report-content th { background: #1a1a2e; color: #e0e0e0; }
+  .report-content a { color: #6cced4; }
+  .report-content blockquote { border-left: 3px solid #444; margin: 0.5em 0; padding-left: 0.8em; color: #999; }
+  .report-content strong { color: #e0e0e0; }
 </style>
 <script type="module">
 import { h, render } from 'https://esm.sh/preact@10.25.4';
 import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
+import { marked } from 'https://esm.sh/marked@15.0.7';
+marked.setOptions({ breaks: true, gfm: true });
 const html = htm.bind(h);
 
 const COLUMNS = [
@@ -605,7 +620,7 @@ function ReportsSection({ reports, onUpdate }) {
         <span class="badge" style="background:\${statusColors[r.status]}20;color:\${statusColors[r.status]}">\${r.status}</span>
       </div>
       <div class="task-meta">by \${r.createdBy} · \${timeAgo(r.createdAt)}</div>
-      \${expanded === r.id && html\`<div style="margin-top:0.5rem;font-size:0.85rem;white-space:pre-wrap;line-height:1.5;color:#ccc">\${r.content}</div>
+      \${expanded === r.id && html\`<div class="report-content" style="margin-top:0.5rem;font-size:0.85rem;line-height:1.5;color:#ccc" dangerouslySetInnerHTML=\${{ __html: marked.parse(r.content || '') }}></div>
         <div class="task-actions" style="margin-top:0.5rem">
           \${r.status !== 'read' && html\`<button onClick=\${() => setStatus(r.id, 'read')}>Mark read</button>\`}
           \${r.status === 'read' && html\`<button onClick=\${() => setStatus(r.id, 'unread')}>Mark unread</button>\`}
