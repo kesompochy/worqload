@@ -7,6 +7,7 @@ import { addFeedback } from "../feedback";
 import {
   collectObservation,
   analyzeObservation,
+  formatObserveLog,
   type IterateContext,
 } from "./iterate";
 
@@ -139,6 +140,55 @@ describe("analyzeObservation", () => {
 
     expect(obs.tasks).toHaveLength(0);
     expect(analysis).toContain("queue_empty");
+  });
+
+  test("includes principle content in analysis when principles exist", async () => {
+    const principlesPath = tmpMdPath("principles");
+    await Bun.write(principlesPath, "# Principles\n\n- Ship small increments\n- Write tests first");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext({ principlesPath });
+    const obs = await collectObservation(queue, ctx);
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("Ship small increments");
+    expect(analysis).toContain("Write tests first");
+  });
+
+  test("includes principles count in observe log", async () => {
+    const principlesPath = tmpMdPath("principles");
+    await Bun.write(principlesPath, "# Principles\n\n- Ship small increments\n- Write tests first");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext({ principlesPath });
+    const obs = await collectObservation(queue, ctx);
+
+    const log = formatObserveLog(obs);
+
+    expect(log).toContain("principles: 2");
+  });
+
+  test("shows 0 principles in observe log when none exist", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+
+    const log = formatObserveLog(obs);
+
+    expect(log).toContain("principles: 0");
+  });
+
+  test("omits principles section in analysis when no principles exist", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).not.toContain("principles:");
   });
 
   test("includes feedback themes in analysis", async () => {

@@ -84,7 +84,10 @@ export function analyzeObservation(obs: Observation): string {
   }
 
   if (obs.principles) {
-    lines.push(`principles loaded: ${obs.principles.split("\n").filter(l => l.startsWith("- ")).length} items`);
+    const principleItems = obs.principles.split("\n").filter(l => l.startsWith("- "));
+    for (const item of principleItems) {
+      lines.push(`principle: ${item.slice(2)}`);
+    }
   }
 
   for (const sr of obs.sourceResults) {
@@ -174,11 +177,13 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   }
 }
 
-function formatObserveLog(obs: Observation): string {
+export function formatObserveLog(obs: Observation): string {
   const parts: string[] = [];
   parts.push(`tasks: ${obs.tasks.length} active, ${obs.waitingHumanTasks.length} waiting_human`);
   parts.push(`feedback: ${obs.feedbackSummary.counts.new} new, ${obs.feedbackSummary.counts.acknowledged} acked`);
   parts.push(`missions: ${obs.activeMissions.length} active`);
   parts.push(`sources: ${obs.sourceResults.length} ran`);
+  const principleCount = obs.principles ? obs.principles.split("\n").filter(l => l.startsWith("- ")).length : 0;
+  parts.push(`principles: ${principleCount}`);
   return parts.join("; ");
 }
