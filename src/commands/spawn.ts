@@ -38,6 +38,19 @@ export async function spawn(queue: TaskQueue, args: string[]) {
     exitWithError("Example: worqload spawn abc123 claude -p 'Process this task'");
   }
 
+  if (task.status === "done" || task.status === "failed") {
+    console.log(`Spawn skip: task already ${task.status} (${task.title})`);
+    return;
+  }
+  if (task.owner) {
+    console.log(`Spawn skip: task already claimed by ${task.owner} (${task.title})`);
+    return;
+  }
+  if (task.status !== "observing") {
+    console.log(`Spawn skip: task is ${task.status}, not observing (${task.title})`);
+    return;
+  }
+
   const owner = commandArgs.join(" ").slice(0, 50);
   queue.claim(task.id, owner);
   await queue.save();

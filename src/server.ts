@@ -890,6 +890,8 @@ function App() {
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 3000); return () => clearInterval(id); }, [refresh]);
 
+  const missionTaskIds = new Set(data.missions.flatMap(m => (m.tasks || []).map(t => t.id)));
+
   return html\`
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
       <h1 style="margin:0">worqload</h1>
@@ -905,7 +907,7 @@ function App() {
       <div class=\${"tab" + (tab === 'active' ? ' active' : '')} onClick=\${() => setTab('active')}>Active</div>
       <div class=\${"tab" + (tab === 'history' ? ' active' : '')} onClick=\${() => setTab('history')}>History</div>
     </div>
-    \${tab === 'active' && html\`<\${Board} tasks=\${data.tasks.filter(t => !t.missionId)} onUpdate=\${refresh} />\`}
+    \${tab === 'active' && html\`<\${Board} tasks=\${data.tasks.filter(t => !missionTaskIds.has(t.id))} onUpdate=\${refresh} />\`}
     \${tab === 'history' && html\`<\${HistoryView} history=\${data.history} />\`}
   \`;
 }
