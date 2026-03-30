@@ -7,6 +7,7 @@ import { loadFeedback, addFeedback, removeFeedback } from "./feedback";
 import { loadProjects } from "./projects";
 import { loadReports, updateReportStatus } from "./reports";
 import { loadSleep, sleepFor, clearSleep } from "./sleep";
+import { generateAgentCard, handleA2ARequest } from "./a2a";
 
 const TASK_NOT_FOUND = { error: "Task not found" } as const;
 const NOT_WAITING_HUMAN = { error: "Task is not waiting for human" } as const;
@@ -35,6 +36,17 @@ export function startServer(basePort = 3456): void {
         port,
         async fetch(req) {
           const url = new URL(req.url);
+
+      if (req.method === "GET" && url.pathname === "/.well-known/agent.json") {
+        const card = generateAgentCard(`http://localhost:${port}`);
+        return json(card);
+      }
+
+      if (req.method === "POST" && url.pathname === "/a2a") {
+        const body = await req.json();
+        const result = await handleA2ARequest(queue, body);
+        return json(result);
+      }
 
       if (req.method === "GET" && url.pathname === "/") {
         return new Response(html(), { headers: { "Content-Type": "text/html; charset=utf-8" } });

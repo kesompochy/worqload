@@ -17,3 +17,5 @@ export { loadReports, addReport, updateReportStatus, removeReport } from "./src/
 export type { Report, ReportStatus } from "./src/reports";
 export { loadConfig } from "./src/config";
 export type { WorkqloadConfig, SpawnHooks, InitConfig } from "./src/config";
+export { generateAgentCard, handleA2ARequest, toA2AState, toA2ATask } from "./src/a2a";
+export type { A2ATask, A2ATaskState, A2AMessage, AgentCard, Part, TextPart, JsonRpcRequest, JsonRpcResponse } from "./src/a2a";
