@@ -16,6 +16,7 @@ export interface MissionRunnerOptions {
   spawnsPath?: string;
   maxRetries?: number;
   retryBaseMs?: number;
+  actCommand?: string[];
 }
 
 export type IterationResult = "processed" | "idle" | "mission_completed" | "spawned";
@@ -29,6 +30,12 @@ export interface SpawnResult {
   spawnId: string;
   pid: number;
   completion: Promise<SpawnCompletion>;
+}
+
+export interface ProcessTaskOptions {
+  storePath?: string;
+  actCommand?: string[];
+  missionsPath?: string;
 }
 
 export function findNextMissionTask(queue: TaskQueue, missionId: string): Task | undefined {
@@ -207,7 +214,7 @@ export async function spawnTask(
 }
 
 export async function processTask(task: Task, mission: Mission, options: ProcessTaskOptions = {}): Promise<void> {
-  const { storePath, actCommand } = options;
+  const { storePath, actCommand, missionsPath } = options;
 
   // Read current state from store to check plan flag
   const tasks = await load(storePath);
@@ -294,6 +301,20 @@ export async function processTask(task: Task, mission: Mission, options: Process
     }), storePath);
     console.error(`Failed: ${task.title} - ${message}`);
   }
+
+  // Auto-complete mission if all tasks are terminal
+  try {
+    const queue = new TaskQueue(storePath);
+    await queue.load();
+    const missionTasks = queue.getByMission(mission.id);
+    const allTerminal = missionTasks.length > 0 &&
+      missionTasks.every(t => t.status === "done" || t.status === "failed");
+    if (allTerminal) {
+      await completeMission(mission.id, missionsPath);
+    }
+  } catch {
+    // Best-effort: mission may already be completed by another runner
+  }
 }
 
 // Per-mission OODA: picks the next unclaimed task for a specific mission and
@@ -330,7 +351,7 @@ export async function iterateMission(
     return "spawned";
   }
 
-  await processTask(task, mission, { storePath: options.storePath, actCommand: options.actCommand });
+  await processTask(task, mission, { storePath: options.storePath, actCommand: options.actCommand, missionsPath: options.missionsPath });
   return "processed";
 }
 

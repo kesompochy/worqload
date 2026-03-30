@@ -736,9 +736,22 @@ function MissionCard({ mission, onUpdate }) {
     \${expanded && html\`<div style="margin-top:0.5rem;border-top:1px solid #2a2a2a;padding-top:0.5rem">
       \${mission.tasks.length === 0
         ? html\`<div class="empty">No tasks assigned.</div>\`
-        : mission.tasks.map(t => html\`<div key=\${t.id}>
-            <\${MissionTaskCard} task=\${t} onUpdate=\${onUpdate} />
-          </div>\`)}
+        : html\`<div style="display:flex;gap:0.5rem;overflow-x:auto;padding-bottom:0.5rem">
+            \${COLUMNS.map(col => {
+              const colTasks = mission.tasks.filter(t => col.statuses.includes(t.status));
+              if (colTasks.length === 0 && col.key === 'done') return null;
+              return html\`<div class="col-\${col.key}" key=\${col.key} style="flex:0 0 200px;min-width:200px;background:#111;border:1px solid #222;border-radius:6px;display:flex;flex-direction:column">
+                <div class="column-header" style="padding:0.4rem 0.6rem;border-bottom:1px solid #222;font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;display:flex;justify-content:space-between;align-items:center">
+                  \${col.label} <span class="count">\${colTasks.length}</span>
+                </div>
+                <div style="padding:0.4rem;flex:1;overflow-y:auto">
+                  \${colTasks.length === 0
+                    ? html\`<div class="empty">-</div>\`
+                    : colTasks.map(t => html\`<div key=\${t.id}><\${MissionTaskCard} task=\${t} onUpdate=\${onUpdate} /></div>\`)}
+                </div>
+              </div>\`;
+            })}
+          </div>\`}
     </div>\`}
   </div>\`;
 }
