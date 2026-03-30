@@ -2,6 +2,7 @@ import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
 import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from "../feedback";
 import { parseFlags } from "../utils/args";
+import { SHORT_ID_LENGTH } from "../task";
 
 export async function feedback(_queue: TaskQueue, args: string[]) {
   if (args[0] === "list") {
@@ -11,7 +12,7 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
       return;
     }
     for (const f of items) {
-      console.log(`[${f.status.padEnd(12)}] ${f.message} (from: ${f.from}, ${f.id.slice(0, 8)})`);
+      console.log(`[${f.status.padEnd(12)}] ${f.message} (from: ${f.from}, ${f.id.slice(0, SHORT_ID_LENGTH)})`);
     }
     return;
   }
@@ -32,5 +33,5 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
     exitWithError("Usage: worqload feedback <message> [--from <sender>]");
   }
   const fb = await addFeedback(message, from);
-  console.log(`Feedback added: ${fb.message} (from: ${fb.from}, ${fb.id.slice(0, 8)})`);
+  console.log(`Feedback added: ${fb.message} (from: ${fb.from}, ${fb.id.slice(0, SHORT_ID_LENGTH)})`);
 }

@@ -1,6 +1,7 @@
 import { exitWithError } from "../utils/errors";
 import { createTask } from "../task";
 import type { TaskStatus } from "../task";
+import { SHORT_ID_LENGTH } from "../task";
 import type { TaskQueue } from "../queue";
 import { parseFlags } from "../utils/args";
 import { resolveTask } from "./resolve";
@@ -20,7 +21,7 @@ export async function add(queue: TaskQueue, args: string[]) {
   queue.enqueue(task);
   await queue.save();
   const byLabel = createdBy ? ` by:${createdBy}` : "";
-  console.log(`Added: ${task.title} (${task.id.slice(0, 8)}) [priority: ${priority}]${byLabel}`);
+  console.log(`Added: ${task.title} (${task.id.slice(0, SHORT_ID_LENGTH)}) [priority: ${priority}]${byLabel}`);
 }
 
 export async function list(queue: TaskQueue, args: string[]) {
@@ -38,7 +39,7 @@ export async function list(queue: TaskQueue, args: string[]) {
     const priorityLabel = task.priority !== 0 ? ` p:${task.priority}` : "";
     const ownerLabel = task.owner ? ` @${task.owner}` : "";
     const createdByLabel = task.createdBy ? ` by:${task.createdBy}` : "";
-    console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, 8)})${priorityLabel}${ownerLabel}${createdByLabel}`);
+    console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, SHORT_ID_LENGTH)})${priorityLabel}${ownerLabel}${createdByLabel}`);
   }
 }
 
@@ -95,7 +96,7 @@ export async function history(queue: TaskQueue, _args: string[]) {
     return;
   }
   for (const task of archived) {
-    console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, 8)})`);
+    console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, SHORT_ID_LENGTH)})`);
   }
 }
 
