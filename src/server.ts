@@ -8,6 +8,7 @@ import { loadProjects } from "./projects";
 import { loadReports, updateReportStatus } from "./reports";
 import { loadSleep, sleepFor, clearSleep } from "./sleep";
 import { generateAgentCard, handleA2ARequest } from "./a2a";
+import { loadMissions } from "./mission";
 
 const TASK_NOT_FOUND = { error: "Task not found" } as const;
 const NOT_WAITING_HUMAN = { error: "Task is not waiting for human" } as const;
@@ -93,6 +94,18 @@ export function startServer(basePort = 3456): void {
       if (req.method === "GET" && url.pathname === "/api/spawns") {
         const spawns = await loadSpawns();
         return json(spawns);
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/missions") {
+        await queue.load();
+        const missions = await loadMissions();
+        const tasks = queue.list();
+        const result = missions.map(m => ({
+          ...m,
+          taskCount: tasks.filter(t => t.missionId === m.id).length,
+          tasks: tasks.filter(t => t.missionId === m.id),
+        }));
+        return json(result);
       }
 
       if (req.method === "GET" && url.pathname === "/api/projects") {
@@ -684,6 +697,43 @@ function HistoryView({ history }) {
   </div>\`;
 }
 
+function MissionSection({ missions, onUpdate }) {
+  const activeMissions = missions.filter(m => m.status === 'active');
+  const completedMissions = missions.filter(m => m.status === 'completed');
+  if (!missions.length) return null;
+
+  return html\`<div style="margin-bottom:1rem">
+    <h2 style="margin-top:0">Missions</h2>
+    \${activeMissions.map(m => html\`<\${MissionCard} key=\${m.id} mission=\${m} onUpdate=\${onUpdate} />\`)}
+    \${completedMissions.length > 0 && html\`<div style="margin-top:0.5rem;font-size:0.75rem;color:#666">Completed</div>
+      \${completedMissions.map(m => html\`<\${MissionCard} key=\${m.id} mission=\${m} onUpdate=\${onUpdate} />\`)}\`}
+  </div>\`;
+}
+
+function MissionCard({ mission, onUpdate }) {
+  const [expanded, setExpanded] = useState(false);
+  const statusColor = mission.status === 'active' ? '#6c7aed' : '#666';
+  const tasksByStatus = {};
+  for (const t of mission.tasks) {
+    const key = t.status;
+    if (!tasksByStatus[key]) tasksByStatus[key] = [];
+    tasksByStatus[key].push(t);
+  }
+  return html\`<div class="task" style="border-left:3px solid \${statusColor}">
+    <div style="display:flex;align-items:center;gap:0.5rem;cursor:pointer" onClick=\${() => setExpanded(!expanded)}>
+      <span style="font-size:0.7rem;color:#666">\${expanded ? '▼' : '▶'}</span>
+      <span class="task-title" style="flex:1">\${mission.name}</span>
+      <span class="badge" style="background:\${statusColor}20;color:\${statusColor}">\${mission.status}</span>
+      <span class="count" style="font-size:0.7rem;color:#888">\${mission.taskCount} tasks</span>
+    </div>
+    \${expanded && html\`<div style="margin-top:0.5rem;border-top:1px solid #2a2a2a;padding-top:0.5rem">
+      \${mission.tasks.length === 0
+        ? html\`<div class="empty">No tasks assigned.</div>\`
+        : mission.tasks.map(t => html\`<\${TaskCard} key=\${t.id} task=\${t} onUpdate=\${onUpdate} />\`)}
+    </div>\`}
+  </div>\`;
+}
+
 function Board({ tasks, onUpdate }) {
   const [showAllDone, setShowAllDone] = useState(false);
   const [doneSortDesc, setDoneSortDesc] = useState(true);
@@ -792,16 +842,16 @@ function ReportsSection({ reports, onUpdate }) {
 }
 
 function App() {
-  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], reports: [], sleep: null });
+  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], reports: [], sleep: null, missions: [] });
   const [tab, setTab] = useState('active');
 
   const refresh = useCallback(async () => {
-    const [tasks, history, principles, heartbeat, spawns, projects, reports, sleep] = await Promise.all([
+    const [tasks, history, principles, heartbeat, spawns, projects, reports, sleep, missions] = await Promise.all([
       api.get('/api/tasks'), api.get('/api/history'), api.get('/api/principles'),
       api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/reports'),
-      api.get('/api/sleep'),
+      api.get('/api/sleep'), api.get('/api/missions'),
     ]);
-    setData({ tasks, history, principles, heartbeat, spawns, projects, reports, sleep });
+    setData({ tasks, history, principles, heartbeat, spawns, projects, reports, sleep, missions });
   }, []);
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 3000); return () => clearInterval(id); }, [refresh]);
@@ -816,11 +866,12 @@ function App() {
     \${data.reports.length > 0 && html\`<\${ReportsSection} reports=\${data.reports} onUpdate=\${refresh} />\`}
     \${data.projects.length > 0 && html\`<\${FeedbackSection} projects=\${data.projects} onSend=\${refresh} />\`}
     <\${FeedbackForm} onSend=\${refresh} />
+    \${data.missions.length > 0 && html\`<\${MissionSection} missions=\${data.missions} onUpdate=\${refresh} />\`}
     <div class="tabs">
       <div class=\${"tab" + (tab === 'active' ? ' active' : '')} onClick=\${() => setTab('active')}>Active</div>
       <div class=\${"tab" + (tab === 'history' ? ' active' : '')} onClick=\${() => setTab('history')}>History</div>
     </div>
-    \${tab === 'active' && html\`<\${Board} tasks=\${data.tasks} onUpdate=\${refresh} />\`}
+    \${tab === 'active' && html\`<\${Board} tasks=\${data.tasks.filter(t => !t.missionId)} onUpdate=\${refresh} />\`}
     \${tab === 'history' && html\`<\${HistoryView} history=\${data.history} />\`}
   \`;
 }
