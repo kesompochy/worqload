@@ -20,6 +20,7 @@ Use `/loop` to keep this cycle running.
 ```sh
 bun src/cli.ts sleep                             # check if paused
 bun src/cli.ts heartbeat 300                     # record loop heartbeat (interval in seconds)
+bun src/cli.ts spawn-cleanup                     # recover stuck spawns
 bun src/cli.ts principle
 bun src/cli.ts list
 ```
