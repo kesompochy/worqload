@@ -1,6 +1,7 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
+import { readFileSync } from "fs";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import {
@@ -10,6 +11,21 @@ import {
   handleA2ARequest,
 } from "./a2a";
 import type { A2ATask, JsonRpcResponse } from "./a2a";
+
+const REAL_STORE = ".worqload/tasks.json";
+let snapshotBefore: string | null = null;
+
+beforeAll(() => {
+  try { snapshotBefore = readFileSync(REAL_STORE, "utf-8"); } catch { snapshotBefore = null; }
+});
+
+afterAll(() => {
+  let snapshotAfter: string | null = null;
+  try { snapshotAfter = readFileSync(REAL_STORE, "utf-8"); } catch { snapshotAfter = null; }
+  if (snapshotBefore !== snapshotAfter) {
+    throw new Error("A2A tests modified the real .worqload/tasks.json!");
+  }
+});
 
 function tmpStorePath(): string {
   return join(tmpdir(), `worqload-a2a-test-${crypto.randomUUID()}.json`);
