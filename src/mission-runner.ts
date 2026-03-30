@@ -344,10 +344,11 @@ export async function iterateMission(
   }
 
   if (options.spawnCommand && !isPlanTask(task)) {
-    await spawnTask(task, mission, options.spawnCommand, {
+    const spawn = await spawnTask(task, mission, options.spawnCommand, {
       storePath: options.storePath,
       spawnsPath: options.spawnsPath,
     });
+    await spawn.completion;
     return "spawned";
   }
 

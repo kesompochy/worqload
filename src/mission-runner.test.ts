@@ -798,6 +798,71 @@ describe("iterateMission with spawn", () => {
     expect(result).toBe("mission_completed");
   });
 
+  test("waits for spawn completion before returning", async () => {
+    const missionPath = tmpPath("iter-spawn-wait-m");
+    const storePath = tmpPath("iter-spawn-wait");
+    const spawnsPath = tmpPath("iter-spawn-wait-s");
+    const mission = await createMission("spawn-wait", {}, missionPath);
+    const task = createTask("spawn wait task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await iterateMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      spawnCommand: ["sh", "-c", "sleep 0.1 && echo done"],
+      spawnsPath,
+    });
+    expect(result).toBe("spawned");
+
+    // After iterateMission returns, the task must already be done (not in-progress)
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+    expect(updated?.owner).toBeUndefined();
+  });
+
+  test("processes tasks sequentially not in parallel with spawnCommand", async () => {
+    const missionPath = tmpPath("iter-spawn-seq-m");
+    const storePath = tmpPath("iter-spawn-seq");
+    const spawnsPath = tmpPath("iter-spawn-seq-s");
+    const mission = await createMission("spawn-seq", {}, missionPath);
+    const task1 = createTask("seq task 1");
+    const task2 = createTask("seq task 2");
+    await setupQueue(storePath, [
+      { ...task1, missionId: mission.id },
+      { ...task2, missionId: mission.id },
+    ]);
+
+    // First iteration: spawns and completes task1
+    const result1 = await iterateMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      spawnCommand: ["echo", "ok"],
+      spawnsPath,
+    });
+    expect(result1).toBe("spawned");
+
+    const tasksAfter1 = await load(storePath);
+    const t1 = tasksAfter1.find(t => t.id === task1.id);
+    expect(t1?.status).toBe("done");
+    // task2 should still be observing (not yet spawned)
+    const t2 = tasksAfter1.find(t => t.id === task2.id);
+    expect(t2?.status).toBe("observing");
+
+    // Second iteration: spawns and completes task2
+    const result2 = await iterateMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      spawnCommand: ["echo", "ok"],
+      spawnsPath,
+    });
+    expect(result2).toBe("spawned");
+
+    const tasksAfter2 = await load(storePath);
+    const t2After = tasksAfter2.find(t => t.id === task2.id);
+    expect(t2After?.status).toBe("done");
+  });
+
   test("still processes plan tasks inline with spawnCommand", async () => {
     const missionPath = tmpPath("iter-spawn-plan-m");
     const storePath = tmpPath("iter-spawn-plan");
