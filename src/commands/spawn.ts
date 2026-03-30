@@ -1,3 +1,4 @@
+import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
 import { recordSpawnStart, recordSpawnFinish } from "../spawns";
 import { loadConfig } from "../config";
@@ -29,8 +30,7 @@ export async function spawn(queue: TaskQueue, args: string[]) {
   const commandArgs = args.slice(1);
   if (commandArgs.length === 0) {
     console.error("Usage: worqload spawn <id> <command...>");
-    console.error("Example: worqload spawn abc123 claude -p 'Process this task'");
-    process.exit(1);
+    exitWithError("Example: worqload spawn abc123 claude -p 'Process this task'");
   }
 
   const owner = commandArgs.join(" ").slice(0, 50);

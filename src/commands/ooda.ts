@@ -1,3 +1,4 @@
+import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
 import { resolveTask } from "./resolve";
 
@@ -16,8 +17,7 @@ export async function orient(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
   const note = args.slice(1).join(" ");
   if (!note) {
-    console.error("Usage: worqload orient <id> <analysis>");
-    process.exit(1);
+    exitWithError("Usage: worqload orient <id> <analysis>");
   }
   queue.transition(task.id, "orienting");
   queue.addLog(task.id, "orient", note);
@@ -38,8 +38,7 @@ export async function decide(queue: TaskQueue, args: string[]) {
   const decision = args.slice(1).join(" ");
   if (!decision) {
     console.error("Usage: worqload decide <id> <decision>");
-    console.error("       worqload decide <id> --human <question>");
-    process.exit(1);
+    exitWithError("       worqload decide <id> --human <question>");
   }
   queue.transition(task.id, "deciding");
   queue.addLog(task.id, "decide", decision);

@@ -1,3 +1,4 @@
+import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
 import { loadSources, addSource, removeSource, runAllSources } from "../sources";
 
@@ -6,8 +7,7 @@ export async function source(_queue: TaskQueue, args: string[]) {
     const name = args[1];
     const command = args.slice(2).join(" ");
     if (!name || !command) {
-      console.error("Usage: worqload source add <name> <command>");
-      process.exit(1);
+      exitWithError("Usage: worqload source add <name> <command>");
     }
     await addSource({ name, type: "shell", command });
     console.log(`Source added: ${name} → ${command}`);
@@ -16,8 +16,7 @@ export async function source(_queue: TaskQueue, args: string[]) {
   if (args[0] === "remove") {
     const name = args[1];
     if (!name) {
-      console.error("Usage: worqload source remove <name>");
-      process.exit(1);
+      exitWithError("Usage: worqload source remove <name>");
     }
     await removeSource(name);
     console.log(`Source removed: ${name}`);

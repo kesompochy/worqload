@@ -1,3 +1,4 @@
+import { exitWithError } from "../utils/errors";
 import { createTask } from "../task";
 import type { TaskStatus } from "../task";
 import type { TaskQueue } from "../queue";
@@ -8,14 +9,12 @@ export async function add(queue: TaskQueue, args: string[]) {
   const { flags, rest } = parseFlags(args, ["--priority", "--by"]);
   const priority = flags["--priority"] ? Number(flags["--priority"]) : 0;
   if (flags["--priority"] && !Number.isFinite(priority)) {
-    console.error("Priority must be a number.");
-    process.exit(1);
+    exitWithError("Priority must be a number.");
   }
   const createdBy = flags["--by"];
   const title = rest.join(" ").trim();
   if (!title) {
-    console.error("Usage: worqload add <title> [--priority N] [--by <creator>]");
-    process.exit(1);
+    exitWithError("Usage: worqload add <title> [--priority N] [--by <creator>]");
   }
   const task = createTask(title, {}, priority, createdBy);
   queue.enqueue(task);
@@ -28,9 +27,7 @@ export async function list(queue: TaskQueue, args: string[]) {
   const validStatuses: TaskStatus[] = ["pending", "observing", "orienting", "deciding", "waiting_human", "acting", "done", "failed"];
   const statusFilter = args[0] as TaskStatus | undefined;
   if (statusFilter && !validStatuses.includes(statusFilter)) {
-    console.error(`Invalid status: ${statusFilter}`);
-    console.error(`Valid statuses: ${validStatuses.join(", ")}`);
-    process.exit(1);
+    exitWithError(`Invalid status: ${statusFilter}\nValid statuses: ${validStatuses.join(", ")}`);
   }
   const tasks = statusFilter ? queue.list().filter(t => t.status === statusFilter) : queue.list();
   if (tasks.length === 0) {
@@ -59,8 +56,7 @@ export async function context(queue: TaskQueue, args: string[]) {
   }
   const raw = args.slice(2).join(" ");
   if (!raw) {
-    console.error("Usage: worqload context <id> <key> <value>");
-    process.exit(1);
+    exitWithError("Usage: worqload context <id> <key> <value>");
   }
   let value: unknown;
   try {
@@ -107,8 +103,7 @@ export async function claim(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
   const owner = args[1];
   if (!owner) {
-    console.error("Usage: worqload claim <id> <owner>");
-    process.exit(1);
+    exitWithError("Usage: worqload claim <id> <owner>");
   }
   queue.claim(task.id, owner);
   await queue.save();

@@ -1,3 +1,4 @@
+import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
 import { loadProjects, registerProject, removeProject } from "../projects";
 import { parseFlags } from "../utils/args";
@@ -13,8 +14,7 @@ export async function project(_queue: TaskQueue, args: string[]) {
   }
   if (args[0] === "remove") {
     if (!args[1]) {
-      console.error("Usage: worqload project remove <name>");
-      process.exit(1);
+      exitWithError("Usage: worqload project remove <name>");
     }
     await removeProject(args[1]);
     console.log(`Removed: ${args[1]}`);

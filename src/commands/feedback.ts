@@ -1,3 +1,4 @@
+import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
 import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from "../feedback";
 import { parseFlags } from "../utils/args";
@@ -28,8 +29,7 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
   const from = flags["--from"] || "anonymous";
   const message = rest.join(" ").trim();
   if (!message) {
-    console.error("Usage: worqload feedback <message> [--from <sender>]");
-    process.exit(1);
+    exitWithError("Usage: worqload feedback <message> [--from <sender>]");
   }
   const fb = await addFeedback(message, from);
   console.log(`Feedback added: ${fb.message} (from: ${fb.from}, ${fb.id.slice(0, 8)})`);

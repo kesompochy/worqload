@@ -1,14 +1,18 @@
+import { exitWithError } from "../utils/errors";
 import { loadPrinciples, savePrinciples } from "../principles";
 import type { TaskQueue } from "../queue";
+
+function parsePrincipleLines(content: string): string[] {
+  return content.split("\n").filter(l => l.startsWith("- "));
+}
 
 export async function principle(_queue: TaskQueue, args: string[]) {
   if (args[0] === "remove") {
     const index = Number(args[1]);
     const content = await loadPrinciples();
-    const lines = content.split("\n").filter(l => l.startsWith("- "));
+    const lines = parsePrincipleLines(content);
     if (!Number.isInteger(index) || index < 1 || index > lines.length) {
-      console.error(`Invalid index: ${args[1]}. Valid range: 1-${lines.length}`);
-      process.exit(1);
+      exitWithError(`Invalid index: ${args[1]}. Valid range: 1-${lines.length}`);
     }
     lines.splice(index - 1, 1);
     const updated = lines.length > 0 ? `# Principles\n\n${lines.join("\n")}` : "";
@@ -19,15 +23,13 @@ export async function principle(_queue: TaskQueue, args: string[]) {
   if (args[0] === "edit") {
     const index = Number(args[1]);
     const content = await loadPrinciples();
-    const lines = content.split("\n").filter(l => l.startsWith("- "));
+    const lines = parsePrincipleLines(content);
     if (!Number.isInteger(index) || index < 1 || index > lines.length) {
-      console.error(`Invalid index: ${args[1]}. Valid range: 1-${lines.length}`);
-      process.exit(1);
+      exitWithError(`Invalid index: ${args[1]}. Valid range: 1-${lines.length}`);
     }
     const newText = args.slice(2).join(" ").trim();
     if (!newText) {
-      console.error("Usage: worqload principle edit <N> <new text>");
-      process.exit(1);
+      exitWithError("Usage: worqload principle edit <N> <new text>");
     }
     lines[index - 1] = `- ${newText}`;
     await savePrinciples(`# Principles\n\n${lines.join("\n")}`);
@@ -40,7 +42,7 @@ export async function principle(_queue: TaskQueue, args: string[]) {
       console.log("No principles defined.");
       console.log("Usage: worqload principle <text to append>");
     } else {
-      const lines = content.split("\n").filter(l => l.startsWith("- "));
+      const lines = parsePrincipleLines(content);
       console.log("# Principles\n");
       for (let i = 0; i < lines.length; i++) {
         console.log(`${i + 1}. ${lines[i].slice(2)}`);
