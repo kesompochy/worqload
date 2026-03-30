@@ -73,6 +73,7 @@ worqload spawn <id> <command...>
 - Write tests before implementation (TDD). Write failing tests first, then implement to make them pass.
 - When uncertain, escalate with \\\`--human\\\`.
 - Do NOT modify principles without explicit user instruction.
+- Minimal output: Only produce chat output when there is something actionable for the human — a \\\`waiting_human\\\` question or an empty-queue proposal. If all tasks are being handled by spawns and there is nothing new, produce NO output. Status updates like "spawn working, skip" must not be output.
 `;
 
 export async function init(_queue: TaskQueue, args: string[]) {

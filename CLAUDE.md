@@ -72,3 +72,4 @@ Multiple independent tasks can be spawned in parallel. The main loop continues c
 - When uncertain, escalate with `--human`.
 - Spawn independent tasks in parallel when possible.
 - `principle` の追加・変更・削除はユーザーの明示的な指示がある場合のみ行う。Agentが独自判断で原則を操作してはならない。
+- Minimal output: Only produce chat output when there is something actionable for the human — a `waiting_human` question or an empty-queue proposal. If all tasks are being handled by spawns and there is nothing new, produce NO output. Status updates like "spawn working, skip" must not be output.
