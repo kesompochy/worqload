@@ -311,7 +311,8 @@ function html(): string {
     function renderSpawns(spawns) {
       const el = document.getElementById('spawns');
       const running = spawns.filter(s => s.status === 'running');
-      const recent = spawns.filter(s => s.status !== 'running').slice(-10).reverse();
+      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+      const recent = spawns.filter(s => s.status !== 'running' && s.finishedAt && new Date(s.finishedAt).getTime() > fiveMinAgo).slice(-10).reverse();
       if (running.length === 0 && recent.length === 0) { el.innerHTML = ''; return; }
 
       let h = '<h2 style="margin-top:0">Spawns</h2>';
