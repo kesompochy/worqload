@@ -60,7 +60,7 @@ Tasks:
   context <id> [key] [value]     Show or set task context data
   claim <id> <owner>             Claim a task (lock for an agent)
   unclaim <id>                   Release a claimed task
-  spawn <id> [owner]             Spawn a Claude agent to process a task
+  spawn <id> <command...>        Spawn a process to handle a task
   init [path] [--name N]         Initialize worqload in a project
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)

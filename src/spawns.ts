@@ -12,8 +12,6 @@ export interface SpawnRecord {
   startedAt: string;
   finishedAt?: string;
   exitCode?: number;
-  worktreePath?: string;
-  worktreeBranch?: string;
 }
 
 export async function loadSpawns(path: string = DEFAULT_SPAWNS_PATH): Promise<SpawnRecord[]> {
@@ -46,14 +44,12 @@ export async function recordSpawnStart(taskId: string, taskTitle: string, owner:
   return record;
 }
 
-export async function recordSpawnFinish(id: string, exitCode: number, path: string = DEFAULT_SPAWNS_PATH, worktreePath?: string, worktreeBranch?: string): Promise<void> {
+export async function recordSpawnFinish(id: string, exitCode: number, path: string = DEFAULT_SPAWNS_PATH): Promise<void> {
   const spawns = await loadSpawns(path);
   const record = spawns.find(s => s.id === id);
   if (!record) return;
   record.status = exitCode === 0 ? "done" : "failed";
   record.finishedAt = new Date().toISOString();
   record.exitCode = exitCode;
-  if (worktreePath) record.worktreePath = worktreePath;
-  if (worktreeBranch) record.worktreeBranch = worktreeBranch;
   await saveSpawns(spawns, path);
 }

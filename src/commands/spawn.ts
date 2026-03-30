@@ -1,45 +1,32 @@
 import type { TaskQueue } from "../queue";
 import { recordSpawnStart, recordSpawnFinish } from "../spawns";
-import { createWorktree, removeWorktree, mergeWorktreeBranch } from "../worktree";
 import { resolveTask } from "./resolve";
 
 export async function spawn(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
-  const owner = args[1] || `spawn-${process.pid}`;
+  const commandArgs = args.slice(1);
+  if (commandArgs.length === 0) {
+    console.error("Usage: worqload spawn <id> <command...>");
+    console.error("Example: worqload spawn abc123 claude -p 'Process this task'");
+    process.exit(1);
+  }
+
+  const owner = commandArgs.join(" ").slice(0, 50);
   queue.claim(task.id, owner);
   queue.transition(task.id, "observing");
   await queue.save();
 
-  const taskIdPrefix = task.id.slice(0, 8);
-  let worktree: { path: string; branch: string } | undefined;
-  try {
-    worktree = await createWorktree(taskIdPrefix);
-    console.log(`Spawning: ${task.title} (owner: ${owner}, worktree: ${worktree.path})`);
-  } catch (error) {
-    console.error(`Failed to create worktree, running in main directory: ${error}`);
-    console.log(`Spawning: ${task.title} (owner: ${owner})`);
-  }
+  console.log(`Spawning: ${task.title} (${owner})`);
 
-  const cwd = worktree ? worktree.path : undefined;
-  const prompt = [
-    `You are processing a worqload task. Work in the current directory.`,
-    `Task: ${task.title}`,
-    `Task ID: ${taskIdPrefix}`,
-    ``,
-    `Instructions:`,
-    `1. Understand the task`,
-    `2. Make the necessary code changes`,
-    `3. Run tests with: bun test`,
-    `4. Commit your changes with a descriptive message`,
-    `5. Report what you did`,
-    ``,
-    `Context: ${JSON.stringify(task.context)}`,
-  ].join("\n");
-
-  const proc = Bun.spawn(["claude", "-p", "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep", "--", prompt], {
+  const proc = Bun.spawn(commandArgs, {
     stdout: "pipe",
     stderr: "pipe",
-    ...(cwd ? { cwd } : {}),
+    env: {
+      ...process.env,
+      WORQLOAD_TASK_ID: task.id,
+      WORQLOAD_TASK_TITLE: task.title,
+      WORQLOAD_TASK_CONTEXT: JSON.stringify(task.context),
+    },
   });
   const spawnRecord = await recordSpawnStart(task.id, task.title, owner, proc.pid);
 
@@ -47,7 +34,7 @@ export async function spawn(queue: TaskQueue, args: string[]) {
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;
 
-  await recordSpawnFinish(spawnRecord.id, exitCode, undefined, worktree?.path, worktree?.branch);
+  await recordSpawnFinish(spawnRecord.id, exitCode);
 
   await queue.load();
   const current = queue.get(task.id);
@@ -59,16 +46,6 @@ export async function spawn(queue: TaskQueue, args: string[]) {
   if (alreadyTerminal) {
     console.log(`Already ${current.status}: ${task.title}`);
   } else if (exitCode === 0) {
-    if (worktree) {
-      const mergeResult = await mergeWorktreeBranch(worktree.branch);
-      if (mergeResult.merged) {
-        queue.addLog(task.id, "act", `[MERGED] branch ${worktree.branch}`);
-        console.log(`Merged: ${worktree.branch}`);
-      } else {
-        queue.addLog(task.id, "act", `[MERGE CONFLICT] branch ${worktree.branch}: ${mergeResult.output}`);
-        console.log(`Merge conflict on ${worktree.branch} — resolve manually`);
-      }
-    }
     queue.transition(task.id, "done");
     console.log(`Done: ${task.title}`);
   } else {
@@ -77,9 +54,6 @@ export async function spawn(queue: TaskQueue, args: string[]) {
     console.log(`Failed: ${task.title} (exit: ${exitCode})`);
   }
 
-  if (worktree) {
-    await removeWorktree(worktree.path, worktree.branch);
-  }
   queue.update(task.id, { owner: undefined });
   await queue.save();
 }
