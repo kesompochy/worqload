@@ -50,6 +50,14 @@ export async function resolveFeedback(id: string, path: string = DEFAULT_FEEDBAC
   await saveFeedback(items, path);
 }
 
+export async function updateFeedbackMessage(id: string, message: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
+  const items = await loadFeedback(path);
+  const item = items.find(f => f.id === id || f.id.startsWith(id));
+  if (!item) throw new Error(`Feedback not found: ${id}`);
+  item.message = message;
+  await saveFeedback(items, path);
+}
+
 export async function removeFeedback(id: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
   const items = await loadFeedback(path);
   const filtered = items.filter(f => f.id !== id && !f.id.startsWith(id));

@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback } from "./feedback";
+import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage } from "./feedback";
 
 function tmpPath(): string {
   return join(tmpdir(), `worqload-feedback-test-${crypto.randomUUID()}.json`);
@@ -59,4 +59,27 @@ test("resolveFeedback changes status to resolved", async () => {
 test("resolveFeedback throws for unknown id", async () => {
   const path = tmpPath();
   expect(resolveFeedback("nonexistent", path)).rejects.toThrow("Feedback not found");
+});
+
+test("updateFeedbackMessage updates message text", async () => {
+  const path = tmpPath();
+  const item = await addFeedback("original", "user1", path);
+
+  await updateFeedbackMessage(item.id, "updated", path);
+  const loaded = await loadFeedback(path);
+  expect(loaded[0].message).toBe("updated");
+});
+
+test("updateFeedbackMessage matches by id prefix", async () => {
+  const path = tmpPath();
+  const item = await addFeedback("original", "user1", path);
+
+  await updateFeedbackMessage(item.id.slice(0, 8), "updated", path);
+  const loaded = await loadFeedback(path);
+  expect(loaded[0].message).toBe("updated");
+});
+
+test("updateFeedbackMessage throws for unknown id", async () => {
+  const path = tmpPath();
+  expect(updateFeedbackMessage("nonexistent", "msg", path)).rejects.toThrow("Feedback not found");
 });

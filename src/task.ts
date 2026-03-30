@@ -17,6 +17,7 @@ export interface Task {
   priority: number;
   owner?: string;
   createdBy?: string;
+  missionId?: string;
   context: Record<string, unknown>;
   logs: PhaseLog[];
   createdAt: string;

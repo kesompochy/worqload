@@ -86,6 +86,10 @@ export class TaskQueue {
     return this.tasks.delete(id);
   }
 
+  getByMission(missionId: string): Task[] {
+    return Array.from(this.tasks.values()).filter(t => t.missionId === missionId);
+  }
+
   list(): Task[] {
     return Array.from(this.tasks.values());
   }

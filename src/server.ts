@@ -3,7 +3,7 @@ import type { Task } from "./task";
 import { createTask } from "./task";
 import { loadPrinciples } from "./principles";
 import { loadSpawns } from "./spawns";
-import { loadFeedback, addFeedback, removeFeedback } from "./feedback";
+import { loadFeedback, addFeedback, removeFeedback, updateFeedbackMessage } from "./feedback";
 import { loadProjects } from "./projects";
 import { loadReports, updateReportStatus } from "./reports";
 import { loadSleep, sleepFor, clearSleep } from "./sleep";
@@ -119,10 +119,16 @@ export function startServer(basePort = 3456): void {
         return json(fb, 201);
       }
 
-      const feedbackDeleteMatch = url.pathname.match(/^\/api\/feedback\/([^/]+)$/);
-      if (req.method === "DELETE" && feedbackDeleteMatch) {
-        await removeFeedback(feedbackDeleteMatch[1]);
-        return json({ deleted: feedbackDeleteMatch[1] });
+      const feedbackIdMatch = url.pathname.match(/^\/api\/feedback\/([^/]+)$/);
+      if (req.method === "PATCH" && feedbackIdMatch) {
+        const body = await req.json() as { message: string };
+        await updateFeedbackMessage(feedbackIdMatch[1], body.message);
+        return json({ updated: feedbackIdMatch[1] });
+      }
+
+      if (req.method === "DELETE" && feedbackIdMatch) {
+        await removeFeedback(feedbackIdMatch[1]);
+        return json({ deleted: feedbackIdMatch[1] });
       }
 
       if (req.method === "GET" && url.pathname === "/api/reports") {
@@ -711,6 +717,28 @@ function Board({ tasks, onUpdate }) {
   </div>\`;
 }
 
+function EditableFeedbackMessage({ fb, onSend }) {
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef(null);
+  const save = async () => {
+    const val = inputRef.current.value.trim();
+    if (val && val !== fb.message) {
+      await api.patch('/api/feedback/' + fb.id.slice(0, 8), { message: val });
+      onSend();
+    }
+    setEditing(false);
+  };
+  const onKey = (e) => {
+    if (e.key === 'Enter' && e.shiftKey && !e.isComposing) { e.preventDefault(); save(); }
+    if (e.key === 'Escape') setEditing(false);
+  };
+  useEffect(() => { if (editing && inputRef.current) inputRef.current.focus(); }, [editing]);
+  if (editing) {
+    return html\`<input type="text" ref=\${inputRef} defaultValue=\${fb.message} onBlur=\${save} onKeyDown=\${onKey} style="flex:1;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.3rem 0.5rem;color:#e0e0e0;font-size:0.85rem" />\`;
+  }
+  return html\`<div class="task-title" style="cursor:pointer" onClick=\${() => setEditing(true)}>\${fb.message}</div>\`;
+}
+
 function FeedbackSection({ projects, onSend }) {
   const allFeedback = [];
   for (const p of projects) {
@@ -724,7 +752,7 @@ function FeedbackSection({ projects, onSend }) {
     \${allFeedback.length > 0
       ? allFeedback.map(fb => html\`<div class="task" key=\${fb.id} style="border-left:3px solid #ed6c6c;display:flex;align-items:start;gap:0.5rem">
           <div style="flex:1">
-            <div class="task-title">\${fb.message}</div>
+            <\${EditableFeedbackMessage} fb=\${fb} onSend=\${onSend} />
             <div class="task-meta">from \${fb.from} · \${fb.projectName} · \${timeAgo(fb.createdAt)}</div>
           </div>
           <button class="danger" style="font-size:0.65rem;padding:0.15rem 0.3rem" onClick=\${async () => {

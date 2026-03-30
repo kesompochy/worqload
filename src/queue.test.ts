@@ -221,3 +221,28 @@ test("unclaim releases owner", () => {
   expect(unclaimed?.owner).toBeUndefined();
   expect(queue.dequeue()?.id).toBe(task.id);
 });
+
+test("getByMission returns tasks with matching missionId", () => {
+  const queue = new TaskQueue();
+  const missionId = crypto.randomUUID();
+  const t1 = createTask("mission task 1");
+  const t2 = createTask("mission task 2");
+  const t3 = createTask("other task");
+  queue.enqueue(t1);
+  queue.enqueue(t2);
+  queue.enqueue(t3);
+  queue.update(t1.id, { missionId });
+  queue.update(t2.id, { missionId });
+
+  const result = queue.getByMission(missionId);
+  expect(result).toHaveLength(2);
+  expect(result.map(t => t.id).sort()).toEqual([t1.id, t2.id].sort());
+});
+
+test("getByMission returns empty array when no tasks match", () => {
+  const queue = new TaskQueue();
+  const task = createTask("no mission");
+  queue.enqueue(task);
+
+  expect(queue.getByMission(crypto.randomUUID())).toEqual([]);
+});
