@@ -72,6 +72,18 @@ export function startServer(basePort = 3456): void {
         return json(fb, 201);
       }
 
+      const projectFeedbackMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/feedback$/);
+      if (req.method === "POST" && projectFeedbackMatch) {
+        const projectName = decodeURIComponent(projectFeedbackMatch[1]);
+        const projects = await loadProjects();
+        const project = projects.find(p => p.name === projectName);
+        if (!project) return json({ error: "Project not found" }, 404);
+        const feedbackPath = project.path + "/.worqload/feedback.json";
+        const body = await req.json() as { message: string; from?: string };
+        const fb = await addFeedback(body.message, body.from || "dashboard", feedbackPath);
+        return json(fb, 201);
+      }
+
       if (req.method === "POST" && url.pathname === "/api/tasks") {
         await queue.load();
         const body = await req.json() as { title: string; priority?: number; createdBy?: string };
@@ -427,16 +439,54 @@ function Board({ tasks, onUpdate }) {
   </div>\`;
 }
 
+function FeedbackSection({ projects, onSend }) {
+  const allFeedback = [];
+  for (const p of projects) {
+    for (const fb of (p.feedback || [])) {
+      if (fb.status === 'new') allFeedback.push({ ...fb, projectName: p.name });
+    }
+  }
+  const msgRef = useRef(null);
+  const [selectedProject, setSelectedProject] = useState(projects[0]?.name || '');
+
+  const submit = async () => {
+    const msg = msgRef.current.value.trim();
+    if (!msg || !selectedProject) return;
+    await api.post('/api/projects/' + encodeURIComponent(selectedProject) + '/feedback', { message: msg, from: 'dashboard' });
+    msgRef.current.value = '';
+    onSend();
+  };
+
+  return html\`<div style="margin-bottom:1rem">
+    <h2 style="margin-top:0">Feedback</h2>
+    \${allFeedback.length > 0
+      ? allFeedback.map(fb => html\`<div class="task" key=\${fb.id} style="border-left:3px solid #ed6c6c">
+          <div class="task-title">\${fb.message}</div>
+          <div class="task-meta">from \${fb.from} · \${fb.projectName} · \${timeAgo(fb.createdAt)}</div>
+        </div>\`)
+      : html\`<div class="empty">No new feedback.</div>\`}
+    <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
+      <select style="background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.4rem;color:#e0e0e0;font-size:0.85rem"
+        value=\${selectedProject} onChange=\${(e) => setSelectedProject(e.target.value)}>
+        \${projects.map(p => html\`<option key=\${p.name} value=\${p.name}>\${p.name}</option>\`)}
+      </select>
+      <input type="text" ref=\${msgRef} placeholder="Send feedback..." style="flex:1;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.4rem;color:#e0e0e0;font-size:0.85rem"
+        onKeyDown=\${(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); submit(); }}} />
+      <button class="primary" onClick=\${submit}>Send</button>
+    </div>
+  </div>\`;
+}
+
 function App() {
-  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [] });
+  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [] });
   const [tab, setTab] = useState('active');
 
   const refresh = useCallback(async () => {
-    const [tasks, history, principles, heartbeat, spawns] = await Promise.all([
+    const [tasks, history, principles, heartbeat, spawns, projects] = await Promise.all([
       api.get('/api/tasks'), api.get('/api/history'), api.get('/api/principles'),
-      api.get('/api/heartbeat'), api.get('/api/spawns'),
+      api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'),
     ]);
-    setData({ tasks, history, principles, heartbeat, spawns });
+    setData({ tasks, history, principles, heartbeat, spawns, projects });
   }, []);
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 3000); return () => clearInterval(id); }, [refresh]);
@@ -448,6 +498,7 @@ function App() {
     </div>
     <\${Principles} items=\${data.principles} />
     <\${SpawnList} spawns=\${data.spawns} />
+    \${data.projects.length > 0 && html\`<\${FeedbackSection} projects=\${data.projects} onSend=\${refresh} />\`}
     <\${AddForm} onAdd=\${refresh} />
     <div class="tabs">
       <div class=\${"tab" + (tab === 'active' ? ' active' : '')} onClick=\${() => setTab('active')}>Active</div>
