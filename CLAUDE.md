@@ -23,7 +23,7 @@ bun src/cli.ts principle
 bun src/cli.ts list
 ```
 
-If `waiting_human` tasks exist, present the question to the user and **stop the loop (CronDelete)**. Resume when the user responds.
+If `waiting_human` tasks exist, present the question to the user and **skip to the next iteration**. Do NOT stop the loop.
 
 **2. If queue has no pending tasks**
 
@@ -35,7 +35,7 @@ bun src/cli.ts observe <id> "<observations>"
 bun src/cli.ts orient <id> "<analysis>"
 bun src/cli.ts decide <id> --human "<proposal and question>"
 ```
-This creates a `waiting_human` task, which stops the loop until the user responds.
+This creates a `waiting_human` task. The loop continues polling until the user responds.
 Do NOT generate tasks and process them autonomously when the queue is empty.
 
 **3. Process one task through OODA**
