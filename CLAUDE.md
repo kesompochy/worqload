@@ -41,7 +41,8 @@ Do NOT generate tasks and process them autonomously when the queue is empty.
 **3. Process one task through OODA**
 ```sh
 bun src/cli.ts next                              # pick next pending task
-bun src/cli.ts source run                        # collect data from registered sources
+bun src/cli.ts source run                        # collect data from registered sources (includes feedback)
+bun src/cli.ts feedback list                     # check for new feedback from external projects
 bun src/cli.ts observe <id> "<what you found>"   # gather info
 bun src/cli.ts orient <id> "<analysis>"          # analyze
 bun src/cli.ts decide <id> "<plan>"              # decide action
