@@ -131,6 +131,24 @@ worqload spawn <id> <agent-name>           # delegates to Claude CLI in a git wo
       console.log(`Principle removed (#${index}).`);
       break;
     }
+    if (args[0] === "edit") {
+      const index = Number(args[1]);
+      const content = await loadPrinciples();
+      const lines = content.split("\n").filter(l => l.startsWith("- "));
+      if (!Number.isInteger(index) || index < 1 || index > lines.length) {
+        console.error(`Invalid index: ${args[1]}. Valid range: 1-${lines.length}`);
+        process.exit(1);
+      }
+      const newText = args.slice(2).join(" ").trim();
+      if (!newText) {
+        console.error("Usage: worqload principle edit <N> <new text>");
+        process.exit(1);
+      }
+      lines[index - 1] = `- ${newText}`;
+      await savePrinciples(`# Principles\n\n${lines.join("\n")}`);
+      console.log(`Principle updated (#${index}): ${newText}`);
+      break;
+    }
     if (args.length === 0) {
       const content = await loadPrinciples();
       if (!content) {
@@ -610,6 +628,7 @@ worqload spawn <id> <agent-name>           # delegates to Claude CLI in a git wo
 Principles:
   principle                      List principles with numbers
   principle <text>               Append a principle
+  principle edit <N> <text>      Replace principle by number
   principle remove <N>           Remove principle by number
 
 Tasks:
