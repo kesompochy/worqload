@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "bun src/cli.ts",
+    "dev": "bun --watch src/cli.ts serve",
     "build": "bun build --compile src/cli.ts --outfile dist/worqload",
     "test": "bun test"
   },
