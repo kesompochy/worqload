@@ -7,3 +7,5 @@ export type { OodaHandlers } from "./src/loop";
 export { startServer } from "./src/server";
 export { loadSources, addSource, removeSource, runAllSources } from "./src/sources";
 export type { Source, SourceResult } from "./src/sources";
+export { loadSpawns, recordSpawnStart, recordSpawnFinish } from "./src/spawns";
+export type { SpawnRecord } from "./src/spawns";

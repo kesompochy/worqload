@@ -3,6 +3,7 @@ import type { TaskStatus } from "./task";
 import { TaskQueue } from "./queue";
 import { loadPrinciples, savePrinciples } from "./principles";
 import { loadSources, addSource, removeSource, runAllSources } from "./sources";
+import { recordSpawnStart, recordSpawnFinish } from "./spawns";
 
 const queue = new TaskQueue();
 await queue.load();
@@ -298,9 +299,13 @@ switch (command) {
       stdout: "pipe",
       stderr: "pipe",
     });
+    const spawnRecord = await recordSpawnStart(task.id, task.title, owner, proc.pid);
+
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
+
+    await recordSpawnFinish(spawnRecord.id, exitCode);
 
     await queue.load();
     const output = (stdout + stderr).trim();

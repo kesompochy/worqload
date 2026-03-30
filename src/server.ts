@@ -1,6 +1,7 @@
 import { TaskQueue } from "./queue";
 import { createTask } from "./task";
 import { loadPrinciples } from "./principles";
+import { loadSpawns } from "./spawns";
 
 export function startServer(basePort = 3456): void {
   const queue = new TaskQueue();
@@ -38,6 +39,11 @@ export function startServer(basePort = 3456): void {
         const content = await loadPrinciples();
         const lines = content.split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2));
         return json(lines);
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/spawns") {
+        const spawns = await loadSpawns();
+        return json(spawns);
       }
 
       if (req.method === "POST" && url.pathname === "/api/tasks") {
@@ -190,6 +196,17 @@ function html(): string {
   .priority-edit { width: 3.5rem; background: #0a0a0a; border: 1px solid #333; border-radius: 4px; padding: 0.2rem 0.4rem; color: #e0e0e0; font-size: 0.75rem; text-align: center; }
   .priority-edit:focus { outline: none; border-color: #6c7aed; }
   .action-label { font-size: 0.75rem; color: #888; }
+
+  .spawns { margin-bottom: 1.5rem; }
+  .spawn { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.75rem; }
+  .spawn-task { flex: 1; font-weight: 500; font-size: 0.9rem; }
+  .spawn-owner { font-size: 0.7rem; color: #6cced4; background: #1a2e2e; padding: 0.1rem 0.4rem; border-radius: 3px; }
+  .spawn-pid { font-size: 0.7rem; color: #888; font-family: monospace; }
+  .spawn-status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+  .spawn-running { background: #1a2e2e; color: #6cced4; animation: pulse 2s infinite; }
+  .spawn-done { background: #1a2e1a; color: #6aed6c; }
+  .spawn-failed { background: #2e1a1a; color: #d46c6c; }
+  .spawn-duration { font-size: 0.75rem; color: #666; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -199,6 +216,7 @@ function html(): string {
   </div>
 
   <div class="principles" id="principles"></div>
+  <div class="spawns" id="spawns"></div>
 
   <div class="add-form">
     <input type="text" id="new-title" placeholder="New task title...">
@@ -223,13 +241,15 @@ function html(): string {
       const focusValue = focused && focused.value !== undefined ? focused.value : null;
       const focusCursor = focused && focused.selectionStart !== undefined ? focused.selectionStart : null;
 
-      const [tasks, history, principles, heartbeat] = await Promise.all([
+      const [tasks, history, principles, heartbeat, spawns] = await Promise.all([
         fetch('/api/tasks').then(r => r.json()),
         fetch('/api/history').then(r => r.json()),
         fetch('/api/principles').then(r => r.json()),
         fetch('/api/heartbeat').then(r => r.json()),
+        fetch('/api/spawns').then(r => r.json()),
       ]);
       renderPrinciples(principles);
+      renderSpawns(spawns);
       renderTasks(tasks);
       renderHistory(history);
       renderHeartbeat(heartbeat);
@@ -264,6 +284,50 @@ function html(): string {
       const el = document.getElementById('principles');
       if (items.length === 0) { el.innerHTML = '<div class="section-empty">No principles defined.</div>'; return; }
       el.innerHTML = '<h2 style="margin-top:0">Principles</h2><ol>' + items.map(p => '<li>' + esc(p) + '</li>').join('') + '</ol>';
+    }
+
+    function renderSpawns(spawns) {
+      const el = document.getElementById('spawns');
+      const running = spawns.filter(s => s.status === 'running');
+      const recent = spawns.filter(s => s.status !== 'running').slice(-10).reverse();
+      if (running.length === 0 && recent.length === 0) { el.innerHTML = ''; return; }
+
+      let h = '<h2 style="margin-top:0">Spawns</h2>';
+      if (running.length > 0) {
+        h += running.map(s => renderSpawn(s)).join('');
+      }
+      if (recent.length > 0) {
+        h += '<div style="margin-top:0.5rem;font-size:0.75rem;color:#666">Recent</div>' + recent.map(s => renderSpawn(s)).join('');
+      }
+      el.innerHTML = h;
+    }
+
+    function renderSpawn(s) {
+      let duration = '';
+      if (s.finishedAt) {
+        const ms = new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime();
+        duration = formatDuration(ms);
+      } else {
+        const ms = Date.now() - new Date(s.startedAt).getTime();
+        duration = formatDuration(ms) + '...';
+      }
+      return '<div class="spawn">'
+        + '<span class="spawn-status spawn-' + s.status + '">' + s.status + '</span>'
+        + '<span class="spawn-task">' + esc(s.taskTitle) + '</span>'
+        + '<span class="spawn-owner">@' + esc(s.owner) + '</span>'
+        + '<span class="spawn-pid">PID ' + s.pid + '</span>'
+        + '<span class="spawn-duration">' + duration + '</span>'
+        + '</div>';
+    }
+
+    function formatDuration(ms) {
+      const totalSeconds = Math.floor(ms / 1000);
+      if (totalSeconds < 60) return totalSeconds + 's';
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      if (minutes < 60) return minutes + 'm ' + seconds + 's';
+      const hours = Math.floor(minutes / 60);
+      return hours + 'h ' + (minutes % 60) + 'm';
     }
 
     function renderTasks(tasks) {
