@@ -39,6 +39,20 @@ export async function appendArchive(tasks: Task[], path: string = DEFAULT_ARCHIV
   });
 }
 
+export async function updateTask(id: string, patchOrFn: Partial<Task> | ((current: Task) => Partial<Task>), path: string = DEFAULT_STORE_PATH): Promise<Task | undefined> {
+  return withLock(path, async () => {
+    const file = Bun.file(path);
+    if (!(await file.exists())) return undefined;
+    const tasks: Task[] = (await file.json()).map(ensureDefaults);
+    const index = tasks.findIndex(t => t.id === id);
+    if (index === -1) return undefined;
+    const patch = typeof patchOrFn === "function" ? patchOrFn(tasks[index]) : patchOrFn;
+    tasks[index] = { ...tasks[index], ...patch, updatedAt: new Date().toISOString() };
+    await Bun.write(path, JSON.stringify(tasks, null, 2));
+    return tasks[index];
+  });
+}
+
 async function loadArchiveUnlocked(path: string): Promise<Task[]> {
   const file = Bun.file(path);
   if (!(await file.exists())) return [];

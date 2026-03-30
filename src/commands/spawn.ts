@@ -2,6 +2,9 @@ import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
 import { loadSpawns, recordSpawnStart, recordSpawnFinish } from "../spawns";
 import { loadConfig } from "../config";
+import { updateTask } from "../store";
+import type { Task, OodaPhase } from "../task";
+import { validateTransition } from "../task";
 import { resolveTask } from "./resolve";
 
 async function runHook(command: string, env: Record<string, string>): Promise<{ output: string; exitCode: number }> {
@@ -101,26 +104,25 @@ export async function spawn(queue: TaskQueue, args: string[]) {
     }
   }
 
-  await queue.load();
-  const current = queue.get(task.id);
   const output = (stdout + stderr).trim();
   const truncated = output.length > 2000 ? output.slice(-2000) : output;
-  queue.addLog(task.id, "act", truncated);
 
-  const alreadyTerminal = current && (current.status === "done" || current.status === "failed");
-  if (alreadyTerminal) {
-    console.log(`Already ${current.status}: ${task.title}`);
-  } else if (exitCode === 0) {
-    queue.transition(task.id, "done");
-    console.log(`Done: ${task.title}`);
-  } else {
-    queue.addLog(task.id, "act", `[FAILED] exit code ${exitCode}`);
-    queue.transition(task.id, "failed");
-    console.log(`Failed: ${task.title} (exit: ${exitCode})`);
-  }
-
-  queue.update(task.id, { owner: undefined });
-  await queue.save();
+  // Atomically update only this task in tasks.json to avoid overwriting other changes
+  await updateTask(task.id, (current) => {
+    const logs = [...current.logs, { phase: "act" as OodaPhase, content: truncated, timestamp: new Date().toISOString() }];
+    const alreadyTerminal = current.status === "done" || current.status === "failed";
+    if (alreadyTerminal) {
+      console.log(`Already ${current.status}: ${task.title}`);
+      return { logs, owner: undefined };
+    } else if (exitCode === 0) {
+      console.log(`Done: ${task.title}`);
+      return { status: "done" as const, logs, owner: undefined };
+    } else {
+      console.log(`Failed: ${task.title} (exit: ${exitCode})`);
+      const failLogs = [...logs, { phase: "act" as OodaPhase, content: `[FAILED] exit code ${exitCode}`, timestamp: new Date().toISOString() }];
+      return { status: "failed" as const, logs: failLogs, owner: undefined };
+    }
+  });
 }
 
 function isProcessRunning(pid: number): boolean {
