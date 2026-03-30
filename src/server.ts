@@ -5,6 +5,7 @@ import { loadPrinciples } from "./principles";
 import { loadSpawns } from "./spawns";
 import { loadFeedback, addFeedback, removeFeedback } from "./feedback";
 import { loadProjects } from "./projects";
+import { loadReports, updateReportStatus } from "./reports";
 
 const TASK_NOT_FOUND = { error: "Task not found" } as const;
 const NOT_WAITING_HUMAN = { error: "Task is not waiting for human" } as const;
@@ -93,6 +94,18 @@ export function startServer(basePort = 3456): void {
       if (req.method === "DELETE" && feedbackDeleteMatch) {
         await removeFeedback(feedbackDeleteMatch[1]);
         return json({ deleted: feedbackDeleteMatch[1] });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/reports") {
+        const reports = await loadReports();
+        return json(reports);
+      }
+
+      const reportStatusMatch = url.pathname.match(/^\/api\/reports\/([^/]+)\/status$/);
+      if (req.method === "PATCH" && reportStatusMatch) {
+        const body = await req.json() as { status: string };
+        await updateReportStatus(reportStatusMatch[1], body.status as "unread" | "reading" | "read");
+        return json({ updated: true });
       }
 
       const projectFeedbackMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/feedback$/);
@@ -527,16 +540,41 @@ function FeedbackSection({ projects, onSend }) {
   </div>\`;
 }
 
+function ReportsSection({ reports, onUpdate }) {
+  if (!reports.length) return null;
+  const [expanded, setExpanded] = useState(null);
+  const setStatus = async (id, status) => {
+    await api.patch('/api/reports/' + id.slice(0, 8) + '/status', { status });
+    onUpdate();
+  };
+  const statusColors = { unread: '#ed6c6c', reading: '#edd76c', read: '#666' };
+  return html\`<div style="margin-bottom:1rem">
+    <h2 style="margin-top:0">Reports \${reports.filter(r => r.status === 'unread').length > 0 ? html\`<span style="color:#ed6c6c;font-size:0.75rem">(\${reports.filter(r => r.status === 'unread').length} unread)</span>\` : null}</h2>
+    \${reports.map(r => html\`<div class="task" key=\${r.id} style="border-left:3px solid \${statusColors[r.status]}">
+      <div class="task-title" style="cursor:pointer" onClick=\${() => { setExpanded(expanded === r.id ? null : r.id); if (r.status === 'unread') setStatus(r.id, 'reading'); }}>
+        \${r.title}
+        <span class="badge" style="background:\${statusColors[r.status]}20;color:\${statusColors[r.status]}">\${r.status}</span>
+      </div>
+      <div class="task-meta">by \${r.createdBy} · \${timeAgo(r.createdAt)}</div>
+      \${expanded === r.id && html\`<div style="margin-top:0.5rem;font-size:0.85rem;white-space:pre-wrap;line-height:1.5;color:#ccc">\${r.content}</div>
+        <div class="task-actions" style="margin-top:0.5rem">
+          \${r.status !== 'read' && html\`<button onClick=\${() => setStatus(r.id, 'read')}>Mark read</button>\`}
+          \${r.status === 'read' && html\`<button onClick=\${() => setStatus(r.id, 'unread')}>Mark unread</button>\`}
+        </div>\`}
+    </div>\`)}
+  </div>\`;
+}
+
 function App() {
-  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [] });
+  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], reports: [] });
   const [tab, setTab] = useState('active');
 
   const refresh = useCallback(async () => {
     const [tasks, history, principles, heartbeat, spawns, projects] = await Promise.all([
       api.get('/api/tasks'), api.get('/api/history'), api.get('/api/principles'),
-      api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'),
+      api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/reports'),
     ]);
-    setData({ tasks, history, principles, heartbeat, spawns, projects });
+    setData({ tasks, history, principles, heartbeat, spawns, projects, reports });
   }, []);
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 3000); return () => clearInterval(id); }, [refresh]);
@@ -548,6 +586,7 @@ function App() {
     </div>
     <\${Principles} items=\${data.principles} />
     <\${SpawnList} spawns=\${data.spawns} />
+    \${data.reports.length > 0 && html\`<\${ReportsSection} reports=\${data.reports} onUpdate=\${refresh} />\`}
     \${data.projects.length > 0 && html\`<\${FeedbackSection} projects=\${data.projects} onSend=\${refresh} />\`}
     <\${AddForm} onAdd=\${refresh} />
     <div class="tabs">

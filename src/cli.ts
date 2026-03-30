@@ -9,6 +9,7 @@ import { project } from "./commands/project";
 import { feedback } from "./commands/feedback";
 import { source } from "./commands/source";
 import { heartbeat, serve } from "./commands/serve";
+import { report } from "./commands/report";
 
 type CommandHandler = (queue: TaskQueueType, args: string[]) => Promise<void>;
 
@@ -20,6 +21,7 @@ const commands: Record<string, CommandHandler> = {
   project,
   feedback,
   source,
+  report,
   heartbeat, serve,
 };
 
@@ -75,6 +77,13 @@ Feedback:
   feedback list                         List all feedback
   feedback ack <id>                     Acknowledge feedback
   feedback resolve <id>                 Mark feedback resolved
+
+Reports:
+  report                         List reports
+  report add <title> <content> [--by <creator>]  Create a report
+  report show <id>               Show report content
+  report status <id> <status>    Set status (unread/reading/read)
+  report remove <id>             Delete a report
 
 Sources (observation data):
   source                         List registered sources

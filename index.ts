@@ -13,5 +13,7 @@ export { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from 
 export type { Feedback, FeedbackStatus } from "./src/feedback";
 export { loadProjects, registerProject, removeProject } from "./src/projects";
 export type { Project } from "./src/projects";
+export { loadReports, addReport, updateReportStatus, removeReport } from "./src/reports";
+export type { Report, ReportStatus } from "./src/reports";
 export { loadConfig } from "./src/config";
 export type { WorkqloadConfig, SpawnHooks, InitConfig } from "./src/config";
