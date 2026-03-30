@@ -67,6 +67,12 @@ export async function mission(queue: TaskQueue, args: string[]) {
     }
     return;
   }
+  if (args[0] === "run") {
+    if (!args[1]) exitWithError("Usage: worqload mission run <mission-id>");
+    const { runMission } = await import("../mission-runner");
+    await runMission(args[1]);
+    return;
+  }
   if (args[0] === "complete") {
     if (!args[1]) exitWithError("Usage: worqload mission complete <mission-id>");
     await completeMission(args[1]);

@@ -28,8 +28,8 @@ export interface Observation {
   waitingHumanTasks: Task[];
 }
 
-export async function collectObservation(queue: TaskQueue, ctx: IterateContext): Promise<Observation> {
-  const allTasks = queue.list();
+export async function collectObservation(queue: TaskQueue, ctx: IterateContext, excludeTaskId?: string): Promise<Observation> {
+  const allTasks = queue.list().filter(t => t.id !== excludeTaskId);
   const waitingHumanTasks = allTasks.filter(t => t.status === "waiting_human");
   const activeTasks = allTasks.filter(t => t.status !== "done" && t.status !== "failed" && t.status !== "waiting_human");
 
@@ -103,7 +103,7 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   const shortId = id.slice(0, SHORT_ID_LENGTH);
 
   // Observe
-  const obs = await collectObservation(queue, {});
+  const obs = await collectObservation(queue, {}, id);
   const observeLog = formatObserveLog(obs);
   queue.addLog(id, "observe", observeLog);
 

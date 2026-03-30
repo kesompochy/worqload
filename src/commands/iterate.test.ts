@@ -114,6 +114,33 @@ describe("analyzeObservation", () => {
     expect(analysis).toContain("has_pending");
   });
 
+  test("excludeTaskId filters out the specified task from observation", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const iterateTask = createTask("Iterate: OODA cycle", {}, 0, "worqload");
+    const realTask = createTask("Real task");
+    queue.enqueue(iterateTask);
+    queue.enqueue(realTask);
+    const ctx = makeContext();
+
+    const obs = await collectObservation(queue, ctx, iterateTask.id);
+
+    expect(obs.tasks).toHaveLength(1);
+    expect(obs.tasks[0].title).toBe("Real task");
+  });
+
+  test("excludeTaskId results in queue_empty when only iterate task exists", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const iterateTask = createTask("Iterate: OODA cycle", {}, 0, "worqload");
+    queue.enqueue(iterateTask);
+    const ctx = makeContext();
+
+    const obs = await collectObservation(queue, ctx, iterateTask.id);
+    const analysis = analyzeObservation(obs);
+
+    expect(obs.tasks).toHaveLength(0);
+    expect(analysis).toContain("queue_empty");
+  });
+
   test("includes feedback themes in analysis", async () => {
     const feedbackPath = tmpPath("feedback");
     for (let i = 0; i < 3; i++) {
