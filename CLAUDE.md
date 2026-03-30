@@ -23,7 +23,7 @@ bun src/cli.ts principle
 bun src/cli.ts list
 ```
 
-If `waiting_human` tasks exist, present the question to the user and stop.
+If `waiting_human` tasks exist, present the question to the user and **stop the loop (CronDelete)**. Resume when the user responds.
 
 **2. If queue has no pending tasks**
 
