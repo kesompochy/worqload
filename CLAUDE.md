@@ -16,12 +16,15 @@ Use `/loop` to keep this cycle running.
 
 ### Each iteration:
 
-**1. Check principles and queue**
+**1. Check sleep state, principles, and queue**
 ```sh
+bun src/cli.ts sleep                             # check if paused
 bun src/cli.ts heartbeat 300                     # record loop heartbeat (interval in seconds)
 bun src/cli.ts principle
 bun src/cli.ts list
 ```
+
+If the loop is sleeping, **skip to the next iteration**.
 
 If `waiting_human` tasks exist, present the question to the user and **skip to the next iteration**. Do NOT stop the loop.
 

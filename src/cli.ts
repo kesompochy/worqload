@@ -8,7 +8,7 @@ import { spawn } from "./commands/spawn";
 import { project } from "./commands/project";
 import { feedback } from "./commands/feedback";
 import { source } from "./commands/source";
-import { heartbeat, serve } from "./commands/serve";
+import { heartbeat, serve, sleep, wake } from "./commands/serve";
 import { report } from "./commands/report";
 
 type CommandHandler = (queue: TaskQueueType, args: string[]) => Promise<void>;
@@ -22,7 +22,7 @@ const commands: Record<string, CommandHandler> = {
   feedback,
   source,
   report,
-  heartbeat, serve,
+  heartbeat, serve, sleep, wake,
 };
 
 const { TaskQueue } = await import("./queue");
@@ -66,6 +66,8 @@ Tasks:
   init [path] [--name N]         Initialize worqload in a project
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)
+  sleep [minutes]                Pause the loop (show status if no arg)
+  wake                           Cancel sleep and resume the loop
 
 Projects:
   project                                List registered projects

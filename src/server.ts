@@ -6,6 +6,7 @@ import { loadSpawns } from "./spawns";
 import { loadFeedback, addFeedback, removeFeedback } from "./feedback";
 import { loadProjects } from "./projects";
 import { loadReports, updateReportStatus } from "./reports";
+import { loadSleep, sleepFor, clearSleep } from "./sleep";
 
 const TASK_NOT_FOUND = { error: "Task not found" } as const;
 const NOT_WAITING_HUMAN = { error: "Task is not waiting for human" } as const;
@@ -53,6 +54,22 @@ export function startServer(basePort = 3456): void {
         const file = Bun.file(".worqload/heartbeat.json");
         if (!(await file.exists())) return json(null);
         return json(await file.json());
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/sleep") {
+        const state = await loadSleep();
+        return json(state);
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/sleep") {
+        const body = await req.json() as { minutes: number };
+        const state = await sleepFor(body.minutes);
+        return json(state, 201);
+      }
+
+      if (req.method === "DELETE" && url.pathname === "/api/sleep") {
+        await clearSleep();
+        return json({ cleared: true });
       }
 
       if (req.method === "GET" && url.pathname === "/api/principles") {
@@ -347,13 +364,45 @@ function getHumanQuestion(task) {
   return null;
 }
 
-function Heartbeat({ heartbeat }) {
-  if (!heartbeat) return null;
-  const elapsed = Math.floor((Date.now() - new Date(heartbeat.lastRun).getTime()) / 1000);
-  const remaining = Math.max(0, heartbeat.intervalSeconds - elapsed);
-  const text = remaining === 0 ? 'Loop: running...' : 'Next loop: ' + (remaining >= 60 ? Math.floor(remaining / 60) + 'm ' : '') + (remaining % 60) + 's';
-  const color = remaining === 0 ? '#6cced4' : '#888';
-  return html\`<span style="font-size:0.85rem;color:\${color}">\${text}</span>\`;
+function Heartbeat({ heartbeat, sleepState, onUpdate }) {
+  const [minutes, setMinutes] = useState(20);
+  const sleeping = sleepState && new Date(sleepState.until).getTime() > Date.now();
+  const sleepRemaining = sleeping ? Math.max(0, Math.ceil((new Date(sleepState.until).getTime() - Date.now()) / 1000)) : 0;
+
+  const pause = async () => {
+    await api.post('/api/sleep', { minutes });
+    onUpdate();
+  };
+  const wakeUp = async () => {
+    await fetch('/api/sleep', { method: 'DELETE' });
+    onUpdate();
+  };
+
+  if (sleeping) {
+    const rm = Math.floor(sleepRemaining / 60);
+    const rs = sleepRemaining % 60;
+    const countdownText = (rm > 0 ? rm + 'm ' : '') + rs + 's';
+    return html\`<span style="display:inline-flex;align-items:center;gap:0.5rem">
+      <span style="font-size:0.85rem;color:#edd76c">Paused: \${countdownText} remaining</span>
+      <button style="font-size:0.7rem;padding:0.2rem 0.5rem" onClick=\${wakeUp}>Wake</button>
+    </span>\`;
+  }
+
+  const heartbeatText = (() => {
+    if (!heartbeat) return null;
+    const elapsed = Math.floor((Date.now() - new Date(heartbeat.lastRun).getTime()) / 1000);
+    const remaining = Math.max(0, heartbeat.intervalSeconds - elapsed);
+    const text = remaining === 0 ? 'Loop: running...' : 'Next loop: ' + (remaining >= 60 ? Math.floor(remaining / 60) + 'm ' : '') + (remaining % 60) + 's';
+    const color = remaining === 0 ? '#6cced4' : '#888';
+    return html\`<span style="font-size:0.85rem;color:\${color}">\${text}</span>\`;
+  })();
+
+  return html\`<span style="display:inline-flex;align-items:center;gap:0.5rem">
+    \${heartbeatText}
+    <input type="number" value=\${minutes} min="1" style="width:3.5rem;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.2rem 0.3rem;color:#e0e0e0;font-size:0.75rem;text-align:center"
+      onChange=\${(e) => setMinutes(Number(e.target.value) || 1)} />
+    <button style="font-size:0.7rem;padding:0.2rem 0.5rem" onClick=\${pause}>Pause</button>
+  </span>\`;
 }
 
 function Principles({ items }) {
@@ -566,15 +615,16 @@ function ReportsSection({ reports, onUpdate }) {
 }
 
 function App() {
-  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], reports: [] });
+  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], reports: [], sleep: null });
   const [tab, setTab] = useState('active');
 
   const refresh = useCallback(async () => {
-    const [tasks, history, principles, heartbeat, spawns, projects, reports] = await Promise.all([
+    const [tasks, history, principles, heartbeat, spawns, projects, reports, sleep] = await Promise.all([
       api.get('/api/tasks'), api.get('/api/history'), api.get('/api/principles'),
       api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/reports'),
+      api.get('/api/sleep'),
     ]);
-    setData({ tasks, history, principles, heartbeat, spawns, projects, reports });
+    setData({ tasks, history, principles, heartbeat, spawns, projects, reports, sleep });
   }, []);
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 3000); return () => clearInterval(id); }, [refresh]);
@@ -582,7 +632,7 @@ function App() {
   return html\`
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
       <h1 style="margin:0">worqload</h1>
-      <\${Heartbeat} heartbeat=\${data.heartbeat} />
+      <\${Heartbeat} heartbeat=\${data.heartbeat} sleepState=\${data.sleep} onUpdate=\${refresh} />
     </div>
     <\${Principles} items=\${data.principles} />
     <\${SpawnList} spawns=\${data.spawns} />
