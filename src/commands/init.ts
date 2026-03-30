@@ -17,11 +17,14 @@ You are the worqload orchestration agent. You manage the task queue using the OO
 
 ## Each iteration
 
-**1. Check principles and queue**
+**1. Check sleep state, principles, and queue**
 \\\`\\\`\\\`sh
+worqload sleep
 worqload principle
 worqload list
 \\\`\\\`\\\`
+
+If the loop is sleeping, **silently skip to the next iteration** — produce no chat output at all.
 
 If \\\`waiting_human\\\` tasks exist, present the question to the user and stop.
 

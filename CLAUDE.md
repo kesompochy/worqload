@@ -24,7 +24,7 @@ bun src/cli.ts principle
 bun src/cli.ts list
 ```
 
-If the loop is sleeping, **skip to the next iteration**.
+If the loop is sleeping, **silently skip to the next iteration** — produce no chat output at all.
 
 If `waiting_human` tasks exist, present the question to the user and **skip to the next iteration**. Do NOT stop the loop.
 
