@@ -404,6 +404,7 @@ function getHumanQuestion(task) {
 
 function Heartbeat({ heartbeat, sleepState, onUpdate }) {
   const [minutes, setMinutes] = useState(20);
+  const [gracefulStop, setGracefulStop] = useState(null);
   const sleeping = sleepState && new Date(sleepState.until).getTime() > Date.now();
   const sleepRemaining = sleeping ? Math.max(0, Math.ceil((new Date(sleepState.until).getTime() - Date.now()) / 1000)) : 0;
 
@@ -413,7 +414,24 @@ function Heartbeat({ heartbeat, sleepState, onUpdate }) {
   };
   const wakeUp = async () => {
     await fetch('/api/sleep', { method: 'DELETE' });
+    setGracefulStop(null);
     onUpdate();
+  };
+
+  const startGracefulStop = async () => {
+    await api.post('/api/sleep', { minutes: 60 * 24 });
+    onUpdate();
+    const poll = async () => {
+      const spawns = await api.get('/api/spawns');
+      const running = spawns.filter(s => s.status === 'running');
+      if (running.length === 0) {
+        setGracefulStop(null);
+        return;
+      }
+      setGracefulStop(running.length);
+      setTimeout(poll, 3000);
+    };
+    poll();
   };
 
   if (sleeping) {
@@ -421,7 +439,9 @@ function Heartbeat({ heartbeat, sleepState, onUpdate }) {
     const rs = sleepRemaining % 60;
     const countdownText = (rm > 0 ? rm + 'm ' : '') + rs + 's';
     return html\`<span style="display:inline-flex;align-items:center;gap:0.5rem">
-      <span style="font-size:0.85rem;color:#edd76c">Paused: \${countdownText} remaining</span>
+      \${gracefulStop != null
+        ? html\`<span style="font-size:0.85rem;color:#e8a55a">Waiting for \${gracefulStop} spawns...</span>\`
+        : html\`<span style="font-size:0.85rem;color:#edd76c">Paused: \${countdownText} remaining</span>\`}
       <button style="font-size:0.7rem;padding:0.2rem 0.5rem" onClick=\${wakeUp}>Wake</button>
     </span>\`;
   }
@@ -440,6 +460,7 @@ function Heartbeat({ heartbeat, sleepState, onUpdate }) {
     <input type="number" value=\${minutes} min="1" placeholder="20" style="width:3.5rem;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.2rem 0.3rem;color:#e0e0e0;font-size:0.75rem;text-align:center"
       onChange=\${(e) => setMinutes(Number(e.target.value) || 1)} /><span style="font-size:0.75rem;color:#888">min</span>
     <button style="font-size:0.7rem;padding:0.2rem 0.5rem" onClick=\${pause}>Pause</button>
+    <button style="font-size:0.7rem;padding:0.2rem 0.5rem;color:#e8a55a" onClick=\${startGracefulStop}>Graceful Stop</button>
   </span>\`;
 }
 
@@ -586,6 +607,7 @@ function TaskCard({ task, onUpdate }) {
 
 function Board({ tasks, onUpdate }) {
   const [showAllDone, setShowAllDone] = useState(false);
+  const [doneSortDesc, setDoneSortDesc] = useState(true);
   const DONE_LIMIT = 5;
   const cleanDone = async () => {
     await api.post('/api/clean', {});
@@ -595,10 +617,15 @@ function Board({ tasks, onUpdate }) {
     \${COLUMNS.map(col => {
       const colTasks = tasks.filter(t => col.statuses.includes(t.status));
       const isDone = col.key === 'done';
+      if (isDone) colTasks.sort((a, b) => {
+        const ta = new Date(a.updatedAt || 0).getTime();
+        const tb = new Date(b.updatedAt || 0).getTime();
+        return doneSortDesc ? tb - ta : ta - tb;
+      });
       const truncated = isDone && !showAllDone && colTasks.length > DONE_LIMIT;
       const visibleTasks = truncated ? colTasks.slice(0, DONE_LIMIT) : colTasks;
       return html\`<div class="column col-\${col.key}" key=\${col.key}>
-        <div class="column-header">\${col.label} <span style="display:inline-flex;align-items:center;gap:0.35rem"><span class="count">\${colTasks.length}</span>\${isDone && colTasks.length > 0 && html\`<button style="font-size:0.6rem;padding:0.1rem 0.35rem;background:#1a1a1a;border:1px solid #333;border-radius:3px;color:#888;cursor:pointer" onClick=\${cleanDone}>Clean</button>\`}</span></div>
+        <div class="column-header">\${col.label} <span style="display:inline-flex;align-items:center;gap:0.35rem"><span class="count">\${colTasks.length}</span>\${isDone && colTasks.length > 0 && html\`<button style="font-size:0.6rem;padding:0.1rem 0.35rem;background:#1a1a1a;border:1px solid #333;border-radius:3px;color:#888;cursor:pointer" onClick=\${() => setDoneSortDesc(!doneSortDesc)}>\${doneSortDesc ? '↓' : '↑'}</button><button style="font-size:0.6rem;padding:0.1rem 0.35rem;background:#1a1a1a;border:1px solid #333;border-radius:3px;color:#888;cursor:pointer" onClick=\${cleanDone}>Clean</button>\`}</span></div>
         <div class="column-body">
           \${colTasks.length === 0
             ? html\`<div class="empty">-</div>\`
