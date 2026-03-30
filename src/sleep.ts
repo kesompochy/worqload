@@ -1,3 +1,4 @@
+import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 import { withLock } from "./lock";
 
 export const DEFAULT_SLEEP_PATH = ".worqload/sleep.json";
@@ -9,20 +10,14 @@ export interface SleepState {
 export async function loadSleep(
   path = DEFAULT_SLEEP_PATH,
 ): Promise<SleepState | null> {
-  return withLock(path, async () => {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return null;
-    return await file.json();
-  });
+  return loadJsonFile<SleepState | null>(path, null);
 }
 
 export async function saveSleep(
   state: SleepState,
   path = DEFAULT_SLEEP_PATH,
 ): Promise<void> {
-  await withLock(path, async () => {
-    await Bun.write(path, JSON.stringify(state, null, 2));
-  });
+  await saveJsonFile(path, state);
 }
 
 export async function clearSleep(path = DEFAULT_SLEEP_PATH): Promise<void> {
