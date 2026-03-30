@@ -108,7 +108,8 @@ export async function init(_queue: TaskQueue, args: string[]) {
           "branch=worqload/$WORQLOAD_TASK_ID && dir=.worqload/worktrees/$WORQLOAD_TASK_ID && git worktree add -b $branch $dir 2>/dev/null && echo WORQLOAD_SPAWN_CWD=$dir"
         ],
         post: [
-          "[ \"$WORQLOAD_SPAWN_EXIT_CODE\" = \"0\" ] && [ -n \"$WORQLOAD_SPAWN_CWD\" ] && git merge worqload/$WORQLOAD_TASK_ID --no-edit 2>&1 || true"
+          "[ \"$WORQLOAD_SPAWN_EXIT_CODE\" = \"0\" ] && [ -n \"$WORQLOAD_SPAWN_CWD\" ] && git merge worqload/$WORQLOAD_TASK_ID --no-edit 2>&1 || true",
+          "[ -n \"$WORQLOAD_SPAWN_CWD\" ] && git worktree remove \"$WORQLOAD_SPAWN_CWD\" --force 2>/dev/null; git branch -D worqload/$WORQLOAD_TASK_ID 2>/dev/null; true"
         ]
       }
     } : {};
