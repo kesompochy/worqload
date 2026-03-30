@@ -154,14 +154,30 @@ export function toA2ATask(task: Task): A2ATask {
     });
   }
 
+  const status: A2ATaskStatus = {
+    state: toA2AState(task.status),
+    timestamp: task.updatedAt,
+  };
+
+  if (task.status === "waiting_human") {
+    const humanLog = [...task.logs].reverse().find(
+      (log) => log.content.startsWith("[HUMAN REQUIRED] ")
+    );
+    if (humanLog) {
+      status.message = {
+        message_id: `log-${humanLog.timestamp}`,
+        role: "agent",
+        parts: [{ kind: "text", text: humanLog.content.slice("[HUMAN REQUIRED] ".length) }],
+        kind: "message",
+      };
+    }
+  }
+
   const a2aTask: A2ATask = {
     kind: "task",
     id: task.id,
     context_id: contextId ?? task.id,
-    status: {
-      state: toA2AState(task.status),
-      timestamp: task.updatedAt,
-    },
+    status,
   };
 
   if (history.length > 0) {
@@ -221,8 +237,26 @@ async function handleMessageSend(queue: TaskQueue, params: Record<string, unknow
     throw { code: INVALID_REQUEST, message: "message with parts is required" };
   }
 
-  const title = extractTextFromParts(message.parts) || "A2A task";
+  const text = extractTextFromParts(message.parts);
 
+  // Reply to an existing task
+  if (message.task_id) {
+    await queue.load();
+    const existing = queue.get(message.task_id) ?? queue.findById(message.task_id);
+    if (!existing) {
+      throw { code: TASK_NOT_FOUND, message: `Task not found: ${message.task_id}` };
+    }
+    if (existing.status !== "waiting_human") {
+      throw { code: INVALID_REQUEST, message: `Task is not waiting for human input (current: ${existing.status})` };
+    }
+    queue.addLog(existing.id, "decide", text);
+    queue.transition(existing.id, "deciding");
+    await queue.save();
+    return toA2ATask(queue.get(existing.id)!);
+  }
+
+  // Create a new task
+  const title = text || "A2A task";
   await queue.load();
   const task = createTask(title, {
     a2a_context_id: message.context_id ?? undefined,

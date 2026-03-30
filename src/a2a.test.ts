@@ -82,6 +82,25 @@ describe("toA2ATask", () => {
 
     expect(a2a.history).toBeUndefined();
   });
+
+  test("includes HUMAN REQUIRED question as status message when waiting_human", () => {
+    const task = createTask("test task");
+    task.status = "waiting_human";
+    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] Should we proceed?", timestamp: "2025-01-01T00:00:00Z" });
+    const a2a = toA2ATask(task);
+
+    expect(a2a.status.state).toBe("input-required");
+    expect(a2a.status.message).toBeDefined();
+    expect(a2a.status.message!.role).toBe("agent");
+    expect(a2a.status.message!.parts[0]).toEqual({ kind: "text", text: "Should we proceed?" });
+  });
+
+  test("no status message when not waiting_human", () => {
+    const task = createTask("test task");
+    const a2a = toA2ATask(task);
+
+    expect(a2a.status.message).toBeUndefined();
+  });
 });
 
 describe("generateAgentCard", () => {
@@ -182,6 +201,91 @@ describe("handleA2ARequest", () => {
       const res = await handleA2ARequest(queue, rpc("message/send", {}));
 
       expect(res.error?.code).toBe(-32600);
+    });
+
+    test("responds to waiting_human task via task_id, transitions to deciding", async () => {
+      const queue = makeQueue();
+      const task = createTask("need approval", {}, 0, "a2a");
+      queue.enqueue(task);
+      queue.transition(task.id, "observing");
+      queue.transition(task.id, "orienting");
+      queue.transition(task.id, "deciding");
+      queue.addLog(task.id, "decide", "[HUMAN REQUIRED] Approve this change?");
+      queue.transition(task.id, "waiting_human");
+
+      const res = await handleA2ARequest(queue, rpc("message/send", {
+        message: {
+          message_id: "msg-reply",
+          role: "user",
+          parts: [{ kind: "text", text: "Yes, approved" }],
+          task_id: task.id,
+          kind: "message",
+        },
+      }));
+
+      expect(res.error).toBeUndefined();
+      const a2aTask = res.result as A2ATask;
+      expect(a2aTask.id).toBe(task.id);
+      expect(a2aTask.status.state).toBe("working");
+
+      const updated = queue.get(task.id)!;
+      expect(updated.status).toBe("deciding");
+      const lastLog = updated.logs[updated.logs.length - 1];
+      expect(lastLog.phase).toBe("decide");
+      expect(lastLog.content).toBe("Yes, approved");
+    });
+
+    test("returns input-required when fetching waiting_human task via message/send", async () => {
+      const queue = makeQueue();
+      const task = createTask("waiting task", {}, 0, "a2a");
+      queue.enqueue(task);
+      queue.transition(task.id, "observing");
+      queue.transition(task.id, "orienting");
+      queue.addLog(task.id, "decide", "[HUMAN REQUIRED] What should we do?");
+      queue.transition(task.id, "waiting_human");
+
+      const res = await handleA2ARequest(queue, rpc("tasks/get", { id: task.id }));
+
+      expect(res.error).toBeUndefined();
+      const a2aTask = res.result as A2ATask;
+      expect(a2aTask.status.state).toBe("input-required");
+      expect(a2aTask.status.message).toBeDefined();
+      expect(a2aTask.status.message!.parts[0]).toEqual({ kind: "text", text: "What should we do?" });
+    });
+
+    test("rejects reply to non-waiting_human task", async () => {
+      const queue = makeQueue();
+      const task = createTask("active task", {}, 0, "a2a");
+      queue.enqueue(task);
+
+      const res = await handleA2ARequest(queue, rpc("message/send", {
+        message: {
+          message_id: "msg-reply",
+          role: "user",
+          parts: [{ kind: "text", text: "reply" }],
+          task_id: task.id,
+          kind: "message",
+        },
+      }));
+
+      expect(res.error?.code).toBe(-32600);
+      expect(res.error?.message).toContain("not waiting for human input");
+    });
+
+    test("rejects reply to nonexistent task_id", async () => {
+      const queue = makeQueue();
+
+      const res = await handleA2ARequest(queue, rpc("message/send", {
+        message: {
+          message_id: "msg-reply",
+          role: "user",
+          parts: [{ kind: "text", text: "reply" }],
+          task_id: "nonexistent",
+          kind: "message",
+        },
+      }));
+
+      expect(res.error?.code).toBe(-32001);
     });
   });
 
