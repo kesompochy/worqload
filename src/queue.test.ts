@@ -163,6 +163,16 @@ test("createTask defaults priority to 0", () => {
   expect(task.priority).toBe(0);
 });
 
+test("createTask sets createdBy when provided", () => {
+  const task = createTask("agent task", {}, 0, "agent-1");
+  expect(task.createdBy).toBe("agent-1");
+});
+
+test("createTask omits createdBy when not provided", () => {
+  const task = createTask("human task");
+  expect(task.createdBy).toBeUndefined();
+});
+
 test("claim sets owner on pending task", () => {
   const queue = new TaskQueue();
   const task = createTask("claimable");

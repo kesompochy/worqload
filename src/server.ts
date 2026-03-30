@@ -48,8 +48,8 @@ export function startServer(basePort = 3456): void {
 
       if (req.method === "POST" && url.pathname === "/api/tasks") {
         await queue.load();
-        const body = await req.json() as { title: string; priority?: number };
-        const task = createTask(body.title, {}, body.priority ?? 0);
+        const body = await req.json() as { title: string; priority?: number; createdBy?: string };
+        const task = createTask(body.title, {}, body.priority ?? 0, body.createdBy);
         queue.enqueue(task);
         await queue.save();
         return json(task, 201);
@@ -146,6 +146,7 @@ function html(): string {
   .task-title { font-weight: 600; font-size: 0.85rem; word-break: break-word; }
   .task-meta { font-size: 0.7rem; color: #666; margin-top: 0.25rem; }
   .task-owner { font-size: 0.65rem; color: #6cced4; background: #1a2e2e; padding: 0.1rem 0.4rem; border-radius: 3px; }
+  .task-created-by { font-size: 0.65rem; color: #b0a0d0; margin-left: 0.3rem; }
 
   .status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
   .status-pending { background: #1a1a2e; color: #6c7aed; }
@@ -395,8 +396,9 @@ function html(): string {
       }
       const age = timeAgo(t.createdAt);
       const ownerBadge = t.owner ? ' <span class="task-owner">@' + esc(t.owner) + '</span>' : '';
+      const createdByBadge = t.createdBy ? ' <span class="task-created-by">by ' + esc(t.createdBy) + '</span>' : '';
       const statusBadge = t.status === 'waiting_human' ? ' <span class="status status-waiting_human">waiting</span>' : (t.status === 'failed' ? ' <span class="status status-failed">failed</span>' : '');
-      return '<div class="task" title="' + t.id.slice(0, 8) + '"><div class="task-title">' + esc(t.title) + statusBadge + ownerBadge + '</div><div class="task-meta">' + age + ' \\u00b7 p' + t.priority + '</div>' + logs + humanAction + actions + '</div>';
+      return '<div class="task" title="' + t.id.slice(0, 8) + '"><div class="task-title">' + esc(t.title) + statusBadge + ownerBadge + '</div><div class="task-meta">' + age + ' \\u00b7 p' + t.priority + createdByBadge + '</div>' + logs + humanAction + actions + '</div>';
     }
 
     async function addTask() {

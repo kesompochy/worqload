@@ -14,6 +14,7 @@ export interface Task {
   status: TaskStatus;
   priority: number;
   owner?: string;
+  createdBy?: string;
   context: Record<string, unknown>;
   logs: PhaseLog[];
   createdAt: string;
@@ -37,7 +38,7 @@ export function validateTransition(from: TaskStatus, to: TaskStatus): void {
   }
 }
 
-export function createTask(title: string, context: Record<string, unknown> = {}, priority = 0): Task {
+export function createTask(title: string, context: Record<string, unknown> = {}, priority = 0, createdBy?: string): Task {
   const trimmed = title.trim();
   if (trimmed === "") {
     throw new Error("Task title must not be empty");
@@ -48,6 +49,7 @@ export function createTask(title: string, context: Record<string, unknown> = {},
     title: trimmed,
     status: "pending",
     priority,
+    ...(createdBy !== undefined && { createdBy }),
     context,
     logs: [],
     createdAt: now,
