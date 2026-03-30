@@ -603,7 +603,7 @@ function TaskCard({ task, onUpdate }) {
         ref=\${(el) => el && el.focus()}
         style="width:100%; font-size:inherit; font-weight:inherit; padding:2px 4px; box-sizing:border-box;"
       />
-    </div>\` : html\`<div class="task-title" onClick=\${startEdit} style="cursor:pointer">
+    </div>\` : html\`<div class="task-title" onClick=\${task.missionId ? undefined : startEdit} style=\${task.missionId ? '' : 'cursor:pointer'}>
       \${task.title}
       \${task.status === 'waiting_human' && html\` <span class="badge badge-waiting">waiting</span>\`}
       \${task.status === 'failed' && html\` <span class="badge badge-failed">failed</span>\`}
@@ -818,7 +818,7 @@ function EditableFeedbackMessage({ fb, onSend }) {
   };
   useEffect(() => { if (editing && inputRef.current) inputRef.current.focus(); }, [editing]);
   if (editing) {
-    return html\`<input type="text" ref=\${inputRef} defaultValue=\${fb.message} onBlur=\${save} onKeyDown=\${onKey} style="flex:1;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.3rem 0.5rem;color:#e0e0e0;font-size:0.85rem" />\`;
+    return html\`<input type="text" ref=\${inputRef} defaultValue=\${fb.message} onBlur=\${save} onKeyDown=\${onKey} style="width:100%;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.3rem 0.5rem;color:#e0e0e0;font-size:0.85rem;box-sizing:border-box" />\`;
   }
   return html\`<div class="task-title" style="cursor:pointer" onClick=\${() => setEditing(true)}>\${fb.message}</div>\`;
 }
