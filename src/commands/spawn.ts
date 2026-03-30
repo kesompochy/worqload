@@ -6,6 +6,7 @@ import { updateTask } from "../store";
 import type { Task, OodaPhase } from "../task";
 import { validateTransition } from "../task";
 import { resolveTask } from "./resolve";
+import { loadMissions } from "../mission";
 
 async function runHook(command: string, env: Record<string, string>): Promise<{ output: string; exitCode: number }> {
   const proc = Bun.spawn(["sh", "-c", command], {
@@ -47,6 +48,14 @@ export async function spawn(queue: TaskQueue, args: string[]) {
     WORQLOAD_TASK_TITLE: task.title,
     WORQLOAD_TASK_CONTEXT: JSON.stringify(task.context),
   };
+
+  if (task.missionId) {
+    const missions = await loadMissions();
+    const m = missions.find(mi => mi.id === task.missionId);
+    if (m && m.principles && m.principles.length > 0) {
+      taskEnv.WORQLOAD_MISSION_PRINCIPLES = m.principles.join("\n");
+    }
+  }
 
   let spawnCwd: string | undefined;
   if (config.spawn?.pre) {

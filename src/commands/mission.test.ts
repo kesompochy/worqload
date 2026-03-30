@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { createTask } from "../task";
 import { TaskQueue } from "../queue";
-import { createMission, loadMissions } from "../mission";
+import { createMission, loadMissions, addMissionPrinciple } from "../mission";
 
 function tmpPath(): string {
   return join(tmpdir(), `worqload-mission-cmd-test-${crypto.randomUUID()}.json`);
@@ -45,4 +45,15 @@ test("getByMission returns assigned tasks after assign", async () => {
   const result = queue.getByMission(missionId);
   expect(result).toHaveLength(1);
   expect(result[0].id).toBe(t1.id);
+});
+
+test("mission principle lists principles for a mission", async () => {
+  const missionPath = tmpPath();
+  const m = await createMission("principle-list", {}, missionPath);
+  await addMissionPrinciple(m.id, "First principle", missionPath);
+  await addMissionPrinciple(m.id, "Second principle", missionPath);
+
+  const loaded = await loadMissions(missionPath);
+  const found = loaded.find(mi => mi.id === m.id);
+  expect(found?.principles).toEqual(["First principle", "Second principle"]);
 });

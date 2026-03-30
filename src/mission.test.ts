@@ -6,6 +6,7 @@ import {
   saveMissions,
   createMission,
   completeMission,
+  addMissionPrinciple,
 } from "./mission";
 import type { Mission } from "./mission";
 
@@ -93,4 +94,56 @@ test("multiple missions can be created and loaded", async () => {
   const loaded = await loadMissions(path);
   expect(loaded).toHaveLength(2);
   expect(loaded.map((m) => m.name)).toEqual(["mission-a", "mission-b"]);
+});
+
+test("createMission initializes with empty principles", async () => {
+  const path = tmpPath();
+  const mission = await createMission("with-principles", {}, path);
+  expect(mission.principles).toEqual([]);
+});
+
+test("addMissionPrinciple adds a principle to a mission", async () => {
+  const path = tmpPath();
+  const mission = await createMission("principle-test", {}, path);
+
+  await addMissionPrinciple(mission.id, "Always write tests first", path);
+
+  const loaded = await loadMissions(path);
+  expect(loaded[0].principles).toEqual(["Always write tests first"]);
+});
+
+test("addMissionPrinciple appends multiple principles", async () => {
+  const path = tmpPath();
+  const mission = await createMission("multi-principle", {}, path);
+
+  await addMissionPrinciple(mission.id, "Principle A", path);
+  await addMissionPrinciple(mission.id, "Principle B", path);
+
+  const loaded = await loadMissions(path);
+  expect(loaded[0].principles).toEqual(["Principle A", "Principle B"]);
+});
+
+test("addMissionPrinciple matches by id prefix", async () => {
+  const path = tmpPath();
+  const mission = await createMission("prefix-test", {}, path);
+
+  await addMissionPrinciple(mission.id.slice(0, 8), "Prefix principle", path);
+
+  const loaded = await loadMissions(path);
+  expect(loaded[0].principles).toEqual(["Prefix principle"]);
+});
+
+test("addMissionPrinciple throws for unknown mission", async () => {
+  const path = tmpPath();
+  expect(addMissionPrinciple("nonexistent", "text", path)).rejects.toThrow(
+    "Mission not found",
+  );
+});
+
+test("addMissionPrinciple throws on empty text", async () => {
+  const path = tmpPath();
+  const mission = await createMission("empty-principle", {}, path);
+  expect(addMissionPrinciple(mission.id, "  ", path)).rejects.toThrow(
+    "Principle text must not be empty",
+  );
 });

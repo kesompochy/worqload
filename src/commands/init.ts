@@ -61,6 +61,11 @@ If a decision is difficult or architectural:
 worqload decide <id> --human "<question>"
 \\\`\\\`\\\`
 
+## Mission Principles
+
+Tasks assigned to a mission inherit the mission's principles via the \\\`WORQLOAD_MISSION_PRINCIPLES\\\` environment variable (newline-separated).
+Check this variable at the start of execution and follow the mission-specific guidance it provides.
+
 ## Spawning parallel agents
 
 For independent tasks, spawn processes:

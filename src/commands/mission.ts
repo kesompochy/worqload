@@ -1,6 +1,6 @@
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { loadMissions, createMission, completeMission } from "../mission";
+import { loadMissions, createMission, completeMission, addMissionPrinciple } from "../mission";
 import { SHORT_ID_LENGTH } from "../task";
 import { parseFlags } from "../utils/args";
 
@@ -43,6 +43,28 @@ export async function mission(queue: TaskQueue, args: string[]) {
     queue.update(task!.id, { missionId: m!.id });
     await queue.save();
     console.log(`Task ${task!.id.slice(0, SHORT_ID_LENGTH)} assigned to mission "${m!.name}"`);
+    return;
+  }
+  if (args[0] === "principle") {
+    const missionId = args[1];
+    if (!missionId) exitWithError("Usage: worqload mission principle <mission-id> [<text>]");
+    const text = args[2];
+    if (text) {
+      await addMissionPrinciple(missionId, text);
+      console.log("Principle added.");
+      return;
+    }
+    const missions = await loadMissions();
+    const m = missions.find(mi => mi.id === missionId || mi.id.startsWith(missionId));
+    if (!m) exitWithError(`Mission not found: ${missionId}`);
+    const principles = m!.principles || [];
+    if (principles.length === 0) {
+      console.log("No principles.");
+      return;
+    }
+    for (const p of principles) {
+      console.log(`- ${p}`);
+    }
     return;
   }
   if (args[0] === "complete") {

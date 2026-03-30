@@ -12,6 +12,7 @@ export interface Mission {
   id: string;
   name: string;
   filter: MissionFilter;
+  principles: string[];
   status: MissionStatus;
   createdAt: string;
 }
@@ -33,6 +34,7 @@ export async function createMission(name: string, filter: MissionFilter = {}, pa
     id: crypto.randomUUID(),
     name: trimmed,
     filter,
+    principles: [],
     status: "active",
     createdAt: new Date().toISOString(),
   };
@@ -40,6 +42,19 @@ export async function createMission(name: string, filter: MissionFilter = {}, pa
   missions.push(mission);
   await saveMissions(missions, path);
   return mission;
+}
+
+export async function addMissionPrinciple(id: string, text: string, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
+  const trimmed = text.trim();
+  if (trimmed === "") {
+    throw new Error("Principle text must not be empty");
+  }
+  const missions = await loadMissions(path);
+  const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+  if (!mission) throw new Error(`Mission not found: ${id}`);
+  if (!mission.principles) mission.principles = [];
+  mission.principles.push(trimmed);
+  await saveMissions(missions, path);
 }
 
 export async function completeMission(id: string, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
