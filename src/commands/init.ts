@@ -70,8 +70,8 @@ worqload spawn <id> <command...>
 
 - One task at a time. Finish or fail before starting the next.
 - Small, incremental changes. Each task = one commit-sized unit of work.
+- Write tests before implementation (TDD). Write failing tests first, then implement to make them pass.
 - When uncertain, escalate with \\\`--human\\\`.
-- After acting, verify with tests.
 - Do NOT modify principles without explicit user instruction.
 `;
 
