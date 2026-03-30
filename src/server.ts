@@ -100,10 +100,14 @@ export function startServer(basePort = 3456): void {
         await queue.load();
         const missions = await loadMissions();
         const tasks = queue.list();
+        const spawns = await loadSpawns();
         const result = missions.map(m => ({
           ...m,
           taskCount: tasks.filter(t => t.missionId === m.id).length,
-          tasks: tasks.filter(t => t.missionId === m.id),
+          tasks: tasks.filter(t => t.missionId === m.id).map(t => ({
+            ...t,
+            spawns: spawns.filter(s => s.taskId === t.id),
+          })),
         }));
         return json(result);
       }
@@ -319,6 +323,7 @@ function html(): string {
   .add-form input[type="text"]:focus { outline: none; border-color: #6c7aed; }
 
   .principles { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; }
+  .principles ol { padding-left: 1.5rem; }
   .principles li { margin: 0.2rem 0; padding-left: 0.5rem; font-size: 0.85rem; }
 
   .empty { color: #444; font-style: italic; font-size: 0.8rem; }
@@ -711,23 +716,54 @@ function MissionSection({ missions, onUpdate }) {
 function MissionCard({ mission, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
   const statusColor = mission.status === 'active' ? '#6c7aed' : '#666';
+  const oodaColors = { observing: '#4caf50', orienting: '#4caf50', deciding: '#ffc107', waiting_human: '#ed6c6c', acting: '#00bcd4', done: '#666', failed: '#d46c6c' };
+  const oodaLabels = { observing: 'O', orienting: 'Or', deciding: 'D', waiting_human: 'W', acting: 'A', done: '✓', failed: '✗' };
   const tasksByStatus = {};
   for (const t of mission.tasks) {
-    const key = t.status;
-    if (!tasksByStatus[key]) tasksByStatus[key] = [];
-    tasksByStatus[key].push(t);
+    if (!tasksByStatus[t.status]) tasksByStatus[t.status] = 0;
+    tasksByStatus[t.status]++;
   }
   return html\`<div class="task" style="border-left:3px solid \${statusColor}">
     <div style="display:flex;align-items:center;gap:0.5rem;cursor:pointer" onClick=\${() => setExpanded(!expanded)}>
       <span style="font-size:0.7rem;color:#666">\${expanded ? '▼' : '▶'}</span>
       <span class="task-title" style="flex:1">\${mission.name}</span>
+      <span style="display:flex;gap:0.2rem">\${Object.entries(tasksByStatus).map(([status, count]) =>
+        html\`<span key=\${status} class="badge" style="background:\${oodaColors[status]}20;color:\${oodaColors[status]};font-size:0.6rem;padding:0.1rem 0.35rem">\${oodaLabels[status]}\${count > 1 ? count : ''}</span>\`
+      )}</span>
       <span class="badge" style="background:\${statusColor}20;color:\${statusColor}">\${mission.status}</span>
       <span class="count" style="font-size:0.7rem;color:#888">\${mission.taskCount} tasks</span>
     </div>
     \${expanded && html\`<div style="margin-top:0.5rem;border-top:1px solid #2a2a2a;padding-top:0.5rem">
       \${mission.tasks.length === 0
         ? html\`<div class="empty">No tasks assigned.</div>\`
-        : mission.tasks.map(t => html\`<\${TaskCard} key=\${t.id} task=\${t} onUpdate=\${onUpdate} />\`)}
+        : mission.tasks.map(t => html\`<div key=\${t.id}>
+            <\${MissionTaskCard} task=\${t} onUpdate=\${onUpdate} />
+          </div>\`)}
+    </div>\`}
+  </div>\`;
+}
+
+function MissionTaskCard({ task, onUpdate }) {
+  const oodaColors = { observing: '#4caf50', orienting: '#4caf50', deciding: '#ffc107', waiting_human: '#ed6c6c', acting: '#00bcd4', done: '#666', failed: '#d46c6c' };
+  const runningSpawns = (task.spawns || []).filter(s => s.status === 'running');
+  const recentSpawns = (task.spawns || []).filter(s => s.status !== 'running').slice(-2).reverse();
+  return html\`<div>
+    <\${TaskCard} task=\${task} onUpdate=\${onUpdate} />
+    \${runningSpawns.length > 0 && html\`<div style="margin:-0.25rem 0 0.5rem 0.5rem;padding:0.4rem 0.6rem;background:#0e1a0e;border:1px solid #1a2e1a;border-radius:6px;font-size:0.7rem">
+      \${runningSpawns.map(s => html\`<div key=\${s.id} style="display:flex;align-items:center;gap:0.5rem;color:#6aed6c">
+        <span style="animation:pulse 2s infinite">●</span>
+        <span>@\${s.owner}</span>
+        <span style="color:#666">PID \${s.pid}</span>
+        <span style="color:#666">\${formatDuration(Date.now() - new Date(s.startedAt).getTime())}...</span>
+      </div>\`)}
+    </div>\`}
+    \${recentSpawns.length > 0 && runningSpawns.length === 0 && html\`<div style="margin:-0.25rem 0 0.5rem 0.5rem;padding:0.4rem 0.6rem;background:#161616;border:1px solid #2a2a2a;border-radius:6px;font-size:0.7rem">
+      \${recentSpawns.map(s => html\`<div key=\${s.id} style="display:flex;align-items:center;gap:0.5rem;color:\${s.status === 'done' ? '#666' : '#d46c6c'}">
+        <span>\${s.status === 'done' ? '✓' : '✗'}</span>
+        <span>@\${s.owner}</span>
+        <span style="color:#555">\${s.finishedAt ? formatDuration(new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) : ''}</span>
+        \${s.exitCode !== undefined && s.exitCode !== 0 && html\`<span style="color:#d46c6c">exit \${s.exitCode}</span>\`}
+      </div>\`)}
     </div>\`}
   </div>\`;
 }

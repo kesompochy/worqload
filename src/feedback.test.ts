@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback } from "./feedback";
+import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback, distillFeedback } from "./feedback";
 
 function tmpPath(): string {
   return join(tmpdir(), `worqload-feedback-test-${crypto.randomUUID()}.json`);
@@ -125,4 +125,100 @@ test("summarizeFeedback detects repeated themes from same sender", async () => {
   // Repeated sender with 3+ items is a theme
   expect(summary.themes.length).toBeGreaterThanOrEqual(1);
   expect(summary.themes[0]).toContain("alice");
+});
+
+describe("distillFeedback", () => {
+  function tmpTemplatePath(): string {
+    return join(tmpdir(), `worqload-template-test-${crypto.randomUUID()}.md`);
+  }
+
+  const sampleTemplate = `---
+name: worqload
+---
+
+## Rules
+
+- One task at a time.
+- Small, incremental changes.
+`;
+
+  test("returns empty rules when no resolved feedback exists", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    await addFeedback("unresolved msg", "user1", feedbackPath);
+
+    const result = await distillFeedback(feedbackPath, templatePath);
+    expect(result.distilledCount).toBe(0);
+    expect(result.rules).toEqual([]);
+
+    // Template unchanged
+    const content = await Bun.file(templatePath).text();
+    expect(content).toBe(sampleTemplate);
+  });
+
+  test("extracts resolved feedback messages as rules and appends to template", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb1 = await addFeedback("Always run lint before commit", "user1", feedbackPath);
+    await addFeedback("unresolved msg", "user2", feedbackPath);
+    const fb2 = await addFeedback("Use Japanese for all reports", "user1", feedbackPath);
+    await resolveFeedback(fb1.id, feedbackPath);
+    await resolveFeedback(fb2.id, feedbackPath);
+
+    const result = await distillFeedback(feedbackPath, templatePath);
+    expect(result.distilledCount).toBe(2);
+    expect(result.rules).toEqual([
+      "Always run lint before commit",
+      "Use Japanese for all reports",
+    ]);
+
+    // Template has new rules appended
+    const content = await Bun.file(templatePath).text();
+    expect(content).toContain("- Always run lint before commit");
+    expect(content).toContain("- Use Japanese for all reports");
+    // Original rules preserved
+    expect(content).toContain("- One task at a time.");
+    expect(content).toContain("- Small, incremental changes.");
+  });
+
+  test("removes distilled feedback from the store", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb1 = await addFeedback("rule A", "user1", feedbackPath);
+    const fb2 = await addFeedback("stays", "user2", feedbackPath);
+    await resolveFeedback(fb1.id, feedbackPath);
+
+    await distillFeedback(feedbackPath, templatePath);
+
+    const remaining = await loadFeedback(feedbackPath);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe(fb2.id);
+  });
+
+  test("does nothing when feedback store is empty", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const result = await distillFeedback(feedbackPath, templatePath);
+    expect(result.distilledCount).toBe(0);
+    expect(result.rules).toEqual([]);
+  });
+
+  test("throws when template file has no Rules section", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, "# No rules here\n\nSome content.\n");
+
+    const fb = await addFeedback("rule", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+
+    expect(distillFeedback(feedbackPath, templatePath)).rejects.toThrow("Rules");
+  });
 });
