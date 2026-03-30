@@ -81,3 +81,40 @@ export function summarizeFeedback(items: Feedback[]): FeedbackSummary {
 
   return { counts, recentUnresolved, themes };
 }
+
+export interface DistillResult {
+  distilledCount: number;
+  rules: string[];
+}
+
+export async function distillFeedback(
+  feedbackPath: string = DEFAULT_FEEDBACK_PATH,
+  templatePath: string = ".claude/agents/worqload.md",
+): Promise<DistillResult> {
+  const items = await store.load(feedbackPath);
+  const resolved = items.filter((f) => f.status === "resolved");
+
+  if (resolved.length === 0) {
+    return { distilledCount: 0, rules: [] };
+  }
+
+  const templateFile = Bun.file(templatePath);
+  const templateContent = await templateFile.text();
+
+  const rulesIndex = templateContent.indexOf("## Rules");
+  if (rulesIndex === -1) {
+    throw new Error("Agent template has no ## Rules section");
+  }
+
+  const rules = resolved.map((f) => f.message);
+  const rulesBlock = rules.map((r) => `- ${r}`).join("\n") + "\n";
+
+  const updatedContent = templateContent.trimEnd() + "\n" + rulesBlock;
+  await Bun.write(templatePath, updatedContent);
+
+  for (const f of resolved) {
+    await store.remove(f.id, feedbackPath);
+  }
+
+  return { distilledCount: resolved.length, rules };
+}

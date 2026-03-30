@@ -1,8 +1,9 @@
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback, summarizeFeedback } from "../feedback";
+import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback, summarizeFeedback, distillFeedback } from "../feedback";
 import { parseFlags } from "../utils/args";
 import { SHORT_ID_LENGTH } from "../task";
+import { loadConfig } from "../config";
 
 export async function feedback(_queue: TaskQueue, args: string[]) {
   if (args[0] === "summary") {
@@ -43,6 +44,20 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
   if (args[0] === "resolve") {
     await resolveFeedback(args[1]);
     console.log("Resolved.");
+    return;
+  }
+  if (args[0] === "distill") {
+    const config = await loadConfig();
+    const templatePath = config.init?.agentPath || ".claude/agents/worqload.md";
+    const result = await distillFeedback(undefined, templatePath);
+    if (result.distilledCount === 0) {
+      console.log("No resolved feedback to distill.");
+      return;
+    }
+    console.log(`Distilled ${result.distilledCount} feedback item(s) into Rules:`);
+    for (const rule of result.rules) {
+      console.log(`  - ${rule}`);
+    }
     return;
   }
   const { flags, rest } = parseFlags(args, ["--from"]);
