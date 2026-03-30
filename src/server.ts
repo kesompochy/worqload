@@ -570,7 +570,7 @@ function App() {
   const [tab, setTab] = useState('active');
 
   const refresh = useCallback(async () => {
-    const [tasks, history, principles, heartbeat, spawns, projects] = await Promise.all([
+    const [tasks, history, principles, heartbeat, spawns, projects, reports] = await Promise.all([
       api.get('/api/tasks'), api.get('/api/history'), api.get('/api/principles'),
       api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/reports'),
     ]);
