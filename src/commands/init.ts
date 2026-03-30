@@ -66,6 +66,9 @@ For independent tasks, spawn processes:
 worqload spawn <id> <command...>
 \\\`\\\`\\\`
 
+Spawn prompts must instruct agents to always create a report summarizing what they did upon completion using \\\`worqload report add <task-id> "<title>" "<content>"\\\`.
+Spawn prompts must instruct agents to write report titles and content in Japanese when using \\\`worqload report add\\\`.
+
 ## Rules
 
 - One task at a time. Finish or fail before starting the next.
