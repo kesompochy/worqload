@@ -4,6 +4,7 @@ import { TaskQueue } from "./queue";
 import { loadPrinciples, savePrinciples } from "./principles";
 import { loadSources, addSource, removeSource, runAllSources } from "./sources";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
+import { createWorktree, removeWorktree, mergeWorktreeBranch } from "./worktree";
 
 const queue = new TaskQueue();
 await queue.load();
@@ -51,6 +52,7 @@ switch (command) {
 
   case "add": {
     let priority = 0;
+    let createdBy: string | undefined;
     const filtered: string[] = [];
     for (let i = 0; i < args.length; i++) {
       if (args[i] === "--priority" && i + 1 < args.length) {
@@ -60,19 +62,23 @@ switch (command) {
           process.exit(1);
         }
         i++;
+      } else if (args[i] === "--by" && i + 1 < args.length) {
+        createdBy = args[i + 1];
+        i++;
       } else {
         filtered.push(args[i]);
       }
     }
     const title = filtered.join(" ").trim();
     if (!title) {
-      console.error("Usage: worqload add <title> [--priority N]");
+      console.error("Usage: worqload add <title> [--priority N] [--by <creator>]");
       process.exit(1);
     }
-    const task = createTask(title, {}, priority);
+    const task = createTask(title, {}, priority, createdBy);
     queue.enqueue(task);
     await queue.save();
-    console.log(`Added: ${task.title} (${task.id.slice(0, 8)}) [priority: ${priority}]`);
+    const byLabel = createdBy ? ` by:${createdBy}` : "";
+    console.log(`Added: ${task.title} (${task.id.slice(0, 8)}) [priority: ${priority}]${byLabel}`);
     break;
   }
 
@@ -92,7 +98,8 @@ switch (command) {
     for (const task of tasks) {
       const priorityLabel = task.priority !== 0 ? ` p:${task.priority}` : "";
       const ownerLabel = task.owner ? ` @${task.owner}` : "";
-      console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, 8)})${priorityLabel}${ownerLabel}`);
+      const createdByLabel = task.createdBy ? ` by:${task.createdBy}` : "";
+      console.log(`[${task.status.padEnd(13)}] ${task.title} (${task.id.slice(0, 8)})${priorityLabel}${ownerLabel}${createdByLabel}`);
     }
     break;
   }
@@ -279,18 +286,29 @@ switch (command) {
     queue.claim(task.id, owner);
     queue.transition(task.id, "observing");
     await queue.save();
-    console.log(`Spawning: ${task.title} (owner: ${owner})`);
 
+    const taskIdPrefix = task.id.slice(0, 8);
+    let worktree: { path: string; branch: string } | undefined;
+    try {
+      worktree = await createWorktree(taskIdPrefix);
+      console.log(`Spawning: ${task.title} (owner: ${owner}, worktree: ${worktree.path})`);
+    } catch (error) {
+      console.error(`Failed to create worktree, running in main directory: ${error}`);
+      console.log(`Spawning: ${task.title} (owner: ${owner})`);
+    }
+
+    const cwd = worktree ? worktree.path : undefined;
     const prompt = [
       `You are processing a worqload task. Work in the current directory.`,
       `Task: ${task.title}`,
-      `Task ID: ${task.id.slice(0, 8)}`,
+      `Task ID: ${taskIdPrefix}`,
       ``,
       `Instructions:`,
       `1. Understand the task`,
       `2. Make the necessary code changes`,
       `3. Run tests with: bun test`,
-      `4. Report what you did`,
+      `4. Commit your changes with a descriptive message`,
+      `5. Report what you did`,
       ``,
       `Context: ${JSON.stringify(task.context)}`,
     ].join("\n");
@@ -298,6 +316,7 @@ switch (command) {
     const proc = Bun.spawn(["claude", "-p", "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep", "--", prompt], {
       stdout: "pipe",
       stderr: "pipe",
+      ...(cwd ? { cwd } : {}),
     });
     const spawnRecord = await recordSpawnStart(task.id, task.title, owner, proc.pid);
 
@@ -305,7 +324,7 @@ switch (command) {
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
 
-    await recordSpawnFinish(spawnRecord.id, exitCode);
+    await recordSpawnFinish(spawnRecord.id, exitCode, undefined, worktree?.path, worktree?.branch);
 
     await queue.load();
     const current = queue.get(task.id);
@@ -317,12 +336,26 @@ switch (command) {
     if (alreadyTerminal) {
       console.log(`Already ${current.status}: ${task.title}`);
     } else if (exitCode === 0) {
+      if (worktree) {
+        const mergeResult = await mergeWorktreeBranch(worktree.branch);
+        if (mergeResult.merged) {
+          queue.addLog(task.id, "act", `[MERGED] branch ${worktree.branch}`);
+          console.log(`Merged: ${worktree.branch}`);
+        } else {
+          queue.addLog(task.id, "act", `[MERGE CONFLICT] branch ${worktree.branch}: ${mergeResult.output}`);
+          console.log(`Merge conflict on ${worktree.branch} — resolve manually`);
+        }
+      }
       queue.transition(task.id, "done");
       console.log(`Done: ${task.title}`);
     } else {
       queue.addLog(task.id, "act", `[FAILED] exit code ${exitCode}`);
       queue.transition(task.id, "failed");
       console.log(`Failed: ${task.title} (exit: ${exitCode})`);
+    }
+
+    if (worktree) {
+      await removeWorktree(worktree.path, worktree.branch);
     }
     queue.update(task.id, { owner: undefined });
     await queue.save();
@@ -400,7 +433,7 @@ Principles:
   principle remove <N>           Remove principle by number
 
 Tasks:
-  add <title> [--priority N]     Add a new task (higher N = higher priority)
+  add <title> [--priority N] [--by <creator>]  Add a new task
   list [status]                  List tasks (optionally filter by status)
   next                           Show next pending task
   clean                          Archive done/failed tasks
