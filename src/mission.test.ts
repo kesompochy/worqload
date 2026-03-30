@@ -102,6 +102,21 @@ test("createMission initializes with empty principles", async () => {
   expect(mission.principles).toEqual([]);
 });
 
+test("createMission defaults priority to 0", async () => {
+  const path = tmpPath();
+  const mission = await createMission("default-priority", {}, path);
+  expect(mission.priority).toBe(0);
+});
+
+test("createMission accepts custom priority", async () => {
+  const path = tmpPath();
+  const mission = await createMission("high-priority", {}, path, 10);
+  expect(mission.priority).toBe(10);
+
+  const loaded = await loadMissions(path);
+  expect(loaded[0].priority).toBe(10);
+});
+
 test("addMissionPrinciple adds a principle to a mission", async () => {
   const path = tmpPath();
   const mission = await createMission("principle-test", {}, path);

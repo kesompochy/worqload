@@ -205,4 +205,58 @@ describe("analyzeObservation", () => {
 
     expect(analysis).toContain("alice");
   });
+
+  test("groups pending tasks by mission and outputs mission_run", async () => {
+    const missionId = crypto.randomUUID();
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Mission task A");
+    t1.missionId = missionId;
+    const t2 = createTask("Mission task B");
+    t2.missionId = missionId;
+    queue.enqueue(t1);
+    queue.enqueue(t2);
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+    obs.activeMissions = [{ id: missionId, name: "Deploy v2", filter: {}, principles: [], priority: 0, status: "active", createdAt: new Date().toISOString() }];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("has_pending");
+    expect(analysis).toContain("mission_run");
+    expect(analysis).toContain("Deploy v2");
+    expect(analysis).toContain("2 task");
+  });
+
+  test("reports unassigned pending tasks separately", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Orphan task");
+    queue.enqueue(t1);
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("has_pending");
+    expect(analysis).toContain("unassigned");
+    expect(analysis).toContain("1 task");
+  });
+
+  test("reports both mission tasks and unassigned tasks", async () => {
+    const missionId = crypto.randomUUID();
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Mission task");
+    t1.missionId = missionId;
+    const t2 = createTask("Orphan task");
+    queue.enqueue(t1);
+    queue.enqueue(t2);
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+    obs.activeMissions = [{ id: missionId, name: "Alpha", filter: {}, principles: [], priority: 0, status: "active", createdAt: new Date().toISOString() }];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("mission_run");
+    expect(analysis).toContain("Alpha");
+    expect(analysis).toContain("unassigned: 1 task");
+  });
 });

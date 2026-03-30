@@ -13,19 +13,21 @@ export interface Mission {
   name: string;
   filter: MissionFilter;
   principles: string[];
+  priority: number;
   status: MissionStatus;
   createdAt: string;
 }
 
 export async function loadMissions(path: string = DEFAULT_MISSIONS_PATH): Promise<Mission[]> {
-  return loadJsonFile<Mission[]>(path, []);
+  const missions = await loadJsonFile<Mission[]>(path, []);
+  return missions.map(m => ({ priority: 0, ...m }));
 }
 
 export async function saveMissions(missions: Mission[], path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
   await saveJsonFile(path, missions);
 }
 
-export async function createMission(name: string, filter: MissionFilter = {}, path: string = DEFAULT_MISSIONS_PATH): Promise<Mission> {
+export async function createMission(name: string, filter: MissionFilter = {}, path: string = DEFAULT_MISSIONS_PATH, priority = 0): Promise<Mission> {
   const trimmed = name.trim();
   if (trimmed === "") {
     throw new Error("Mission name must not be empty");
@@ -35,6 +37,7 @@ export async function createMission(name: string, filter: MissionFilter = {}, pa
     name: trimmed,
     filter,
     principles: [],
+    priority,
     status: "active",
     createdAt: new Date().toISOString(),
   };

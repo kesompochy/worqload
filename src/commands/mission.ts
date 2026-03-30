@@ -6,9 +6,9 @@ import { parseFlags } from "../utils/args";
 
 export async function mission(queue: TaskQueue, args: string[]) {
   if (args[0] === "create") {
-    const { flags, rest } = parseFlags(args.slice(1), ["--filter"]);
+    const { flags, rest } = parseFlags(args.slice(1), ["--filter", "--priority"]);
     const name = rest[0];
-    if (!name) exitWithError("Usage: worqload mission create <name> [--filter tags:a,b]");
+    if (!name) exitWithError("Usage: worqload mission create <name> [--filter tags:a,b] [--priority N]");
     const filter: { tags?: string[] } = {};
     if (flags["--filter"]) {
       const filterStr = flags["--filter"];
@@ -16,8 +16,9 @@ export async function mission(queue: TaskQueue, args: string[]) {
         filter.tags = filterStr.slice(5).split(",").map(t => t.trim());
       }
     }
-    const m = await createMission(name, filter);
-    console.log(`Mission created: ${m.name} (${m.id.slice(0, SHORT_ID_LENGTH)})`);
+    const priority = flags["--priority"] ? Number(flags["--priority"]) : 0;
+    const m = await createMission(name, filter, undefined, priority);
+    console.log(`Mission created: ${m.name} (${m.id.slice(0, SHORT_ID_LENGTH)}) [priority: ${m.priority}]`);
     return;
   }
   if (args[0] === "list") {
@@ -28,8 +29,9 @@ export async function mission(queue: TaskQueue, args: string[]) {
     }
     for (const m of missions) {
       const tags = m.filter.tags ? ` [${m.filter.tags.join(",")}]` : "";
+      const priorityLabel = m.priority !== 0 ? ` p:${m.priority}` : "";
       const taskCount = queue.getByMission(m.id).length;
-      console.log(`[${m.status.padEnd(9)}] ${m.name}${tags} (tasks: ${taskCount}, ${m.id.slice(0, SHORT_ID_LENGTH)})`);
+      console.log(`[${m.status.padEnd(9)}] ${m.name}${tags}${priorityLabel} (tasks: ${taskCount}, ${m.id.slice(0, SHORT_ID_LENGTH)})`);
     }
     return;
   }

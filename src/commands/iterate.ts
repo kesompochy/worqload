@@ -64,7 +64,29 @@ export function analyzeObservation(obs: Observation): string {
   const observingTasks = obs.tasks.filter(t => t.status === "observing");
   if (observingTasks.length > 0) {
     tags.push("has_pending");
-    lines.push(`pending tasks: ${observingTasks.length}`);
+
+    const byMission = new Map<string, { name: string; count: number }>();
+    let unassignedCount = 0;
+    for (const t of observingTasks) {
+      if (t.missionId) {
+        const entry = byMission.get(t.missionId);
+        if (entry) {
+          entry.count++;
+        } else {
+          const mission = obs.activeMissions.find(m => m.id === t.missionId);
+          byMission.set(t.missionId, { name: mission?.name ?? t.missionId.slice(0, SHORT_ID_LENGTH), count: 1 });
+        }
+      } else {
+        unassignedCount++;
+      }
+    }
+
+    for (const [id, { name, count }] of byMission) {
+      lines.push(`mission_run: ${id.slice(0, SHORT_ID_LENGTH)} "${name}" (${count} task${count > 1 ? "s" : ""})`);
+    }
+    if (unassignedCount > 0) {
+      lines.push(`unassigned: ${unassignedCount} task${unassignedCount > 1 ? "s" : ""}`);
+    }
   }
 
   if (obs.tasks.length === 0 && obs.waitingHumanTasks.length === 0) {
@@ -99,6 +121,10 @@ export function analyzeObservation(obs: Observation): string {
   return `[${tags.join(",")}] ${lines.join("; ")}`;
 }
 
+// Queue-wide OODA: surveys all tasks, feedback, missions, and sources to decide
+// the orchestration agent's next action (waiting_human / queue_empty / has_pending).
+// Contrast with mission-runner.ts iterateMission(), which processes a single task
+// within one mission.
 export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   const iterationTask = createTask("Iterate: OODA cycle", {}, 0, "worqload");
   queue.enqueue(iterationTask);
@@ -150,12 +176,32 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
     return;
   }
 
-  // Has pending tasks — signal to process them
+  // Has pending tasks — signal to run missions
   const pending = obs.tasks.filter(t => t.status === "observing" && !t.owner);
   const inProgress = obs.tasks.filter(t => t.status !== "observing" || t.owner);
+
+  const missionTasks = new Map<string, { name: string; tasks: Task[] }>();
+  const unassigned: Task[] = [];
+  for (const t of pending) {
+    if (t.missionId) {
+      const entry = missionTasks.get(t.missionId);
+      if (entry) {
+        entry.tasks.push(t);
+      } else {
+        const mission = obs.activeMissions.find(m => m.id === t.missionId);
+        missionTasks.set(t.missionId, { name: mission?.name ?? t.missionId.slice(0, SHORT_ID_LENGTH), tasks: [t] });
+      }
+    } else {
+      unassigned.push(t);
+    }
+  }
+
   const decisionParts: string[] = [];
-  if (pending.length > 0) {
-    decisionParts.push(`spawn ${pending.length} pending task(s)`);
+  if (missionTasks.size > 0) {
+    decisionParts.push(`run ${missionTasks.size} mission(s)`);
+  }
+  if (unassigned.length > 0) {
+    decisionParts.push(`${unassigned.length} unassigned task(s)`);
   }
   if (inProgress.length > 0) {
     decisionParts.push(`${inProgress.length} task(s) in progress`);
@@ -170,10 +216,11 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   await runOnDoneHooks(id, iterationTask.title);
 
   console.log(`[${shortId}] Iteration complete: ${decision}`);
-  if (pending.length > 0) {
-    for (const t of pending) {
-      console.log(`  pending: [${t.id.slice(0, SHORT_ID_LENGTH)}] ${t.title}`);
-    }
+  for (const [mId, { name, tasks }] of missionTasks) {
+    console.log(`  mission_run: [${mId.slice(0, SHORT_ID_LENGTH)}] ${name} (${tasks.length} task${tasks.length > 1 ? "s" : ""})`);
+  }
+  for (const t of unassigned) {
+    console.log(`  unassigned: [${t.id.slice(0, SHORT_ID_LENGTH)}] ${t.title}`);
   }
 }
 

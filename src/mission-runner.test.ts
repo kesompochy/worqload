@@ -4,7 +4,7 @@ import { join } from "path";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import { createMission, completeMission, addMissionPrinciple, loadMissions, type Mission } from "./mission";
-import { findNextMissionTask, processTask, processPlanTask, iterate, spawnTask } from "./mission-runner";
+import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission } from "./mission-runner";
 import { load } from "./store";
 import { loadSpawns } from "./spawns";
 
@@ -179,14 +179,14 @@ describe("processTask", () => {
   });
 });
 
-describe("iterate", () => {
+describe("iterateMission", () => {
   test("returns mission_completed when mission is completed", async () => {
     const missionPath = tmpPath("iter-completed-m");
     const storePath = tmpPath("iter-completed");
     const mission = await createMission("completed", {}, missionPath);
     await completeMission(mission.id, missionPath);
 
-    const result = await iterate(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
     expect(result).toBe("mission_completed");
   });
 
@@ -197,7 +197,7 @@ describe("iterate", () => {
     const queue = new TaskQueue(storePath);
     await queue.save();
 
-    const result = await iterate(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
     expect(result).toBe("idle");
   });
 
@@ -208,7 +208,7 @@ describe("iterate", () => {
     const task = createTask("to process");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
-    const result = await iterate(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
     expect(result).toBe("processed");
 
     const tasks = await load(storePath);
@@ -220,7 +220,7 @@ describe("iterate", () => {
     const missionPath = tmpPath("iter-notfound-m");
     const storePath = tmpPath("iter-notfound");
 
-    expect(iterate("nonexistent", { storePath, missionsPath: missionPath }))
+    expect(iterateMission("nonexistent", { storePath, missionsPath: missionPath }))
       .rejects.toThrow("Mission not found");
   });
 
@@ -235,14 +235,15 @@ describe("iterate", () => {
       { ...task2, missionId: mission.id },
     ]);
 
-    const result1 = await iterate(mission.id, { storePath, missionsPath: missionPath });
+    const result1 = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
     expect(result1).toBe("processed");
 
-    const result2 = await iterate(mission.id, { storePath, missionsPath: missionPath });
+    const result2 = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
     expect(result2).toBe("processed");
 
-    const result3 = await iterate(mission.id, { storePath, missionsPath: missionPath });
-    expect(result3).toBe("idle");
+    // All tasks done → auto-complete triggers
+    const result3 = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    expect(result3).toBe("mission_completed");
 
     const tasks = await load(storePath);
     expect(tasks.filter(t => t.status === "done")).toHaveLength(2);
@@ -255,7 +256,7 @@ describe("iterate", () => {
     const queue = new TaskQueue(storePath);
     await queue.save();
 
-    const result = await iterate(mission.id.slice(0, 8), { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id.slice(0, 8), { storePath, missionsPath: missionPath });
     expect(result).toBe("idle");
   });
 });
@@ -374,7 +375,7 @@ describe("processPlanTask", () => {
     };
     await setupQueue(storePath, [planTask]);
 
-    const result = await iterate(mission.id, { storePath, missionsPath: missionPath });
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
     expect(result).toBe("processed");
 
     const tasks = await load(storePath);
@@ -487,7 +488,203 @@ describe("spawnTask", () => {
   });
 });
 
-describe("iterate with spawn", () => {
+describe("mission auto-complete", () => {
+  test("auto-completes mission when all tasks are done", async () => {
+    const missionPath = tmpPath("auto-done-m");
+    const storePath = tmpPath("auto-done");
+    const mission = await createMission("auto-done", {}, missionPath);
+    const task1 = createTask("task 1");
+    const task2 = createTask("task 2");
+    await setupQueue(storePath, [
+      { ...task1, missionId: mission.id },
+      { ...task2, missionId: mission.id },
+    ]);
+
+    await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    expect(result).toBe("mission_completed");
+
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("completed");
+  });
+
+  test("auto-completes mission when all tasks are failed", async () => {
+    const missionPath = tmpPath("auto-fail-m");
+    const storePath = tmpPath("auto-fail");
+    const mission = await createMission("auto-fail", {}, missionPath);
+    const task = createTask("will fail");
+    const queue = new TaskQueue(storePath);
+    queue.enqueue({ ...task, missionId: mission.id });
+    queue.transition(task.id, "failed");
+    await queue.save();
+
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    expect(result).toBe("mission_completed");
+
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("completed");
+  });
+
+  test("auto-completes with mix of done and failed tasks", async () => {
+    const missionPath = tmpPath("auto-mix-m");
+    const storePath = tmpPath("auto-mix");
+    const mission = await createMission("auto-mix", {}, missionPath);
+    const done = createTask("done task");
+    const failed = createTask("failed task");
+    const queue = new TaskQueue(storePath);
+    queue.enqueue({ ...done, missionId: mission.id });
+    queue.enqueue({ ...failed, missionId: mission.id });
+    queue.transition(done.id, "done");
+    queue.transition(failed.id, "failed");
+    await queue.save();
+
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    expect(result).toBe("mission_completed");
+  });
+
+  test("does not auto-complete when tasks are in progress", async () => {
+    const missionPath = tmpPath("auto-inprog-m");
+    const storePath = tmpPath("auto-inprog");
+    const mission = await createMission("auto-inprog", {}, missionPath);
+    const done = createTask("done task");
+    const acting = createTask("acting task");
+    const queue = new TaskQueue(storePath);
+    queue.enqueue({ ...done, missionId: mission.id });
+    queue.enqueue({ ...acting, missionId: mission.id });
+    queue.transition(done.id, "done");
+    queue.transition(acting.id, "orienting");
+    queue.update(acting.id, { owner: "someone" });
+    await queue.save();
+
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    expect(result).toBe("idle");
+
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("active");
+  });
+
+  test("returns idle when mission has no tasks", async () => {
+    const missionPath = tmpPath("auto-empty-m");
+    const storePath = tmpPath("auto-empty");
+    const mission = await createMission("auto-empty", {}, missionPath);
+    const queue = new TaskQueue(storePath);
+    await queue.save();
+
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath });
+    expect(result).toBe("idle");
+
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("active");
+  });
+});
+
+describe("runMission error handling", () => {
+  test("throws after maxRetries consecutive errors instead of retrying forever", async () => {
+    const missionPath = tmpPath("run-retry-m");
+    const storePath = tmpPath("run-retry");
+    const mission = await createMission("retry-mission", {}, missionPath);
+
+    // Write invalid JSON so iterate always throws on queue.load()
+    await Bun.write(storePath, "invalid json");
+
+    await expect(runMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      maxRetries: 3,
+      retryBaseMs: 1,
+    })).rejects.toThrow(/retry limit.*3/i);
+  });
+
+  test("applies exponential backoff between retries", async () => {
+    const missionPath = tmpPath("run-backoff-m");
+    const storePath = tmpPath("run-backoff");
+    const mission = await createMission("backoff-mission", {}, missionPath);
+    await Bun.write(storePath, "invalid json");
+
+    const start = Date.now();
+    try {
+      await runMission(mission.id, {
+        storePath,
+        missionsPath: missionPath,
+        maxRetries: 4,
+        retryBaseMs: 20,
+      });
+    } catch {
+      // expected
+    }
+    const elapsed = Date.now() - start;
+
+    // Exponential: 20 + 40 + 80 = 140ms total backoff (3 waits before 4th attempt throws)
+    // With constant 20ms: 20 + 20 + 20 = 60ms
+    expect(elapsed).toBeGreaterThanOrEqual(100);
+  });
+
+  test("resets retry counter on successful iteration", async () => {
+    const missionPath = tmpPath("run-reset-m");
+    const storePath = tmpPath("run-reset");
+    const mission = await createMission("reset-mission", {}, missionPath);
+
+    // Set up valid store with a processable task and an in-progress task
+    // (in-progress task prevents auto-complete after the first task finishes)
+    const task = createTask("succeed once");
+    const inProgress = createTask("in progress");
+    const queue = new TaskQueue(storePath);
+    queue.enqueue({ ...task, missionId: mission.id });
+    queue.enqueue({ ...inProgress, missionId: mission.id });
+    queue.transition(inProgress.id, "orienting");
+    queue.update(inProgress.id, { owner: "other-agent" });
+    await queue.save();
+
+    // After first iterate processes the task, corrupt the store for subsequent calls.
+    const corruptAfter = 50;
+    setTimeout(async () => {
+      await Bun.write(storePath, "invalid json");
+    }, corruptAfter);
+
+    // maxRetries=2 means it tolerates 2 consecutive errors.
+    // If the counter weren't reset after the first success, it would only tolerate 1 more.
+    // Since we corrupt after success, the counter should restart from 0.
+    await expect(runMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      maxRetries: 2,
+      retryBaseMs: 1,
+      pollIntervalMs: 10,
+      idleTimeoutMs: 500,
+    })).rejects.toThrow(/retry limit.*2/i);
+  });
+
+  test("includes last error message in the thrown error", async () => {
+    const missionPath = tmpPath("run-errmsg-m");
+    const storePath = tmpPath("run-errmsg");
+    const mission = await createMission("errmsg-mission", {}, missionPath);
+    await Bun.write(storePath, "invalid json");
+
+    await expect(runMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      maxRetries: 1,
+      retryBaseMs: 1,
+    })).rejects.toThrow(/JSON/i);
+  });
+
+  test("uses default maxRetries of 5 when not specified", async () => {
+    const missionPath = tmpPath("run-default-m");
+    const storePath = tmpPath("run-default");
+    const mission = await createMission("default-mission", {}, missionPath);
+    await Bun.write(storePath, "invalid json");
+
+    await expect(runMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      retryBaseMs: 1,
+    })).rejects.toThrow(/retry limit.*5/i);
+  });
+});
+
+describe("iterateMission with spawn", () => {
   test("returns spawned when spawnCommand is provided", async () => {
     const missionPath = tmpPath("iter-spawn-m");
     const storePath = tmpPath("iter-spawn");
@@ -496,7 +693,7 @@ describe("iterate with spawn", () => {
     const task = createTask("spawn iterate task");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
-    const result = await iterate(mission.id, {
+    const result = await iterateMission(mission.id, {
       storePath,
       missionsPath: missionPath,
       spawnCommand: ["echo", "processing"],
@@ -512,7 +709,7 @@ describe("iterate with spawn", () => {
     const queue = new TaskQueue(storePath);
     await queue.save();
 
-    const result = await iterate(mission.id, {
+    const result = await iterateMission(mission.id, {
       storePath,
       missionsPath: missionPath,
       spawnCommand: ["echo"],
@@ -526,7 +723,7 @@ describe("iterate with spawn", () => {
     const mission = await createMission("done-spawn", {}, missionPath);
     await completeMission(mission.id, missionPath);
 
-    const result = await iterate(mission.id, {
+    const result = await iterateMission(mission.id, {
       storePath,
       missionsPath: missionPath,
       spawnCommand: ["echo"],
@@ -546,7 +743,7 @@ describe("iterate with spawn", () => {
     };
     await setupQueue(storePath, [planTask]);
 
-    const result = await iterate(mission.id, {
+    const result = await iterateMission(mission.id, {
       storePath,
       missionsPath: missionPath,
       spawnCommand: ["echo", "should not run"],

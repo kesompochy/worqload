@@ -1,4 +1,4 @@
-import { loadMissions } from "./mission";
+import { loadMissions, completeMission } from "./mission";
 import type { Mission } from "./mission";
 import { TaskQueue } from "./queue";
 import type { Task, OodaPhase } from "./task";
@@ -14,6 +14,8 @@ export interface MissionRunnerOptions {
   missionsPath?: string;
   spawnCommand?: string[];
   spawnsPath?: string;
+  maxRetries?: number;
+  retryBaseMs?: number;
 }
 
 export type IterationResult = "processed" | "idle" | "mission_completed" | "spawned";
@@ -256,7 +258,11 @@ export async function processTask(task: Task, mission: Mission, storePath?: stri
   }
 }
 
-export async function iterate(
+// Per-mission OODA: picks the next unclaimed task for a specific mission and
+// processes or spawns it. Called in a loop by runMission().
+// Contrast with commands/iterate.ts iterate(), which is the queue-wide iteration
+// that surveys all tasks across all missions.
+export async function iterateMission(
   missionId: string,
   options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string } = {},
 ): Promise<IterationResult> {
@@ -267,7 +273,16 @@ export async function iterate(
   await queue.load();
 
   const task = findNextMissionTask(queue, mission.id);
-  if (!task) return "idle";
+  if (!task) {
+    const missionTasks = queue.getByMission(mission.id);
+    const allTerminal = missionTasks.length > 0 &&
+      missionTasks.every(t => t.status === "done" || t.status === "failed");
+    if (allTerminal) {
+      await completeMission(mission.id, options.missionsPath);
+      return "mission_completed";
+    }
+    return "idle";
+  }
 
   if (options.spawnCommand && !isPlanTask(task)) {
     await spawnTask(task, mission, options.spawnCommand, {
@@ -285,6 +300,8 @@ export async function runMission(missionId: string, options: MissionRunnerOption
   const {
     pollIntervalMs = 30_000,
     idleTimeoutMs = 300_000,
+    maxRetries = 5,
+    retryBaseMs = 1000,
     storePath,
     missionsPath,
     spawnCommand,
@@ -298,13 +315,21 @@ export async function runMission(missionId: string, options: MissionRunnerOption
   }
 
   let idleSince: number | null = null;
+  let consecutiveErrors = 0;
+  let lastError: Error | undefined;
 
   while (true) {
     let result: IterationResult;
     try {
-      result = await iterate(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath });
-    } catch {
-      // Transient error (e.g., claim race condition) — retry next iteration
+      result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath });
+      consecutiveErrors = 0;
+    } catch (error) {
+      consecutiveErrors++;
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (consecutiveErrors >= maxRetries) {
+        throw new Error(`Retry limit reached (${maxRetries}): ${lastError.message}`);
+      }
+      await Bun.sleep(retryBaseMs * Math.pow(2, consecutiveErrors - 1));
       continue;
     }
 

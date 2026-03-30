@@ -39,32 +39,35 @@ bun src/cli.ts iterate
 The output tells you what to do next:
 - **waiting_human**: present the listed questions to the user, skip to next iteration
 - **queue empty**: propose next action to the user via `add` + `decide --human`
-- **pending tasks**: spawn agents to process them
+- **mission_run**: start mission runners for listed missions
+- **unassigned**: tasks need a mission assignment before processing
 
 **3. Act on the iteration result**
 
-If `iterate` reports pending tasks, spawn them:
+If `iterate` reports missions to run, start mission runners:
 ```sh
-bun src/cli.ts spawn <id> <command...>
+bun src/cli.ts mission run <mission-id>
 ```
 
-Spawn prompts must instruct agents to write tests first and run `bun test` after implementation.
-Spawn prompts must instruct agents to write report titles and content in Japanese when using `worqload report add`.
+Mission runners autonomously process all tasks assigned to the mission via the OODA loop. Start one runner per mission. Multiple mission runners can run in parallel.
+
+If there are unassigned tasks, assign them to an appropriate mission first:
+```sh
+bun src/cli.ts mission assign <mission-id> <task-id>
+```
 
 If a decision is difficult or architectural:
 ```sh
 bun src/cli.ts decide <id> --human "<question>"
 ```
 
-Multiple independent tasks can be spawned in parallel. The main loop continues checking the queue while spawned agents work.
-
 ### Rules
 
-- Delegate task execution to spawn. The main loop manages the queue, not the work itself.
+- Delegate task execution to mission runners. The main loop manages the queue, not the work itself.
 - Small, incremental changes. Each task = one commit-sized unit of work.
-- Write tests before implementation (TDD). Spawn prompts must instruct agents to write tests first.
-- Reports must be written in Japanese. Spawn prompts must instruct agents to use Japanese for `worqload report add` titles and content.
+- Write tests before implementation (TDD).
+- Reports must be written in Japanese.
 - When uncertain, escalate with `--human`.
-- Spawn independent tasks in parallel when possible.
+- Run independent missions in parallel when possible.
 - `principle` の追加・変更・削除はユーザーの明示的な指示がある場合のみ行う。Agentが独自判断で原則を操作してはならない。
-- Minimal output: Only produce chat output when there is something actionable for the human — a `waiting_human` question or an empty-queue proposal. If all tasks are being handled by spawns and there is nothing new, produce NO output. Status updates like "spawn working, skip" must not be output.
+- Minimal output: Only produce chat output when there is something actionable for the human — a `waiting_human` question or an empty-queue proposal. If all tasks are being handled by mission runners and there is nothing new, produce NO output.
