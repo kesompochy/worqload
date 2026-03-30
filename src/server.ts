@@ -399,8 +399,8 @@ function Heartbeat({ heartbeat, sleepState, onUpdate }) {
 
   return html\`<span style="display:inline-flex;align-items:center;gap:0.5rem">
     \${heartbeatText}
-    <input type="number" value=\${minutes} min="1" style="width:3.5rem;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.2rem 0.3rem;color:#e0e0e0;font-size:0.75rem;text-align:center"
-      onChange=\${(e) => setMinutes(Number(e.target.value) || 1)} />
+    <input type="number" value=\${minutes} min="1" placeholder="20" style="width:3.5rem;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.2rem 0.3rem;color:#e0e0e0;font-size:0.75rem;text-align:center"
+      onChange=\${(e) => setMinutes(Number(e.target.value) || 1)} /><span style="font-size:0.75rem;color:#888">min</span>
     <button style="font-size:0.7rem;padding:0.2rem 0.5rem" onClick=\${pause}>Pause</button>
   </span>\`;
 }
