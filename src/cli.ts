@@ -6,6 +6,7 @@ import { loadSources, addSource, removeSource, runAllSources } from "./sources";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
 import { createWorktree, removeWorktree, mergeWorktreeBranch } from "./worktree";
 import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from "./feedback";
+import { loadProjects, registerProject, removeProject } from "./projects";
 
 const queue = new TaskQueue();
 await queue.load();
@@ -363,6 +364,41 @@ switch (command) {
     break;
   }
 
+  case "project": {
+    if (args[0] === "register") {
+      const projectPath = args[1] || process.cwd();
+      let name: string | undefined;
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === "--name" && i + 1 < args.length) {
+          name = args[i + 1];
+          break;
+        }
+      }
+      const project = await registerProject(projectPath, name);
+      console.log(`Registered: ${project.name} → ${project.path}`);
+      break;
+    }
+    if (args[0] === "remove") {
+      if (!args[1]) {
+        console.error("Usage: worqload project remove <name>");
+        process.exit(1);
+      }
+      await removeProject(args[1]);
+      console.log(`Removed: ${args[1]}`);
+      break;
+    }
+    const projects = await loadProjects();
+    if (projects.length === 0) {
+      console.log("No projects registered.");
+      console.log("Usage: worqload project register [path] [--name N]");
+      break;
+    }
+    for (const p of projects) {
+      console.log(`  ${p.name}: ${p.path}`);
+    }
+    break;
+  }
+
   case "feedback": {
     if (args[0] === "list") {
       const items = await loadFeedback();
@@ -488,6 +524,11 @@ Tasks:
   spawn <id> [owner]             Spawn a Claude agent to process a task
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)
+
+Projects:
+  project                                List registered projects
+  project register [path] [--name N]     Register a project (default: cwd)
+  project remove <name>                  Remove a project
 
 Feedback:
   feedback <message> [--from <sender>]  Send feedback

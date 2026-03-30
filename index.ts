@@ -11,3 +11,5 @@ export { loadSpawns, recordSpawnStart, recordSpawnFinish } from "./src/spawns";
 export type { SpawnRecord } from "./src/spawns";
 export { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from "./src/feedback";
 export type { Feedback, FeedbackStatus } from "./src/feedback";
+export { loadProjects, registerProject, removeProject } from "./src/projects";
+export type { Project } from "./src/projects";

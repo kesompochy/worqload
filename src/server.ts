@@ -3,6 +3,7 @@ import { createTask } from "./task";
 import { loadPrinciples } from "./principles";
 import { loadSpawns } from "./spawns";
 import { loadFeedback, addFeedback } from "./feedback";
+import { loadProjects } from "./projects";
 
 export function startServer(basePort = 3456): void {
   const queue = new TaskQueue();
@@ -45,6 +46,19 @@ export function startServer(basePort = 3456): void {
       if (req.method === "GET" && url.pathname === "/api/spawns") {
         const spawns = await loadSpawns();
         return json(spawns);
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/projects") {
+        const projects = await loadProjects();
+        const result = [];
+        for (const p of projects) {
+          const tasksFile = Bun.file(p.path + "/.worqload/tasks.json");
+          const feedbackFile = Bun.file(p.path + "/.worqload/feedback.json");
+          const tasks = (await tasksFile.exists()) ? await tasksFile.json() : [];
+          const feedback = (await feedbackFile.exists()) ? await feedbackFile.json() : [];
+          result.push({ ...p, tasks, feedback });
+        }
+        return json(result);
       }
 
       if (req.method === "GET" && url.pathname === "/api/feedback") {
