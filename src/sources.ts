@@ -10,34 +10,34 @@ export interface SourceResult {
   exitCode: number;
 }
 
-const SOURCES_PATH = ".worqload/sources.json";
+const DEFAULT_SOURCES_PATH = ".worqload/sources.json";
 
-export async function loadSources(): Promise<Source[]> {
-  const file = Bun.file(SOURCES_PATH);
+export async function loadSources(path: string = DEFAULT_SOURCES_PATH): Promise<Source[]> {
+  const file = Bun.file(path);
   if (!(await file.exists())) return [];
   return await file.json();
 }
 
-export async function saveSources(sources: Source[]): Promise<void> {
-  await Bun.write(SOURCES_PATH, JSON.stringify(sources, null, 2));
+export async function saveSources(sources: Source[], path: string = DEFAULT_SOURCES_PATH): Promise<void> {
+  await Bun.write(path, JSON.stringify(sources, null, 2));
 }
 
-export async function addSource(source: Source): Promise<void> {
-  const sources = await loadSources();
+export async function addSource(source: Source, path: string = DEFAULT_SOURCES_PATH): Promise<void> {
+  const sources = await loadSources(path);
   if (sources.some(s => s.name === source.name)) {
     throw new Error(`Source already exists: ${source.name}`);
   }
   sources.push(source);
-  await saveSources(sources);
+  await saveSources(sources, path);
 }
 
-export async function removeSource(name: string): Promise<void> {
-  const sources = await loadSources();
+export async function removeSource(name: string, path: string = DEFAULT_SOURCES_PATH): Promise<void> {
+  const sources = await loadSources(path);
   const filtered = sources.filter(s => s.name !== name);
   if (filtered.length === sources.length) {
     throw new Error(`Source not found: ${name}`);
   }
-  await saveSources(filtered);
+  await saveSources(filtered, path);
 }
 
 export async function runSource(source: Source): Promise<SourceResult> {
@@ -55,8 +55,8 @@ export async function runSource(source: Source): Promise<SourceResult> {
   };
 }
 
-export async function runAllSources(): Promise<SourceResult[]> {
-  const sources = await loadSources();
+export async function runAllSources(path: string = DEFAULT_SOURCES_PATH): Promise<SourceResult[]> {
+  const sources = await loadSources(path);
   const results: SourceResult[] = [];
   for (const source of sources) {
     results.push(await runSource(source));
