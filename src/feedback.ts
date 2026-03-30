@@ -48,3 +48,36 @@ export async function updateFeedbackMessage(id: string, message: string, path: s
 export async function removeFeedback(id: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
   await store.remove(id, path);
 }
+
+export interface FeedbackSummary {
+  counts: Record<FeedbackStatus, number>;
+  recentUnresolved: Feedback[];
+  themes: string[];
+}
+
+export function summarizeFeedback(items: Feedback[]): FeedbackSummary {
+  const counts: Record<FeedbackStatus, number> = { new: 0, acknowledged: 0, resolved: 0 };
+  for (const item of items) {
+    counts[item.status]++;
+  }
+
+  const unresolved = items
+    .filter((f) => f.status !== "resolved")
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const recentUnresolved = unresolved.slice(0, 5);
+
+  const themes: string[] = [];
+  const bySender = new Map<string, Feedback[]>();
+  for (const item of unresolved) {
+    const group = bySender.get(item.from) || [];
+    group.push(item);
+    bySender.set(item.from, group);
+  }
+  for (const [sender, group] of bySender) {
+    if (group.length >= 3) {
+      themes.push(`${sender} から未解決フィードバックが ${group.length} 件`);
+    }
+  }
+
+  return { counts, recentUnresolved, themes };
+}

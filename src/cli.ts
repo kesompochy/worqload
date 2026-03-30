@@ -11,6 +11,7 @@ import { source } from "./commands/source";
 import { heartbeat, serve, sleep, wake } from "./commands/serve";
 import { report } from "./commands/report";
 import { mission } from "./commands/mission";
+import { resume } from "./commands/resume";
 
 type CommandHandler = (queue: TaskQueueType, args: string[]) => Promise<void>;
 
@@ -25,6 +26,7 @@ const commands: Record<string, CommandHandler> = {
   source,
   report,
   mission,
+  resume,
   heartbeat, serve, sleep, wake,
 };
 
@@ -68,6 +70,7 @@ Tasks:
   spawn <id> <command...>        Spawn a process to handle a task
   spawn-cleanup                  Clean up stuck spawned tasks
   init [path] [--name N]         Initialize worqload in a project
+  resume                         Show session resume state
   serve [port]                   Start web UI (default: 3456)
   heartbeat [seconds]            Record loop heartbeat (default: 300s)
   sleep [minutes]                Pause the loop (show status if no arg)

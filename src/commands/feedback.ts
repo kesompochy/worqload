@@ -1,10 +1,29 @@
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from "../feedback";
+import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback, summarizeFeedback } from "../feedback";
 import { parseFlags } from "../utils/args";
 import { SHORT_ID_LENGTH } from "../task";
 
 export async function feedback(_queue: TaskQueue, args: string[]) {
+  if (args[0] === "summary") {
+    const items = await loadFeedback();
+    const summary = summarizeFeedback(items);
+    console.log("--- Feedback Summary ---");
+    console.log(`new: ${summary.counts.new}  acknowledged: ${summary.counts.acknowledged}  resolved: ${summary.counts.resolved}`);
+    if (summary.recentUnresolved.length > 0) {
+      console.log("\nRecent unresolved:");
+      for (const f of summary.recentUnresolved) {
+        console.log(`  [${f.status}] ${f.message} (from: ${f.from})`);
+      }
+    }
+    if (summary.themes.length > 0) {
+      console.log("\nThemes:");
+      for (const t of summary.themes) {
+        console.log(`  - ${t}`);
+      }
+    }
+    return;
+  }
   if (args[0] === "list") {
     const items = await loadFeedback();
     if (items.length === 0) {

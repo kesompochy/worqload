@@ -83,3 +83,46 @@ test("updateFeedbackMessage throws for unknown id", async () => {
   const path = tmpPath();
   expect(updateFeedbackMessage("nonexistent", "msg", path)).rejects.toThrow("Feedback not found");
 });
+
+test("summarizeFeedback returns zero counts for empty feedback", async () => {
+  const summary = summarizeFeedback([]);
+  expect(summary.counts).toEqual({ new: 0, acknowledged: 0, resolved: 0 });
+  expect(summary.recentUnresolved).toEqual([]);
+  expect(summary.themes).toEqual([]);
+});
+
+test("summarizeFeedback counts by status", async () => {
+  const path = tmpPath();
+  await addFeedback("msg1", "user1", path);
+  await addFeedback("msg2", "user2", path);
+  const items = await loadFeedback(path);
+  items[1].status = "acknowledged";
+  const summary = summarizeFeedback(items);
+  expect(summary.counts).toEqual({ new: 1, acknowledged: 1, resolved: 0 });
+});
+
+test("summarizeFeedback returns up to 5 recent unresolved items", async () => {
+  const path = tmpPath();
+  for (let i = 0; i < 7; i++) {
+    await addFeedback(`msg${i}`, "user1", path);
+  }
+  const items = await loadFeedback(path);
+  // resolve one
+  items[0].status = "resolved";
+  const summary = summarizeFeedback(items);
+  // 6 unresolved, but only 5 returned (most recent first)
+  expect(summary.recentUnresolved).toHaveLength(5);
+  expect(summary.recentUnresolved[0].message).toBe("msg6");
+});
+
+test("summarizeFeedback detects repeated themes from same sender", async () => {
+  const path = tmpPath();
+  await addFeedback("UI is slow", "alice", path);
+  await addFeedback("UI loading is slow", "alice", path);
+  await addFeedback("UI performance is slow", "alice", path);
+  const items = await loadFeedback(path);
+  const summary = summarizeFeedback(items);
+  // Repeated sender with 3+ items is a theme
+  expect(summary.themes.length).toBeGreaterThanOrEqual(1);
+  expect(summary.themes[0]).toContain("alice");
+});
