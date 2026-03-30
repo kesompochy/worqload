@@ -502,7 +502,8 @@ function FeedbackSection({ projects, onSend }) {
 
   return html\`<div style="margin-bottom:1rem">
     <h2 style="margin-top:0">Feedback</h2>
-    <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem">
+    <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;align-items:center">
+      <span style="font-size:0.75rem;color:#888;white-space:nowrap">To:</span>
       <select style="background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.4rem;color:#e0e0e0;font-size:0.85rem"
         value=\${selectedProject} onChange=\${(e) => setSelectedProject(e.target.value)}>
         \${projects.map(p => html\`<option key=\${p.name} value=\${p.name}>\${p.name}</option>\`)}
