@@ -4,6 +4,13 @@ import { load, save, loadArchive, appendArchive } from "./store";
 
 export class TaskQueue {
   private tasks: Map<string, Task> = new Map();
+  private storePath?: string;
+  private archivePath?: string;
+
+  constructor(storePath?: string, archivePath?: string) {
+    this.storePath = storePath;
+    this.archivePath = archivePath;
+  }
 
   enqueue(task: Task): void {
     this.tasks.set(task.id, task);
@@ -84,14 +91,14 @@ export class TaskQueue {
   }
 
   async load(): Promise<void> {
-    const tasks = await load();
+    const tasks = await load(this.storePath);
     for (const task of tasks) {
       this.tasks.set(task.id, task);
     }
   }
 
   async save(): Promise<void> {
-    await save(this.list());
+    await save(this.list(), this.storePath);
   }
 
   async archive(ids: string[]): Promise<Task[]> {
@@ -104,13 +111,13 @@ export class TaskQueue {
       }
     }
     if (archived.length > 0) {
-      await appendArchive(archived);
-      await save(this.list());
+      await appendArchive(archived, this.archivePath);
+      await save(this.list(), this.storePath);
     }
     return archived;
   }
 
   async history(): Promise<Task[]> {
-    return await loadArchive();
+    return await loadArchive(this.archivePath);
   }
 }

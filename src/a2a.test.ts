@@ -1,4 +1,6 @@
 import { test, expect, describe } from "bun:test";
+import { tmpdir } from "os";
+import { join } from "path";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import {
@@ -8,6 +10,10 @@ import {
   handleA2ARequest,
 } from "./a2a";
 import type { A2ATask, JsonRpcResponse } from "./a2a";
+
+function tmpStorePath(): string {
+  return join(tmpdir(), `worqload-a2a-test-${crypto.randomUUID()}.json`);
+}
 
 describe("toA2AState", () => {
   test("maps pending to submitted", () => {
@@ -119,7 +125,7 @@ describe("generateAgentCard", () => {
 
 describe("handleA2ARequest", () => {
   function makeQueue(): TaskQueue {
-    return new TaskQueue();
+    return new TaskQueue(tmpStorePath());
   }
 
   function rpc(method: string, params: Record<string, unknown> = {}) {
