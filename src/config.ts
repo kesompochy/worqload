@@ -5,8 +5,14 @@ export interface SpawnHooks {
   post?: string[];
 }
 
+export interface InitConfig {
+  agentPath?: string;
+  agentTemplate?: string;
+}
+
 export interface WorkqloadConfig {
   spawn?: SpawnHooks;
+  init?: InitConfig;
 }
 
 export async function loadConfig(path: string = DEFAULT_CONFIG_PATH): Promise<WorkqloadConfig> {
