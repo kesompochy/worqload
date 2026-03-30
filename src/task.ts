@@ -1,4 +1,4 @@
-export type TaskStatus = "pending" | "observing" | "orienting" | "deciding" | "waiting_human" | "acting" | "done" | "failed";
+export type TaskStatus = "observing" | "orienting" | "deciding" | "waiting_human" | "acting" | "done" | "failed";
 
 export const SHORT_ID_LENGTH = 8;
 
@@ -25,14 +25,13 @@ export interface Task {
 }
 
 const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
-  pending: ["observing", "done", "failed"],
   observing: ["orienting", "done", "failed"],
   orienting: ["deciding", "waiting_human", "done", "failed"],
   deciding: ["acting", "waiting_human", "done", "failed"],
   waiting_human: ["deciding", "done", "failed"],
   acting: ["done", "failed"],
   done: [],
-  failed: ["pending"],
+  failed: ["observing"],
 };
 
 export function validateTransition(from: TaskStatus, to: TaskStatus): void {
@@ -61,7 +60,7 @@ export function createTask(title: string, context: Record<string, unknown> = {},
   return {
     id: crypto.randomUUID(),
     title: trimmed,
-    status: "pending",
+    status: "observing",
     priority,
     ...(createdBy !== undefined && { createdBy }),
     context,

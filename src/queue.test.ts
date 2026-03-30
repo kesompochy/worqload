@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 
-test("dequeue returns first pending task", () => {
+test("dequeue returns first observing task", () => {
   const queue = new TaskQueue();
   const task1 = createTask("task 1");
   const task2 = createTask("task 2");
@@ -13,10 +13,10 @@ test("dequeue returns first pending task", () => {
   expect(dequeued?.id).toBe(task1.id);
 });
 
-test("dequeue skips non-pending tasks", () => {
+test("dequeue skips non-observing tasks", () => {
   const queue = new TaskQueue();
   const task1 = createTask("done task");
-  const task2 = createTask("pending task");
+  const task2 = createTask("observing task");
   queue.enqueue(task1);
   queue.enqueue(task2);
   queue.update(task1.id, { status: "done" });
@@ -25,7 +25,7 @@ test("dequeue skips non-pending tasks", () => {
   expect(dequeued?.id).toBe(task2.id);
 });
 
-test("dequeue returns undefined when no pending tasks", () => {
+test("dequeue returns undefined when no observing tasks", () => {
   const queue = new TaskQueue();
   const task = createTask("done task");
   queue.enqueue(task);
@@ -119,8 +119,8 @@ test("transition changes status for valid transition", () => {
   const task = createTask("transition task");
   queue.enqueue(task);
 
-  const updated = queue.transition(task.id, "observing");
-  expect(updated?.status).toBe("observing");
+  const updated = queue.transition(task.id, "orienting");
+  expect(updated?.status).toBe("orienting");
 });
 
 test("transition throws on invalid transition", () => {
@@ -128,7 +128,7 @@ test("transition throws on invalid transition", () => {
   const task = createTask("invalid transition");
   queue.enqueue(task);
 
-  expect(() => queue.transition(task.id, "acting")).toThrow("Invalid status transition: pending → acting");
+  expect(() => queue.transition(task.id, "acting")).toThrow("Invalid status transition: observing → acting");
 });
 
 test("transition returns undefined for non-existent id", () => {
@@ -136,7 +136,7 @@ test("transition returns undefined for non-existent id", () => {
   expect(queue.transition("non-existent", "observing")).toBeUndefined();
 });
 
-test("dequeue returns highest priority pending task", () => {
+test("dequeue returns highest priority observing task", () => {
   const queue = new TaskQueue();
   const low = createTask("low priority", {}, 1);
   const high = createTask("high priority", {}, 10);
@@ -173,7 +173,7 @@ test("createTask omits createdBy when not provided", () => {
   expect(task.createdBy).toBeUndefined();
 });
 
-test("claim sets owner on pending task", () => {
+test("claim sets owner on observing task", () => {
   const queue = new TaskQueue();
   const task = createTask("claimable");
   queue.enqueue(task);
@@ -182,11 +182,11 @@ test("claim sets owner on pending task", () => {
   expect(claimed?.owner).toBe("agent-1");
 });
 
-test("claim throws if task is not pending", () => {
+test("claim throws if task is not observing", () => {
   const queue = new TaskQueue();
-  const task = createTask("not pending");
+  const task = createTask("not observing");
   queue.enqueue(task);
-  queue.transition(task.id, "observing");
+  queue.transition(task.id, "orienting");
 
   expect(() => queue.claim(task.id, "agent-1")).toThrow("Cannot claim");
 });

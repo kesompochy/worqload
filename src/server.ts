@@ -239,7 +239,7 @@ export function startServer(basePort = 3456): void {
         return withTask(queue, retryMatch[1], async (task) => {
           if (task.status !== "failed") return json(NOT_FAILED, 400);
           queue.addLog(task.id, "act", "[RETRY]");
-          queue.transition(task.id, "pending");
+          queue.transition(task.id, "observing");
           await queue.save();
           return json(queue.get(task.id));
         });
@@ -339,7 +339,6 @@ function html(): string {
   .column-header .count { font-size: 0.7rem; font-weight: 400; color: #666; background: #1a1a1a; padding: 0.1rem 0.4rem; border-radius: 3px; }
   .column-body { padding: 0.5rem; flex: 1; overflow-y: auto; }
 
-  .col-pending .column-header { color: #6c7aed; border-bottom-color: #2a2a4a; }
   .col-observe .column-header { color: #6aed6c; border-bottom-color: #2a4a2a; }
   .col-orient .column-header { color: #6aed6c; border-bottom-color: #2a4a2a; }
   .col-decide .column-header { color: #edd76c; border-bottom-color: #4a4a2a; }
@@ -394,7 +393,6 @@ marked.setOptions({ breaks: true, gfm: true });
 const html = htm.bind(h);
 
 const COLUMNS = [
-  { key: 'pending', label: 'Pending', statuses: ['pending'] },
   { key: 'observe', label: 'Observe', statuses: ['observing'] },
   { key: 'orient', label: 'Orient', statuses: ['orienting'] },
   { key: 'decide', label: 'Decide', statuses: ['deciding', 'waiting_human'] },

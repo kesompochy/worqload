@@ -6,7 +6,7 @@ test("createTask returns a valid task with defaults", () => {
   const task = createTask("do something");
 
   expect(task.title).toBe("do something");
-  expect(task.status).toBe("pending");
+  expect(task.status).toBe("observing");
   expect(task.priority).toBe(0);
   expect(task.context).toEqual({});
   expect(task.logs).toEqual([]);
@@ -34,8 +34,6 @@ test("createTask accepts custom priority, context, and createdBy", () => {
 
 test("validateTransition allows valid transitions", () => {
   const valid: [TaskStatus, TaskStatus][] = [
-    ["pending", "observing"],
-    ["pending", "failed"],
     ["observing", "orienting"],
     ["orienting", "deciding"],
     ["orienting", "waiting_human"],
@@ -44,7 +42,7 @@ test("validateTransition allows valid transitions", () => {
     ["waiting_human", "deciding"],
     ["acting", "done"],
     ["acting", "failed"],
-    ["failed", "pending"],
+    ["failed", "observing"],
   ];
 
   for (const [from, to] of valid) {
@@ -54,8 +52,7 @@ test("validateTransition allows valid transitions", () => {
 
 test("validateTransition rejects invalid transitions", () => {
   const invalid: [TaskStatus, TaskStatus][] = [
-    ["pending", "acting"],
-    ["done", "pending"],
+    ["done", "observing"],
     ["done", "failed"],
     ["acting", "observing"],
     ["failed", "done"],

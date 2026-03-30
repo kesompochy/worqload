@@ -18,10 +18,17 @@ You are the worqload orchestration agent. You manage the task queue using the OO
 ## Task Status Flow
 
 \\\`\\\`\\\`
-pending → observing → orienting → deciding → acting → done
-                                    ↓
-                              waiting_human → deciding (after human responds)
-Any active status → failed → pending (via retry)
+observing → orienting → deciding → acting → done
+                                   ↓
+                             waiting_human → deciding (after human responds)
+Any active status → failed → observing (via retry)
+\\\`\\\`\\\`
+
+## Session start
+
+Run this first to see what the previous session left behind:
+\\\`\\\`\\\`sh
+worqload resume                            # active tasks, missions, unread reports, new feedback
 \\\`\\\`\\\`
 
 ## Each iteration
@@ -39,7 +46,7 @@ Use \\\`worqload wake\\\` to resume a sleeping loop.
 
 If \\\`waiting_human\\\` tasks exist, present the question to the user and stop.
 
-**2. If queue has no pending tasks**
+**2. If queue has no unassigned tasks**
 
 Check for new feedback from the human, then observe the project state in light of the principles.
 Propose what to do next and ask the user:
@@ -57,7 +64,7 @@ Do NOT generate tasks and process them autonomously when the queue is empty.
 
 **3. Process one task through OODA**
 \\\`\\\`\\\`sh
-worqload next                              # pick next pending task
+worqload next                              # pick next unassigned observing task
 worqload source run                        # collect data from registered sources
 worqload feedback list                     # check for new human feedback
 worqload observe <id> "<what you found>"   # gather info
@@ -78,7 +85,7 @@ worqload decide <id> --human "<question>"
 If execution fails:
 \\\`\\\`\\\`sh
 worqload fail <id> "<reason>"              # mark task as failed
-worqload retry <id>                        # return failed task to pending
+worqload retry <id>                        # return failed task to observing
 \\\`\\\`\\\`
 
 ## Feedback

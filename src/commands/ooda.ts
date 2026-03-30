@@ -83,7 +83,7 @@ export async function fail(queue: TaskQueue, args: string[]) {
 export async function retry(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
   queue.addLog(task.id, "act", "[RETRY]");
-  queue.transition(task.id, "pending");
+  queue.transition(task.id, "observing");
   await queue.save();
   console.log(`Retrying: ${task.title}`);
 }

@@ -60,7 +60,7 @@ Principles:
 Tasks:
   add <title> [--priority N] [--by <creator>]  Add a new task
   list [status]                  List tasks (optionally filter by status)
-  next                           Show next pending task
+  next                           Show next unassigned observing task
   clean                          Archive done/failed tasks
   history                        List archived tasks
   show <id>                      Show task details with logs

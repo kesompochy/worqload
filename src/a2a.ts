@@ -122,7 +122,6 @@ const TASK_NOT_CANCELABLE = -32002;
 
 // State mapping: worqload → A2A
 const STATE_MAP: Record<TaskStatus, A2ATaskState> = {
-  pending: "submitted",
   observing: "working",
   orienting: "working",
   deciding: "working",

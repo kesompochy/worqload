@@ -40,7 +40,6 @@ export async function spawn(queue: TaskQueue, args: string[]) {
 
   const owner = commandArgs.join(" ").slice(0, 50);
   queue.claim(task.id, owner);
-  queue.transition(task.id, "observing");
   await queue.save();
 
   const config = await loadConfig();

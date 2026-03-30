@@ -25,7 +25,7 @@ export async function add(queue: TaskQueue, args: string[]) {
 }
 
 export async function list(queue: TaskQueue, args: string[]) {
-  const validStatuses: TaskStatus[] = ["pending", "observing", "orienting", "deciding", "waiting_human", "acting", "done", "failed"];
+  const validStatuses: TaskStatus[] = ["observing", "orienting", "deciding", "waiting_human", "acting", "done", "failed"];
   const statusFilter = args[0] as TaskStatus | undefined;
   if (statusFilter && !validStatuses.includes(statusFilter)) {
     exitWithError(`Invalid status: ${statusFilter}\nValid statuses: ${validStatuses.join(", ")}`);
@@ -73,7 +73,7 @@ export async function context(queue: TaskQueue, args: string[]) {
 export async function next(queue: TaskQueue, _args: string[]) {
   const task = queue.dequeue();
   if (!task) {
-    console.log("No pending tasks.");
+    console.log("No tasks in queue.");
     return;
   }
   console.log(JSON.stringify(task, null, 2));

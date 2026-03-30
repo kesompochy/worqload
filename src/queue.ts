@@ -19,7 +19,7 @@ export class TaskQueue {
   dequeue(): Task | undefined {
     let best: Task | undefined;
     for (const [, task] of this.tasks) {
-      if (task.status !== "pending") continue;
+      if (task.status !== "observing") continue;
       if (task.owner) continue;
       if (!best || task.priority > best.priority || (task.priority === best.priority && task.createdAt < best.createdAt)) {
         best = task;
@@ -57,8 +57,8 @@ export class TaskQueue {
   claim(id: string, owner: string): Task | undefined {
     const task = this.tasks.get(id);
     if (!task) return undefined;
-    if (task.status !== "pending") {
-      throw new Error(`Cannot claim: task is ${task.status}, expected pending`);
+    if (task.status !== "observing") {
+      throw new Error(`Cannot claim: task is ${task.status}, expected observing`);
     }
     if (task.owner) {
       throw new Error(`Task already claimed by ${task.owner}`);

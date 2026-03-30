@@ -9,7 +9,6 @@ import type { Feedback } from "./feedback";
 import { loadFeedback } from "./feedback";
 
 export interface ResumeState {
-  pendingTasks: Task[];
   activeTasks: Task[];
   waitingHumanTasks: Task[];
   activeMissions: Mission[];
@@ -35,7 +34,6 @@ export async function collectResumeState(queue: TaskQueue, options: ResumeOption
   ]);
 
   return {
-    pendingTasks: tasks.filter(t => t.status === "pending"),
     activeTasks: tasks.filter(t => ACTIVE_STATUSES.has(t.status)),
     waitingHumanTasks: tasks.filter(t => t.status === "waiting_human"),
     activeMissions: missions.filter(m => m.status === "active"),
@@ -45,10 +43,9 @@ export async function collectResumeState(queue: TaskQueue, options: ResumeOption
 }
 
 export function formatResumeSummary(state: ResumeState): string {
-  const { pendingTasks, activeTasks, waitingHumanTasks, activeMissions, unreadReports, newFeedback } = state;
+  const { activeTasks, waitingHumanTasks, activeMissions, unreadReports, newFeedback } = state;
 
-  const hasAnything = pendingTasks.length > 0
-    || activeTasks.length > 0
+  const hasAnything = activeTasks.length > 0
     || waitingHumanTasks.length > 0
     || activeMissions.length > 0
     || unreadReports.length > 0
@@ -71,10 +68,6 @@ export function formatResumeSummary(state: ResumeState): string {
 
   if (activeTasks.length > 0) {
     sections.push(formatTaskSection("Active tasks", activeTasks));
-  }
-
-  if (pendingTasks.length > 0) {
-    sections.push(formatTaskSection("Pending tasks", pendingTasks));
   }
 
   if (activeMissions.length > 0) {

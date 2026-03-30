@@ -23,28 +23,11 @@ describe("collectResumeState", () => {
       feedbackPath: tmpPath("feedback"),
     });
 
-    expect(state.pendingTasks).toEqual([]);
     expect(state.activeTasks).toEqual([]);
     expect(state.waitingHumanTasks).toEqual([]);
     expect(state.activeMissions).toEqual([]);
     expect(state.unreadReports).toEqual([]);
     expect(state.newFeedback).toEqual([]);
-  });
-
-  test("collects pending tasks", async () => {
-    const storePath = tmpPath("tasks");
-    const queue = new TaskQueue(storePath, tmpPath("archive"));
-    queue.enqueue(createTask("Task A"));
-    queue.enqueue(createTask("Task B"));
-    await queue.save();
-
-    const state = await collectResumeState(queue, {
-      missionsPath: tmpPath("missions"),
-      reportsPath: tmpPath("reports"),
-      feedbackPath: tmpPath("feedback"),
-    });
-
-    expect(state.pendingTasks).toHaveLength(2);
   });
 
   test("collects active tasks (observing/orienting/deciding/acting)", async () => {
@@ -53,8 +36,6 @@ describe("collectResumeState", () => {
     const t2 = createTask("Acting task");
     queue.enqueue(t1);
     queue.enqueue(t2);
-    queue.transition(t1.id, "observing");
-    queue.transition(t2.id, "observing");
     queue.transition(t2.id, "orienting");
     queue.transition(t2.id, "deciding");
     queue.transition(t2.id, "acting");
@@ -72,7 +53,6 @@ describe("collectResumeState", () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const t = createTask("Needs human");
     queue.enqueue(t);
-    queue.transition(t.id, "observing");
     queue.transition(t.id, "orienting");
     queue.transition(t.id, "deciding");
     queue.transition(t.id, "waiting_human");
@@ -153,7 +133,7 @@ describe("collectResumeState", () => {
 describe("formatResumeSummary", () => {
   test("shows 'nothing to resume' when state is empty", () => {
     const summary = formatResumeSummary({
-      pendingTasks: [],
+
       activeTasks: [],
       waitingHumanTasks: [],
       activeMissions: [],
@@ -164,25 +144,10 @@ describe("formatResumeSummary", () => {
     expect(summary).toContain("Nothing to resume");
   });
 
-  test("includes pending tasks section", () => {
-    const task = createTask("Fix bug");
-    const summary = formatResumeSummary({
-      pendingTasks: [task],
-      activeTasks: [],
-      waitingHumanTasks: [],
-      activeMissions: [],
-      unreadReports: [],
-      newFeedback: [],
-    });
-
-    expect(summary).toContain("Pending");
-    expect(summary).toContain("Fix bug");
-  });
-
   test("includes waiting_human tasks section", () => {
     const task = createTask("Needs decision");
     const summary = formatResumeSummary({
-      pendingTasks: [],
+
       activeTasks: [],
       waitingHumanTasks: [task],
       activeMissions: [],
@@ -197,7 +162,7 @@ describe("formatResumeSummary", () => {
   test("includes active tasks section", () => {
     const task = createTask("In progress");
     const summary = formatResumeSummary({
-      pendingTasks: [],
+
       activeTasks: [task],
       waitingHumanTasks: [],
       activeMissions: [],
@@ -211,7 +176,7 @@ describe("formatResumeSummary", () => {
 
   test("includes missions section", () => {
     const summary = formatResumeSummary({
-      pendingTasks: [],
+
       activeTasks: [],
       waitingHumanTasks: [],
       activeMissions: [{ id: "m1", name: "Ship v2", filter: {}, principles: [], status: "active", createdAt: "" }],
@@ -225,7 +190,7 @@ describe("formatResumeSummary", () => {
 
   test("includes unread reports section", () => {
     const summary = formatResumeSummary({
-      pendingTasks: [],
+
       activeTasks: [],
       waitingHumanTasks: [],
       activeMissions: [],
@@ -239,7 +204,7 @@ describe("formatResumeSummary", () => {
 
   test("includes new feedback section", () => {
     const summary = formatResumeSummary({
-      pendingTasks: [],
+
       activeTasks: [],
       waitingHumanTasks: [],
       activeMissions: [],
@@ -253,7 +218,6 @@ describe("formatResumeSummary", () => {
 
   test("combines all sections", () => {
     const summary = formatResumeSummary({
-      pendingTasks: [createTask("Task A")],
       activeTasks: [createTask("Task B")],
       waitingHumanTasks: [createTask("Task C")],
       activeMissions: [{ id: "m1", name: "Mission X", filter: {}, principles: [], status: "active", createdAt: "" }],
@@ -261,7 +225,6 @@ describe("formatResumeSummary", () => {
       newFeedback: [{ id: "f1", from: "user", message: "Feedback Z", status: "new", createdAt: "" }],
     });
 
-    expect(summary).toContain("Task A");
     expect(summary).toContain("Task B");
     expect(summary).toContain("Task C");
     expect(summary).toContain("Mission X");

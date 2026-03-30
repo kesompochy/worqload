@@ -32,10 +32,6 @@ function tmpStorePath(): string {
 }
 
 describe("toA2AState", () => {
-  test("maps pending to submitted", () => {
-    expect(toA2AState("pending")).toBe("submitted");
-  });
-
   test("maps OODA phases to working", () => {
     expect(toA2AState("observing")).toBe("working");
     expect(toA2AState("orienting")).toBe("working");
@@ -64,7 +60,7 @@ describe("toA2ATask", () => {
     expect(a2a.kind).toBe("task");
     expect(a2a.id).toBe(task.id);
     expect(a2a.context_id).toBe(task.id);
-    expect(a2a.status.state).toBe("submitted");
+    expect(a2a.status.state).toBe("working");
     expect(a2a.status.timestamp).toBe(task.updatedAt);
   });
 
@@ -194,7 +190,7 @@ describe("handleA2ARequest", () => {
       expect(res.error).toBeUndefined();
       const task = res.result as A2ATask;
       expect(task.kind).toBe("task");
-      expect(task.status.state).toBe("submitted");
+      expect(task.status.state).toBe("working");
       expect(task.id).toBeDefined();
 
       const worqloadTask = queue.get(task.id);
@@ -239,7 +235,6 @@ describe("handleA2ARequest", () => {
       const queue = makeQueue();
       const task = createTask("need approval", {}, 0, "a2a");
       queue.enqueue(task);
-      queue.transition(task.id, "observing");
       queue.transition(task.id, "orienting");
       queue.transition(task.id, "deciding");
       queue.addLog(task.id, "decide", "[HUMAN REQUIRED] Approve this change?");
@@ -271,7 +266,6 @@ describe("handleA2ARequest", () => {
       const queue = makeQueue();
       const task = createTask("waiting task", {}, 0, "a2a");
       queue.enqueue(task);
-      queue.transition(task.id, "observing");
       queue.transition(task.id, "orienting");
       queue.addLog(task.id, "decide", "[HUMAN REQUIRED] What should we do?");
       queue.transition(task.id, "waiting_human");
@@ -332,7 +326,7 @@ describe("handleA2ARequest", () => {
       expect(res.error).toBeUndefined();
       const a2aTask = res.result as A2ATask;
       expect(a2aTask.id).toBe(task.id);
-      expect(a2aTask.status.state).toBe("submitted");
+      expect(a2aTask.status.state).toBe("working");
     });
 
     test("returns task by short id", async () => {
@@ -381,7 +375,6 @@ describe("handleA2ARequest", () => {
       const queue = makeQueue();
       const task = createTask("done task");
       queue.enqueue(task);
-      queue.transition(task.id, "observing");
       queue.transition(task.id, "done");
 
       const res = await handleA2ARequest(queue, rpc("tasks/cancel", { id: task.id }));

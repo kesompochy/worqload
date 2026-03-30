@@ -34,7 +34,6 @@ test("spawnCleanup fails observing task with dead spawn process", async () => {
 
   const task = createTask("stuck observing");
   queue.enqueue(task);
-  queue.transition(task.id, "observing");
   queue.update(task.id, { owner: "test-agent" });
   await queue.save();
 
@@ -74,7 +73,6 @@ test("spawnCleanup skips task with live process", async () => {
 
   const task = createTask("active task");
   queue.enqueue(task);
-  queue.transition(task.id, "observing");
   queue.update(task.id, { owner: "test-agent" });
   await queue.save();
 
@@ -97,7 +95,6 @@ test("spawnCleanup fails task with no spawn record", async () => {
 
   const task = createTask("orphaned task");
   queue.enqueue(task);
-  queue.transition(task.id, "observing");
   queue.update(task.id, { owner: "test-agent" });
   await queue.save();
 
@@ -110,25 +107,6 @@ test("spawnCleanup fails task with no spawn record", async () => {
   expect(updated?.owner).toBeUndefined();
 });
 
-test("spawnCleanup ignores pending tasks with owner", async () => {
-  const storePath = tmpPath("tasks");
-  const spawnsPath = tmpPath("spawns");
-  const queue = new TaskQueue(storePath);
-
-  const task = createTask("pending with owner");
-  queue.enqueue(task);
-  queue.update(task.id, { owner: "test-agent" });
-  await queue.save();
-
-  await saveSpawns([], spawnsPath);
-
-  await spawnCleanup(queue, [], spawnsPath);
-
-  const updated = queue.get(task.id);
-  expect(updated?.status).toBe("pending");
-  expect(updated?.owner).toBe("test-agent");
-});
-
 test("spawnCleanup marks spawn record as failed", async () => {
   const storePath = tmpPath("tasks");
   const spawnsPath = tmpPath("spawns");
@@ -136,7 +114,6 @@ test("spawnCleanup marks spawn record as failed", async () => {
 
   const task = createTask("stuck task");
   queue.enqueue(task);
-  queue.transition(task.id, "observing");
   queue.update(task.id, { owner: "test-agent" });
   await queue.save();
 
@@ -156,7 +133,7 @@ test("spawnCleanup handles no stuck tasks", async () => {
   const spawnsPath = tmpPath("spawns");
   const queue = new TaskQueue(storePath);
 
-  const task = createTask("normal pending");
+  const task = createTask("normal observing");
   queue.enqueue(task);
   await queue.save();
 
@@ -165,5 +142,5 @@ test("spawnCleanup handles no stuck tasks", async () => {
   await spawnCleanup(queue, [], spawnsPath);
 
   const updated = queue.get(task.id);
-  expect(updated?.status).toBe("pending");
+  expect(updated?.status).toBe("observing");
 });

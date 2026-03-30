@@ -45,7 +45,7 @@ describe("DEFAULT_AGENT_TEMPLATE covers worqload commands", () => {
 
 describe("DEFAULT_AGENT_TEMPLATE covers OODA workflow", () => {
   test("documents status transitions", () => {
-    expect(template).toContain("pending");
+    expect(template).not.toContain("pending");
     expect(template).toContain("observing");
     expect(template).toContain("orienting");
     expect(template).toContain("deciding");
@@ -92,6 +92,18 @@ describe("DEFAULT_AGENT_TEMPLATE covers spawned agent env vars", () => {
 
   test("documents WORQLOAD_TASK_CONTEXT env var", () => {
     expect(template).toContain("WORQLOAD_TASK_CONTEXT");
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers session resume", () => {
+  test("mentions worqload resume command", () => {
+    expect(template).toContain("worqload resume");
+  });
+
+  test("documents resume as first command for session start", () => {
+    const resumeIndex = template.indexOf("worqload resume");
+    const sleepIndex = template.indexOf("worqload sleep");
+    expect(resumeIndex).toBeLessThan(sleepIndex);
   });
 });
 
