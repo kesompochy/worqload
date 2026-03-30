@@ -338,6 +338,21 @@ function html(): string {
   .spawn-done { background: #1a2e1a; color: #6aed6c; }
   .spawn-failed { background: #2e1a1a; color: #d46c6c; }
   .spawn-duration { font-size: 0.75rem; color: #666; white-space: nowrap; }
+  .history-card { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem; }
+  .history-header { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+  .history-header:hover { opacity: 0.85; }
+  .history-title { font-weight: 600; font-size: 0.85rem; word-break: break-word; flex: 1; }
+  .history-meta { font-size: 0.7rem; color: #666; margin-top: 0.25rem; }
+  .history-id { font-size: 0.65rem; font-family: monospace; color: #888; background: #1a1a2e; padding: 0.15rem 0.4rem; border-radius: 3px; cursor: pointer; user-select: all; white-space: nowrap; }
+  .history-id:hover { background: #2a2a4e; color: #aaa; }
+  .history-id.copied { background: #1a2e1a; color: #6aed6c; }
+  .history-expand { font-size: 0.7rem; color: #666; transition: transform 0.2s; }
+  .history-logs { margin-top: 0.5rem; border-top: 1px solid #2a2a2a; padding-top: 0.5rem; }
+  .history-logs .log { font-size: 0.7rem; color: #888; padding: 0.2rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-word; }
+  .history-search { margin-bottom: 0.75rem; display: flex; gap: 0.5rem; }
+  .history-search input { flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.5rem; color: #e0e0e0; font-size: 0.85rem; }
+  .history-search input:focus { outline: none; border-color: #6c7aed; }
+
   .report-content h1, .report-content h2, .report-content h3, .report-content h4 { color: #e0e0e0; margin: 0.8em 0 0.4em; }
   .report-content h1 { font-size: 1.2em; } .report-content h2 { font-size: 1.1em; } .report-content h3 { font-size: 1em; }
   .report-content p { margin: 0.4em 0; }
@@ -605,6 +620,68 @@ function TaskCard({ task, onUpdate }) {
   </div>\`;
 }
 
+function HistoryCard({ task }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const shortId = task.id.slice(0, 8);
+
+  const copyId = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(shortId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
+
+  const statusBadge = task.status === 'failed'
+    ? html\` <span class="badge badge-failed">failed</span>\`
+    : html\` <span class="badge" style="background:#1a2e1a;color:#6aed6c">done</span>\`;
+
+  return html\`<div class="history-card">
+    <div class="history-header" onClick=\${() => setExpanded(!expanded)}>
+      <span class="history-expand">\${expanded ? '▼' : '▶'}</span>
+      <span class="history-title">\${task.title}\${statusBadge}
+        \${task.owner && html\` <span class="task-owner">@\${task.owner}</span>\`}
+      </span>
+      <span class=\${"history-id" + (copied ? " copied" : "")} onClick=\${copyId} title="Click to copy task ID">\${copied ? 'Copied!' : shortId}</span>
+    </div>
+    <div class="history-meta">
+      \${timeAgo(task.createdAt)} · p\${task.priority}
+      \${task.createdBy && html\` <span class="task-created-by">by \${task.createdBy}</span>\`}
+    </div>
+    \${expanded && task.logs.length > 0 && html\`<div class="history-logs">
+      \${task.logs.map((l, i) => html\`<div class="log" key=\${i}><span class="log-phase">[\${l.phase}]</span> \${l.content}</div>\`)}
+    </div>\`}
+    \${expanded && task.logs.length === 0 && html\`<div class="history-logs"><div class="empty">No logs.</div></div>\`}
+  </div>\`;
+}
+
+function HistoryView({ history }) {
+  const [search, setSearch] = useState('');
+  const filtered = search.trim()
+    ? history.filter(t => {
+        const q = search.trim().toLowerCase();
+        return t.title.toLowerCase().includes(q) || t.id.slice(0, 8).includes(q);
+      })
+    : history;
+  const sorted = filtered.slice().reverse();
+
+  return html\`<div>
+    <div class="history-search">
+      <input type="text" placeholder="Search by title or task ID..." value=\${search} onInput=\${(e) => setSearch(e.target.value)} />
+    </div>
+    <div class="board"><div class="column" style="flex:1;min-width:auto">
+      <div class="column-header">Archived <span class="count">\${filtered.length}\${search.trim() ? ' / ' + history.length : ''}</span></div>
+      <div class="column-body">
+        \${sorted.length === 0
+          ? html\`<div class="empty">\${search.trim() ? 'No matching tasks.' : 'No archived tasks.'}</div>\`
+          : sorted.map(t => html\`<\${HistoryCard} key=\${t.id} task=\${t} />\`)}
+      </div>
+    </div></div>
+  </div>\`;
+}
+
 function Board({ tasks, onUpdate }) {
   const [showAllDone, setShowAllDone] = useState(false);
   const [doneSortDesc, setDoneSortDesc] = useState(true);
@@ -740,14 +817,7 @@ function App() {
       <div class=\${"tab" + (tab === 'history' ? ' active' : '')} onClick=\${() => setTab('history')}>History</div>
     </div>
     \${tab === 'active' && html\`<\${Board} tasks=\${data.tasks} onUpdate=\${refresh} />\`}
-    \${tab === 'history' && html\`<div class="board"><div class="column" style="flex:1;min-width:auto">
-      <div class="column-header">Archived <span class="count">\${data.history.length}</span></div>
-      <div class="column-body">
-        \${data.history.length === 0
-          ? html\`<div class="empty">No archived tasks.</div>\`
-          : data.history.slice().reverse().map(t => html\`<\${TaskCard} key=\${t.id} task=\${t} onUpdate=\${refresh} />\`)}
-      </div>
-    </div></div>\`}
+    \${tab === 'history' && html\`<\${HistoryView} history=\${data.history} />\`}
   \`;
 }
 
