@@ -38,7 +38,10 @@ bun src/cli.ts decide <id> --human "<proposal and question>"
 This creates a `waiting_human` task. The loop continues polling until the user responds.
 Do NOT generate tasks and process them autonomously when the queue is empty.
 
-**3. Process one task through OODA**
+**3. Process pending tasks via spawn**
+
+Delegate task execution to spawned agents. The main loop should focus on queue management, not direct implementation.
+
 ```sh
 bun src/cli.ts next                              # pick next pending task
 bun src/cli.ts source run                        # collect data from registered sources (includes feedback)
@@ -46,9 +49,7 @@ bun src/cli.ts feedback list                     # check for new feedback from e
 bun src/cli.ts observe <id> "<what you found>"   # gather info
 bun src/cli.ts orient <id> "<analysis>"          # analyze
 bun src/cli.ts decide <id> "<plan>"              # decide action
-bun src/cli.ts act <id>                          # start execution
-# ... make code changes, run tests ...
-bun src/cli.ts done <id> "<result>"              # mark complete
+bun src/cli.ts spawn <id> <command...>           # delegate to a spawned agent
 ```
 
 If a decision is difficult or architectural:
@@ -56,10 +57,12 @@ If a decision is difficult or architectural:
 bun src/cli.ts decide <id> --human "<question>"
 ```
 
+Multiple independent tasks can be spawned in parallel. The main loop continues checking the queue while spawned agents work.
+
 ### Rules
 
-- One task at a time. Finish or fail before starting the next.
+- Delegate task execution to spawn. The main loop manages the queue, not the work itself.
 - Small, incremental changes. Each task = one commit-sized unit of work.
 - When uncertain, escalate with `--human`.
-- After acting, verify with `bun test`.
+- Spawn independent tasks in parallel when possible.
 - `principle` の追加・変更・削除はユーザーの明示的な指示がある場合のみ行う。Agentが独自判断で原則を操作してはならない。
