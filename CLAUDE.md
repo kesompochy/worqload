@@ -56,6 +56,7 @@ bun src/cli.ts spawn <id> <command...>           # delegate to a spawned agent
 ```
 
 Spawn prompts must instruct agents to write tests first and run `bun test` after implementation.
+Spawn prompts must instruct agents to write report titles and content in Japanese when using `worqload report add`.
 
 If a decision is difficult or architectural:
 ```sh
@@ -69,6 +70,7 @@ Multiple independent tasks can be spawned in parallel. The main loop continues c
 - Delegate task execution to spawn. The main loop manages the queue, not the work itself.
 - Small, incremental changes. Each task = one commit-sized unit of work.
 - Write tests before implementation (TDD). Spawn prompts must instruct agents to write tests first.
+- Reports must be written in Japanese. Spawn prompts must instruct agents to use Japanese for `worqload report add` titles and content.
 - When uncertain, escalate with `--human`.
 - Spawn independent tasks in parallel when possible.
 - `principle` の追加・変更・削除はユーザーの明示的な指示がある場合のみ行う。Agentが独自判断で原則を操作してはならない。
