@@ -7,6 +7,7 @@ import type { Task, OodaPhase } from "../task";
 import { validateTransition } from "../task";
 import { resolveTask } from "./resolve";
 import { loadMissions } from "../mission";
+import { runOnDoneHooks } from "../hooks";
 
 async function runHook(command: string, env: Record<string, string>): Promise<{ output: string; exitCode: number }> {
   const proc = Bun.spawn(["sh", "-c", command], {
@@ -117,7 +118,7 @@ export async function spawn(queue: TaskQueue, args: string[]) {
   const truncated = output.length > 2000 ? output.slice(-2000) : output;
 
   // Atomically update only this task in tasks.json to avoid overwriting other changes
-  await updateTask(task.id, (current) => {
+  const updated = await updateTask(task.id, (current) => {
     const logs = [...current.logs, { phase: "act" as OodaPhase, content: truncated, timestamp: new Date().toISOString() }];
     const alreadyTerminal = current.status === "done" || current.status === "failed";
     if (alreadyTerminal) {
@@ -132,6 +133,10 @@ export async function spawn(queue: TaskQueue, args: string[]) {
       return { status: "failed" as const, logs: failLogs, owner: undefined };
     }
   });
+
+  if (updated?.status === "done") {
+    await runOnDoneHooks(task.id, task.title);
+  }
 }
 
 function isProcessRunning(pid: number): boolean {

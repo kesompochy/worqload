@@ -2,6 +2,7 @@ import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
 import { HUMAN_REQUIRED_PREFIX } from "../task";
 import { resolveTask } from "./resolve";
+import { runOnDoneHooks } from "../hooks";
 
 export async function observe(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
@@ -67,6 +68,7 @@ export async function done(queue: TaskQueue, args: string[]) {
   queue.transition(task.id, "done");
   await queue.save();
   console.log(`Done: ${task.title}`);
+  await runOnDoneHooks(task.id, task.title);
 }
 
 export async function fail(queue: TaskQueue, args: string[]) {

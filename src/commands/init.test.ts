@@ -1,0 +1,106 @@
+import { test, expect, describe } from "bun:test";
+import { readFileSync } from "fs";
+
+const initSource = readFileSync(
+  new URL("./init.ts", import.meta.url),
+  "utf-8",
+);
+
+const templateMatch = initSource.match(
+  /const DEFAULT_AGENT_TEMPLATE = `([\s\S]*?)`;/,
+);
+if (!templateMatch) throw new Error("DEFAULT_AGENT_TEMPLATE not found");
+
+const template = templateMatch[1]
+  .replace(/\\\\\\\`\\\\\\\`\\\\\\\`/g, "```")
+  .replace(/\\\\\`/g, "`");
+
+describe("DEFAULT_AGENT_TEMPLATE covers worqload commands", () => {
+  test("mentions heartbeat command", () => {
+    expect(template).toContain("heartbeat");
+  });
+
+  test("mentions sleep and wake commands", () => {
+    expect(template).toContain("worqload sleep");
+    expect(template).toContain("worqload wake");
+  });
+
+  test("mentions all OODA phase commands", () => {
+    expect(template).toContain("worqload observe");
+    expect(template).toContain("worqload orient");
+    expect(template).toContain("worqload decide");
+    expect(template).toContain("worqload act");
+    expect(template).toContain("worqload done");
+  });
+
+  test("mentions fail and retry commands", () => {
+    expect(template).toContain("worqload fail");
+    expect(template).toContain("worqload retry");
+  });
+
+  test("mentions task inspection commands", () => {
+    expect(template).toContain("worqload show");
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers OODA workflow", () => {
+  test("documents status transitions", () => {
+    expect(template).toContain("pending");
+    expect(template).toContain("observing");
+    expect(template).toContain("orienting");
+    expect(template).toContain("deciding");
+    expect(template).toContain("acting");
+    expect(template).toContain("waiting_human");
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers human escalation", () => {
+  test("explains --human flag", () => {
+    expect(template).toContain("--human");
+  });
+
+  test("explains what happens after human responds", () => {
+    expect(template).toMatch(/waiting_human.*decid/s);
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers missions", () => {
+  test("explains WORQLOAD_MISSION_PRINCIPLES env var", () => {
+    expect(template).toContain("WORQLOAD_MISSION_PRINCIPLES");
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers feedback", () => {
+  test("mentions feedback list command", () => {
+    expect(template).toContain("worqload feedback list");
+  });
+
+  test("mentions feedback ack and resolve commands", () => {
+    expect(template).toContain("feedback ack");
+    expect(template).toContain("feedback resolve");
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers spawned agent env vars", () => {
+  test("documents WORQLOAD_TASK_ID env var", () => {
+    expect(template).toContain("WORQLOAD_TASK_ID");
+  });
+
+  test("documents WORQLOAD_TASK_TITLE env var", () => {
+    expect(template).toContain("WORQLOAD_TASK_TITLE");
+  });
+
+  test("documents WORQLOAD_TASK_CONTEXT env var", () => {
+    expect(template).toContain("WORQLOAD_TASK_CONTEXT");
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers reports", () => {
+  test("mentions report add command with task-id", () => {
+    expect(template).toContain("worqload report add");
+  });
+
+  test("mentions report status lifecycle", () => {
+    expect(template).toContain("report status");
+  });
+});

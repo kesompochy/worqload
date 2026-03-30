@@ -1,4 +1,4 @@
-import { loadJsonFile, saveJsonFile } from "./utils/json-store";
+import { EntityStore } from "./utils/entity-store";
 
 const DEFAULT_FEEDBACK_PATH = ".worqload/feedback.json";
 
@@ -12,12 +12,14 @@ export interface Feedback {
   createdAt: string;
 }
 
+const store = new EntityStore<Feedback>(DEFAULT_FEEDBACK_PATH, "Feedback");
+
 export async function loadFeedback(path: string = DEFAULT_FEEDBACK_PATH): Promise<Feedback[]> {
-  return loadJsonFile<Feedback[]>(path, []);
+  return store.load(path);
 }
 
 export async function saveFeedback(items: Feedback[], path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
-  await saveJsonFile(path, items);
+  await store.save(items, path);
 }
 
 export async function addFeedback(message: string, from: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<Feedback> {
@@ -28,39 +30,21 @@ export async function addFeedback(message: string, from: string, path: string = 
     status: "new",
     createdAt: new Date().toISOString(),
   };
-  const items = await loadFeedback(path);
-  items.push(item);
-  await saveFeedback(items, path);
-  return item;
+  return store.add(item, path);
 }
 
 export async function acknowledgeFeedback(id: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
-  const items = await loadFeedback(path);
-  const item = items.find(f => f.id === id || f.id.startsWith(id));
-  if (!item) throw new Error(`Feedback not found: ${id}`);
-  item.status = "acknowledged";
-  await saveFeedback(items, path);
+  await store.update(id, { status: "acknowledged" }, path);
 }
 
 export async function resolveFeedback(id: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
-  const items = await loadFeedback(path);
-  const item = items.find(f => f.id === id || f.id.startsWith(id));
-  if (!item) throw new Error(`Feedback not found: ${id}`);
-  item.status = "resolved";
-  await saveFeedback(items, path);
+  await store.update(id, { status: "resolved" }, path);
 }
 
 export async function updateFeedbackMessage(id: string, message: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
-  const items = await loadFeedback(path);
-  const item = items.find(f => f.id === id || f.id.startsWith(id));
-  if (!item) throw new Error(`Feedback not found: ${id}`);
-  item.message = message;
-  await saveFeedback(items, path);
+  await store.update(id, { message }, path);
 }
 
 export async function removeFeedback(id: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
-  const items = await loadFeedback(path);
-  const filtered = items.filter(f => f.id !== id && !f.id.startsWith(id));
-  if (filtered.length === items.length) throw new Error(`Feedback not found: ${id}`);
-  await saveFeedback(filtered, path);
+  await store.remove(id, path);
 }

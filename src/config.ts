@@ -15,6 +15,7 @@ export interface InitConfig {
 export interface WorkqloadConfig {
   spawn?: SpawnHooks;
   init?: InitConfig;
+  onDone?: string[];
 }
 
 export async function loadConfig(path: string = DEFAULT_CONFIG_PATH): Promise<WorkqloadConfig> {

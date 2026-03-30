@@ -1,4 +1,4 @@
-import { loadJsonFile, saveJsonFile } from "./utils/json-store";
+import { EntityStore } from "./utils/entity-store";
 
 const DEFAULT_REPORTS_PATH = ".worqload/reports.json";
 
@@ -13,12 +13,14 @@ export interface Report {
   createdAt: string;
 }
 
+const store = new EntityStore<Report>(DEFAULT_REPORTS_PATH, "Report");
+
 export async function loadReports(path: string = DEFAULT_REPORTS_PATH): Promise<Report[]> {
-  return loadJsonFile<Report[]>(path, []);
+  return store.load(path);
 }
 
 export async function saveReports(reports: Report[], path: string = DEFAULT_REPORTS_PATH): Promise<void> {
-  await saveJsonFile(path, reports);
+  await store.save(reports, path);
 }
 
 export async function addReport(title: string, content: string, createdBy: string, path: string = DEFAULT_REPORTS_PATH): Promise<Report> {
@@ -30,23 +32,13 @@ export async function addReport(title: string, content: string, createdBy: strin
     createdBy,
     createdAt: new Date().toISOString(),
   };
-  const reports = await loadReports(path);
-  reports.push(report);
-  await saveReports(reports, path);
-  return report;
+  return store.add(report, path);
 }
 
 export async function updateReportStatus(id: string, status: ReportStatus, path: string = DEFAULT_REPORTS_PATH): Promise<void> {
-  const reports = await loadReports(path);
-  const report = reports.find(r => r.id === id || r.id.startsWith(id));
-  if (!report) throw new Error(`Report not found: ${id}`);
-  report.status = status;
-  await saveReports(reports, path);
+  await store.update(id, { status }, path);
 }
 
 export async function removeReport(id: string, path: string = DEFAULT_REPORTS_PATH): Promise<void> {
-  const reports = await loadReports(path);
-  const filtered = reports.filter(r => r.id !== id && !r.id.startsWith(id));
-  if (filtered.length === reports.length) throw new Error(`Report not found: ${id}`);
-  await saveReports(filtered, path);
+  await store.remove(id, path);
 }
