@@ -528,7 +528,7 @@ function TaskCard({ task, onUpdate }) {
   };
 
   return html\`<div class="task" title=\${task.id.slice(0, 8)}>
-    ${editing ? html\`<div class="task-title">
+    \${editing ? html\`<div class="task-title">
       <input
         value=\${editValue}
         onInput=\${(e) => setEditValue(e.target.value)}
