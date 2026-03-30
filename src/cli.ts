@@ -308,11 +308,15 @@ switch (command) {
     await recordSpawnFinish(spawnRecord.id, exitCode);
 
     await queue.load();
+    const current = queue.get(task.id);
     const output = (stdout + stderr).trim();
     const truncated = output.length > 2000 ? output.slice(-2000) : output;
     queue.addLog(task.id, "act", truncated);
 
-    if (exitCode === 0) {
+    const alreadyTerminal = current && (current.status === "done" || current.status === "failed");
+    if (alreadyTerminal) {
+      console.log(`Already ${current.status}: ${task.title}`);
+    } else if (exitCode === 0) {
       queue.transition(task.id, "done");
       console.log(`Done: ${task.title}`);
     } else {
