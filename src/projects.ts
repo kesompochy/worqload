@@ -1,5 +1,5 @@
 import { homedir } from "os";
-import { join } from "path";
+import { join, resolve, basename, dirname } from "path";
 import { mkdir } from "node:fs/promises";
 
 export interface Project {
@@ -8,33 +8,31 @@ export interface Project {
   registeredAt: string;
 }
 
-const GLOBAL_DIR = join(homedir(), ".worqload");
-const PROJECTS_PATH = join(GLOBAL_DIR, "projects.json");
+const DEFAULT_PROJECTS_PATH = join(homedir(), ".worqload", "projects.json");
 
-async function ensureGlobalDir(): Promise<void> {
+async function ensureParentDir(filePath: string): Promise<void> {
   try {
-    await mkdir(GLOBAL_DIR, { recursive: true });
+    await mkdir(dirname(filePath), { recursive: true });
   } catch {}
 }
 
-export async function loadProjects(): Promise<Project[]> {
-  await ensureGlobalDir();
-  const file = Bun.file(PROJECTS_PATH);
+export async function loadProjects(projectsPath: string = DEFAULT_PROJECTS_PATH): Promise<Project[]> {
+  await ensureParentDir(projectsPath);
+  const file = Bun.file(projectsPath);
   if (!(await file.exists())) return [];
   return await file.json();
 }
 
-async function saveProjects(projects: Project[]): Promise<void> {
-  await ensureGlobalDir();
-  await Bun.write(PROJECTS_PATH, JSON.stringify(projects, null, 2));
+async function saveProjects(projects: Project[], projectsPath: string): Promise<void> {
+  await ensureParentDir(projectsPath);
+  await Bun.write(projectsPath, JSON.stringify(projects, null, 2));
 }
 
-export async function registerProject(projectPath: string, name?: string): Promise<Project> {
-  const { resolve, basename } = await import("path");
+export async function registerProject(projectPath: string, name?: string, projectsPath: string = DEFAULT_PROJECTS_PATH): Promise<Project> {
   const absPath = resolve(projectPath);
   const projectName = name || basename(absPath);
 
-  const projects = await loadProjects();
+  const projects = await loadProjects(projectsPath);
   if (projects.some(p => p.path === absPath)) {
     throw new Error(`Project already registered: ${absPath}`);
   }
@@ -48,15 +46,15 @@ export async function registerProject(projectPath: string, name?: string): Promi
     registeredAt: new Date().toISOString(),
   };
   projects.push(project);
-  await saveProjects(projects);
+  await saveProjects(projects, projectsPath);
   return project;
 }
 
-export async function removeProject(name: string): Promise<void> {
-  const projects = await loadProjects();
+export async function removeProject(name: string, projectsPath: string = DEFAULT_PROJECTS_PATH): Promise<void> {
+  const projects = await loadProjects(projectsPath);
   const filtered = projects.filter(p => p.name !== name);
   if (filtered.length === projects.length) {
     throw new Error(`Project not found: ${name}`);
   }
-  await saveProjects(filtered);
+  await saveProjects(filtered, projectsPath);
 }
