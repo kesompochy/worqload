@@ -138,17 +138,16 @@ function html(): string {
 <title>worqload</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0a0a0a; color: #e0e0e0; padding: 2rem; max-width: 960px; margin: 0 auto; }
-  h1 { font-size: 1.5rem; margin-bottom: 1.5rem; color: #fff; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0a0a0a; color: #e0e0e0; padding: 1.5rem; }
+  h1 { font-size: 1.5rem; color: #fff; }
   h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; }
 
-  .task { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; }
-  .task-header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
-  .task-title { font-weight: 600; flex: 1; }
-  .task-meta { font-size: 0.75rem; color: #666; white-space: nowrap; }
-  .task-owner { font-size: 0.7rem; color: #6cced4; background: #1a2e2e; padding: 0.1rem 0.4rem; border-radius: 3px; }
+  .task { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem; }
+  .task-title { font-weight: 600; font-size: 0.85rem; word-break: break-word; }
+  .task-meta { font-size: 0.7rem; color: #666; margin-top: 0.25rem; }
+  .task-owner { font-size: 0.65rem; color: #6cced4; background: #1a2e2e; padding: 0.1rem 0.4rem; border-radius: 3px; }
 
-  .status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+  .status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
   .status-pending { background: #1a1a2e; color: #6c7aed; }
   .status-observing, .status-orienting { background: #1a2e1a; color: #6aed6c; }
   .status-deciding { background: #2e2a1a; color: #edd76c; }
@@ -159,45 +158,58 @@ function html(): string {
 
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
-  .human-action { margin-top: 0.75rem; display: flex; gap: 0.5rem; }
-  .human-action input { flex: 1; background: #0a0a0a; border: 1px solid #333; border-radius: 4px; padding: 0.5rem; color: #e0e0e0; font-size: 0.9rem; }
+  .human-action { margin-top: 0.5rem; display: flex; gap: 0.25rem; }
+  .human-action input { flex: 1; background: #0a0a0a; border: 1px solid #333; border-radius: 4px; padding: 0.35rem; color: #e0e0e0; font-size: 0.8rem; min-width: 0; }
   .human-action input:focus { outline: none; border-color: #ed6c6c; }
 
-  .logs { margin-top: 0.5rem; }
-  .log { font-size: 0.8rem; color: #888; padding: 0.2rem 0; font-family: monospace; }
+  .logs { margin-top: 0.4rem; max-height: 6rem; overflow-y: auto; }
+  .log { font-size: 0.7rem; color: #888; padding: 0.15rem 0; font-family: monospace; }
   .log-phase { color: #6c7aed; }
 
-  button { background: #2a2a2a; color: #e0e0e0; border: 1px solid #333; border-radius: 4px; padding: 0.5rem 1rem; cursor: pointer; font-size: 0.85rem; }
+  button { background: #2a2a2a; color: #e0e0e0; border: 1px solid #333; border-radius: 4px; padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.8rem; }
   button:hover { background: #333; }
   button.primary { background: #6c7aed; color: #fff; border-color: #6c7aed; }
   button.primary:hover { background: #5a68d4; }
 
-  .add-form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
-  .add-form input[type="text"] { flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; color: #e0e0e0; font-size: 0.95rem; }
+  .add-form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  .add-form input[type="text"] { flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.6rem; color: #e0e0e0; font-size: 0.9rem; }
   .add-form input[type="text"]:focus { outline: none; border-color: #6c7aed; }
-  .add-form input[type="number"] { width: 5rem; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; color: #e0e0e0; font-size: 0.95rem; text-align: center; }
+  .add-form input[type="number"] { width: 4.5rem; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.6rem; color: #e0e0e0; font-size: 0.9rem; text-align: center; }
   .add-form input[type="number"]:focus { outline: none; border-color: #6c7aed; }
 
-  .principles { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; }
-  .principles li { margin: 0.3rem 0; padding-left: 0.5rem; }
+  .principles { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; }
+  .principles li { margin: 0.2rem 0; padding-left: 0.5rem; font-size: 0.85rem; }
 
-  .section-empty { color: #444; font-style: italic; padding: 0.5rem 0; }
+  .section-empty { color: #444; font-style: italic; padding: 0.5rem 0; font-size: 0.8rem; }
 
   .tabs { display: flex; gap: 0.25rem; margin-bottom: 1rem; }
   .tab { padding: 0.4rem 1rem; border-radius: 4px 4px 0 0; cursor: pointer; font-size: 0.85rem; background: #161616; border: 1px solid #2a2a2a; border-bottom: none; color: #888; }
   .tab.active { background: #0a0a0a; color: #fff; border-color: #333; }
 
-  .task-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; align-items: center; }
-  .task-actions button { font-size: 0.75rem; padding: 0.25rem 0.5rem; }
+  .task-actions { display: flex; gap: 0.35rem; margin-top: 0.4rem; align-items: center; flex-wrap: wrap; }
+  .task-actions button { font-size: 0.7rem; padding: 0.2rem 0.4rem; }
   .task-actions button.danger { background: #2e1a1a; color: #d46c6c; border-color: #4a2a2a; }
   .task-actions button.danger:hover { background: #3d1a1a; }
   .task-actions button.retry { background: #1a2e1a; color: #6aed6c; border-color: #2a4a2a; }
   .task-actions button.retry:hover { background: #1a3d1a; }
-  .priority-edit { width: 3.5rem; background: #0a0a0a; border: 1px solid #333; border-radius: 4px; padding: 0.2rem 0.4rem; color: #e0e0e0; font-size: 0.75rem; text-align: center; }
+  .priority-edit { width: 3rem; background: #0a0a0a; border: 1px solid #333; border-radius: 4px; padding: 0.15rem 0.3rem; color: #e0e0e0; font-size: 0.7rem; text-align: center; }
   .priority-edit:focus { outline: none; border-color: #6c7aed; }
-  .action-label { font-size: 0.75rem; color: #888; }
+  .action-label { font-size: 0.7rem; color: #888; }
 
-  .spawns { margin-bottom: 1.5rem; }
+  .board { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 1rem; min-height: 300px; }
+  .column { flex: 0 0 220px; min-width: 220px; background: #111; border: 1px solid #222; border-radius: 8px; display: flex; flex-direction: column; }
+  .column-header { padding: 0.6rem 0.75rem; border-bottom: 1px solid #222; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center; }
+  .column-header .count { font-size: 0.7rem; font-weight: 400; color: #666; background: #1a1a1a; padding: 0.1rem 0.4rem; border-radius: 3px; }
+  .column-body { padding: 0.5rem; flex: 1; overflow-y: auto; }
+
+  .col-pending .column-header { color: #6c7aed; border-bottom-color: #2a2a4a; }
+  .col-observe .column-header { color: #6aed6c; border-bottom-color: #2a4a2a; }
+  .col-orient .column-header { color: #6aed6c; border-bottom-color: #2a4a2a; }
+  .col-decide .column-header { color: #edd76c; border-bottom-color: #4a4a2a; }
+  .col-act .column-header { color: #6cced4; border-bottom-color: #2a4a4a; }
+  .col-done .column-header { color: #666; border-bottom-color: #222; }
+
+  .spawns { margin-bottom: 1rem; }
   .spawn { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.75rem; }
   .spawn-task { flex: 1; font-weight: 500; font-size: 0.9rem; }
   .spawn-owner { font-size: 0.7rem; color: #6cced4; background: #1a2e2e; padding: 0.1rem 0.4rem; border-radius: 3px; }
@@ -210,7 +222,7 @@ function html(): string {
 </style>
 </head>
 <body>
-  <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem">
+  <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
     <h1 style="margin:0">worqload</h1>
     <span id="heartbeat" style="font-size:0.85rem;color:#666"></span>
   </div>
@@ -220,7 +232,7 @@ function html(): string {
 
   <div class="add-form">
     <input type="text" id="new-title" placeholder="New task title...">
-    <input type="number" id="new-priority" value="0" placeholder="Priority" title="Priority (higher = more urgent)">
+    <input type="number" id="new-priority" value="0" placeholder="Pri" title="Priority (higher = more urgent)">
     <button class="primary" onclick="addTask()" title="Shift+Enter">Add</button>
   </div>
 
@@ -234,6 +246,15 @@ function html(): string {
 
   <script>
     let currentTab = 'active';
+
+    const COLUMNS = [
+      { key: 'pending', label: 'Pending', statuses: ['pending'] },
+      { key: 'observe', label: 'Observe', statuses: ['observing'] },
+      { key: 'orient', label: 'Orient', statuses: ['orienting'] },
+      { key: 'decide', label: 'Decide', statuses: ['deciding', 'waiting_human'] },
+      { key: 'act', label: 'Act', statuses: ['acting'] },
+      { key: 'done', label: 'Done', statuses: ['done', 'failed'] },
+    ];
 
     async function load() {
       const focused = document.activeElement;
@@ -250,7 +271,7 @@ function html(): string {
       ]);
       renderPrinciples(principles);
       renderSpawns(spawns);
-      renderTasks(tasks);
+      renderBoard(tasks);
       renderHistory(history);
       renderHeartbeat(heartbeat);
 
@@ -330,48 +351,52 @@ function html(): string {
       return hours + 'h ' + (minutes % 60) + 'm';
     }
 
-    function renderTasks(tasks) {
+    function renderBoard(tasks) {
       const el = document.getElementById('active-tasks');
-      const active = tasks.filter(t => t.status !== 'done' && t.status !== 'failed');
-      const done = tasks.filter(t => t.status === 'done' || t.status === 'failed');
-      if (active.length === 0 && done.length === 0) { el.innerHTML = '<div class="section-empty">No tasks.</div>'; return; }
-
-      let h = '';
-      if (active.length > 0) {
-        h += active.map(renderTask).join('');
+      let h = '<div class="board">';
+      for (const col of COLUMNS) {
+        const colTasks = tasks.filter(t => col.statuses.includes(t.status));
+        h += '<div class="column col-' + col.key + '">';
+        h += '<div class="column-header">' + col.label + '<span class="count">' + colTasks.length + '</span></div>';
+        h += '<div class="column-body">';
+        if (colTasks.length === 0) {
+          h += '<div class="section-empty">-</div>';
+        } else {
+          h += colTasks.map(renderCard).join('');
+        }
+        h += '</div></div>';
       }
-      if (done.length > 0) {
-        h += '<h2>Completed</h2>' + done.map(renderTask).join('');
-      }
+      h += '</div>';
       el.innerHTML = h;
     }
 
     function renderHistory(tasks) {
       const el = document.getElementById('history-tasks');
       if (tasks.length === 0) { el.innerHTML = '<div class="section-empty">No archived tasks.</div>'; return; }
-      el.innerHTML = tasks.slice().reverse().map(renderTask).join('');
+      el.innerHTML = '<div class="board"><div class="column" style="flex:1;min-width:auto"><div class="column-header">Archived<span class="count">' + tasks.length + '</span></div><div class="column-body">' + tasks.slice().reverse().map(renderCard).join('') + '</div></div></div>';
     }
 
-    function renderTask(t) {
+    function renderCard(t) {
       const logs = t.logs.length > 0
         ? '<div class="logs">' + t.logs.map(l => '<div class="log"><span class="log-phase">[' + esc(l.phase) + ']</span> ' + esc(l.content) + '</div>').join('') + '</div>'
         : '';
       const humanAction = t.status === 'waiting_human'
-        ? '<div class="human-action"><input type="text" id="decide-' + t.id + '" placeholder="Your decision..." onkeydown="if(event.key===\\'Enter\\'&&event.shiftKey){event.preventDefault();decide(\\'' + t.id + '\\')}"><button class="primary" onclick="decide(\\'' + t.id + '\\')">Decide</button></div>'
+        ? '<div class="human-action"><input type="text" id="decide-' + t.id + '" placeholder="Decision..." onkeydown="if(event.key===\\'Enter\\'&&event.shiftKey){event.preventDefault();decide(\\'' + t.id + '\\')}"><button class="primary" onclick="decide(\\'' + t.id + '\\')">OK</button></div>'
         : '';
       const isTerminal = t.status === 'done' || t.status === 'failed';
       let actions = '';
       if (!isTerminal) {
         actions = '<div class="task-actions">'
-          + '<label class="action-label">Priority</label><input type="number" class="priority-edit" value="' + t.priority + '" onchange="setPriority(\\'' + t.id + '\\', this.value)">'
+          + '<label class="action-label">Pri</label><input type="number" class="priority-edit" value="' + t.priority + '" onchange="setPriority(\\'' + t.id + '\\', this.value)">'
           + '<button class="danger" onclick="failTask(\\'' + t.id + '\\')">Fail</button>'
           + '</div>';
       } else if (t.status === 'failed') {
         actions = '<div class="task-actions"><button class="retry" onclick="retryTask(\\'' + t.id + '\\')">Retry</button></div>';
       }
       const age = timeAgo(t.createdAt);
-      const ownerBadge = t.owner ? '<span class="task-owner">@' + esc(t.owner) + '</span>' : '';
-      return '<div class="task" title="' + t.id.slice(0, 8) + '"><div class="task-header"><span class="task-title">' + esc(t.title) + '</span>' + ownerBadge + '<span class="status status-' + t.status + '">' + t.status + '</span><span class="task-meta">' + age + '</span></div>' + logs + humanAction + actions + '</div>';
+      const ownerBadge = t.owner ? ' <span class="task-owner">@' + esc(t.owner) + '</span>' : '';
+      const statusBadge = t.status === 'waiting_human' ? ' <span class="status status-waiting_human">waiting</span>' : (t.status === 'failed' ? ' <span class="status status-failed">failed</span>' : '');
+      return '<div class="task" title="' + t.id.slice(0, 8) + '"><div class="task-title">' + esc(t.title) + statusBadge + ownerBadge + '</div><div class="task-meta">' + age + ' \\u00b7 p' + t.priority + '</div>' + logs + humanAction + actions + '</div>';
     }
 
     async function addTask() {
