@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { createTask } from "./task";
 import type { TaskStatus } from "./task";
 import { TaskQueue } from "./queue";

@@ -8,6 +8,8 @@ export function lockPathFor(filePath: string): string {
 }
 
 async function acquireLock(lockPath: string): Promise<void> {
+  const { dirname } = await import("path");
+  await mkdir(dirname(lockPath), { recursive: true });
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   while (true) {
     try {
