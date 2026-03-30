@@ -544,15 +544,22 @@ function TaskCard({ task, onUpdate }) {
 }
 
 function Board({ tasks, onUpdate }) {
+  const [showAllDone, setShowAllDone] = useState(false);
+  const DONE_LIMIT = 5;
   return html\`<div class="board">
     \${COLUMNS.map(col => {
       const colTasks = tasks.filter(t => col.statuses.includes(t.status));
+      const isDone = col.key === 'done';
+      const truncated = isDone && !showAllDone && colTasks.length > DONE_LIMIT;
+      const visibleTasks = truncated ? colTasks.slice(0, DONE_LIMIT) : colTasks;
       return html\`<div class="column col-\${col.key}" key=\${col.key}>
         <div class="column-header">\${col.label} <span class="count">\${colTasks.length}</span></div>
         <div class="column-body">
           \${colTasks.length === 0
             ? html\`<div class="empty">-</div>\`
-            : colTasks.map(t => html\`<\${TaskCard} key=\${t.id} task=\${t} onUpdate=\${onUpdate} />\`)}
+            : visibleTasks.map(t => html\`<\${TaskCard} key=\${t.id} task=\${t} onUpdate=\${onUpdate} />\`)}
+          \${isDone && colTasks.length > DONE_LIMIT && html\`<button class="toggle-done" style="width:100%;margin-top:0.5rem;font-size:0.75rem;padding:0.3rem;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:4px;color:#888;cursor:pointer"
+            onClick=\${() => setShowAllDone(!showAllDone)}>\${showAllDone ? 'Show recent' : 'Show all (' + colTasks.length + ')'}</button>\`}
         </div>
       </div>\`;
     })}
