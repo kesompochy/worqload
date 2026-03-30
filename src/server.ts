@@ -472,13 +472,7 @@ function FeedbackSection({ projects, onSend }) {
 
   return html\`<div style="margin-bottom:1rem">
     <h2 style="margin-top:0">Feedback</h2>
-    \${allFeedback.length > 0
-      ? allFeedback.map(fb => html\`<div class="task" key=\${fb.id} style="border-left:3px solid #ed6c6c">
-          <div class="task-title">\${fb.message}</div>
-          <div class="task-meta">from \${fb.from} · \${fb.projectName} · \${timeAgo(fb.createdAt)}</div>
-        </div>\`)
-      : html\`<div class="empty">No new feedback.</div>\`}
-    <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
+    <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem">
       <select style="background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.4rem;color:#e0e0e0;font-size:0.85rem"
         value=\${selectedProject} onChange=\${(e) => setSelectedProject(e.target.value)}>
         \${projects.map(p => html\`<option key=\${p.name} value=\${p.name}>\${p.name}</option>\`)}
@@ -487,6 +481,12 @@ function FeedbackSection({ projects, onSend }) {
         onKeyDown=\${(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); submit(); }}} />
       <button class="primary" onClick=\${submit}>Send</button>
     </div>
+    \${allFeedback.length > 0
+      ? allFeedback.map(fb => html\`<div class="task" key=\${fb.id} style="border-left:3px solid #ed6c6c">
+          <div class="task-title">\${fb.message}</div>
+          <div class="task-meta">from \${fb.from} · \${fb.projectName} · \${timeAgo(fb.createdAt)}</div>
+        </div>\`)
+      : html\`<div class="empty">No new feedback.</div>\`}
   </div>\`;
 }
 
