@@ -247,6 +247,9 @@ function html(): string {
 
   <script>
     let currentTab = 'active';
+    let isComposing = false;
+    document.addEventListener('compositionstart', () => { isComposing = true; });
+    document.addEventListener('compositionend', () => { isComposing = false; });
 
     const COLUMNS = [
       { key: 'pending', label: 'Pending', statuses: ['pending'] },
@@ -258,6 +261,7 @@ function html(): string {
     ];
 
     async function load() {
+      if (isComposing) return;
       const focused = document.activeElement;
       const focusId = focused && focused.id ? focused.id : null;
       const focusValue = focused && focused.value !== undefined ? focused.value : null;
