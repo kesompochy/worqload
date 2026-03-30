@@ -34,10 +34,10 @@ export async function report(_queue: TaskQueue, args: string[]) {
     return;
   }
   if (args[0] === "status") {
-    if (!args[1] || !args[2]) exitWithError("Usage: worqload report status <id> <unread|reading|read>");
-    const valid = ["unread", "reading", "read"];
+    if (!args[1] || !args[2]) exitWithError("Usage: worqload report status <id> <unread|reading|read|archived>");
+    const valid = ["unread", "reading", "read", "archived"];
     if (!valid.includes(args[2])) exitWithError(`Invalid status: ${args[2]}. Valid: ${valid.join(", ")}`);
-    await updateReportStatus(args[1], args[2] as "unread" | "reading" | "read");
+    await updateReportStatus(args[1], args[2] as "unread" | "reading" | "read" | "archived");
     console.log(`Report status updated: ${args[2]}`);
     return;
   }

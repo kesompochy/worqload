@@ -2,7 +2,7 @@ import { withLock } from "./lock";
 
 const DEFAULT_REPORTS_PATH = ".worqload/reports.json";
 
-export type ReportStatus = "unread" | "reading" | "read";
+export type ReportStatus = "unread" | "reading" | "read" | "archived";
 
 export interface Report {
   id: string;

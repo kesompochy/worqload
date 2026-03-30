@@ -121,7 +121,7 @@ export function startServer(basePort = 3456): void {
       const reportStatusMatch = url.pathname.match(/^\/api\/reports\/([^/]+)\/status$/);
       if (req.method === "PATCH" && reportStatusMatch) {
         const body = await req.json() as { status: string };
-        await updateReportStatus(reportStatusMatch[1], body.status as "unread" | "reading" | "read");
+        await updateReportStatus(reportStatusMatch[1], body.status as "unread" | "reading" | "read" | "archived");
         return json({ updated: true });
       }
 
@@ -605,7 +605,8 @@ function FeedbackSection({ projects, onSend }) {
 }
 
 function ReportsSection({ reports, onUpdate }) {
-  if (!reports.length) return null;
+  const visibleReports = reports.filter(r => r.status !== 'archived');
+  if (!visibleReports.length) return null;
   const [expanded, setExpanded] = useState(null);
   const setStatus = async (id, status) => {
     await api.patch('/api/reports/' + id.slice(0, 8) + '/status', { status });
@@ -613,8 +614,8 @@ function ReportsSection({ reports, onUpdate }) {
   };
   const statusColors = { unread: '#ed6c6c', reading: '#edd76c', read: '#666' };
   return html\`<div style="margin-bottom:1rem">
-    <h2 style="margin-top:0">Reports \${reports.filter(r => r.status === 'unread').length > 0 ? html\`<span style="color:#ed6c6c;font-size:0.75rem">(\${reports.filter(r => r.status === 'unread').length} unread)</span>\` : null}</h2>
-    \${reports.map(r => html\`<div class="task" key=\${r.id} style="border-left:3px solid \${statusColors[r.status]}">
+    <h2 style="margin-top:0">Reports \${visibleReports.filter(r => r.status === 'unread').length > 0 ? html\`<span style="color:#ed6c6c;font-size:0.75rem">(\${visibleReports.filter(r => r.status === 'unread').length} unread)</span>\` : null}</h2>
+    \${visibleReports.map(r => html\`<div class="task" key=\${r.id} style="border-left:3px solid \${statusColors[r.status]}">
       <div class="task-title" style="cursor:pointer" onClick=\${() => { setExpanded(expanded === r.id ? null : r.id); if (r.status === 'unread') setStatus(r.id, 'reading'); }}>
         \${r.title}
         <span class="badge" style="background:\${statusColors[r.status]}20;color:\${statusColors[r.status]}">\${r.status}</span>
@@ -624,6 +625,7 @@ function ReportsSection({ reports, onUpdate }) {
         <div class="task-actions" style="margin-top:0.5rem">
           \${r.status !== 'read' && html\`<button onClick=\${() => setStatus(r.id, 'read')}>Mark read</button>\`}
           \${r.status === 'read' && html\`<button onClick=\${() => setStatus(r.id, 'unread')}>Mark unread</button>\`}
+          \${r.status === 'read' && html\`<button onClick=\${() => setStatus(r.id, 'archived')}>Archive</button>\`}
         </div>\`}
     </div>\`)}
   </div>\`;
