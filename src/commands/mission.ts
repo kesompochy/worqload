@@ -50,8 +50,9 @@ export async function mission(queue: TaskQueue, args: string[]) {
   if (args[0] === "principle") {
     const missionId = args[1];
     if (!missionId) exitWithError("Usage: worqload mission principle <mission-id> [<text>]");
-    const text = args[2];
-    if (text) {
+    if (args[2] === "add") {
+      const text = args.slice(3).join(" ").trim();
+      if (!text) exitWithError("Usage: worqload mission principle <mission-id> add <text>");
       await addMissionPrinciple(missionId, text);
       console.log("Principle added.");
       return;

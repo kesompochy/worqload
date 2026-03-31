@@ -36,7 +36,7 @@ export async function principle(_queue: TaskQueue, args: string[]) {
     console.log(`Principle updated (#${index}): ${newText}`);
     return;
   }
-  if (args.length === 0) {
+  if (args.length === 0 || args[0] === "list") {
     const content = await loadPrinciples();
     if (!content) {
       console.log("No principles defined.");
