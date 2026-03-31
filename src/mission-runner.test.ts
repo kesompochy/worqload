@@ -1439,3 +1439,58 @@ describe("processTask orient integration", () => {
     expect(orientLog?.content).toContain("Incremental delivery");
   });
 });
+
+describe("processTask escalation via exit code", () => {
+  test("sets WORQLOAD_TASK_ID in spawned subprocess environment", async () => {
+    const storePath = tmpPath("process-env");
+    const missionPath = tmpPath("process-env-m");
+    const mission = await createMissionWithPrinciple("env-mission", missionPath);
+    const task = createTask("env task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "echo $WORQLOAD_TASK_ID"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const actLog = updated?.logs.find(l => l.phase === "act" && l.content.includes(task.id));
+    expect(actLog).toBeDefined();
+  });
+
+  test("transitions to waiting_human on escalation exit code", async () => {
+    const storePath = tmpPath("process-escalate");
+    const missionPath = tmpPath("process-escalate-m");
+    const mission = await createMissionWithPrinciple("escalate-mission", missionPath);
+    const task = createTask("needs human input");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, {
+      storePath,
+      actCommand: ["sh", "-c", `echo "I need guidance"; exit ${ESCALATION_EXIT_CODE}`],
+    });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("waiting_human");
+    expect(updated?.owner).toBeUndefined();
+    const orientLog = updated?.logs.find(l => l.phase === "orient" && l.content.includes(HUMAN_REQUIRED_PREFIX));
+    expect(orientLog).toBeDefined();
+  });
+
+  test("escalation exit code does not retry", async () => {
+    const storePath = tmpPath("process-escalate-no-retry");
+    const missionPath = tmpPath("process-escalate-no-retry-m");
+    const mission = await createMissionWithPrinciple("no-retry-mission", missionPath);
+    const task = createTask("escalate no retry");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, {
+      storePath,
+      actCommand: ["sh", "-c", `exit ${ESCALATION_EXIT_CODE}`],
+    });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("waiting_human");
+    expect(updated?.context.retryCount).toBeUndefined();
+  });
+});

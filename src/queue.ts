@@ -12,6 +12,10 @@ export class TaskQueue {
     this.archivePath = archivePath;
   }
 
+  getStorePath(): string | undefined {
+    return this.storePath;
+  }
+
   enqueue(task: Task): void {
     this.tasks.set(task.id, task);
   }

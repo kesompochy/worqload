@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import type { TaskQueue as TaskQueueType } from "./queue";
+import { EscalationError } from "./utils/errors";
 import { init } from "./commands/init";
 import { principle } from "./commands/principle";
 import { add, list, show, context, next, clean, history, claim, unclaim } from "./commands/task";
@@ -46,6 +47,10 @@ try {
     printUsage();
   }
 } catch (error) {
+  if (error instanceof EscalationError) {
+    console.error(error.message);
+    process.exit(error.exitCode);
+  }
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }

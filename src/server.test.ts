@@ -8,6 +8,8 @@ import { createMission, loadMissions, saveMissions } from "./mission";
 import type { Mission } from "./mission";
 import { recordSpawnStart, loadSpawns, saveSpawns } from "./spawns";
 import type { SpawnRecord } from "./spawns";
+import type { RunnerState } from "./mission-runner-state";
+import { filterSpawnsForDashboard, filterRunnersForDashboard } from "./server";
 
 const REAL_STORE = ".worqload/tasks.json";
 const REAL_MISSIONS = ".worqload/missions.json";
@@ -305,5 +307,122 @@ describe("Activity visibility: dashboard HTML", () => {
     expect(source).toContain("ActivityDashboard");
     expect(source).toContain("Mission Runners");
     expect(source).toContain("Active Spawns");
+  });
+});
+
+describe("API spawn filtering: filterSpawnsForDashboard", () => {
+  function makeSpawn(overrides: Partial<SpawnRecord>): SpawnRecord {
+    return {
+      id: crypto.randomUUID(),
+      taskId: crypto.randomUUID(),
+      taskTitle: "test",
+      owner: "agent",
+      pid: 1000,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  test("returns all running spawns", () => {
+    const spawns = [
+      makeSpawn({ status: "running" }),
+      makeSpawn({ status: "running" }),
+      makeSpawn({ status: "done", finishedAt: new Date().toISOString() }),
+    ];
+    const result = filterSpawnsForDashboard(spawns);
+    const running = result.filter(s => s.status === "running");
+    expect(running).toHaveLength(2);
+  });
+
+  test("returns at most 10 recent non-running spawns", () => {
+    const spawns: SpawnRecord[] = [];
+    for (let i = 0; i < 15; i++) {
+      spawns.push(makeSpawn({
+        status: "done",
+        finishedAt: new Date(Date.now() - i * 1000).toISOString(),
+      }));
+    }
+    const result = filterSpawnsForDashboard(spawns);
+    expect(result).toHaveLength(10);
+  });
+
+  test("recent spawns are ordered newest first", () => {
+    const older = makeSpawn({
+      status: "done",
+      finishedAt: new Date(Date.now() - 60000).toISOString(),
+    });
+    const newer = makeSpawn({
+      status: "done",
+      finishedAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const result = filterSpawnsForDashboard([older, newer]);
+    expect(result[0].id).toBe(newer.id);
+    expect(result[1].id).toBe(older.id);
+  });
+
+  test("running spawns come before recent finished spawns", () => {
+    const running = makeSpawn({ status: "running" });
+    const finished = makeSpawn({
+      status: "done",
+      finishedAt: new Date().toISOString(),
+    });
+    const result = filterSpawnsForDashboard([finished, running]);
+    expect(result[0].status).toBe("running");
+    expect(result[1].status).toBe("done");
+  });
+
+  test("returns empty array when no spawns exist", () => {
+    expect(filterSpawnsForDashboard([])).toEqual([]);
+  });
+});
+
+describe("API runner filtering: filterRunnersForDashboard", () => {
+  function makeRunner(overrides: Partial<RunnerState>): RunnerState {
+    return {
+      id: crypto.randomUUID(),
+      missionId: crypto.randomUUID(),
+      missionName: "test mission",
+      pid: 2000,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      lastHeartbeat: new Date().toISOString(),
+      tasksProcessed: 0,
+      consecutiveIdles: 0,
+      ...overrides,
+    };
+  }
+
+  test("excludes stopped runners", () => {
+    const runners = [
+      makeRunner({ status: "running" }),
+      makeRunner({ status: "idle" }),
+      makeRunner({ status: "stopped" }),
+    ];
+    const result = filterRunnersForDashboard(runners);
+    expect(result).toHaveLength(2);
+    expect(result.every(r => r.status !== "stopped")).toBe(true);
+  });
+
+  test("returns all running and idle runners", () => {
+    const runners = [
+      makeRunner({ status: "running" }),
+      makeRunner({ status: "running" }),
+      makeRunner({ status: "idle" }),
+    ];
+    const result = filterRunnersForDashboard(runners);
+    expect(result).toHaveLength(3);
+  });
+
+  test("returns empty array when all runners are stopped", () => {
+    const runners = [
+      makeRunner({ status: "stopped" }),
+      makeRunner({ status: "stopped" }),
+    ];
+    expect(filterRunnersForDashboard(runners)).toEqual([]);
+  });
+
+  test("returns empty array when no runners exist", () => {
+    expect(filterRunnersForDashboard([])).toEqual([]);
   });
 });

@@ -320,9 +320,20 @@ export async function processTask(task: Task, mission: Mission, options: Process
       logs: [...current.logs, phaseLog("act", `Spawning: ${command[0]}`)],
     }), storePath);
 
+    const taskEnv: Record<string, string> = {
+      WORQLOAD_CLI: "worqload",
+      WORQLOAD_TASK_ID: task.id,
+      WORQLOAD_TASK_TITLE: task.title,
+      WORQLOAD_TASK_CONTEXT: JSON.stringify(claimed.context),
+    };
+    if (mission.principles.length > 0) {
+      taskEnv.WORQLOAD_MISSION_PRINCIPLES = mission.principles.join("\n");
+    }
+
     const proc = Bun.spawn(command, {
       stdout: "pipe",
       stderr: "pipe",
+      env: { ...process.env, ...taskEnv },
     });
 
     const stdout = await new Response(proc.stdout).text();
@@ -339,6 +350,17 @@ export async function processTask(task: Task, mission: Mission, options: Process
       }), storePath);
       console.log(`Completed: ${task.title}`);
       await runOnDoneHooks(task.id, task.title);
+    } else if (exitCode === ESCALATION_EXIT_CODE) {
+      const question = truncated || "Spawned agent requested human escalation";
+      await updateTask(task.id, (current) => ({
+        status: "waiting_human" as const,
+        owner: undefined,
+        logs: [...current.logs,
+          phaseLog("act", truncated),
+          phaseLog("orient", `${HUMAN_REQUIRED_PREFIX}${question}`),
+        ],
+      }), storePath);
+      console.log(`Escalated: ${task.title}`);
     } else {
       const retryCount = (claimed.context.retryCount as number) || 0;
       if (retryCount < MAX_TASK_RETRIES) {

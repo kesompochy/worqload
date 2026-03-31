@@ -44,7 +44,7 @@ Compare observations against Principles. Every decision must trace back to a Pri
 **4. Decide & Act**
 
 Based on the `iterate` output:
-- **waiting_human**: present the listed questions to the user, skip to next iteration
+- **waiting_human**: questions are visible on the dashboard (web UI). Do not duplicate them in chat output. Skip to next iteration.
 - **tasks_created**: iterate auto-generated tasks from observations. Assign them to missions.
 - **mission_run**: start mission runners for listed missions
 - **unassigned**: assign tasks to an appropriate mission, then start runners
@@ -80,8 +80,8 @@ worqload feedback summary                  # check for new human input
 - Small, incremental changes. Each task = one commit-sized unit of work.
 - Write tests before implementation (TDD).
 - Reports must be written in Japanese.
-- When uncertain during Orient, escalate with `worqload orient <id> --human`.
+- When uncertain during Orient, escalate with `worqload orient <id> --human`. Only the main session may use `--human`; spawned agents that need escalation must exit with code 3 (ESCALATION_EXIT_CODE) so the mission runner promotes the task to waiting_human.
 - Run independent missions in parallel when possible.
 - `principle` の追加・変更・削除はユーザーの明示的な指示がある場合のみ行う。Agentが独自判断で原則を操作してはならない。
 - Feedback is human input. Agents never create feedback — they create tasks and reports.
-- Minimal output: Only produce chat output when there is something actionable for the human — a `waiting_human` question, audit findings, or new feedback to present. If all tasks are being handled and there is nothing new, produce NO output.
+- Minimal output: Only produce chat output for audit findings or new feedback to present. `waiting_human` questions are surfaced via the dashboard, not chat. If all tasks are being handled and there is nothing new, produce NO output.

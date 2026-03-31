@@ -3,6 +3,8 @@ import type { Task } from "./task";
 import { createTask } from "./task";
 import { loadPrinciples } from "./principles";
 import { loadSpawns } from "./spawns";
+import type { SpawnRecord } from "./spawns";
+import type { RunnerState } from "./mission-runner-state";
 import { loadFeedback, addFeedback, removeFeedback, updateFeedbackMessage } from "./feedback";
 import { loadProjects } from "./projects";
 import { loadReports, updateReportStatus } from "./reports";
@@ -117,7 +119,7 @@ async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: num
 
       if (req.method === "GET" && url.pathname === "/api/spawns") {
         const spawns = await loadSpawns();
-        return json(spawns);
+        return json(filterSpawnsForDashboard(spawns));
       }
 
       if (req.method === "GET" && url.pathname === "/api/missions") {
@@ -138,7 +140,7 @@ async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: num
 
       if (req.method === "GET" && url.pathname === "/api/mission-runners") {
         const runners = await loadRunnerStatesUnlocked();
-        return json(runners);
+        return json(filterRunnersForDashboard(runners));
       }
 
       if (req.method === "GET" && url.pathname === "/api/projects") {
@@ -279,6 +281,21 @@ async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: num
       }
 
       return new Response("Not Found", { status: 404 });
+}
+
+const RECENT_SPAWN_LIMIT = 10;
+
+export function filterSpawnsForDashboard(spawns: SpawnRecord[]): SpawnRecord[] {
+  const running = spawns.filter(s => s.status === "running");
+  const finished = spawns
+    .filter(s => s.status !== "running")
+    .sort((a, b) => new Date(b.finishedAt ?? b.startedAt).getTime() - new Date(a.finishedAt ?? a.startedAt).getTime())
+    .slice(0, RECENT_SPAWN_LIMIT);
+  return [...running, ...finished];
+}
+
+export function filterRunnersForDashboard(runners: RunnerState[]): RunnerState[] {
+  return runners.filter(r => r.status !== "stopped");
 }
 
 function json(data: unknown, status = 200): Response {
@@ -802,11 +819,9 @@ function MissionTaskCard({ task, onUpdate }) {
 }
 
 function ActivityDashboard({ runners, spawns }) {
-  const activeRunners = runners.filter(r => r.status !== 'stopped');
   const runningSpawns = spawns.filter(s => s.status === 'running');
-  const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-  const recentSpawns = spawns.filter(s => s.status !== 'running' && s.finishedAt && new Date(s.finishedAt).getTime() > fiveMinAgo).slice(-10).reverse();
-  if (!activeRunners.length && !runningSpawns.length && !recentSpawns.length) return null;
+  const recentSpawns = spawns.filter(s => s.status !== 'running');
+  if (!runners.length && !runningSpawns.length && !recentSpawns.length) return null;
 
   const runnerStatusStyle = (status) => {
     if (status === 'running') return 'background:#1a2e2e;color:#6cced4';
@@ -816,9 +831,9 @@ function ActivityDashboard({ runners, spawns }) {
 
   return html\`<div style="margin-bottom:1rem">
     <h2 style="margin-top:0">Activity</h2>
-    \${activeRunners.length > 0 && html\`<div style="margin-bottom:0.75rem">
+    \${runners.length > 0 && html\`<div style="margin-bottom:0.75rem">
       <div style="font-size:0.75rem;color:#888;margin-bottom:0.35rem;text-transform:uppercase;letter-spacing:0.05em">Mission Runners</div>
-      \${activeRunners.map(r => {
+      \${runners.map(r => {
         const elapsed = formatDuration(Date.now() - new Date(r.startedAt).getTime());
         const heartbeatAge = Math.floor((Date.now() - new Date(r.lastHeartbeat).getTime()) / 1000);
         const stale = heartbeatAge > 120;

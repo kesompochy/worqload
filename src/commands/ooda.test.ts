@@ -3,7 +3,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { TaskQueue } from "../queue";
 import { orient } from "./ooda";
-import { createTask, HUMAN_REQUIRED_PREFIX } from "../task";
+import { createTask, HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "../task";
+import { EscalationError } from "../utils/errors";
 
 function tmpPath(label: string): string {
   return join(tmpdir(), `worqload-ooda-cmd-${label}-${crypto.randomUUID()}.json`);
@@ -36,7 +37,7 @@ describe("orient --human", () => {
     expect(updated.logs[0].content).toBe(`${HUMAN_REQUIRED_PREFIX}Orientation requires human input`);
   });
 
-  test("rejects --human when called from spawned agent context", async () => {
+  test("rejects --human when called from spawned agent context with EscalationError", async () => {
     const queue = new TaskQueue(tmpPath("orient-human-guard"));
     const task = createTask("test task");
     queue.enqueue(task);
@@ -44,11 +45,29 @@ describe("orient --human", () => {
     const original = process.env.WORQLOAD_TASK_ID;
     process.env.WORQLOAD_TASK_ID = "some-task-id";
     try {
-      await expect(orient(queue, [task.id, "--human", "question"])).rejects.toThrow(
-        /spawned agent/i
-      );
+      await expect(orient(queue, [task.id, "--human", "question"])).rejects.toThrow(EscalationError);
       const updated = queue.get(task.id)!;
       expect(updated.status).toBe("observing");
+    } finally {
+      if (original === undefined) delete process.env.WORQLOAD_TASK_ID;
+      else process.env.WORQLOAD_TASK_ID = original;
+    }
+  });
+
+  test("EscalationError carries the human question as message", async () => {
+    const queue = new TaskQueue(tmpPath("orient-human-msg"));
+    const task = createTask("test task");
+    queue.enqueue(task);
+
+    const original = process.env.WORQLOAD_TASK_ID;
+    process.env.WORQLOAD_TASK_ID = "some-task-id";
+    try {
+      await orient(queue, [task.id, "--human", "Is this correct?"]);
+      throw new Error("should not reach here");
+    } catch (e) {
+      expect(e).toBeInstanceOf(EscalationError);
+      expect((e as EscalationError).message).toBe("Is this correct?");
+      expect((e as EscalationError).exitCode).toBe(ESCALATION_EXIT_CODE);
     } finally {
       if (original === undefined) delete process.env.WORQLOAD_TASK_ID;
       else process.env.WORQLOAD_TASK_ID = original;

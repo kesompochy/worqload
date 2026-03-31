@@ -1,6 +1,6 @@
-import { exitWithError } from "../utils/errors";
+import { exitWithError, EscalationError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { HUMAN_REQUIRED_PREFIX } from "../task";
+import { HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "../task";
 import { resolveTask } from "./resolve";
 import { runOnDoneHooks } from "../hooks";
 
@@ -19,7 +19,8 @@ export async function orient(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
   if (args[1] === "--human") {
     if (process.env.WORQLOAD_TASK_ID) {
-      throw new Error("Spawned agents cannot escalate directly. Exit with code 3 to request human escalation.");
+      const question = args.slice(2).join(" ") || "Orientation requires human input";
+      throw new EscalationError(question, ESCALATION_EXIT_CODE);
     }
     const question = args.slice(2).join(" ") || "Orientation requires human input";
     queue.transition(task.id, "orienting");

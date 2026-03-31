@@ -4,7 +4,7 @@ import { loadSpawns, recordSpawnStart, recordSpawnFinish } from "../spawns";
 import { loadConfig } from "../config";
 import { updateTask } from "../store";
 import type { Task, OodaPhase } from "../task";
-import { validateTransition } from "../task";
+import { validateTransition, ESCALATION_EXIT_CODE, HUMAN_REQUIRED_PREFIX } from "../task";
 import { resolveTask } from "./resolve";
 import { loadMissions } from "../mission";
 import { runOnDoneHooks } from "../hooks";
@@ -140,6 +140,11 @@ export async function spawn(queue: TaskQueue, args: string[]) {
     } else if (exitCode === 0) {
       console.log(`Done: ${task.title}`);
       return { status: "done" as const, logs, owner: undefined };
+    } else if (exitCode === ESCALATION_EXIT_CODE) {
+      const question = truncated || "Spawned agent requested human escalation";
+      const escalationLogs = [...logs, { phase: "orient" as OodaPhase, content: `${HUMAN_REQUIRED_PREFIX}${question}`, timestamp: new Date().toISOString() }];
+      console.log(`Escalated: ${task.title}`);
+      return { status: "waiting_human" as const, logs: escalationLogs, owner: undefined };
     } else {
       console.log(`Failed: ${task.title} (exit: ${exitCode})`);
       const failLogs = [...logs, { phase: "act" as OodaPhase, content: `[FAILED] exit code ${exitCode}`, timestamp: new Date().toISOString() }];
