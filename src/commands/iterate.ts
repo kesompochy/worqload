@@ -33,6 +33,13 @@ export interface Observation {
   tasks: Task[];
   waitingHumanTasks: Task[];
   suspiciousTasks: SuspiciousTask[];
+  failedTasks: Task[];
+  uncommittedChanges: string;
+}
+
+export interface GenerateResult {
+  createdTasks: string[];
+  retriedTasks: string[];
 }
 
 const MIN_ACT_CONTENT_LENGTH = 10;
@@ -83,17 +90,33 @@ export async function auditRecentCompletions(
   return suspicious;
 }
 
+export async function getUncommittedChanges(): Promise<string> {
+  try {
+    const proc = Bun.spawn(["git", "status", "--porcelain"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
 export async function collectObservation(queue: TaskQueue, ctx: IterateContext, excludeTaskId?: string): Promise<Observation> {
   const allTasks = queue.list().filter(t => t.id !== excludeTaskId);
   const waitingHumanTasks = allTasks.filter(t => t.status === "waiting_human");
   const activeTasks = allTasks.filter(t => t.status !== "done" && t.status !== "failed" && t.status !== "waiting_human");
+  const failedTasks = allTasks.filter(t => t.status === "failed");
 
-  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks] = await Promise.all([
+  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, uncommittedChanges] = await Promise.all([
     loadFeedback(ctx.feedbackPath),
     loadMissions(ctx.missionsPath),
     runAllSources(ctx.sourcesPath).catch(() => [] as SourceResult[]),
     loadPrinciples(ctx.principlesPath),
     auditRecentCompletions(queue, ctx),
+    getUncommittedChanges(),
   ]);
 
   return {
@@ -104,6 +127,8 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     tasks: activeTasks,
     waitingHumanTasks,
     suspiciousTasks,
+    failedTasks,
+    uncommittedChanges,
   };
 }
 
@@ -180,7 +205,58 @@ export function analyzeObservation(obs: Observation): string {
     lines.push(`suspicious: [${shortId}] ${st.title} (${st.reasons.join(", ")})`);
   }
 
+  if (obs.failedTasks.length > 0) {
+    lines.push(`failed: ${obs.failedTasks.length} task${obs.failedTasks.length > 1 ? "s" : ""}`);
+  }
+
+  if (obs.uncommittedChanges) {
+    lines.push("uncommitted changes detected");
+  }
+
   return `[${tags.join(",")}] ${lines.join("; ")}`;
+}
+
+const MAX_RETRY_ATTEMPTS = 2;
+const COMMIT_TASK_TITLE = "Commit uncommitted changes";
+
+function hasDuplicateTask(queue: TaskQueue, existingTasks: Task[], title: string): boolean {
+  const allTasks = [...queue.list(), ...existingTasks];
+  return allTasks.some(t => t.title === title && t.status !== "done" && t.status !== "failed");
+}
+
+export function generateTasksFromObservation(queue: TaskQueue, obs: Observation): GenerateResult {
+  const createdTasks: string[] = [];
+  const retriedTasks: string[] = [];
+
+  // Uncommitted changes → commit task
+  if (obs.uncommittedChanges.length > 0) {
+    if (!hasDuplicateTask(queue, obs.tasks, COMMIT_TASK_TITLE)) {
+      const task = createTask(COMMIT_TASK_TITLE, { gitStatus: obs.uncommittedChanges }, 0, "iterate");
+      queue.enqueue(task);
+      createdTasks.push(task.title);
+    }
+  }
+
+  // New feedback themes → review tasks
+  for (const theme of obs.feedbackSummary.themes) {
+    const title = `Review feedback: ${theme}`;
+    if (!hasDuplicateTask(queue, obs.tasks, title)) {
+      const task = createTask(title, {}, 0, "iterate");
+      queue.enqueue(task);
+      createdTasks.push(task.title);
+    }
+  }
+
+  // Failed tasks → retry by transitioning back to observing
+  for (const failedTask of obs.failedTasks) {
+    const actLogCount = failedTask.logs.filter(l => l.phase === "act").length;
+    if (actLogCount < MAX_RETRY_ATTEMPTS) {
+      queue.transition(failedTask.id, "observing");
+      retriedTasks.push(failedTask.id);
+    }
+  }
+
+  return { createdTasks, retriedTasks };
 }
 
 // Queue-wide OODA: surveys all tasks, feedback, missions, and sources to decide
@@ -205,6 +281,29 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
 
   // Decide
   queue.transition(id, "deciding");
+
+  // Autonomous task generation from observation
+  const generated = generateTasksFromObservation(queue, obs);
+  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0;
+
+  if (hasGenerated) {
+    const genParts: string[] = [];
+    if (generated.createdTasks.length > 0) {
+      genParts.push(`created ${generated.createdTasks.length} task(s): ${generated.createdTasks.join(", ")}`);
+    }
+    if (generated.retriedTasks.length > 0) {
+      genParts.push(`retried ${generated.retriedTasks.length} failed task(s)`);
+    }
+    const genSummary = genParts.join("; ");
+    queue.addLog(id, "decide", `tasks_created: ${genSummary}`);
+    queue.transition(id, "acting");
+    queue.addLog(id, "act", genSummary);
+    queue.transition(id, "done");
+    await queue.save();
+    await runOnDoneHooks(id, iterationTask.title);
+    console.log(`[${shortId}] Iteration complete: tasks_created — ${genSummary}`);
+    return;
+  }
 
   if (obs.waitingHumanTasks.length > 0) {
     const questions = obs.waitingHumanTasks.map(t => {
@@ -295,5 +394,9 @@ export function formatObserveLog(obs: Observation): string {
   const principleCount = obs.principles ? obs.principles.split("\n").filter(l => l.startsWith("- ")).length : 0;
   parts.push(`principles: ${principleCount}`);
   parts.push(`suspicious: ${obs.suspiciousTasks.length}`);
+  parts.push(`failed: ${obs.failedTasks.length}`);
+  if (obs.uncommittedChanges) {
+    parts.push("uncommitted: yes");
+  }
   return parts.join("; ");
 }
