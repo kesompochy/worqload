@@ -7,7 +7,9 @@ import { runOnDoneHooks } from "../hooks";
 export async function observe(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
   const note = args.slice(1).join(" ");
-  queue.transition(task.id, "observing");
+  if (task.status !== "observing") {
+    queue.transition(task.id, "observing");
+  }
   if (note) {
     queue.addLog(task.id, "observe", note);
   }

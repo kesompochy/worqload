@@ -57,7 +57,7 @@ export async function spawn(queue: TaskQueue, args: string[]) {
 
   const config = await loadConfig();
   const taskEnv: Record<string, string> = {
-    WORQLOAD_CLI: "worqload",
+    WORQLOAD_CLI: Bun.which("worqload") ?? process.argv[0],
     WORQLOAD_TASK_ID: task.id,
     WORQLOAD_TASK_TITLE: task.title,
     WORQLOAD_TASK_CONTEXT: JSON.stringify(task.context),

@@ -2,13 +2,41 @@ import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
 import { TaskQueue } from "../queue";
-import { orient } from "./ooda";
+import { observe, orient } from "./ooda";
 import { createTask, HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "../task";
 import { EscalationError } from "../utils/errors";
 
 function tmpPath(label: string): string {
   return join(tmpdir(), `worqload-ooda-cmd-${label}-${crypto.randomUUID()}.json`);
 }
+
+describe("observe", () => {
+  test("does not call transition when task is already observing", async () => {
+    const queue = new TaskQueue(tmpPath("observe-already-observing"));
+    const task = createTask("test task");
+    queue.enqueue(task);
+    // task starts in "observing" status; calling observe should not throw
+    await observe(queue, [task.id, "some observation note"]);
+
+    const updated = queue.get(task.id)!;
+    expect(updated.status).toBe("observing");
+    expect(updated.logs).toHaveLength(1);
+    expect(updated.logs[0].phase).toBe("observe");
+    expect(updated.logs[0].content).toBe("some observation note");
+  });
+
+  test("adds log without note when no note is provided", async () => {
+    const queue = new TaskQueue(tmpPath("observe-no-note"));
+    const task = createTask("test task");
+    queue.enqueue(task);
+
+    await observe(queue, [task.id]);
+
+    const updated = queue.get(task.id)!;
+    expect(updated.status).toBe("observing");
+    expect(updated.logs).toHaveLength(0);
+  });
+});
 
 describe("orient --human", () => {
   test("transitions task to waiting_human and logs the question", async () => {

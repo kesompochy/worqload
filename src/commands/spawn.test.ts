@@ -90,6 +90,37 @@ function tmpPath(label: string): string {
   return join(tmpdir(), `worqload-spawn-cmd-${label}-${crypto.randomUUID()}.json`);
 }
 
+describe("spawn WORQLOAD_CLI environment variable", () => {
+  test("sets WORQLOAD_CLI to an absolute path", async () => {
+    const storePath = tmpPath("spawn-cli-path");
+    const queue = new TaskQueue(storePath);
+    const task = createTask("cli path task");
+    queue.enqueue(task);
+    await queue.save();
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    console.error = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await spawn(queue, [task.id, "sh", "-c", "echo $WORQLOAD_CLI"]);
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const actLog = updated?.logs.find(l => l.phase === "act");
+    expect(actLog).toBeDefined();
+    // The output should contain an absolute path (starts with /)
+    expect(actLog!.content).toMatch(/^\//);
+    // Should not be just the bare command name "worqload"
+    expect(actLog!.content.trim()).not.toBe("worqload");
+  });
+});
+
 describe("spawn escalation via exit code", () => {
   test("transitions to waiting_human on exit code 3", async () => {
     const storePath = tmpPath("spawn-escalate");
