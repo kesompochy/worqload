@@ -1015,4 +1015,104 @@ describe("generateTasksFromObservation", () => {
     expect(result.resumedTasks).toHaveLength(0);
     expect(queue.get(task.id)!.status).toBe("waiting_human");
   });
+
+  test("derives feedback review task when queue is empty and unresolved feedback exists", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.principles = "# Principles\n\n- Improve quality continuously";
+    obs.feedbackSummary = {
+      counts: { new: 2, acknowledged: 1, resolved: 0 },
+      recentUnresolved: [
+        { id: "f1", from: "user", message: "Fix latency issue", status: "new", createdAt: new Date().toISOString() },
+        { id: "f2", from: "user", message: "Improve error messages", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.autonomousTasks.length).toBeGreaterThanOrEqual(1);
+    expect(result.autonomousTasks.some(t => t.includes("feedback"))).toBe(true);
+    expect(queue.list().some(t => t.title.toLowerCase().includes("feedback"))).toBe(true);
+  });
+
+  test("derives improvement task from principles and source results when queue is empty", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.principles = "# Principles\n\n- Increase test coverage\n- Improve performance";
+    obs.sourceResults = [
+      { name: "test-coverage", output: "Coverage: 65%", exitCode: 0 },
+    ];
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.autonomousTasks.length).toBeGreaterThanOrEqual(1);
+    expect(queue.list().length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("does not derive autonomous tasks when queue has active tasks", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const existing = createTask("Active task");
+    queue.enqueue(existing);
+    const obs = emptyObservation();
+    obs.tasks = [existing];
+    obs.principles = "# Principles\n\n- Increase test coverage";
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.autonomousTasks).toHaveLength(0);
+  });
+
+  test("does not derive autonomous tasks when waiting_human tasks exist", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const waiting = createTask("Waiting for input");
+    waiting.status = "waiting_human";
+    const obs = emptyObservation();
+    obs.waitingHumanTasks = [waiting];
+    obs.principles = "# Principles\n\n- Increase test coverage";
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.autonomousTasks).toHaveLength(0);
+  });
+
+  test("does not derive autonomous tasks when no principles exist", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.principles = "";
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.autonomousTasks).toHaveLength(0);
+  });
+
+  test("does not duplicate autonomous tasks already in queue or archive", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.principles = "# Principles\n\n- Increase test coverage";
+    obs.sourceResults = [
+      { name: "test-coverage", output: "Coverage: 65%", exitCode: 0 },
+    ];
+
+    // First call creates the task
+    const result1 = await generateTasksFromObservation(queue, obs);
+    expect(result1.autonomousTasks.length).toBeGreaterThanOrEqual(1);
+
+    // Update obs.tasks to reflect the newly created tasks
+    obs.tasks = queue.list();
+
+    // Second call should not duplicate
+    const result2 = await generateTasksFromObservation(queue, obs);
+    expect(result2.autonomousTasks).toHaveLength(0);
+  });
+
+  test("returns autonomousTasks as empty array when nothing to derive", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.principles = "";
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.autonomousTasks).toEqual([]);
+  });
 });

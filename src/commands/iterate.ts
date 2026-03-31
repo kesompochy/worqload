@@ -51,6 +51,7 @@ export interface GenerateResult {
   retriedTasks: string[];
   resumedTasks: string[];
   distilledRules: string[];
+  autonomousTasks: string[];
 }
 
 const MIN_ACT_CONTENT_LENGTH = 10;
@@ -311,6 +312,59 @@ function hasDuplicateTask(queue: TaskQueue, existingTasks: Task[], title: string
   return activeTasks.some(t => isMatch(t) && !excludedStatuses.includes(t.status));
 }
 
+const AUTONOMOUS_FEEDBACK_REVIEW_TITLE = "Review unresolved feedback";
+const AUTONOMOUS_PRINCIPLE_PREFIX = "Principle-driven:";
+
+function parsePrincipleItems(principles: string): string[] {
+  return principles.split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2).trim());
+}
+
+export function deriveAutonomousTasks(obs: Observation, queue: TaskQueue, archivedTasks: Task[]): string[] {
+  const derived: string[] = [];
+
+  // Unresolved feedback → feedback review task
+  const unresolvedCount = obs.feedbackSummary.counts.new + obs.feedbackSummary.counts.acknowledged;
+  if (unresolvedCount > 0) {
+    if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_FEEDBACK_REVIEW_TITLE, archivedTasks)) {
+      derived.push(AUTONOMOUS_FEEDBACK_REVIEW_TITLE);
+    }
+  }
+
+  // Principles + source results → improvement tasks
+  const principleItems = parsePrincipleItems(obs.principles);
+  for (const principle of principleItems) {
+    const matchingSource = findSourceForPrinciple(principle, obs.sourceResults);
+    if (matchingSource) {
+      const title = `${AUTONOMOUS_PRINCIPLE_PREFIX} ${principle}`;
+      if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
+        derived.push(title);
+      }
+    }
+  }
+
+  // If no source-matched tasks but principles exist, derive a general improvement task
+  if (derived.length === 0 && principleItems.length > 0 && obs.sourceResults.length > 0) {
+    const title = `${AUTONOMOUS_PRINCIPLE_PREFIX} ${principleItems[0]}`;
+    if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
+      derived.push(title);
+    }
+  }
+
+  return derived;
+}
+
+function findSourceForPrinciple(principle: string, sourceResults: SourceResult[]): SourceResult | undefined {
+  const lowerPrinciple = principle.toLowerCase();
+  return sourceResults.find(sr => {
+    if (!sr.output) return false;
+    const lowerOutput = sr.output.toLowerCase();
+    const lowerName = sr.name.toLowerCase();
+    // Match source when principle keywords overlap with source name or output
+    const principleWords = lowerPrinciple.split(/\s+/).filter(w => w.length > 3);
+    return principleWords.some(word => lowerName.includes(word) || lowerOutput.includes(word));
+  });
+}
+
 export async function generateTasksFromObservation(queue: TaskQueue, obs: Observation, ctx: IterateContext = {}): Promise<GenerateResult> {
   const createdTasks: string[] = [];
   const retriedTasks: string[] = [];
@@ -370,7 +424,25 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     distilledRules = distillResult.rules;
   }
 
-  return { createdTasks, retriedTasks, resumedTasks, distilledRules };
+  // Autonomous task derivation from principles when queue is empty
+  const autonomousTasks: string[] = [];
+  const isQueueEmpty = obs.tasks.length === 0
+    && obs.waitingHumanTasks.length === 0
+    && obs.answeredHumanTasks.length === 0;
+  const nothingGeneratedYet = createdTasks.length === 0
+    && retriedTasks.length === 0
+    && resumedTasks.length === 0;
+
+  if (isQueueEmpty && nothingGeneratedYet && obs.principles) {
+    const derived = deriveAutonomousTasks(obs, queue, archivedTasks);
+    for (const title of derived) {
+      const task = createTask(title, {}, 0, "iterate");
+      queue.enqueue(task);
+      autonomousTasks.push(task.title);
+    }
+  }
+
+  return { createdTasks, retriedTasks, resumedTasks, distilledRules, autonomousTasks };
 }
 
 // Queue-wide OODA: surveys all tasks, feedback, missions, and sources to decide
@@ -402,12 +474,15 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
 
   // Autonomous task generation and feedback distillation
   const generated = await generateTasksFromObservation(queue, obs, ctx);
-  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.resumedTasks.length > 0 || generated.distilledRules.length > 0;
+  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.resumedTasks.length > 0 || generated.distilledRules.length > 0 || generated.autonomousTasks.length > 0;
 
   if (hasGenerated) {
     const genParts: string[] = [];
     if (generated.createdTasks.length > 0) {
       genParts.push(`created ${generated.createdTasks.length} task(s): ${generated.createdTasks.join(", ")}`);
+    }
+    if (generated.autonomousTasks.length > 0) {
+      genParts.push(`autonomous ${generated.autonomousTasks.length} task(s): ${generated.autonomousTasks.join(", ")}`);
     }
     if (generated.retriedTasks.length > 0) {
       genParts.push(`retried ${generated.retriedTasks.length} failed task(s)`);
@@ -419,13 +494,14 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
       genParts.push(`distilled ${generated.distilledRules.length} feedback rule(s) into template`);
     }
     const genSummary = genParts.join("; ");
-    queue.addLog(id, "decide", `tasks_created: ${genSummary}`);
+    const decideTag = generated.autonomousTasks.length > 0 ? "autonomous_tasks" : "tasks_created";
+    queue.addLog(id, "decide", `${decideTag}: ${genSummary}`);
     queue.transition(id, "acting");
     queue.addLog(id, "act", genSummary);
     queue.transition(id, "done");
     await queue.save();
     await runOnDoneHooks(id, iterationTask.title);
-    console.log(`[${shortId}] Iteration complete: tasks_created — ${genSummary}`);
+    console.log(`[${shortId}] Iteration complete: ${decideTag} — ${genSummary}`);
     return;
   }
 
