@@ -93,6 +93,18 @@ describe("DEFAULT_AGENT_TEMPLATE covers spawned agent env vars", () => {
   test("documents WORQLOAD_TASK_CONTEXT env var", () => {
     expect(template).toContain("WORQLOAD_TASK_CONTEXT");
   });
+
+  test("documents WORQLOAD_CLI env var", () => {
+    expect(template).toContain("WORQLOAD_CLI");
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers spawned agent escalation", () => {
+  test("instructs spawned agents to escalate via decide --human", () => {
+    expect(template).toContain("decide");
+    expect(template).toContain("--human");
+    expect(template).toContain("WORQLOAD_CLI");
+  });
 });
 
 describe("DEFAULT_AGENT_TEMPLATE covers session resume", () => {

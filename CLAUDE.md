@@ -49,7 +49,14 @@ If `iterate` reports missions to run, start mission runners:
 bun src/cli.ts mission run <mission-id>
 ```
 
-Mission runners autonomously process all tasks assigned to the mission via the OODA loop. Start one runner per mission. Multiple mission runners can run in parallel.
+Mission runners are the **sole mechanism for task processing**. Do not use `spawn` to process individual tasks — always delegate to `mission run`. Each mission runner:
+- Picks the next unclaimed task by priority
+- Runs it through the full OODA loop (observe → orient → decide → act)
+- Auto-retries failed tasks (up to 2 attempts)
+- Auto-completes the mission when all tasks reach a terminal state
+- Stays alive for 30 minutes of idle before exiting
+
+Start one runner per mission. Multiple mission runners can run in parallel.
 
 If there are unassigned tasks, assign them to an appropriate mission first:
 ```sh

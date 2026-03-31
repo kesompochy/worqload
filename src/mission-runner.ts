@@ -38,11 +38,15 @@ export interface ProcessTaskOptions {
   missionsPath?: string;
 }
 
+const MAX_TASK_RETRIES = 2;
+const RETRY_BASE_MS = 1000;
+
 export function findNextMissionTask(queue: TaskQueue, missionId: string): Task | undefined {
   const tasks = queue.getByMission(missionId);
   let best: Task | undefined;
   for (const task of tasks) {
     if (task.status !== "observing" || task.owner) continue;
+    if (task.context.retryAfter && new Date(task.context.retryAfter as string) > new Date()) continue;
     if (!best || task.priority > best.priority ||
         (task.priority === best.priority && task.createdAt < best.createdAt)) {
       best = task;
@@ -157,6 +161,7 @@ export async function spawnTask(
   if (!claimed) throw new Error(`Task not found: ${task.id}`);
 
   const taskEnv: Record<string, string> = {
+    WORQLOAD_CLI: "worqload",
     WORQLOAD_TASK_ID: task.id,
     WORQLOAD_TASK_TITLE: task.title,
     WORQLOAD_TASK_CONTEXT: JSON.stringify(task.context),
@@ -194,12 +199,29 @@ export async function spawnTask(
       if (exitCode === 0) {
         return { status: "done" as const, logs, owner: undefined };
       } else {
-        const failLogs = [...logs, {
-          phase: "act" as OodaPhase,
-          content: `[FAILED] exit code ${exitCode}`,
-          timestamp: new Date().toISOString(),
-        }];
-        return { status: "failed" as const, logs: failLogs, owner: undefined };
+        const retryCount = (current.context.retryCount as number) || 0;
+        if (retryCount < MAX_TASK_RETRIES) {
+          const newRetryCount = retryCount + 1;
+          const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+          const retryLogs = [...logs, {
+            phase: "act" as OodaPhase,
+            content: `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - exit code ${exitCode}`,
+            timestamp: new Date().toISOString(),
+          }];
+          return {
+            status: "observing" as const,
+            logs: retryLogs,
+            owner: undefined,
+            context: { ...current.context, retryCount: newRetryCount, retryAfter },
+          };
+        } else {
+          const failLogs = [...logs, {
+            phase: "act" as OodaPhase,
+            content: `[FAILED] exit code ${exitCode}`,
+            timestamp: new Date().toISOString(),
+          }];
+          return { status: "failed" as const, logs: failLogs, owner: undefined };
+        }
       }
     }, storePath);
 
@@ -282,24 +304,53 @@ export async function processTask(task: Task, mission: Mission, options: Process
       console.log(`Completed: ${task.title}`);
       await runOnDoneHooks(task.id, task.title);
     } else {
-      await updateTask(task.id, (current) => ({
-        status: "failed" as const,
-        owner: undefined,
-        logs: [...current.logs,
-          phaseLog("act", truncated),
-          phaseLog("act", `[FAILED] exit code ${exitCode}`),
-        ],
-      }), storePath);
-      console.error(`Failed: ${task.title} - exit code ${exitCode}`);
+      const retryCount = (claimed.context.retryCount as number) || 0;
+      if (retryCount < MAX_TASK_RETRIES) {
+        const newRetryCount = retryCount + 1;
+        const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+        await updateTask(task.id, (current) => ({
+          status: "observing" as const,
+          owner: undefined,
+          context: { ...current.context, retryCount: newRetryCount, retryAfter },
+          logs: [...current.logs,
+            phaseLog("act", truncated),
+            phaseLog("act", `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - exit code ${exitCode}`),
+          ],
+        }), storePath);
+        console.log(`Retry ${newRetryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
+      } else {
+        await updateTask(task.id, (current) => ({
+          status: "failed" as const,
+          owner: undefined,
+          logs: [...current.logs,
+            phaseLog("act", truncated),
+            phaseLog("act", `[FAILED] exit code ${exitCode}`),
+          ],
+        }), storePath);
+        console.error(`Failed: ${task.title} - exit code ${exitCode}`);
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await updateTask(task.id, (current) => ({
-      status: "failed" as const,
-      owner: undefined,
-      logs: [...current.logs, phaseLog("act", `[FAILED] ${message}`)],
-    }), storePath);
-    console.error(`Failed: ${task.title} - ${message}`);
+    const retryCount = (claimed.context.retryCount as number) || 0;
+    if (retryCount < MAX_TASK_RETRIES) {
+      const newRetryCount = retryCount + 1;
+      const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+      await updateTask(task.id, (current) => ({
+        status: "observing" as const,
+        owner: undefined,
+        context: { ...current.context, retryCount: newRetryCount, retryAfter },
+        logs: [...current.logs, phaseLog("act", `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - ${message}`)],
+      }), storePath);
+      console.log(`Retry ${newRetryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
+    } else {
+      await updateTask(task.id, (current) => ({
+        status: "failed" as const,
+        owner: undefined,
+        logs: [...current.logs, phaseLog("act", `[FAILED] ${message}`)],
+      }), storePath);
+      console.error(`Failed: ${task.title} - ${message}`);
+    }
   }
 
   // Auto-complete mission if all tasks are terminal
@@ -359,7 +410,7 @@ export async function iterateMission(
 export async function runMission(missionId: string, options: MissionRunnerOptions = {}): Promise<void> {
   const {
     pollIntervalMs = 30_000,
-    idleTimeoutMs = 300_000,
+    idleTimeoutMs = 1_800_000,
     maxRetries = 5,
     retryBaseMs = 1000,
     storePath,

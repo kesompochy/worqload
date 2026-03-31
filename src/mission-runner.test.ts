@@ -198,7 +198,7 @@ describe("processTask", () => {
     const storePath = tmpPath("act-fail");
     const missionPath = tmpPath("act-fail-m");
     const mission = await createMission("act-fail", {}, missionPath);
-    const task = createTask("fail act task");
+    const task = createTask("fail act task", { retryCount: 2 });
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
     await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"] });
@@ -479,7 +479,7 @@ describe("spawnTask", () => {
     const missionPath = tmpPath("spawn-fail-m");
     const spawnsPath = tmpPath("spawn-fail-s");
     const mission = await createMission("fail-mission", {}, missionPath);
-    const task = createTask("fail me");
+    const task = createTask("fail me", { retryCount: 2 });
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
     const result = await spawnTask(task, mission, ["sh", "-c", "exit 1"], { storePath, spawnsPath });
@@ -502,6 +502,19 @@ describe("spawnTask", () => {
     const result = await spawnTask(task, mission, ["sh", "-c", "echo $WORQLOAD_TASK_ID"], { storePath, spawnsPath });
     const completion = await result.completion;
     expect(completion.output).toContain(task.id);
+  });
+
+  test("passes WORQLOAD_CLI env variable to subprocess", async () => {
+    const storePath = tmpPath("spawn-cli");
+    const missionPath = tmpPath("spawn-cli-m");
+    const spawnsPath = tmpPath("spawn-cli-s");
+    const mission = await createMission("cli-mission", {}, missionPath);
+    const task = createTask("cli task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["sh", "-c", "echo $WORQLOAD_CLI"], { storePath, spawnsPath });
+    const completion = await result.completion;
+    expect(completion.output).toContain("worqload");
   });
 
   test("passes mission principles as env variable", async () => {
@@ -631,6 +644,26 @@ describe("mission auto-complete", () => {
     expect(missions[0].status).toBe("active");
   });
 
+  test("does not auto-complete when 1 done + 1 observing task", async () => {
+    const missionPath = tmpPath("auto-obs-m");
+    const storePath = tmpPath("auto-obs");
+    const mission = await createMission("auto-obs", {}, missionPath);
+    const doneTask = createTask("done task");
+    const observingTask = createTask("observing task");
+    const queue = new TaskQueue(storePath);
+    queue.enqueue({ ...doneTask, missionId: mission.id });
+    queue.enqueue({ ...observingTask, missionId: mission.id });
+    queue.transition(doneTask.id, "done");
+    queue.update(observingTask.id, { owner: "other-runner" });
+    await queue.save();
+
+    const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
+    expect(result).toBe("idle");
+
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("active");
+  });
+
   test("returns idle when mission has no tasks", async () => {
     const missionPath = tmpPath("auto-empty-m");
     const storePath = tmpPath("auto-empty");
@@ -643,6 +676,142 @@ describe("mission auto-complete", () => {
 
     const missions = await loadMissions(missionPath);
     expect(missions[0].status).toBe("active");
+  });
+});
+
+describe("runMission persistence", () => {
+  test("polls for new tasks when initially idle", async () => {
+    const missionPath = tmpPath("run-poll-m");
+    const storePath = tmpPath("run-poll");
+    const mission = await createMission("poll-mission", {}, missionPath);
+    const queue = new TaskQueue(storePath);
+    await queue.save();
+
+    setTimeout(async () => {
+      const task = createTask("delayed task");
+      const q = new TaskQueue(storePath);
+      await q.load();
+      q.enqueue({ ...task, missionId: mission.id });
+      await q.save();
+    }, 50);
+
+    await runMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      pollIntervalMs: 10,
+      idleTimeoutMs: 2000,
+      actCommand: ["echo"],
+    });
+
+    const tasks = await load(storePath);
+    const processed = tasks.find(t => t.status === "done");
+    expect(processed).toBeDefined();
+  });
+
+  test("exits after idle timeout when no tasks appear", async () => {
+    const missionPath = tmpPath("run-idle-m");
+    const storePath = tmpPath("run-idle");
+    const mission = await createMission("idle-timeout", {}, missionPath);
+    const queue = new TaskQueue(storePath);
+    await queue.save();
+
+    const start = Date.now();
+    await runMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      pollIntervalMs: 10,
+      idleTimeoutMs: 100,
+    });
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeGreaterThanOrEqual(90);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  test("exits on mission completion instead of idle timeout", async () => {
+    const missionPath = tmpPath("run-complete-m");
+    const storePath = tmpPath("run-complete");
+    const mission = await createMission("complete-mission", {}, missionPath);
+    const task = createTask("the only task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const start = Date.now();
+    await runMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      pollIntervalMs: 10,
+      idleTimeoutMs: 5000,
+      actCommand: ["echo"],
+    });
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(3000);
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("completed");
+  });
+
+  test("resets idle timer when a task is processed", async () => {
+    const missionPath = tmpPath("run-reset-idle-m");
+    const storePath = tmpPath("run-reset-idle");
+    const mission = await createMission("reset-idle", {}, missionPath);
+
+    const task1 = createTask("task1");
+    const blocker = createTask("blocker");
+    const queue = new TaskQueue(storePath);
+    queue.enqueue({ ...task1, missionId: mission.id });
+    queue.enqueue({ ...blocker, missionId: mission.id });
+    queue.transition(blocker.id, "orienting");
+    queue.update(blocker.id, { owner: "other" });
+    await queue.save();
+
+    setTimeout(async () => {
+      const q = new TaskQueue(storePath);
+      await q.load();
+      q.enqueue({ ...createTask("task2"), missionId: mission.id });
+      await q.save();
+    }, 80);
+
+    // Without idle timer reset, runner exits at t~150ms before this fires.
+    // With reset, task2 at ~80ms resets idle, so runner survives until ~230ms.
+    setTimeout(async () => {
+      const q = new TaskQueue(storePath);
+      await q.load();
+      q.enqueue({ ...createTask("task3"), missionId: mission.id });
+      q.transition(blocker.id, "done");
+      q.update(blocker.id, { owner: undefined });
+      await q.save();
+    }, 200);
+
+    await runMission(mission.id, {
+      storePath,
+      missionsPath: missionPath,
+      pollIntervalMs: 10,
+      idleTimeoutMs: 150,
+      actCommand: ["echo"],
+    });
+
+    const tasks = await load(storePath);
+    const doneTasks = tasks.filter(t => t.status === "done");
+    expect(doneTasks.length).toBeGreaterThanOrEqual(4);
+  });
+
+  test("default idle timeout is 30 minutes", async () => {
+    const missionPath = tmpPath("run-default-timeout-m");
+    const storePath = tmpPath("run-default-timeout");
+    const mission = await createMission("default-timeout", {}, missionPath);
+    const queue = new TaskQueue(storePath);
+    await queue.save();
+
+    const abortResult = await Promise.race([
+      runMission(mission.id, {
+        storePath,
+        missionsPath: missionPath,
+        pollIntervalMs: 10,
+      }).then(() => "runner_exited"),
+      Bun.sleep(200).then(() => "timeout"),
+    ]);
+
+    expect(abortResult).toBe("timeout");
   });
 });
 
@@ -925,12 +1094,187 @@ describe("processTask auto-complete", () => {
     const storePath = tmpPath("pt-autocomplete-fail");
     const missionPath = tmpPath("pt-autocomplete-fail-m");
     const mission = await createMission("auto-fail-pt", {}, missionPath);
-    const task = createTask("will fail");
+    const task = createTask("will fail", { retryCount: 2 });
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
     await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"], missionsPath: missionPath });
 
     const missions = await loadMissions(missionPath);
     expect(missions[0].status).toBe("completed");
+  });
+});
+
+describe("processTask retry with backoff", () => {
+  test("resets to observing with retryCount incremented on first failure", async () => {
+    const storePath = tmpPath("retry-first");
+    const missionPath = tmpPath("retry-first-m");
+    const mission = await createMission("retry-first", {}, missionPath);
+    const task = createTask("will fail once");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("observing");
+    expect(updated?.context.retryCount).toBe(1);
+    expect(updated?.owner).toBeUndefined();
+  });
+
+  test("increments retryCount on second failure", async () => {
+    const storePath = tmpPath("retry-second");
+    const missionPath = tmpPath("retry-second-m");
+    const mission = await createMission("retry-second", {}, missionPath);
+    const task = createTask("fail twice", { retryCount: 1 });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("observing");
+    expect(updated?.context.retryCount).toBe(2);
+  });
+
+  test("stays failed when retryCount reaches max (2)", async () => {
+    const storePath = tmpPath("retry-max");
+    const missionPath = tmpPath("retry-max-m");
+    const mission = await createMission("retry-max", {}, missionPath);
+    const task = createTask("exhausted retries", { retryCount: 2 });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("failed");
+    expect(updated?.context.retryCount).toBe(2);
+  });
+
+  test("retries on exception in catch path", async () => {
+    const storePath = tmpPath("retry-exc");
+    const missionPath = tmpPath("retry-exc-m");
+    const mission = await createMission("retry-exc", {}, missionPath);
+    const task = createTask("exception task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["__nonexistent_cmd_xyz__"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("observing");
+    expect(updated?.context.retryCount).toBe(1);
+  });
+
+  test("logs [RETRY] with attempt info", async () => {
+    const storePath = tmpPath("retry-log");
+    const missionPath = tmpPath("retry-log-m");
+    const mission = await createMission("retry-log", {}, missionPath);
+    const task = createTask("retry logged");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const retryLog = updated?.logs.find(l => l.content.includes("[RETRY]"));
+    expect(retryLog).toBeDefined();
+    expect(retryLog?.content).toContain("1/2");
+  });
+
+  test("sets retryAfter with 1s backoff on first failure", async () => {
+    const storePath = tmpPath("retry-after1");
+    const missionPath = tmpPath("retry-after1-m");
+    const mission = await createMission("retry-after1", {}, missionPath);
+    const task = createTask("backoff 1s");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const before = Date.now();
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const retryAfter = new Date(updated?.context.retryAfter as string).getTime();
+    expect(retryAfter).toBeGreaterThanOrEqual(before + 800);
+    expect(retryAfter).toBeLessThanOrEqual(before + 1500);
+  });
+
+  test("sets retryAfter with 2s backoff on second failure", async () => {
+    const storePath = tmpPath("retry-after2");
+    const missionPath = tmpPath("retry-after2-m");
+    const mission = await createMission("retry-after2", {}, missionPath);
+    const task = createTask("backoff 2s", { retryCount: 1 });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const before = Date.now();
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const retryAfter = new Date(updated?.context.retryAfter as string).getTime();
+    expect(retryAfter).toBeGreaterThanOrEqual(before + 1800);
+    expect(retryAfter).toBeLessThanOrEqual(before + 2500);
+  });
+
+  test("spawnTask resets to observing on failure when retryCount < 2", async () => {
+    const storePath = tmpPath("spawn-retry");
+    const missionPath = tmpPath("spawn-retry-m");
+    const spawnsPath = tmpPath("spawn-retry-s");
+    const mission = await createMission("spawn-retry", {}, missionPath);
+    const task = createTask("spawn fail");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["sh", "-c", "exit 1"], { storePath, spawnsPath });
+    await result.completion;
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("observing");
+    expect(updated?.context.retryCount).toBe(1);
+    expect(updated?.owner).toBeUndefined();
+  });
+
+  test("spawnTask stays failed when retryCount >= 2", async () => {
+    const storePath = tmpPath("spawn-retry-max");
+    const missionPath = tmpPath("spawn-retry-max-m");
+    const spawnsPath = tmpPath("spawn-retry-max-s");
+    const mission = await createMission("spawn-retry-max", {}, missionPath);
+    const task = createTask("spawn exhaust", { retryCount: 2 });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["sh", "-c", "exit 1"], { storePath, spawnsPath });
+    await result.completion;
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("failed");
+  });
+
+  test("findNextMissionTask skips tasks with future retryAfter", () => {
+    const queue = new TaskQueue();
+    const missionId = crypto.randomUUID();
+    const task = createTask("retrying");
+    queue.enqueue(task);
+    queue.update(task.id, {
+      missionId,
+      context: { retryCount: 1, retryAfter: new Date(Date.now() + 60000).toISOString() },
+    });
+
+    const result = findNextMissionTask(queue, missionId);
+    expect(result).toBeUndefined();
+  });
+
+  test("findNextMissionTask picks up tasks with past retryAfter", () => {
+    const queue = new TaskQueue();
+    const missionId = crypto.randomUUID();
+    const task = createTask("ready to retry");
+    queue.enqueue(task);
+    queue.update(task.id, {
+      missionId,
+      context: { retryCount: 1, retryAfter: new Date(Date.now() - 1000).toISOString() },
+    });
+
+    const result = findNextMissionTask(queue, missionId);
+    expect(result?.id).toBe(task.id);
   });
 });

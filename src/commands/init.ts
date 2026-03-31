@@ -110,10 +110,16 @@ worqload spawn <id> <command...>
 \\\`\\\`\\\`
 
 Spawned agents receive these environment variables:
+- \\\`WORQLOAD_CLI\\\` — the CLI command to invoke worqload (e.g. \\\`worqload\\\`)
 - \\\`WORQLOAD_TASK_ID\\\` — the task UUID
 - \\\`WORQLOAD_TASK_TITLE\\\` — the task title
 - \\\`WORQLOAD_TASK_CONTEXT\\\` — JSON of the task's context data
 - \\\`WORQLOAD_MISSION_PRINCIPLES\\\` — newline-separated mission principles (if assigned)
+
+Spawned agents can escalate to human by running:
+\\\`\\\`\\\`sh
+$WORQLOAD_CLI decide $WORQLOAD_TASK_ID --human "<question>"
+\\\`\\\`\\\`
 
 Spawn prompts must instruct agents to always create a report summarizing what they did upon completion using \\\`worqload report add <task-id> "<title>" "<content>"\\\`.
 Spawn prompts must instruct agents to write report titles and content in Japanese when using \\\`worqload report add\\\`.
