@@ -64,7 +64,7 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
   }
   if (args[0] === "distill") {
     const config = await loadConfig();
-    const templatePath = config.init?.agentPath || ".claude/agents/worqload.md";
+    const templatePath = config.init?.agentPath || ".claude/skills/worqload/SKILL.md";
     const result = await distillFeedback(undefined, templatePath);
     if (result.distilledCount === 0) {
       console.log("No resolved feedback to distill.");

@@ -480,7 +480,7 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   const shortId = id.slice(0, SHORT_ID_LENGTH);
 
   const config = await loadConfig();
-  const templatePath = config.init?.agentPath || ".claude/agents/worqload.md";
+  const templatePath = config.init?.agentPath || ".claude/skills/worqload/SKILL.md";
   const ctx: IterateContext = { templatePath };
 
   // Observe

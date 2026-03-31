@@ -148,7 +148,7 @@ function normalizeRuleForComparison(rule: string): string {
 
 export async function distillFeedback(
   feedbackPath: string = DEFAULT_FEEDBACK_PATH,
-  templatePath: string = ".claude/agents/worqload.md",
+  templatePath: string = ".claude/skills/worqload/SKILL.md",
 ): Promise<DistillResult> {
   const items = await store.load(feedbackPath);
   const resolved = items.filter((f) => f.status === "resolved");

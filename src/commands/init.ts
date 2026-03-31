@@ -5,7 +5,7 @@ import { loadConfig } from "../config";
 import type { TaskQueue } from "../queue";
 import { parseFlags } from "../utils/args";
 
-const DEFAULT_AGENT_PATH = ".claude/agents/worqload.md";
+const DEFAULT_AGENT_PATH = ".claude/skills/worqload/SKILL.md";
 
 const DEFAULT_AGENT_TEMPLATE = `---
 name: worqload
@@ -167,7 +167,7 @@ export async function init(_queue: TaskQueue, args: string[]) {
     await registerProject(projectPath, projectName);
     console.log(`Registered: ${projectName} → ${projectPath}`);
   } catch (e: unknown) {
-    if (e instanceof Error && e.message.includes("already registered")) {
+    if (e instanceof Error && (e.message.includes("already registered") || e.message.includes("already taken"))) {
       console.log(`Already registered: ${projectName}`);
     } else {
       throw e;
