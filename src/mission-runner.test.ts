@@ -807,10 +807,10 @@ describe("runMission persistence", () => {
       await q.load();
       q.enqueue({ ...createTask("task2"), missionId: mission.id });
       await q.save();
-    }, 80);
+    }, 50);
 
-    // Without idle timer reset, runner exits at t~150ms before this fires.
-    // With reset, task2 at ~80ms resets idle, so runner survives until ~230ms.
+    // Without idle timer reset, runner exits at t~300ms before this fires.
+    // With reset, task2 at ~50ms resets idle, so runner survives until ~350ms+.
     setTimeout(async () => {
       const q = new TaskQueue(storePath);
       await q.load();
@@ -818,14 +818,14 @@ describe("runMission persistence", () => {
       q.transition(blocker.id, "done");
       q.update(blocker.id, { owner: undefined });
       await q.save();
-    }, 200);
+    }, 150);
 
     await runMission(mission.id, {
       storePath,
       missionsPath: missionPath,
       runnerStatePath: tmpPath("runners"),
       pollIntervalMs: 10,
-      idleTimeoutMs: 150,
+      idleTimeoutMs: 300,
       actCommand: ["echo"],
     });
 

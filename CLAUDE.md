@@ -27,12 +27,11 @@ If the loop is sleeping, **silently skip to the next iteration** — produce no 
 
 **2. Observe**
 
-Gather all relevant state:
 ```sh
-worqload principle list                    # read Principles — this is the lens for Orient
-worqload feedback list                     # read human feedback — this IS human Orient output
-worqload iterate                           # collect sources, tasks, missions, feedback summary
+worqload iterate                           # collect all observations and run OODA cycle
 ```
+
+`iterate` internally collects Principles, feedback, sources, tasks, missions, and server logs via `collectObservation()`. The output includes principle items, feedback counts/themes, and all other observation data. No separate commands needed.
 
 **3. Orient**
 
