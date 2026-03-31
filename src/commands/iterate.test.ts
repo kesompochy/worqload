@@ -1216,6 +1216,42 @@ describe("deriveAutonomousTasks", () => {
     expect(derived.some(t => t.toLowerCase().includes("test"))).toBe(true);
     expect(derived.filter(t => t.includes("Investigate improvements"))).toHaveLength(0);
   });
+
+  test("derives investigation task even when same title exists in archive", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const archived = createTask("Investigate improvements based on Principles");
+    archived.status = "done" as any;
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Improve documentation";
+
+    const derived = deriveAutonomousTasks(obs, queue, [archived]);
+
+    expect(derived.length).toBe(1);
+    expect(derived[0]).toContain("Principles");
+  });
+
+  test("still checks active queue for investigation task duplicates", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const active = createTask("Investigate improvements based on Principles");
+    queue.enqueue(active);
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Improve documentation";
+    obs.tasks = [active];
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    expect(derived.filter(t => t.includes("Principles"))).toHaveLength(0);
+  });
+
+  test("returns empty array when no principles exist", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObs();
+    obs.principles = "";
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    expect(derived).toHaveLength(0);
+  });
 });
 
 describe("performActCleanup", () => {

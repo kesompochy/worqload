@@ -345,10 +345,12 @@ export function deriveAutonomousTasks(obs: Observation, queue: TaskQueue, archiv
     }
   }
 
-  // If no actionable tasks derived yet and principles exist, derive a general investigation task
+  // If no actionable tasks derived yet and principles exist, derive a general investigation task.
+  // Archive duplicates are intentionally ignored — investigation is a recurring activity
+  // that should restart each time the queue empties.
   const principleItems = parsePrincipleItems(obs.principles);
   if (derived.length === 0 && principleItems.length > 0) {
-    if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_INVESTIGATION_TITLE, archivedTasks)) {
+    if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_INVESTIGATION_TITLE, [])) {
       derived.push(AUTONOMOUS_INVESTIGATION_TITLE);
     }
   }
@@ -558,18 +560,18 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   }
 
   if (obs.tasks.length === 0) {
-    queue.addLog(id, "decide", "queue_empty: propose next action to user");
+    queue.addLog(id, "decide", "queue_empty: no principles defined, add principles to continue");
     queue.transition(id, "acting");
     const cleanup3 = await performActCleanup(queue, ctx);
     const cleanupLog3 = formatCleanupLog(cleanup3);
-    const actSummary3 = ["signaled empty queue for user proposal", cleanupLog3].filter(Boolean).join("; ");
+    const actSummary3 = ["signaled empty queue — no principles defined", cleanupLog3].filter(Boolean).join("; ");
     queue.addLog(id, "act", actSummary3);
     queue.transition(id, "done");
     await queue.save();
     await runOnDoneHooks(id, iterationTask.title);
     const queueEmptyMsg = cleanupLog3
-      ? `queue empty — propose next action; ${cleanupLog3}`
-      : "queue empty — propose next action";
+      ? `queue empty — no principles defined, add principles to continue; ${cleanupLog3}`
+      : "queue empty — no principles defined, add principles to continue";
     console.log(`[${shortId}] Iteration complete: ${queueEmptyMsg}`);
     return;
   }
