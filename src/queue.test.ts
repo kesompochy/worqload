@@ -246,3 +246,24 @@ test("getByMission returns empty array when no tasks match", () => {
 
   expect(queue.getByMission(crypto.randomUUID())).toEqual([]);
 });
+
+test("load clears previously loaded tasks before reading", async () => {
+  const { tmpdir } = await import("os");
+  const { join } = await import("path");
+  const { save } = await import("./store");
+  const tasksPath = join(tmpdir(), `worqload-queue-load-${crypto.randomUUID()}.json`);
+  const archivePath = join(tasksPath.replace("tasks", "archive"));
+
+  const t1 = createTask("persistent");
+  const t2 = createTask("removed");
+  await save([t1, t2], tasksPath);
+
+  const queue = new TaskQueue(tasksPath, archivePath);
+  await queue.load();
+  expect(queue.list()).toHaveLength(2);
+
+  await save([t1], tasksPath);
+  await queue.load();
+  expect(queue.list()).toHaveLength(1);
+  expect(queue.get(t2.id)).toBeUndefined();
+});

@@ -3,6 +3,7 @@ import type { TaskQueue } from "../queue";
 import { loadMissions, createMission, completeMission, addMissionPrinciple, removeMissionPrinciple } from "../mission";
 import { SHORT_ID_LENGTH } from "../task";
 import { parseFlags } from "../utils/args";
+import { launchMissionDaemon } from "../daemon";
 
 export async function mission(queue: TaskQueue, args: string[]) {
   if (args[0] === "create") {
@@ -80,9 +81,18 @@ export async function mission(queue: TaskQueue, args: string[]) {
     return;
   }
   if (args[0] === "run") {
-    if (!args[1]) exitWithError("Usage: worqload mission run <mission-id>");
-    const { runMission } = await import("../mission-runner");
-    await runMission(args[1]);
+    const { flags, rest } = parseFlags(args.slice(1), [], ["--foreground"]);
+    const missionId = rest[0];
+    if (!missionId) exitWithError("Usage: worqload mission run <mission-id> [--foreground]");
+
+    if (flags["--foreground"]) {
+      const { runMission } = await import("../mission-runner");
+      await runMission(missionId);
+    } else {
+      const result = await launchMissionDaemon(missionId);
+      console.log(`Mission runner started (PID: ${result.pid})`);
+      console.log(`Log: ${result.logPath}`);
+    }
     return;
   }
   if (args[0] === "complete") {

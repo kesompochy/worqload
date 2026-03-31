@@ -100,7 +100,7 @@ Missions:
   mission create <name> [--filter tags:a,b]  Create a mission
   mission list                   List missions with task counts
   mission assign <mid> <tid>     Assign a task to a mission
-  mission run <mid>              Run mission agent (OODA loop on tasks)
+  mission run <mid>              Run mission agent as daemon (--foreground to block)
   mission complete <mid>         Complete a mission
 
 Reports:

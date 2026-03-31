@@ -100,6 +100,7 @@ export class TaskQueue {
 
   async load(): Promise<void> {
     const tasks = await load(this.storePath);
+    this.tasks.clear();
     for (const task of tasks) {
       this.tasks.set(task.id, task);
     }

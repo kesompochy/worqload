@@ -490,6 +490,10 @@ export async function runMission(missionId: string, options: MissionRunnerOption
     runnerStatePath,
   } = options;
 
+  // Survive terminal closure when running as a daemon
+  const sighupHandler = () => {};
+  process.on("SIGHUP", sighupHandler);
+
   const mission = await resolveMission(missionId, missionsPath);
   console.log(`Mission agent started: ${mission.name}`);
   if (mission.principles.length > 0) {
@@ -570,6 +574,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
       await Bun.sleep(pollIntervalMs);
     }
   } finally {
+    process.removeListener("SIGHUP", sighupHandler);
     await deregisterRunner(runnerState.id, runnerStatePath);
   }
 }

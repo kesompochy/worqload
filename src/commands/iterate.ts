@@ -13,6 +13,7 @@ import { runOnDoneHooks } from "../hooks";
 import type { ServerLogSummary } from "../server-log";
 import { loadRecentServerLogs, summarizeServerLogs } from "../server-log";
 import { loadConfig } from "../config";
+import { dirname } from "path";
 
 export interface IterateContext {
   feedbackPath?: string;
@@ -38,6 +39,7 @@ export interface Observation {
   principles: string;
   tasks: Task[];
   waitingHumanTasks: Task[];
+  answeredHumanTasks: Task[];
   suspiciousTasks: SuspiciousTask[];
   failedTasks: Task[];
   uncommittedChanges: string;
@@ -47,6 +49,7 @@ export interface Observation {
 export interface GenerateResult {
   createdTasks: string[];
   retriedTasks: string[];
+  resumedTasks: string[];
   distilledRules: string[];
 }
 
@@ -112,15 +115,46 @@ export async function getUncommittedChanges(): Promise<string> {
   }
 }
 
+const DEFAULT_MANAGED_DIR = ".worqload";
+
+export function filterManagedPaths(gitStatus: string, storePath?: string): string {
+  if (!gitStatus) return "";
+  const managedDir = storePath ? dirname(storePath) : DEFAULT_MANAGED_DIR;
+  const prefix = managedDir + "/";
+  return gitStatus
+    .split("\n")
+    .filter(line => {
+      const path = line.slice(3);
+      return !path.startsWith(prefix);
+    })
+    .join("\n");
+}
+
+export function hasHumanAnswer(task: Task): boolean {
+  let lastHumanRequiredIndex = -1;
+  for (let i = task.logs.length - 1; i >= 0; i--) {
+    if (task.logs[i].content.startsWith(HUMAN_REQUIRED_PREFIX)) {
+      lastHumanRequiredIndex = i;
+      break;
+    }
+  }
+  if (lastHumanRequiredIndex === -1) return false;
+  return task.logs.slice(lastHumanRequiredIndex + 1).some(
+    l => l.phase === "decide" && !l.content.startsWith(HUMAN_REQUIRED_PREFIX),
+  );
+}
+
 export async function collectObservation(queue: TaskQueue, ctx: IterateContext, excludeTaskId?: string): Promise<Observation> {
   const allTasks = queue.list().filter(t => t.id !== excludeTaskId);
-  const waitingHumanTasks = allTasks.filter(t => t.status === "waiting_human");
+  const allWaitingHuman = allTasks.filter(t => t.status === "waiting_human");
+  const answeredHumanTasks = allWaitingHuman.filter(hasHumanAnswer);
+  const waitingHumanTasks = allWaitingHuman.filter(t => !hasHumanAnswer(t));
   const activeTasks = allTasks.filter(t => t.status !== "done" && t.status !== "failed" && t.status !== "waiting_human");
   const failedTasks = allTasks.filter(t => t.status === "failed");
 
   const SERVER_LOG_OBSERVE_WINDOW_MS = 10 * 60 * 1000;
 
-  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, uncommittedChanges, serverLogs] = await Promise.all([
+  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, rawUncommittedChanges, serverLogs] = await Promise.all([
     loadFeedback(ctx.feedbackPath),
     loadMissions(ctx.missionsPath),
     runAllSources(ctx.sourcesPath).catch(() => [] as SourceResult[]),
@@ -129,6 +163,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     getUncommittedChanges(),
     loadRecentServerLogs(SERVER_LOG_OBSERVE_WINDOW_MS, ctx.serverLogPath).catch(() => [] as import("../server-log").ServerLogEntry[]),
   ]);
+  const uncommittedChanges = filterManagedPaths(rawUncommittedChanges, queue.getStorePath());
 
   const serverLogSummary = serverLogs.length > 0 ? summarizeServerLogs(serverLogs) : null;
 
@@ -140,6 +175,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     principles,
     tasks: activeTasks,
     waitingHumanTasks,
+    answeredHumanTasks,
     suspiciousTasks,
     failedTasks,
     uncommittedChanges,
@@ -150,6 +186,13 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
 export function analyzeObservation(obs: Observation): string {
   const tags: string[] = [];
   const lines: string[] = [];
+
+  if (obs.answeredHumanTasks.length > 0) {
+    tags.push("answered_human");
+    for (const t of obs.answeredHumanTasks) {
+      lines.push(`answered_human: [${t.id.slice(0, SHORT_ID_LENGTH)}] ${t.title}`);
+    }
+  }
 
   if (obs.waitingHumanTasks.length > 0) {
     tags.push("waiting_human");
@@ -186,7 +229,7 @@ export function analyzeObservation(obs: Observation): string {
     }
   }
 
-  if (obs.tasks.length === 0 && obs.waitingHumanTasks.length === 0) {
+  if (obs.tasks.length === 0 && obs.waitingHumanTasks.length === 0 && obs.answeredHumanTasks.length === 0) {
     tags.push("queue_empty");
     lines.push("queue is empty");
   }
@@ -252,25 +295,31 @@ interface DuplicateCheckOptions {
   includeDone?: boolean;
 }
 
-function hasDuplicateTask(queue: TaskQueue, existingTasks: Task[], title: string, options: DuplicateCheckOptions = {}): boolean {
-  const allTasks = [...queue.list(), ...existingTasks];
+function hasDuplicateTask(queue: TaskQueue, existingTasks: Task[], title: string, archivedTasks: Task[] = [], options: DuplicateCheckOptions = {}): boolean {
+  const isMatch = options.prefixMatch
+    ? (t: Task) => t.title.startsWith(title)
+    : (t: Task) => t.title === title;
+
+  // Archived tasks are always considered duplicates regardless of status
+  if (archivedTasks.some(isMatch)) return true;
+
+  const activeTasks = [...queue.list(), ...existingTasks];
   const excludedStatuses: string[] = ["failed"];
   if (!options.includeDone) {
     excludedStatuses.push("done");
   }
-  const isMatch = options.prefixMatch
-    ? (t: Task) => t.title.startsWith(title)
-    : (t: Task) => t.title === title;
-  return allTasks.some(t => isMatch(t) && !excludedStatuses.includes(t.status));
+  return activeTasks.some(t => isMatch(t) && !excludedStatuses.includes(t.status));
 }
 
 export async function generateTasksFromObservation(queue: TaskQueue, obs: Observation, ctx: IterateContext = {}): Promise<GenerateResult> {
   const createdTasks: string[] = [];
   const retriedTasks: string[] = [];
+  const resumedTasks: string[] = [];
+  const archivedTasks = await queue.history();
 
   // Uncommitted changes → commit task
   if (obs.uncommittedChanges.length > 0) {
-    if (!hasDuplicateTask(queue, obs.tasks, COMMIT_TASK_TITLE)) {
+    if (!hasDuplicateTask(queue, obs.tasks, COMMIT_TASK_TITLE, archivedTasks)) {
       const task = createTask(COMMIT_TASK_TITLE, { gitStatus: obs.uncommittedChanges }, 0, "iterate");
       queue.enqueue(task);
       createdTasks.push(task.title);
@@ -280,7 +329,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   // New feedback themes → review tasks
   for (const theme of obs.feedbackSummary.themes) {
     const title = `Review feedback: ${theme}`;
-    if (!hasDuplicateTask(queue, obs.tasks, REVIEW_FEEDBACK_PREFIX, { prefixMatch: true, includeDone: true })) {
+    if (!hasDuplicateTask(queue, obs.tasks, REVIEW_FEEDBACK_PREFIX, archivedTasks, { prefixMatch: true, includeDone: true })) {
       const task = createTask(title, {}, 0, "iterate");
       queue.enqueue(task);
       createdTasks.push(task.title);
@@ -308,6 +357,12 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     }
   }
 
+  // Answered waiting_human tasks → resume to deciding
+  for (const answeredTask of obs.answeredHumanTasks) {
+    queue.transition(answeredTask.id, "deciding");
+    resumedTasks.push(answeredTask.id);
+  }
+
   // Distill resolved feedback into agent template rules
   let distilledRules: string[] = [];
   if (obs.feedbackSummary.counts.resolved > 0 && ctx.templatePath) {
@@ -315,7 +370,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     distilledRules = distillResult.rules;
   }
 
-  return { createdTasks, retriedTasks, distilledRules };
+  return { createdTasks, retriedTasks, resumedTasks, distilledRules };
 }
 
 // Queue-wide OODA: surveys all tasks, feedback, missions, and sources to decide
@@ -347,7 +402,7 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
 
   // Autonomous task generation and feedback distillation
   const generated = await generateTasksFromObservation(queue, obs, ctx);
-  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.distilledRules.length > 0;
+  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.resumedTasks.length > 0 || generated.distilledRules.length > 0;
 
   if (hasGenerated) {
     const genParts: string[] = [];
@@ -356,6 +411,9 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
     }
     if (generated.retriedTasks.length > 0) {
       genParts.push(`retried ${generated.retriedTasks.length} failed task(s)`);
+    }
+    if (generated.resumedTasks.length > 0) {
+      genParts.push(`resumed ${generated.resumedTasks.length} answered task(s)`);
     }
     if (generated.distilledRules.length > 0) {
       genParts.push(`distilled ${generated.distilledRules.length} feedback rule(s) into template`);
@@ -453,7 +511,7 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
 
 export function formatObserveLog(obs: Observation): string {
   const parts: string[] = [];
-  parts.push(`tasks: ${obs.tasks.length} active, ${obs.waitingHumanTasks.length} waiting_human`);
+  parts.push(`tasks: ${obs.tasks.length} active, ${obs.waitingHumanTasks.length} waiting_human, ${obs.answeredHumanTasks.length} answered`);
   parts.push(`feedback: ${obs.feedbackSummary.counts.new} new, ${obs.feedbackSummary.counts.acknowledged} acked, ${obs.feedbackSummary.counts.resolved} resolved`);
   parts.push(`missions: ${obs.activeMissions.length} active, ${obs.failedMissions.length} failed`);
   parts.push(`sources: ${obs.sourceResults.length} ran`);

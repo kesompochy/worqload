@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
 import { TaskQueue } from "../queue";
-import { createTask, SHORT_ID_LENGTH } from "../task";
+import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX } from "../task";
 import { addFeedback, resolveFeedback, loadFeedback } from "../feedback";
 import { addReport } from "../reports";
 import {
@@ -11,6 +11,8 @@ import {
   formatObserveLog,
   auditRecentCompletions,
   generateTasksFromObservation,
+  filterManagedPaths,
+  hasHumanAnswer,
   type IterateContext,
   type Observation,
 } from "./iterate";
@@ -78,6 +80,52 @@ describe("collectObservation", () => {
 
     expect(obs.waitingHumanTasks).toHaveLength(1);
     expect(obs.waitingHumanTasks[0].title).toBe("Needs human");
+  });
+
+  test("detects answered waiting_human tasks via non-HUMAN_REQUIRED decide log", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Awaiting answer");
+    queue.enqueue(t1);
+    queue.transition(t1.id, "orienting");
+    queue.transition(t1.id, "waiting_human");
+    queue.addLog(t1.id, "decide", `${HUMAN_REQUIRED_PREFIX}What should we do?`);
+    queue.addLog(t1.id, "decide", "Approved by PM");
+    const ctx = makeContext();
+
+    const obs = await collectObservation(queue, ctx);
+
+    expect(obs.waitingHumanTasks).toHaveLength(0);
+    expect(obs.answeredHumanTasks).toHaveLength(1);
+    expect(obs.answeredHumanTasks[0].id).toBe(t1.id);
+  });
+
+  test("does not mark waiting_human task as answered when only HUMAN_REQUIRED log exists", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Unanswered");
+    queue.enqueue(t1);
+    queue.transition(t1.id, "orienting");
+    queue.transition(t1.id, "waiting_human");
+    queue.addLog(t1.id, "decide", `${HUMAN_REQUIRED_PREFIX}Need help`);
+    const ctx = makeContext();
+
+    const obs = await collectObservation(queue, ctx);
+
+    expect(obs.waitingHumanTasks).toHaveLength(1);
+    expect(obs.answeredHumanTasks).toHaveLength(0);
+  });
+
+  test("does not mark waiting_human task as answered when no decide logs exist", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("No decide logs");
+    queue.enqueue(t1);
+    queue.transition(t1.id, "orienting");
+    queue.transition(t1.id, "waiting_human");
+    const ctx = makeContext();
+
+    const obs = await collectObservation(queue, ctx);
+
+    expect(obs.waitingHumanTasks).toHaveLength(1);
+    expect(obs.answeredHumanTasks).toHaveLength(0);
   });
 });
 
@@ -273,6 +321,7 @@ describe("analyzeObservation", () => {
       principles: "",
       tasks: [],
       waitingHumanTasks: [],
+      answeredHumanTasks: [],
       suspiciousTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
@@ -304,6 +353,7 @@ describe("analyzeObservation", () => {
       principles: "",
       tasks: [],
       waitingHumanTasks: [],
+      answeredHumanTasks: [],
       suspiciousTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
@@ -468,6 +518,187 @@ describe("auditRecentCompletions", () => {
   });
 });
 
+describe("hasHumanAnswer", () => {
+  test("returns true when decide log exists after HUMAN_REQUIRED orient log", () => {
+    const task = createTask("Waiting task");
+    task.status = "waiting_human";
+    task.logs = [
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Should we proceed?`, timestamp: new Date().toISOString() },
+      { phase: "decide", content: "Yes, go ahead", timestamp: new Date().toISOString() },
+    ];
+
+    expect(hasHumanAnswer(task)).toBe(true);
+  });
+
+  test("returns false when no decide log after HUMAN_REQUIRED orient log", () => {
+    const task = createTask("Waiting task");
+    task.status = "waiting_human";
+    task.logs = [
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Should we proceed?`, timestamp: new Date().toISOString() },
+    ];
+
+    expect(hasHumanAnswer(task)).toBe(false);
+  });
+
+  test("returns false when decide log also has HUMAN_REQUIRED prefix", () => {
+    const task = createTask("Waiting task");
+    task.status = "waiting_human";
+    task.logs = [
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}First question`, timestamp: new Date().toISOString() },
+      { phase: "decide", content: `${HUMAN_REQUIRED_PREFIX}Another question`, timestamp: new Date().toISOString() },
+    ];
+
+    expect(hasHumanAnswer(task)).toBe(false);
+  });
+
+  test("returns false when no HUMAN_REQUIRED orient log exists", () => {
+    const task = createTask("Waiting task");
+    task.status = "waiting_human";
+    task.logs = [
+      { phase: "orient", content: "some analysis", timestamp: new Date().toISOString() },
+      { phase: "decide", content: "some decision", timestamp: new Date().toISOString() },
+    ];
+
+    expect(hasHumanAnswer(task)).toBe(false);
+  });
+
+  test("uses the last HUMAN_REQUIRED log when multiple exist", () => {
+    const task = createTask("Waiting task");
+    task.status = "waiting_human";
+    task.logs = [
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}First question`, timestamp: new Date().toISOString() },
+      { phase: "decide", content: "Answer to first", timestamp: new Date().toISOString() },
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Second question`, timestamp: new Date().toISOString() },
+    ];
+
+    expect(hasHumanAnswer(task)).toBe(false);
+  });
+
+  test("returns true when answer follows latest HUMAN_REQUIRED log", () => {
+    const task = createTask("Waiting task");
+    task.status = "waiting_human";
+    task.logs = [
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}First question`, timestamp: new Date().toISOString() },
+      { phase: "decide", content: "Answer to first", timestamp: new Date().toISOString() },
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Second question`, timestamp: new Date().toISOString() },
+      { phase: "decide", content: "Answer to second", timestamp: new Date().toISOString() },
+    ];
+
+    expect(hasHumanAnswer(task)).toBe(true);
+  });
+});
+
+describe("collectObservation - answered waiting_human", () => {
+  test("separates answered waiting_human tasks", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const answered = createTask("Answered question");
+    queue.enqueue(answered);
+    queue.transition(answered.id, "orienting");
+    queue.transition(answered.id, "waiting_human");
+    queue.addLog(answered.id, "orient", `${HUMAN_REQUIRED_PREFIX}What to do?`);
+    queue.addLog(answered.id, "decide", "Do this");
+
+    const unanswered = createTask("Unanswered question");
+    queue.enqueue(unanswered);
+    queue.transition(unanswered.id, "orienting");
+    queue.transition(unanswered.id, "waiting_human");
+    queue.addLog(unanswered.id, "orient", `${HUMAN_REQUIRED_PREFIX}What now?`);
+
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+
+    expect(obs.answeredHumanTasks).toHaveLength(1);
+    expect(obs.answeredHumanTasks[0].id).toBe(answered.id);
+    expect(obs.waitingHumanTasks).toHaveLength(1);
+    expect(obs.waitingHumanTasks[0].id).toBe(unanswered.id);
+  });
+
+  test("includes answered count in observe log", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Answered");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "waiting_human");
+    queue.addLog(task.id, "orient", `${HUMAN_REQUIRED_PREFIX}Question?`);
+    queue.addLog(task.id, "decide", "Answer");
+
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+    const log = formatObserveLog(obs);
+
+    expect(log).toContain("1 answered");
+  });
+});
+
+describe("analyzeObservation - answered waiting_human", () => {
+  test("reports answered_human tag when answered tasks exist", () => {
+    const obs: Observation = {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [createTask("Answered task")],
+      suspiciousTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("answered_human");
+  });
+});
+
+describe("filterManagedPaths", () => {
+  test("removes .worqload/ paths from git status output", () => {
+    const gitStatus = " M src/foo.ts\n M .worqload/tasks.json\n?? src/bar.ts";
+
+    const filtered = filterManagedPaths(gitStatus);
+
+    expect(filtered).toBe(" M src/foo.ts\n?? src/bar.ts");
+  });
+
+  test("returns empty string when all changes are managed paths", () => {
+    const gitStatus = " M .worqload/tasks.json\n M .worqload/archive.json";
+
+    const filtered = filterManagedPaths(gitStatus);
+
+    expect(filtered).toBe("");
+  });
+
+  test("returns original output when no managed paths present", () => {
+    const gitStatus = " M src/foo.ts\n?? README.md";
+
+    const filtered = filterManagedPaths(gitStatus);
+
+    expect(filtered).toBe(" M src/foo.ts\n?? README.md");
+  });
+
+  test("returns empty string for empty input", () => {
+    expect(filterManagedPaths("")).toBe("");
+  });
+
+  test("uses store path directory when provided", () => {
+    const gitStatus = " M src/foo.ts\n M data/tasks.json\n?? data/archive.json";
+
+    const filtered = filterManagedPaths(gitStatus, "data/tasks.json");
+
+    expect(filtered).toBe(" M src/foo.ts");
+  });
+
+  test("does not filter paths that merely start with similar prefix", () => {
+    const gitStatus = " M .worqload-extra/config.json\n M .worqload/tasks.json";
+
+    const filtered = filterManagedPaths(gitStatus);
+
+    expect(filtered).toBe(" M .worqload-extra/config.json");
+  });
+});
+
 describe("generateTasksFromObservation", () => {
   function emptyObservation(): Observation {
     return {
@@ -478,6 +709,7 @@ describe("generateTasksFromObservation", () => {
       principles: "",
       tasks: [],
       waitingHumanTasks: [],
+      answeredHumanTasks: [],
       suspiciousTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
@@ -496,6 +728,16 @@ describe("generateTasksFromObservation", () => {
     expect(result.createdTasks[0]).toContain("Commit");
     const tasks = queue.list();
     expect(tasks.some(t => t.title.includes("Commit"))).toBe(true);
+  });
+
+  test("does not create commit task when only managed paths have changes", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.uncommittedChanges = "";
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.createdTasks.filter(t => t.includes("Commit"))).toHaveLength(0);
   });
 
   test("does not create commit task when no uncommitted changes", async () => {
@@ -624,6 +866,40 @@ describe("generateTasksFromObservation", () => {
     expect(result.retriedTasks).toHaveLength(0);
   });
 
+  test("does not recreate commit task when archived version exists", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const commitTask = createTask("Commit uncommitted changes");
+    queue.enqueue(commitTask);
+    queue.transition(commitTask.id, "done");
+    await queue.archive([commitTask.id]);
+
+    const obs = emptyObservation();
+    obs.uncommittedChanges = " M src/foo.ts";
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.createdTasks.filter(t => t.includes("Commit"))).toHaveLength(0);
+  });
+
+  test("does not recreate feedback task when archived version exists", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const feedbackTask = createTask("Review feedback: alice から未解決フィードバックが 3 件");
+    queue.enqueue(feedbackTask);
+    queue.transition(feedbackTask.id, "done");
+    await queue.archive([feedbackTask.id]);
+
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 3, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [],
+      themes: ["alice から未解決フィードバックが 3 件"],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.createdTasks.filter(t => t.includes("feedback"))).toHaveLength(0);
+  });
+
   test("reactivates failed mission when retrying its tasks", async () => {
     const missionsPath = tmpPath("missions");
     const { createMission, failMission, loadMissions } = await import("../mission");
@@ -702,5 +978,41 @@ describe("generateTasksFromObservation", () => {
     expect(result.distilledRules).toHaveLength(0);
     const remaining = await loadFeedback(feedbackPath);
     expect(remaining).toHaveLength(1);
+  });
+
+  test("transitions answered waiting_human tasks to deciding", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Needs approval");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "waiting_human");
+    queue.addLog(task.id, "orient", `${HUMAN_REQUIRED_PREFIX}Should we proceed?`);
+    queue.addLog(task.id, "decide", "Yes, proceed with the plan");
+
+    const obs = emptyObservation();
+    obs.answeredHumanTasks = [queue.get(task.id)!];
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.resumedTasks).toHaveLength(1);
+    expect(result.resumedTasks[0]).toBe(task.id);
+    expect(queue.get(task.id)!.status).toBe("deciding");
+  });
+
+  test("does not transition waiting_human tasks without human answer", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Still waiting");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "waiting_human");
+    queue.addLog(task.id, "orient", `${HUMAN_REQUIRED_PREFIX}What should we do?`);
+
+    const obs = emptyObservation();
+    obs.answeredHumanTasks = [];
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.resumedTasks).toHaveLength(0);
+    expect(queue.get(task.id)!.status).toBe("waiting_human");
   });
 });

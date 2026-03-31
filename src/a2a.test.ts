@@ -238,6 +238,7 @@ describe("handleA2ARequest", () => {
       queue.transition(task.id, "orienting");
       queue.addLog(task.id, "orient", "[HUMAN REQUIRED] Approve this change?");
       queue.transition(task.id, "waiting_human");
+      await queue.save();
 
       const res = await handleA2ARequest(queue, rpc("message/send", {
         message: {
@@ -268,6 +269,7 @@ describe("handleA2ARequest", () => {
       queue.transition(task.id, "orienting");
       queue.addLog(task.id, "decide", "[HUMAN REQUIRED] What should we do?");
       queue.transition(task.id, "waiting_human");
+      await queue.save();
 
       const res = await handleA2ARequest(queue, rpc("tasks/get", { id: task.id }));
 
@@ -282,6 +284,7 @@ describe("handleA2ARequest", () => {
       const queue = makeQueue();
       const task = createTask("active task", {}, 0, "a2a");
       queue.enqueue(task);
+      await queue.save();
 
       const res = await handleA2ARequest(queue, rpc("message/send", {
         message: {
@@ -319,6 +322,7 @@ describe("handleA2ARequest", () => {
       const queue = makeQueue();
       const task = createTask("test task", {}, 0, "a2a");
       queue.enqueue(task);
+      await queue.save();
 
       const res = await handleA2ARequest(queue, rpc("tasks/get", { id: task.id }));
 
@@ -332,6 +336,7 @@ describe("handleA2ARequest", () => {
       const queue = makeQueue();
       const task = createTask("test task");
       queue.enqueue(task);
+      await queue.save();
 
       const res = await handleA2ARequest(queue, rpc("tasks/get", { id: task.id.slice(0, 8) }));
 
@@ -359,6 +364,7 @@ describe("handleA2ARequest", () => {
       const queue = makeQueue();
       const task = createTask("cancel me");
       queue.enqueue(task);
+      await queue.save();
 
       const res = await handleA2ARequest(queue, rpc("tasks/cancel", { id: task.id }));
 
@@ -375,6 +381,7 @@ describe("handleA2ARequest", () => {
       const task = createTask("done task");
       queue.enqueue(task);
       queue.transition(task.id, "done");
+      await queue.save();
 
       const res = await handleA2ARequest(queue, rpc("tasks/cancel", { id: task.id }));
 
