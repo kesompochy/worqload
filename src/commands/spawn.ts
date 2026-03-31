@@ -150,7 +150,7 @@ export async function spawn(queue: TaskQueue, args: string[]) {
       const failLogs = [...logs, { phase: "act" as OodaPhase, content: `[FAILED] exit code ${exitCode}`, timestamp: new Date().toISOString() }];
       return { status: "failed" as const, logs: failLogs, owner: undefined };
     }
-  });
+  }, queue.getStorePath());
 
   if (updated?.status === "done") {
     await runOnDoneHooks(task.id, task.title);

@@ -92,7 +92,8 @@ function tmpPath(label: string): string {
 
 describe("spawn escalation via exit code", () => {
   test("transitions to waiting_human on exit code 3", async () => {
-    const queue = new TaskQueue();
+    const storePath = tmpPath("spawn-escalate");
+    const queue = new TaskQueue(storePath);
     const task = createTask("escalation task");
     queue.enqueue(task);
     await queue.save();
@@ -109,7 +110,7 @@ describe("spawn escalation via exit code", () => {
       console.error = origErr;
     }
 
-    const tasks = await load();
+    const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
     expect(updated?.status).toBe("waiting_human");
     expect(updated?.owner).toBeUndefined();
