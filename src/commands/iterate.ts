@@ -4,12 +4,14 @@ import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX } from "../task";
 import type { FeedbackSummary } from "../feedback";
 import { loadFeedback, summarizeFeedback } from "../feedback";
 import type { Mission } from "../mission";
-import { loadMissions } from "../mission";
+import { loadMissions, reactivateMission } from "../mission";
 import type { SourceResult } from "../sources";
 import { runAllSources } from "../sources";
 import { loadPrinciples } from "../principles";
 import { loadReports } from "../reports";
 import { runOnDoneHooks } from "../hooks";
+import type { ServerLogSummary } from "../server-log";
+import { loadRecentServerLogs, summarizeServerLogs } from "../server-log";
 
 export interface IterateContext {
   feedbackPath?: string;
@@ -17,6 +19,7 @@ export interface IterateContext {
   reportsPath?: string;
   sourcesPath?: string;
   principlesPath?: string;
+  serverLogPath?: string;
 }
 
 export interface SuspiciousTask {
@@ -28,6 +31,7 @@ export interface SuspiciousTask {
 export interface Observation {
   feedbackSummary: FeedbackSummary;
   activeMissions: Mission[];
+  failedMissions: Mission[];
   sourceResults: SourceResult[];
   principles: string;
   tasks: Task[];
@@ -35,6 +39,7 @@ export interface Observation {
   suspiciousTasks: SuspiciousTask[];
   failedTasks: Task[];
   uncommittedChanges: string;
+  serverLogSummary: ServerLogSummary | null;
 }
 
 export interface GenerateResult {
@@ -110,18 +115,24 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
   const activeTasks = allTasks.filter(t => t.status !== "done" && t.status !== "failed" && t.status !== "waiting_human");
   const failedTasks = allTasks.filter(t => t.status === "failed");
 
-  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, uncommittedChanges] = await Promise.all([
+  const SERVER_LOG_OBSERVE_WINDOW_MS = 10 * 60 * 1000;
+
+  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, uncommittedChanges, serverLogs] = await Promise.all([
     loadFeedback(ctx.feedbackPath),
     loadMissions(ctx.missionsPath),
     runAllSources(ctx.sourcesPath).catch(() => [] as SourceResult[]),
     loadPrinciples(ctx.principlesPath),
     auditRecentCompletions(queue, ctx),
     getUncommittedChanges(),
+    loadRecentServerLogs(SERVER_LOG_OBSERVE_WINDOW_MS, ctx.serverLogPath).catch(() => [] as import("../server-log").ServerLogEntry[]),
   ]);
+
+  const serverLogSummary = serverLogs.length > 0 ? summarizeServerLogs(serverLogs) : null;
 
   return {
     feedbackSummary: summarizeFeedback(feedbackItems),
     activeMissions: missions.filter(m => m.status === "active"),
+    failedMissions: missions.filter(m => m.status === "failed"),
     sourceResults,
     principles,
     tasks: activeTasks,
@@ -129,6 +140,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     suspiciousTasks,
     failedTasks,
     uncommittedChanges,
+    serverLogSummary,
   };
 }
 
@@ -187,6 +199,10 @@ export function analyzeObservation(obs: Observation): string {
     lines.push(`active missions: ${obs.activeMissions.map(m => m.name).join(", ")}`);
   }
 
+  if (obs.failedMissions.length > 0) {
+    lines.push(`failed missions: ${obs.failedMissions.map(m => m.name).join(", ")}`);
+  }
+
   if (obs.principles) {
     const principleItems = obs.principles.split("\n").filter(l => l.startsWith("- "));
     for (const item of principleItems) {
@@ -213,18 +229,39 @@ export function analyzeObservation(obs: Observation): string {
     lines.push("uncommitted changes detected");
   }
 
+  if (obs.serverLogSummary) {
+    const s = obs.serverLogSummary;
+    lines.push(`server: ${s.totalRequests} reqs, ${s.errorCount} errors (${Math.round(s.errorRate * 100)}%), avg ${s.avgDurationMs}ms`);
+    if (s.errorPaths.length > 0) {
+      lines.push(`server errors on: ${s.errorPaths.join(", ")}`);
+    }
+  }
+
   return `[${tags.join(",")}] ${lines.join("; ")}`;
 }
 
 const MAX_RETRY_ATTEMPTS = 2;
 const COMMIT_TASK_TITLE = "Commit uncommitted changes";
+const REVIEW_FEEDBACK_PREFIX = "Review feedback:";
 
-function hasDuplicateTask(queue: TaskQueue, existingTasks: Task[], title: string): boolean {
-  const allTasks = [...queue.list(), ...existingTasks];
-  return allTasks.some(t => t.title === title && t.status !== "done" && t.status !== "failed");
+interface DuplicateCheckOptions {
+  prefixMatch?: boolean;
+  includeDone?: boolean;
 }
 
-export function generateTasksFromObservation(queue: TaskQueue, obs: Observation): GenerateResult {
+function hasDuplicateTask(queue: TaskQueue, existingTasks: Task[], title: string, options: DuplicateCheckOptions = {}): boolean {
+  const allTasks = [...queue.list(), ...existingTasks];
+  const excludedStatuses: string[] = ["failed"];
+  if (!options.includeDone) {
+    excludedStatuses.push("done");
+  }
+  const isMatch = options.prefixMatch
+    ? (t: Task) => t.title.startsWith(title)
+    : (t: Task) => t.title === title;
+  return allTasks.some(t => isMatch(t) && !excludedStatuses.includes(t.status));
+}
+
+export async function generateTasksFromObservation(queue: TaskQueue, obs: Observation, ctx: IterateContext = {}): Promise<GenerateResult> {
   const createdTasks: string[] = [];
   const retriedTasks: string[] = [];
 
@@ -240,7 +277,7 @@ export function generateTasksFromObservation(queue: TaskQueue, obs: Observation)
   // New feedback themes → review tasks
   for (const theme of obs.feedbackSummary.themes) {
     const title = `Review feedback: ${theme}`;
-    if (!hasDuplicateTask(queue, obs.tasks, title)) {
+    if (!hasDuplicateTask(queue, obs.tasks, REVIEW_FEEDBACK_PREFIX, { prefixMatch: true, includeDone: true })) {
       const task = createTask(title, {}, 0, "iterate");
       queue.enqueue(task);
       createdTasks.push(task.title);
@@ -248,11 +285,23 @@ export function generateTasksFromObservation(queue: TaskQueue, obs: Observation)
   }
 
   // Failed tasks → retry by transitioning back to observing
+  const reactivatedMissions = new Set<string>();
   for (const failedTask of obs.failedTasks) {
     const actLogCount = failedTask.logs.filter(l => l.phase === "act").length;
     if (actLogCount < MAX_RETRY_ATTEMPTS) {
       queue.transition(failedTask.id, "observing");
       retriedTasks.push(failedTask.id);
+      if (failedTask.missionId) {
+        reactivatedMissions.add(failedTask.missionId);
+      }
+    }
+  }
+
+  // Reactivate failed missions whose tasks were retried
+  for (const missionId of reactivatedMissions) {
+    const mission = obs.failedMissions.find(m => m.id === missionId);
+    if (mission) {
+      await reactivateMission(missionId, ctx.missionsPath);
     }
   }
 
@@ -283,7 +332,7 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   queue.transition(id, "deciding");
 
   // Autonomous task generation from observation
-  const generated = generateTasksFromObservation(queue, obs);
+  const generated = await generateTasksFromObservation(queue, obs, {});
   const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0;
 
   if (hasGenerated) {
@@ -389,7 +438,7 @@ export function formatObserveLog(obs: Observation): string {
   const parts: string[] = [];
   parts.push(`tasks: ${obs.tasks.length} active, ${obs.waitingHumanTasks.length} waiting_human`);
   parts.push(`feedback: ${obs.feedbackSummary.counts.new} new, ${obs.feedbackSummary.counts.acknowledged} acked`);
-  parts.push(`missions: ${obs.activeMissions.length} active`);
+  parts.push(`missions: ${obs.activeMissions.length} active, ${obs.failedMissions.length} failed`);
   parts.push(`sources: ${obs.sourceResults.length} ran`);
   const principleCount = obs.principles ? obs.principles.split("\n").filter(l => l.startsWith("- ")).length : 0;
   parts.push(`principles: ${principleCount}`);
@@ -397,6 +446,10 @@ export function formatObserveLog(obs: Observation): string {
   parts.push(`failed: ${obs.failedTasks.length}`);
   if (obs.uncommittedChanges) {
     parts.push("uncommitted: yes");
+  }
+  if (obs.serverLogSummary) {
+    const s = obs.serverLogSummary;
+    parts.push(`server: ${s.totalRequests} reqs, ${s.errorCount} errors`);
   }
   return parts.join("; ");
 }

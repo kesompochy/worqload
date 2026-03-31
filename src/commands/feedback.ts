@@ -1,6 +1,7 @@
+import { basename } from "path";
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback, summarizeFeedback, distillFeedback } from "../feedback";
+import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback, summarizeFeedback, distillFeedback, sendFeedbackToProject } from "../feedback";
 import { parseFlags } from "../utils/args";
 import { SHORT_ID_LENGTH } from "../task";
 import { loadConfig } from "../config";
@@ -44,6 +45,21 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
   if (args[0] === "resolve") {
     await resolveFeedback(args[1]);
     console.log("Resolved.");
+    return;
+  }
+  if (args[0] === "send") {
+    const targetProject = args[1];
+    if (!targetProject) {
+      exitWithError("Usage: worqload feedback send <project-name> <message> [--from <sender>]");
+    }
+    const { flags, rest } = parseFlags(args.slice(2), ["--from"]);
+    const from = flags["--from"] || basename(process.cwd());
+    const message = rest.join(" ").trim();
+    if (!message) {
+      exitWithError("Usage: worqload feedback send <project-name> <message> [--from <sender>]");
+    }
+    const fb = await sendFeedbackToProject(targetProject, message, from);
+    console.log(`Feedback sent to ${targetProject}: ${fb.message} (from: ${fb.from}, ${fb.id.slice(0, SHORT_ID_LENGTH)})`);
     return;
   }
   if (args[0] === "distill") {

@@ -264,6 +264,57 @@ describe("analyzeObservation", () => {
     expect(analysis).toContain("unassigned: 1 task");
   });
 
+  test("includes server log summary in analysis when logs exist", () => {
+    const obs: Observation = {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      suspiciousTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: {
+        totalRequests: 100,
+        errorCount: 5,
+        errorRate: 0.05,
+        avgDurationMs: 42,
+        errorPaths: ["/api/tasks", "/api/missions"],
+      },
+    };
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("server: 100 reqs");
+    expect(analysis).toContain("5 errors");
+    expect(analysis).toContain("5%");
+    expect(analysis).toContain("avg 42ms");
+    expect(analysis).toContain("/api/tasks");
+    expect(analysis).toContain("/api/missions");
+  });
+
+  test("omits server log section when no logs", () => {
+    const obs: Observation = {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      suspiciousTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).not.toContain("server:");
+  });
+
   test("includes suspicious tasks in analysis when audit finds issues", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const t1 = createTask("Suspect task");
@@ -422,6 +473,7 @@ describe("generateTasksFromObservation", () => {
     return {
       feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
       activeMissions: [],
+      failedMissions: [],
       sourceResults: [],
       principles: "",
       tasks: [],
@@ -429,15 +481,16 @@ describe("generateTasksFromObservation", () => {
       suspiciousTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
+      serverLogSummary: null,
     };
   }
 
-  test("creates commit task when uncommitted changes exist", () => {
+  test("creates commit task when uncommitted changes exist", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const obs = emptyObservation();
     obs.uncommittedChanges = " M src/foo.ts\n?? src/bar.ts";
 
-    const result = generateTasksFromObservation(queue, obs);
+    const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.createdTasks).toHaveLength(1);
     expect(result.createdTasks[0]).toContain("Commit");
@@ -445,17 +498,17 @@ describe("generateTasksFromObservation", () => {
     expect(tasks.some(t => t.title.includes("Commit"))).toBe(true);
   });
 
-  test("does not create commit task when no uncommitted changes", () => {
+  test("does not create commit task when no uncommitted changes", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const obs = emptyObservation();
     obs.uncommittedChanges = "";
 
-    const result = generateTasksFromObservation(queue, obs);
+    const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.createdTasks.filter(t => t.includes("Commit"))).toHaveLength(0);
   });
 
-  test("does not duplicate commit task when one already exists", () => {
+  test("does not duplicate commit task when one already exists", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const existing = createTask("Commit uncommitted changes");
     queue.enqueue(existing);
@@ -463,13 +516,13 @@ describe("generateTasksFromObservation", () => {
     obs.uncommittedChanges = " M src/foo.ts";
     obs.tasks = [existing];
 
-    const result = generateTasksFromObservation(queue, obs);
+    const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.createdTasks.filter(t => t.includes("Commit"))).toHaveLength(0);
     expect(queue.list().filter(t => t.title.includes("Commit"))).toHaveLength(1);
   });
 
-  test("creates tasks from new feedback themes", () => {
+  test("creates tasks from new feedback themes", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const obs = emptyObservation();
     obs.feedbackSummary = {
@@ -482,14 +535,31 @@ describe("generateTasksFromObservation", () => {
       themes: ["alice から未解決フィードバックが 3 件"],
     };
 
-    const result = generateTasksFromObservation(queue, obs);
+    const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.createdTasks.some(t => t.includes("feedback"))).toBe(true);
     const feedbackTasks = queue.list().filter(t => t.title.includes("feedback"));
     expect(feedbackTasks.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("does not duplicate feedback task when one already exists", () => {
+  test("does not recreate feedback task when a matching done task exists", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const doneTask = createTask("Review feedback: alice から未解決フィードバックが 3 件");
+    queue.enqueue(doneTask);
+    queue.transition(doneTask.id, "done");
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 3, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [],
+      themes: ["alice から未解決フィードバックが 3 件"],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.createdTasks.filter(t => t.includes("feedback"))).toHaveLength(0);
+  });
+
+  test("does not duplicate feedback task when one already exists", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const existing = createTask("Review feedback: alice から未解決フィードバックが 3 件");
     queue.enqueue(existing);
@@ -501,12 +571,12 @@ describe("generateTasksFromObservation", () => {
       themes: ["alice から未解決フィードバックが 3 件"],
     };
 
-    const result = generateTasksFromObservation(queue, obs);
+    const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.createdTasks.filter(t => t.includes("feedback"))).toHaveLength(0);
   });
 
-  test("retries failed tasks by transitioning to observing", () => {
+  test("retries failed tasks by transitioning to observing", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const failedTask = createTask("Failed task");
     queue.enqueue(failedTask);
@@ -518,7 +588,7 @@ describe("generateTasksFromObservation", () => {
     const obs = emptyObservation();
     obs.failedTasks = [task];
 
-    const result = generateTasksFromObservation(queue, obs);
+    const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.retriedTasks).toHaveLength(1);
     expect(result.retriedTasks[0]).toBe(failedTask.id);
@@ -526,7 +596,7 @@ describe("generateTasksFromObservation", () => {
     expect(updated.status).toBe("observing");
   });
 
-  test("does not retry failed tasks that already had 2 retries", () => {
+  test("does not retry failed tasks that already had 2 retries", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const failedTask = createTask("Failed task");
     queue.enqueue(failedTask);
@@ -538,19 +608,43 @@ describe("generateTasksFromObservation", () => {
     const obs = emptyObservation();
     obs.failedTasks = [task];
 
-    const result = generateTasksFromObservation(queue, obs);
+    const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.retriedTasks).toHaveLength(0);
     expect(queue.get(failedTask.id)!.status).toBe("failed");
   });
 
-  test("returns empty results when nothing to do", () => {
+  test("returns empty results when nothing to do", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const obs = emptyObservation();
 
-    const result = generateTasksFromObservation(queue, obs);
+    const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.createdTasks).toHaveLength(0);
     expect(result.retriedTasks).toHaveLength(0);
+  });
+
+  test("reactivates failed mission when retrying its tasks", async () => {
+    const missionsPath = tmpPath("missions");
+    const { createMission, failMission, loadMissions } = await import("../mission");
+    const mission = await createMission("test-mission", {}, missionsPath);
+    await failMission(mission.id, missionsPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const failedTask = createTask("Failed task");
+    failedTask.missionId = mission.id;
+    queue.enqueue(failedTask);
+    const task = queue.get(failedTask.id)!;
+    task.status = "failed";
+    task.logs = [];
+
+    const obs = emptyObservation();
+    obs.failedTasks = [task];
+    obs.failedMissions = [{ ...mission, status: "failed" as const }];
+
+    await generateTasksFromObservation(queue, obs, { missionsPath });
+
+    const missions = await loadMissions(missionsPath);
+    expect(missions[0].status).toBe("active");
   });
 });

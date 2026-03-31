@@ -36,6 +36,25 @@ describe("orient --human", () => {
     expect(updated.logs[0].content).toBe(`${HUMAN_REQUIRED_PREFIX}Orientation requires human input`);
   });
 
+  test("rejects --human when called from spawned agent context", async () => {
+    const queue = new TaskQueue(tmpPath("orient-human-guard"));
+    const task = createTask("test task");
+    queue.enqueue(task);
+
+    const original = process.env.WORQLOAD_TASK_ID;
+    process.env.WORQLOAD_TASK_ID = "some-task-id";
+    try {
+      await expect(orient(queue, [task.id, "--human", "question"])).rejects.toThrow(
+        /spawned agent/i
+      );
+      const updated = queue.get(task.id)!;
+      expect(updated.status).toBe("observing");
+    } finally {
+      if (original === undefined) delete process.env.WORQLOAD_TASK_ID;
+      else process.env.WORQLOAD_TASK_ID = original;
+    }
+  });
+
   test("regular orient still works without --human", async () => {
     const queue = new TaskQueue(tmpPath("orient-normal"));
     const task = createTask("test task");

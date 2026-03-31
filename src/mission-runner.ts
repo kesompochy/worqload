@@ -1,8 +1,8 @@
-import { loadMissions, completeMission } from "./mission";
+import { loadMissions, completeMission, failMission } from "./mission";
 import type { Mission } from "./mission";
 import { TaskQueue } from "./queue";
 import type { Task, OodaPhase } from "./task";
-import { createTask, HUMAN_REQUIRED_PREFIX } from "./task";
+import { createTask, HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "./task";
 import { updateTask, load, save } from "./store";
 import { runOnDoneHooks } from "./hooks";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
@@ -18,9 +18,10 @@ export interface MissionRunnerOptions {
   maxRetries?: number;
   retryBaseMs?: number;
   actCommand?: string[];
+  runnerStatePath?: string;
 }
 
-export type IterationResult = "processed" | "idle" | "mission_completed" | "spawned";
+export type IterationResult = "processed" | "idle" | "mission_completed" | "mission_failed" | "spawned";
 
 export interface SpawnCompletion {
   exitCode: number;
@@ -224,6 +225,14 @@ export async function spawnTask(
 
       if (exitCode === 0) {
         return { status: "done" as const, logs, owner: undefined };
+      } else if (exitCode === ESCALATION_EXIT_CODE) {
+        const question = truncated || "Spawned agent requested human escalation";
+        const escalationLogs = [...logs, {
+          phase: "orient" as OodaPhase,
+          content: `${HUMAN_REQUIRED_PREFIX}${question}`,
+          timestamp: new Date().toISOString(),
+        }];
+        return { status: "waiting_human" as const, logs: escalationLogs, owner: undefined };
       } else {
         const retryCount = (current.context.retryCount as number) || 0;
         if (retryCount < MAX_TASK_RETRIES) {
@@ -380,7 +389,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
     }
   }
 
-  // Auto-complete mission if all tasks are terminal
+  // Finalize mission if all tasks are terminal
   try {
     const queue = new TaskQueue(storePath);
     await queue.load();
@@ -388,10 +397,15 @@ export async function processTask(task: Task, mission: Mission, options: Process
     const allTerminal = missionTasks.length > 0 &&
       missionTasks.every(t => t.status === "done" || t.status === "failed");
     if (allTerminal) {
-      await completeMission(mission.id, missionsPath);
+      const hasFailed = missionTasks.some(t => t.status === "failed");
+      if (hasFailed) {
+        await failMission(mission.id, missionsPath);
+      } else {
+        await completeMission(mission.id, missionsPath);
+      }
     }
   } catch {
-    // Best-effort: mission may already be completed by another runner
+    // Best-effort: mission may already be completed/failed by another runner
   }
 }
 
@@ -405,6 +419,7 @@ export async function iterateMission(
 ): Promise<IterationResult> {
   const mission = await resolveMission(missionId, options.missionsPath);
   if (mission.status === "completed") return "mission_completed";
+  if (mission.status === "failed") return "mission_failed";
 
   const queue = new TaskQueue(options.storePath);
   await queue.load();
@@ -415,6 +430,11 @@ export async function iterateMission(
     const allTerminal = missionTasks.length > 0 &&
       missionTasks.every(t => t.status === "done" || t.status === "failed");
     if (allTerminal) {
+      const hasFailed = missionTasks.some(t => t.status === "failed");
+      if (hasFailed) {
+        await failMission(mission.id, options.missionsPath);
+        return "mission_failed";
+      }
       await completeMission(mission.id, options.missionsPath);
       return "mission_completed";
     }
@@ -445,6 +465,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
     spawnCommand,
     spawnsPath,
     actCommand,
+    runnerStatePath,
   } = options;
 
   const mission = await resolveMission(missionId, missionsPath);
@@ -453,7 +474,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
     console.log(`Principles: ${mission.principles.join("; ")}`);
   }
 
-  const runnerState = await registerRunner(mission.id, mission.name, process.pid);
+  const runnerState = await registerRunner(mission.id, mission.name, process.pid, runnerStatePath);
 
   let idleSince: number | null = null;
   let consecutiveErrors = 0;
@@ -476,7 +497,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
           currentTaskTitle: nextTask?.title,
           consecutiveIdles,
           tasksProcessed,
-        });
+        }, runnerStatePath);
 
         result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand });
         consecutiveErrors = 0;
@@ -495,6 +516,11 @@ export async function runMission(missionId: string, options: MissionRunnerOption
         return;
       }
 
+      if (result === "mission_failed") {
+        console.log(`Mission failed: ${mission.name}`);
+        return;
+      }
+
       if (result === "processed" || result === "spawned") {
         idleSince = null;
         consecutiveIdles = 0;
@@ -510,7 +536,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
         currentTaskTitle: undefined,
         consecutiveIdles,
         tasksProcessed,
-      });
+      }, runnerStatePath);
 
       if (idleSince === null) {
         idleSince = Date.now();
@@ -522,6 +548,6 @@ export async function runMission(missionId: string, options: MissionRunnerOption
       await Bun.sleep(pollIntervalMs);
     }
   } finally {
-    await deregisterRunner(runnerState.id);
+    await deregisterRunner(runnerState.id, runnerStatePath);
   }
 }

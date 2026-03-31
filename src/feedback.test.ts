@@ -1,7 +1,8 @@
 import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback, distillFeedback } from "./feedback";
+import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback, distillFeedback, sendFeedbackToProject } from "./feedback";
+import { registerProject, type Project } from "./projects";
 
 function tmpPath(): string {
   return join(tmpdir(), `worqload-feedback-test-${crypto.randomUUID()}.json`);
@@ -220,5 +221,71 @@ name: worqload
     await resolveFeedback(fb.id, feedbackPath);
 
     expect(distillFeedback(feedbackPath, templatePath)).rejects.toThrow("Rules");
+  });
+});
+
+describe("sendFeedbackToProject", () => {
+  function tmpProjectDir(): string {
+    return join(tmpdir(), `worqload-proj-test-${crypto.randomUUID()}`);
+  }
+
+  function tmpProjectsPath(): string {
+    return join(tmpdir(), `worqload-projects-test-${crypto.randomUUID()}.json`);
+  }
+
+  test("sends feedback to target project's feedback store", async () => {
+    const projectsPath = tmpProjectsPath();
+    const targetDir = tmpProjectDir();
+    await Bun.write(join(targetDir, ".worqload", "feedback.json"), "[]");
+
+    await registerProject(targetDir, "target-proj", projectsPath);
+
+    const result = await sendFeedbackToProject("target-proj", "improve error handling", "source-proj", projectsPath);
+    expect(result.message).toBe("improve error handling");
+    expect(result.from).toBe("source-proj");
+    expect(result.status).toBe("new");
+
+    const targetFeedback = await loadFeedback(join(targetDir, ".worqload", "feedback.json"));
+    expect(targetFeedback).toHaveLength(1);
+    expect(targetFeedback[0].message).toBe("improve error handling");
+    expect(targetFeedback[0].from).toBe("source-proj");
+  });
+
+  test("throws when target project is not registered", async () => {
+    const projectsPath = tmpProjectsPath();
+    expect(
+      sendFeedbackToProject("nonexistent", "msg", "source", projectsPath)
+    ).rejects.toThrow("Project not found: nonexistent");
+  });
+
+  test("creates feedback store if target project has none", async () => {
+    const projectsPath = tmpProjectsPath();
+    const targetDir = tmpProjectDir();
+    // No .worqload directory exists yet
+
+    await registerProject(targetDir, "new-proj", projectsPath);
+
+    const result = await sendFeedbackToProject("new-proj", "hello from another project", "sender", projectsPath);
+    expect(result.message).toBe("hello from another project");
+
+    const targetFeedback = await loadFeedback(join(targetDir, ".worqload", "feedback.json"));
+    expect(targetFeedback).toHaveLength(1);
+  });
+
+  test("appends to existing feedback in target project", async () => {
+    const projectsPath = tmpProjectsPath();
+    const targetDir = tmpProjectDir();
+    const feedbackPath = join(targetDir, ".worqload", "feedback.json");
+    await Bun.write(feedbackPath, "[]");
+
+    await registerProject(targetDir, "target", projectsPath);
+
+    await sendFeedbackToProject("target", "first", "projA", projectsPath);
+    await sendFeedbackToProject("target", "second", "projB", projectsPath);
+
+    const targetFeedback = await loadFeedback(feedbackPath);
+    expect(targetFeedback).toHaveLength(2);
+    expect(targetFeedback[0].message).toBe("first");
+    expect(targetFeedback[1].message).toBe("second");
   });
 });

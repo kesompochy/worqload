@@ -116,9 +116,11 @@ Spawned agents receive these environment variables:
 - \\\`WORQLOAD_TASK_CONTEXT\\\` — JSON of the task's context data
 - \\\`WORQLOAD_MISSION_PRINCIPLES\\\` — newline-separated mission principles (if assigned)
 
-Spawned agents can escalate to human by running:
+Spawned agents CANNOT call \\\`orient --human\\\` directly. To request human escalation, exit with code 3.
+The mission runner will detect this and transition the task to \\\`waiting_human\\\`, using your stdout output as the escalation message.
 \\\`\\\`\\\`sh
-$WORQLOAD_CLI orient $WORQLOAD_TASK_ID --human "<question>"
+echo "What should the API response format be?"
+exit 3
 \\\`\\\`\\\`
 
 Spawn prompts must instruct agents to always create a report summarizing what they did upon completion using \\\`worqload report add <task-id> "<title>" "<content>"\\\`.

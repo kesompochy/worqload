@@ -5,7 +5,7 @@ import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import { createMission, completeMission, addMissionPrinciple, loadMissions, type Mission } from "./mission";
 import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission, orientTask } from "./mission-runner";
-import { HUMAN_REQUIRED_PREFIX } from "./task";
+import { HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "./task";
 import { load } from "./store";
 import { loadSpawns } from "./spawns";
 
@@ -560,6 +560,30 @@ describe("spawnTask", () => {
     expect(spawnRecord?.taskId).toBe(task.id);
   });
 
+  test("transitions to waiting_human on escalation exit code", async () => {
+    const storePath = tmpPath("spawn-escalate");
+    const missionPath = tmpPath("spawn-escalate-m");
+    const spawnsPath = tmpPath("spawn-escalate-s");
+    const mission = await createMission("escalate-mission", {}, missionPath);
+    const task = createTask("needs human");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(
+      task, mission,
+      ["sh", "-c", `echo "I need help with this"; exit ${ESCALATION_EXIT_CODE}`],
+      { storePath, spawnsPath },
+    );
+    const completion = await result.completion;
+    expect(completion.exitCode).toBe(ESCALATION_EXIT_CODE);
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("waiting_human");
+    expect(updated?.owner).toBeUndefined();
+    const lastLog = updated?.logs[updated.logs.length - 1];
+    expect(lastLog?.content).toMatch(/\[HUMAN REQUIRED\]/);
+  });
+
   test("throws when task is already claimed", async () => {
     const storePath = tmpPath("spawn-claimed");
     const missionPath = tmpPath("spawn-claimed-m");
@@ -597,7 +621,7 @@ describe("mission auto-complete", () => {
     expect(missions[0].status).toBe("completed");
   });
 
-  test("auto-completes mission when all tasks are failed", async () => {
+  test("fails mission when all tasks are failed", async () => {
     const missionPath = tmpPath("auto-fail-m");
     const storePath = tmpPath("auto-fail");
     const mission = await createMission("auto-fail", {}, missionPath);
@@ -608,13 +632,13 @@ describe("mission auto-complete", () => {
     await queue.save();
 
     const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
-    expect(result).toBe("mission_completed");
+    expect(result).toBe("mission_failed");
 
     const missions = await loadMissions(missionPath);
-    expect(missions[0].status).toBe("completed");
+    expect(missions[0].status).toBe("failed");
   });
 
-  test("auto-completes with mix of done and failed tasks", async () => {
+  test("fails mission with mix of done and failed tasks", async () => {
     const missionPath = tmpPath("auto-mix-m");
     const storePath = tmpPath("auto-mix");
     const mission = await createMission("auto-mix", {}, missionPath);
@@ -628,7 +652,10 @@ describe("mission auto-complete", () => {
     await queue.save();
 
     const result = await iterateMission(mission.id, { storePath, missionsPath: missionPath, actCommand: ["echo"] });
-    expect(result).toBe("mission_completed");
+    expect(result).toBe("mission_failed");
+
+    const missions = await loadMissions(missionPath);
+    expect(missions[0].status).toBe("failed");
   });
 
   test("does not auto-complete when tasks are in progress", async () => {
@@ -706,6 +733,7 @@ describe("runMission persistence", () => {
     await runMission(mission.id, {
       storePath,
       missionsPath: missionPath,
+      runnerStatePath: tmpPath("runners"),
       pollIntervalMs: 10,
       idleTimeoutMs: 2000,
       actCommand: ["echo"],
@@ -727,6 +755,7 @@ describe("runMission persistence", () => {
     await runMission(mission.id, {
       storePath,
       missionsPath: missionPath,
+      runnerStatePath: tmpPath("runners"),
       pollIntervalMs: 10,
       idleTimeoutMs: 100,
     });
@@ -747,6 +776,7 @@ describe("runMission persistence", () => {
     await runMission(mission.id, {
       storePath,
       missionsPath: missionPath,
+      runnerStatePath: tmpPath("runners"),
       pollIntervalMs: 10,
       idleTimeoutMs: 5000,
       actCommand: ["echo"],
@@ -793,6 +823,7 @@ describe("runMission persistence", () => {
     await runMission(mission.id, {
       storePath,
       missionsPath: missionPath,
+      runnerStatePath: tmpPath("runners"),
       pollIntervalMs: 10,
       idleTimeoutMs: 150,
       actCommand: ["echo"],
@@ -835,6 +866,7 @@ describe("runMission error handling", () => {
     await expect(runMission(mission.id, {
       storePath,
       missionsPath: missionPath,
+      runnerStatePath: tmpPath("runners"),
       maxRetries: 3,
       retryBaseMs: 1,
     })).rejects.toThrow(/retry limit.*3/i);
@@ -851,6 +883,7 @@ describe("runMission error handling", () => {
       await runMission(mission.id, {
         storePath,
         missionsPath: missionPath,
+      runnerStatePath: tmpPath("runners"),
         maxRetries: 4,
         retryBaseMs: 20,
       });
@@ -892,6 +925,7 @@ describe("runMission error handling", () => {
     await expect(runMission(mission.id, {
       storePath,
       missionsPath: missionPath,
+      runnerStatePath: tmpPath("runners"),
       maxRetries: 2,
       retryBaseMs: 1,
       pollIntervalMs: 10,
@@ -909,6 +943,7 @@ describe("runMission error handling", () => {
     await expect(runMission(mission.id, {
       storePath,
       missionsPath: missionPath,
+      runnerStatePath: tmpPath("runners"),
       maxRetries: 1,
       retryBaseMs: 1,
     })).rejects.toThrow(/JSON/i);
@@ -923,6 +958,7 @@ describe("runMission error handling", () => {
     await expect(runMission(mission.id, {
       storePath,
       missionsPath: missionPath,
+      runnerStatePath: tmpPath("runners"),
       retryBaseMs: 1,
     })).rejects.toThrow(/retry limit.*5/i);
   });
@@ -1098,7 +1134,7 @@ describe("processTask auto-complete", () => {
     expect(missions[0].status).toBe("active");
   });
 
-  test("auto-completes when last task fails", async () => {
+  test("fails mission when last task fails", async () => {
     const storePath = tmpPath("pt-autocomplete-fail");
     const missionPath = tmpPath("pt-autocomplete-fail-m");
     const mission = await createMissionWithPrinciple("auto-fail-pt", missionPath);
@@ -1108,7 +1144,7 @@ describe("processTask auto-complete", () => {
     await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"], missionsPath: missionPath });
 
     const missions = await loadMissions(missionPath);
-    expect(missions[0].status).toBe("completed");
+    expect(missions[0].status).toBe("failed");
   });
 });
 

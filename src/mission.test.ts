@@ -6,7 +6,10 @@ import {
   saveMissions,
   createMission,
   completeMission,
+  failMission,
+  reactivateMission,
   addMissionPrinciple,
+  removeMissionPrinciple,
 } from "./mission";
 import type { Mission } from "./mission";
 
@@ -160,5 +163,115 @@ test("addMissionPrinciple throws on empty text", async () => {
   const mission = await createMission("empty-principle", {}, path);
   expect(addMissionPrinciple(mission.id, "  ", path)).rejects.toThrow(
     "Principle text must not be empty",
+  );
+});
+
+test("removeMissionPrinciple removes a principle by index", async () => {
+  const path = tmpPath();
+  const mission = await createMission("remove-test", {}, path);
+  await addMissionPrinciple(mission.id, "Principle A", path);
+  await addMissionPrinciple(mission.id, "Principle B", path);
+  await addMissionPrinciple(mission.id, "Principle C", path);
+
+  await removeMissionPrinciple(mission.id, 1, path);
+
+  const loaded = await loadMissions(path);
+  expect(loaded[0].principles).toEqual(["Principle A", "Principle C"]);
+});
+
+test("removeMissionPrinciple removes first principle (index 0)", async () => {
+  const path = tmpPath();
+  const mission = await createMission("remove-first", {}, path);
+  await addMissionPrinciple(mission.id, "Only one", path);
+
+  await removeMissionPrinciple(mission.id, 0, path);
+
+  const loaded = await loadMissions(path);
+  expect(loaded[0].principles).toEqual([]);
+});
+
+test("removeMissionPrinciple matches by id prefix", async () => {
+  const path = tmpPath();
+  const mission = await createMission("remove-prefix", {}, path);
+  await addMissionPrinciple(mission.id, "Target", path);
+
+  await removeMissionPrinciple(mission.id.slice(0, 8), 0, path);
+
+  const loaded = await loadMissions(path);
+  expect(loaded[0].principles).toEqual([]);
+});
+
+test("removeMissionPrinciple throws for unknown mission", async () => {
+  const path = tmpPath();
+  expect(removeMissionPrinciple("nonexistent", 0, path)).rejects.toThrow(
+    "Mission not found",
+  );
+});
+
+test("removeMissionPrinciple throws for out-of-range index", async () => {
+  const path = tmpPath();
+  const mission = await createMission("out-of-range", {}, path);
+  await addMissionPrinciple(mission.id, "Only one", path);
+
+  expect(removeMissionPrinciple(mission.id, 5, path)).rejects.toThrow(
+    "Principle index out of range",
+  );
+});
+
+test("removeMissionPrinciple throws for negative index", async () => {
+  const path = tmpPath();
+  const mission = await createMission("negative-idx", {}, path);
+  await addMissionPrinciple(mission.id, "Only one", path);
+
+  expect(removeMissionPrinciple(mission.id, -1, path)).rejects.toThrow(
+    "Principle index out of range",
+  );
+});
+
+test("failMission changes status to failed", async () => {
+  const path = tmpPath();
+  const mission = await createMission("will-fail", {}, path);
+
+  await failMission(mission.id, path);
+  const loaded = await loadMissions(path);
+  expect(loaded[0].status).toBe("failed");
+});
+
+test("failMission throws for non-active mission", async () => {
+  const path = tmpPath();
+  const mission = await createMission("already-done", {}, path);
+  await completeMission(mission.id, path);
+
+  expect(failMission(mission.id, path)).rejects.toThrow(
+    'Cannot fail mission with status "completed"',
+  );
+});
+
+test("reactivateMission changes status back to active", async () => {
+  const path = tmpPath();
+  const mission = await createMission("reactivate-test", {}, path);
+  await failMission(mission.id, path);
+
+  await reactivateMission(mission.id, path);
+  const loaded = await loadMissions(path);
+  expect(loaded[0].status).toBe("active");
+});
+
+test("reactivateMission works for completed missions", async () => {
+  const path = tmpPath();
+  const mission = await createMission("reactivate-completed", {}, path);
+  await completeMission(mission.id, path);
+
+  await reactivateMission(mission.id, path);
+  const loaded = await loadMissions(path);
+  expect(loaded[0].status).toBe("active");
+});
+
+test("reactivateMission throws if already active", async () => {
+  const path = tmpPath();
+  const mission = await createMission("already-active", {}, path);
+
+  expect(reactivateMission(mission.id, path)).rejects.toThrow(
+    "already active",
   );
 });

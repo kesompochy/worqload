@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { loadJsonFile, saveJsonFile } from "./json-store";
+import { loadJsonFile, loadJsonFileUnlocked, saveJsonFile } from "./json-store";
 
 function tmpPath(): string {
   return join(tmpdir(), `worqload-json-store-test-${crypto.randomUUID()}.json`);
@@ -57,4 +57,18 @@ test("concurrent loadJsonFile calls are serialized by lock", async () => {
   for (const result of results) {
     expect(result).toEqual({ count: 0 });
   }
+});
+
+test("loadJsonFileUnlocked returns default when file does not exist", async () => {
+  const path = tmpPath();
+  expect(await loadJsonFileUnlocked(path, [])).toEqual([]);
+  expect(await loadJsonFileUnlocked(path, null)).toBeNull();
+});
+
+test("loadJsonFileUnlocked reads saved data without acquiring lock", async () => {
+  const path = tmpPath();
+  await saveJsonFile(path, [{ id: "1", name: "unlocked" }]);
+
+  const loaded = await loadJsonFileUnlocked(path, []);
+  expect(loaded).toEqual([{ id: "1", name: "unlocked" }]);
 });

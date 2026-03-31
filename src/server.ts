@@ -9,7 +9,8 @@ import { loadReports, updateReportStatus } from "./reports";
 import { loadSleep, sleepFor, clearSleep } from "./sleep";
 import { generateAgentCard, handleA2ARequest } from "./a2a";
 import { loadMissions } from "./mission";
-import { loadRunnerStates } from "./mission-runner-state";
+import { loadRunnerStatesUnlocked } from "./mission-runner-state";
+import { appendServerLog } from "./server-log";
 
 const TASK_NOT_FOUND = { error: "Task not found" } as const;
 const NOT_WAITING_HUMAN = { error: "Task is not waiting for human" } as const;
@@ -38,7 +39,29 @@ export function startServer(basePort = 3456): void {
         port,
         async fetch(req) {
           const url = new URL(req.url);
+          const startTime = Date.now();
+          const response = await handleRequest(req, url, queue, port);
+          if (url.pathname.startsWith("/api/")) {
+            appendServerLog({ method: req.method, path: url.pathname, statusCode: response.status, durationMs: Date.now() - startTime }).catch(() => {});
+          }
+          return response;
+        },
+      });
 
+  if (port !== basePort) {
+    console.log(`Port ${basePort} in use, using ${port} instead.`);
+  }
+  console.log(`worqload UI: http://localhost:${port}`);
+  return;
+    } catch {
+      port++;
+    }
+  }
+  console.error(`Could not find an available port (tried ${basePort}-${basePort + maxAttempts - 1}).`);
+  process.exit(1);
+}
+
+async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: number): Promise<Response> {
       if (req.method === "GET" && url.pathname === "/.well-known/agent.json") {
         const card = generateAgentCard(`http://localhost:${port}`);
         return json(card);
@@ -114,7 +137,7 @@ export function startServer(basePort = 3456): void {
       }
 
       if (req.method === "GET" && url.pathname === "/api/mission-runners") {
-        const runners = await loadRunnerStates();
+        const runners = await loadRunnerStatesUnlocked();
         return json(runners);
       }
 
@@ -256,20 +279,6 @@ export function startServer(basePort = 3456): void {
       }
 
       return new Response("Not Found", { status: 404 });
-    },
-  });
-
-  if (port !== basePort) {
-    console.log(`Port ${basePort} in use, using ${port} instead.`);
-  }
-  console.log(`worqload UI: http://localhost:${port}`);
-  return;
-    } catch {
-      port++;
-    }
-  }
-  console.error(`Could not find an available port (tried ${basePort}-${basePort + maxAttempts - 1}).`);
-  process.exit(1);
 }
 
 function json(data: unknown, status = 200): Response {

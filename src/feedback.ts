@@ -1,4 +1,6 @@
+import { join } from "path";
 import { EntityStore } from "./utils/entity-store";
+import { loadProjects } from "./projects";
 
 const DEFAULT_FEEDBACK_PATH = ".worqload/feedback.json";
 
@@ -117,4 +119,19 @@ export async function distillFeedback(
   }
 
   return { distilledCount: resolved.length, rules };
+}
+
+export async function sendFeedbackToProject(
+  targetProjectName: string,
+  message: string,
+  from: string,
+  projectsPath?: string,
+): Promise<Feedback> {
+  const projects = await loadProjects(projectsPath);
+  const target = projects.find(p => p.name === targetProjectName);
+  if (!target) {
+    throw new Error(`Project not found: ${targetProjectName}`);
+  }
+  const targetFeedbackPath = join(target.path, DEFAULT_FEEDBACK_PATH);
+  return addFeedback(message, from, targetFeedbackPath);
 }

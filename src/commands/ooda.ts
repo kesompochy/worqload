@@ -18,6 +18,9 @@ export async function observe(queue: TaskQueue, args: string[]) {
 export async function orient(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
   if (args[1] === "--human") {
+    if (process.env.WORQLOAD_TASK_ID) {
+      throw new Error("Spawned agents cannot escalate directly. Exit with code 3 to request human escalation.");
+    }
     const question = args.slice(2).join(" ") || "Orientation requires human input";
     queue.transition(task.id, "orienting");
     queue.transition(task.id, "waiting_human");

@@ -2,7 +2,7 @@ import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 
 const DEFAULT_MISSIONS_PATH = ".worqload/missions.json";
 
-export type MissionStatus = "active" | "completed";
+export type MissionStatus = "active" | "completed" | "failed";
 
 export interface MissionFilter {
   tags?: string[];
@@ -60,11 +60,41 @@ export async function addMissionPrinciple(id: string, text: string, path: string
   await saveMissions(missions, path);
 }
 
+export async function removeMissionPrinciple(id: string, index: number, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
+  const missions = await loadMissions(path);
+  const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+  if (!mission) throw new Error(`Mission not found: ${id}`);
+  const principles = mission.principles || [];
+  if (index < 0 || index >= principles.length) {
+    throw new Error(`Principle index out of range: ${index}`);
+  }
+  principles.splice(index, 1);
+  await saveMissions(missions, path);
+}
+
 export async function completeMission(id: string, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
   const missions = await loadMissions(path);
   const mission = missions.find(m => m.id === id || m.id.startsWith(id));
   if (!mission) throw new Error(`Mission not found: ${id}`);
   if (mission.status === "completed") throw new Error(`Mission is already completed: ${id}`);
   mission.status = "completed";
+  await saveMissions(missions, path);
+}
+
+export async function failMission(id: string, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
+  const missions = await loadMissions(path);
+  const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+  if (!mission) throw new Error(`Mission not found: ${id}`);
+  if (mission.status !== "active") throw new Error(`Cannot fail mission with status "${mission.status}": ${id}`);
+  mission.status = "failed";
+  await saveMissions(missions, path);
+}
+
+export async function reactivateMission(id: string, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
+  const missions = await loadMissions(path);
+  const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+  if (!mission) throw new Error(`Mission not found: ${id}`);
+  if (mission.status === "active") throw new Error(`Mission is already active: ${id}`);
+  mission.status = "active";
   await saveMissions(missions, path);
 }

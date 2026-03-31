@@ -85,6 +85,7 @@ Projects:
 
 Feedback:
   feedback <message> [--from <sender>]  Send feedback
+  feedback send <project> <message> [--from <sender>]  Send feedback to another project
   feedback list                         List all feedback
   feedback ack <id>                     Acknowledge feedback
   feedback resolve <id>                 Mark feedback resolved

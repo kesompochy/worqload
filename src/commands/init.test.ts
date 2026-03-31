@@ -100,10 +100,14 @@ describe("DEFAULT_AGENT_TEMPLATE covers spawned agent env vars", () => {
 });
 
 describe("DEFAULT_AGENT_TEMPLATE covers spawned agent escalation", () => {
-  test("instructs spawned agents to escalate via orient --human", () => {
-    expect(template).toContain("orient");
-    expect(template).toContain("--human");
-    expect(template).toContain("WORQLOAD_CLI");
+  test("instructs spawned agents to escalate via exit code 3", () => {
+    expect(template).toContain("exit 3");
+    expect(template).toContain("waiting_human");
+  });
+
+  test("prohibits spawned agents from calling orient --human directly", () => {
+    expect(template).toContain("CANNOT");
+    expect(template).toContain("orient --human");
   });
 });
 

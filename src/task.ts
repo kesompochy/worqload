@@ -42,6 +42,8 @@ export function validateTransition(from: TaskStatus, to: TaskStatus): void {
 
 export const HUMAN_REQUIRED_PREFIX = "[HUMAN REQUIRED] ";
 
+export const ESCALATION_EXIT_CODE = 3;
+
 export function getHumanQuestion(task: Task): string | null {
   if (task.status !== "waiting_human") return null;
   for (let i = task.logs.length - 1; i >= 0; i--) {

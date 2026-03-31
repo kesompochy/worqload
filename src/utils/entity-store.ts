@@ -1,4 +1,5 @@
-import { loadJsonFile, saveJsonFile } from "./json-store";
+import { loadJsonFile, loadJsonFileUnlocked, saveJsonFile } from "./json-store";
+import { withLock } from "../lock";
 
 export class EntityStore<T extends { id: string }> {
   private readonly defaultPath: string;
@@ -13,14 +14,20 @@ export class EntityStore<T extends { id: string }> {
     return loadJsonFile<T[]>(path, []);
   }
 
+  async loadUnlocked(path: string = this.defaultPath): Promise<T[]> {
+    return loadJsonFileUnlocked<T[]>(path, []);
+  }
+
   async save(items: T[], path: string = this.defaultPath): Promise<void> {
     await saveJsonFile(path, items);
   }
 
   async add(entity: T, path: string = this.defaultPath): Promise<T> {
-    const items = await this.load(path);
-    items.push(entity);
-    await this.save(items, path);
+    await withLock(path, async () => {
+      const items = await loadJsonFileUnlocked<T[]>(path, []);
+      items.push(entity);
+      await Bun.write(path, JSON.stringify(items, null, 2));
+    });
     return entity;
   }
 
@@ -29,18 +36,22 @@ export class EntityStore<T extends { id: string }> {
   }
 
   async update(id: string, changes: Partial<T>, path: string = this.defaultPath): Promise<T> {
-    const items = await this.load(path);
-    const item = this.findByIdOrPrefix(items, id);
-    if (!item) throw new Error(`${this.entityName} not found: ${id}`);
-    Object.assign(item, changes);
-    await this.save(items, path);
-    return item;
+    return withLock(path, async () => {
+      const items = await loadJsonFileUnlocked<T[]>(path, []);
+      const item = this.findByIdOrPrefix(items, id);
+      if (!item) throw new Error(`${this.entityName} not found: ${id}`);
+      Object.assign(item, changes);
+      await Bun.write(path, JSON.stringify(items, null, 2));
+      return item;
+    });
   }
 
   async remove(id: string, path: string = this.defaultPath): Promise<void> {
-    const items = await this.load(path);
-    const filtered = items.filter(item => item.id !== id && !item.id.startsWith(id));
-    if (filtered.length === items.length) throw new Error(`${this.entityName} not found: ${id}`);
-    await this.save(filtered, path);
+    await withLock(path, async () => {
+      const items = await loadJsonFileUnlocked<T[]>(path, []);
+      const filtered = items.filter(item => item.id !== id && !item.id.startsWith(id));
+      if (filtered.length === items.length) throw new Error(`${this.entityName} not found: ${id}`);
+      await Bun.write(path, JSON.stringify(filtered, null, 2));
+    });
   }
 }

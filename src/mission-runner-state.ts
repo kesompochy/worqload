@@ -22,6 +22,10 @@ export async function loadRunnerStates(path: string = DEFAULT_PATH): Promise<Run
   return store.load(path);
 }
 
+export async function loadRunnerStatesUnlocked(path: string = DEFAULT_PATH): Promise<RunnerState[]> {
+  return store.loadUnlocked(path);
+}
+
 export async function registerRunner(
   missionId: string,
   missionName: string,

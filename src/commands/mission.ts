@@ -1,6 +1,6 @@
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { loadMissions, createMission, completeMission, addMissionPrinciple } from "../mission";
+import { loadMissions, createMission, completeMission, addMissionPrinciple, removeMissionPrinciple } from "../mission";
 import { SHORT_ID_LENGTH } from "../task";
 import { parseFlags } from "../utils/args";
 
@@ -57,6 +57,15 @@ export async function mission(queue: TaskQueue, args: string[]) {
       console.log("Principle added.");
       return;
     }
+    if (args[2] === "remove") {
+      const indexStr = args[3];
+      if (indexStr === undefined) exitWithError("Usage: worqload mission principle <mission-id> remove <index>");
+      const index = Number(indexStr);
+      if (!Number.isInteger(index)) exitWithError("Index must be an integer");
+      await removeMissionPrinciple(missionId, index);
+      console.log("Principle removed.");
+      return;
+    }
     const missions = await loadMissions();
     const m = missions.find(mi => mi.id === missionId || mi.id.startsWith(missionId));
     if (!m) exitWithError(`Mission not found: ${missionId}`);
@@ -65,8 +74,8 @@ export async function mission(queue: TaskQueue, args: string[]) {
       console.log("No principles.");
       return;
     }
-    for (const p of principles) {
-      console.log(`- ${p}`);
+    for (let i = 0; i < principles.length; i++) {
+      console.log(`${i}: ${principles[i]}`);
     }
     return;
   }

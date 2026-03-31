@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   loadRunnerStates,
+  loadRunnerStatesUnlocked,
   registerRunner,
   heartbeatRunner,
   deregisterRunner,
@@ -80,6 +81,20 @@ test("deregisterRunner marks runner as stopped", async () => {
 
   const states = await loadRunnerStates(path);
   expect(states[0].status).toBe("stopped");
+});
+
+test("loadRunnerStatesUnlocked reads without lock", async () => {
+  const path = tmpPath();
+  await registerRunner("mission-1", "Test", 1234, path);
+
+  const states = await loadRunnerStatesUnlocked(path);
+  expect(states).toHaveLength(1);
+  expect(states[0].missionName).toBe("Test");
+});
+
+test("loadRunnerStatesUnlocked returns empty when no file", async () => {
+  const path = tmpPath();
+  expect(await loadRunnerStatesUnlocked(path)).toEqual([]);
 });
 
 test("multiple runners tracked independently", async () => {

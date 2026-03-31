@@ -143,3 +143,37 @@ test("custom entity name appears in error messages", async () => {
   expect(store.update("bad-id", { name: "x" })).rejects.toThrow("Widget not found: bad-id");
   expect(store.remove("bad-id")).rejects.toThrow("Widget not found: bad-id");
 });
+
+test("loadUnlocked reads data without acquiring lock", async () => {
+  const path = tmpPath();
+  const store = createStore(path);
+  await store.add({ id: "abc", name: "test", value: 1 });
+
+  const loaded = await store.loadUnlocked();
+  expect(loaded).toHaveLength(1);
+  expect(loaded[0].name).toBe("test");
+});
+
+test("loadUnlocked returns empty array when file does not exist", async () => {
+  const store = createStore();
+  const loaded = await store.loadUnlocked();
+  expect(loaded).toEqual([]);
+});
+
+test("concurrent updates do not lose data", async () => {
+  const path = tmpPath();
+  const store = createStore(path);
+  await store.add({ id: "aaa", name: "first", value: 0 });
+  await store.add({ id: "bbb", name: "second", value: 0 });
+
+  await Promise.all([
+    store.update("aaa", { value: 10 }, path),
+    store.update("bbb", { value: 20 }, path),
+  ]);
+
+  const loaded = await store.load(path);
+  const aaa = loaded.find(i => i.id === "aaa");
+  const bbb = loaded.find(i => i.id === "bbb");
+  expect(aaa?.value).toBe(10);
+  expect(bbb?.value).toBe(20);
+});
