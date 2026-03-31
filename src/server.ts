@@ -6,7 +6,9 @@ import { loadSpawns } from "./spawns";
 import type { SpawnRecord } from "./spawns";
 import type { RunnerState } from "./mission-runner-state";
 import { loadFeedback, addFeedback, removeFeedback, updateFeedbackMessage } from "./feedback";
+import type { Feedback } from "./feedback";
 import { loadProjects } from "./projects";
+import type { Project } from "./projects";
 import { loadReports, updateReportStatus } from "./reports";
 import { loadSleep, sleepFor, clearSleep } from "./sleep";
 import { generateAgentCard, handleA2ARequest } from "./a2a";
@@ -145,15 +147,12 @@ async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: num
 
       if (req.method === "GET" && url.pathname === "/api/projects") {
         const projects = await loadProjects();
-        const result = [];
-        for (const p of projects) {
-          const tasksFile = Bun.file(p.path + "/.worqload/tasks.json");
-          const feedbackFile = Bun.file(p.path + "/.worqload/feedback.json");
-          const tasks = (await tasksFile.exists()) ? await tasksFile.json() : [];
-          const feedback = (await feedbackFile.exists()) ? await feedbackFile.json() : [];
-          result.push({ ...p, tasks, feedback });
-        }
-        return json(result);
+        return json(await buildProjectsSummary(projects));
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/projects/feedback") {
+        const projects = await loadProjects();
+        return json(await loadAllProjectFeedback(projects));
       }
 
       if (req.method === "GET" && url.pathname === "/api/feedback") {
@@ -296,6 +295,49 @@ export function filterSpawnsForDashboard(spawns: SpawnRecord[]): SpawnRecord[] {
 
 export function filterRunnersForDashboard(runners: RunnerState[]): RunnerState[] {
   return runners.filter(r => r.status !== "stopped");
+}
+
+export interface ProjectSummary {
+  name: string;
+  path: string;
+  registeredAt: string;
+  taskCount: number;
+  feedbackCount: number;
+}
+
+export async function buildProjectsSummary(projects: Project[]): Promise<ProjectSummary[]> {
+  const result: ProjectSummary[] = [];
+  for (const p of projects) {
+    const tasksFile = Bun.file(p.path + "/.worqload/tasks.json");
+    const feedbackFile = Bun.file(p.path + "/.worqload/feedback.json");
+    const tasks = (await tasksFile.exists()) ? await tasksFile.json() : [];
+    const feedback = (await feedbackFile.exists()) ? await feedbackFile.json() : [];
+    result.push({
+      name: p.name,
+      path: p.path,
+      registeredAt: p.registeredAt,
+      taskCount: tasks.length,
+      feedbackCount: feedback.length,
+    });
+  }
+  return result;
+}
+
+export interface ProjectFeedback extends Feedback {
+  projectName: string;
+}
+
+export async function loadAllProjectFeedback(projects: Project[]): Promise<ProjectFeedback[]> {
+  const result: ProjectFeedback[] = [];
+  for (const p of projects) {
+    const feedbackFile = Bun.file(p.path + "/.worqload/feedback.json");
+    if (!(await feedbackFile.exists())) continue;
+    const feedback: Feedback[] = await feedbackFile.json();
+    for (const fb of feedback) {
+      result.push({ ...fb, projectName: p.name });
+    }
+  }
+  return result;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -914,13 +956,8 @@ function EditableFeedbackMessage({ fb, onSend }) {
   return html\`<div class="task-title" style="cursor:pointer" onClick=\${() => setEditing(true)}>\${fb.message}</div>\`;
 }
 
-function FeedbackSection({ projects, onSend }) {
-  const allFeedback = [];
-  for (const p of projects) {
-    for (const fb of (p.feedback || [])) {
-      if (fb.status === 'new') allFeedback.push({ ...fb, projectName: p.name });
-    }
-  }
+function FeedbackSection({ projectFeedback, onSend }) {
+  const allFeedback = (projectFeedback || []).filter(fb => fb.status === 'new');
 
   return html\`<div style="margin-bottom:1rem">
     <h2 style="margin-top:0">Feedback</h2>
@@ -967,16 +1004,16 @@ function ReportsSection({ reports, onUpdate }) {
 }
 
 function App() {
-  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], reports: [], sleep: null, missions: [], runners: [] });
+  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], projectFeedback: [], reports: [], sleep: null, missions: [], runners: [] });
   const [tab, setTab] = useState('active');
 
   const refresh = useCallback(async () => {
-    const [tasks, history, principles, heartbeat, spawns, projects, reports, sleep, missions, runners] = await Promise.all([
+    const [tasks, history, principles, heartbeat, spawns, projects, projectFeedback, reports, sleep, missions, runners] = await Promise.all([
       api.get('/api/tasks'), api.get('/api/history'), api.get('/api/principles'),
-      api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/reports'),
+      api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/projects/feedback'), api.get('/api/reports'),
       api.get('/api/sleep'), api.get('/api/missions'), api.get('/api/mission-runners'),
     ]);
-    setData({ tasks, history, principles, heartbeat, spawns, projects, reports, sleep, missions, runners });
+    setData({ tasks, history, principles, heartbeat, spawns, projects, projectFeedback, reports, sleep, missions, runners });
   }, []);
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 3000); return () => clearInterval(id); }, [refresh]);
@@ -991,7 +1028,7 @@ function App() {
     <\${Principles} items=\${data.principles} />
     <\${ActivityDashboard} runners=\${data.runners} spawns=\${data.spawns} />
     \${data.reports.length > 0 && html\`<\${ReportsSection} reports=\${data.reports} onUpdate=\${refresh} />\`}
-    \${data.projects.length > 0 && html\`<\${FeedbackSection} projects=\${data.projects} onSend=\${refresh} />\`}
+    \${data.projectFeedback.length > 0 && html\`<\${FeedbackSection} projectFeedback=\${data.projectFeedback} onSend=\${refresh} />\`}
     <\${FeedbackForm} onSend=\${refresh} />
     \${data.missions.length > 0 && html\`<\${MissionSection} missions=\${data.missions} onUpdate=\${refresh} />\`}
     <div class="tabs">

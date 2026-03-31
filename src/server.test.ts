@@ -1,15 +1,18 @@
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import { createMission, loadMissions, saveMissions } from "./mission";
 import type { Mission } from "./mission";
 import { recordSpawnStart, loadSpawns, saveSpawns } from "./spawns";
+import { addFeedback } from "./feedback";
+import { registerProject } from "./projects";
+import type { Project } from "./projects";
 import type { SpawnRecord } from "./spawns";
 import type { RunnerState } from "./mission-runner-state";
-import { filterSpawnsForDashboard, filterRunnersForDashboard } from "./server";
+import { filterSpawnsForDashboard, filterRunnersForDashboard, buildProjectsSummary, loadAllProjectFeedback } from "./server";
 
 const REAL_STORE = ".worqload/tasks.json";
 const REAL_MISSIONS = ".worqload/missions.json";
@@ -424,5 +427,128 @@ describe("API runner filtering: filterRunnersForDashboard", () => {
 
   test("returns empty array when no runners exist", () => {
     expect(filterRunnersForDashboard([])).toEqual([]);
+  });
+});
+
+describe("buildProjectsSummary: /api/projects returns counts instead of raw data", () => {
+  function setupProjectDir(prefix: string): { projectPath: string; tasksPath: string; feedbackPath: string } {
+    const projectPath = join(tmpdir(), `worqload-proj-test-${prefix}-${crypto.randomUUID()}`);
+    const worqloadDir = join(projectPath, ".worqload");
+    mkdirSync(worqloadDir, { recursive: true });
+    return {
+      projectPath,
+      tasksPath: join(worqloadDir, "tasks.json"),
+      feedbackPath: join(worqloadDir, "feedback.json"),
+    };
+  }
+
+  test("returns taskCount and feedbackCount instead of tasks and feedback arrays", async () => {
+    const { projectPath, tasksPath, feedbackPath } = setupProjectDir("counts");
+    writeFileSync(tasksPath, JSON.stringify([
+      { id: "t1", title: "task1", status: "observing" },
+      { id: "t2", title: "task2", status: "acting" },
+    ]));
+    writeFileSync(feedbackPath, JSON.stringify([
+      { id: "f1", message: "fix this", status: "new", from: "user", createdAt: new Date().toISOString() },
+    ]));
+
+    const projects: Project[] = [{ name: "test-proj", path: projectPath, registeredAt: new Date().toISOString() }];
+    const result = await buildProjectsSummary(projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("test-proj");
+    expect(result[0].taskCount).toBe(2);
+    expect(result[0].feedbackCount).toBe(1);
+    expect(result[0]).not.toHaveProperty("tasks");
+    expect(result[0]).not.toHaveProperty("feedback");
+  });
+
+  test("returns zero counts when files do not exist", async () => {
+    const projectPath = join(tmpdir(), `worqload-proj-test-empty-${crypto.randomUUID()}`);
+    mkdirSync(projectPath, { recursive: true });
+
+    const projects: Project[] = [{ name: "empty-proj", path: projectPath, registeredAt: new Date().toISOString() }];
+    const result = await buildProjectsSummary(projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].taskCount).toBe(0);
+    expect(result[0].feedbackCount).toBe(0);
+  });
+
+  test("handles multiple projects independently", async () => {
+    const p1 = setupProjectDir("multi1");
+    const p2 = setupProjectDir("multi2");
+    writeFileSync(p1.tasksPath, JSON.stringify([{ id: "t1" }]));
+    writeFileSync(p1.feedbackPath, JSON.stringify([{ id: "f1" }, { id: "f2" }]));
+    writeFileSync(p2.tasksPath, JSON.stringify([{ id: "t2" }, { id: "t3" }, { id: "t4" }]));
+    writeFileSync(p2.feedbackPath, JSON.stringify([]));
+
+    const projects: Project[] = [
+      { name: "proj-a", path: p1.projectPath, registeredAt: new Date().toISOString() },
+      { name: "proj-b", path: p2.projectPath, registeredAt: new Date().toISOString() },
+    ];
+    const result = await buildProjectsSummary(projects);
+
+    expect(result).toHaveLength(2);
+    expect(result[0].taskCount).toBe(1);
+    expect(result[0].feedbackCount).toBe(2);
+    expect(result[1].taskCount).toBe(3);
+    expect(result[1].feedbackCount).toBe(0);
+  });
+});
+
+describe("loadAllProjectFeedback: aggregates feedback across projects with project name", () => {
+  function setupProjectDir(prefix: string): { projectPath: string; feedbackPath: string } {
+    const projectPath = join(tmpdir(), `worqload-allfb-test-${prefix}-${crypto.randomUUID()}`);
+    const worqloadDir = join(projectPath, ".worqload");
+    mkdirSync(worqloadDir, { recursive: true });
+    return {
+      projectPath,
+      feedbackPath: join(worqloadDir, "feedback.json"),
+    };
+  }
+
+  test("returns feedback from all projects with projectName attached", async () => {
+    const p1 = setupProjectDir("fb1");
+    const p2 = setupProjectDir("fb2");
+    writeFileSync(p1.feedbackPath, JSON.stringify([
+      { id: "f1", message: "issue A", status: "new", from: "user", createdAt: "2026-01-01T00:00:00Z" },
+    ]));
+    writeFileSync(p2.feedbackPath, JSON.stringify([
+      { id: "f2", message: "issue B", status: "new", from: "admin", createdAt: "2026-01-02T00:00:00Z" },
+    ]));
+
+    const projects: Project[] = [
+      { name: "alpha", path: p1.projectPath, registeredAt: new Date().toISOString() },
+      { name: "beta", path: p2.projectPath, registeredAt: new Date().toISOString() },
+    ];
+    const result = await loadAllProjectFeedback(projects);
+
+    expect(result).toHaveLength(2);
+    const alpha = result.find((f: any) => f.id === "f1");
+    const beta = result.find((f: any) => f.id === "f2");
+    expect(alpha.projectName).toBe("alpha");
+    expect(beta.projectName).toBe("beta");
+  });
+
+  test("returns empty array when no projects have feedback", async () => {
+    const p1 = setupProjectDir("nofb");
+    const projects: Project[] = [
+      { name: "empty", path: p1.projectPath, registeredAt: new Date().toISOString() },
+    ];
+    writeFileSync(p1.feedbackPath, JSON.stringify([]));
+    const result = await loadAllProjectFeedback(projects);
+    expect(result).toEqual([]);
+  });
+
+  test("handles missing feedback files gracefully", async () => {
+    const projectPath = join(tmpdir(), `worqload-allfb-test-missing-${crypto.randomUUID()}`);
+    mkdirSync(projectPath, { recursive: true });
+
+    const projects: Project[] = [
+      { name: "no-file", path: projectPath, registeredAt: new Date().toISOString() },
+    ];
+    const result = await loadAllProjectFeedback(projects);
+    expect(result).toEqual([]);
   });
 });
