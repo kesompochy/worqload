@@ -54,7 +54,6 @@ describe("collectResumeState", () => {
     const t = createTask("Needs human");
     queue.enqueue(t);
     queue.transition(t.id, "orienting");
-    queue.transition(t.id, "deciding");
     queue.transition(t.id, "waiting_human");
 
     const state = await collectResumeState(queue, {

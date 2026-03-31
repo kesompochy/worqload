@@ -9,6 +9,7 @@ import { loadReports, updateReportStatus } from "./reports";
 import { loadSleep, sleepFor, clearSleep } from "./sleep";
 import { generateAgentCard, handleA2ARequest } from "./a2a";
 import { loadMissions } from "./mission";
+import { loadRunnerStates } from "./mission-runner-state";
 
 const TASK_NOT_FOUND = { error: "Task not found" } as const;
 const NOT_WAITING_HUMAN = { error: "Task is not waiting for human" } as const;
@@ -110,6 +111,11 @@ export function startServer(basePort = 3456): void {
           })),
         }));
         return json(result);
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/mission-runners") {
+        const runners = await loadRunnerStates();
+        return json(runners);
       }
 
       if (req.method === "GET" && url.pathname === "/api/projects") {
@@ -353,7 +359,9 @@ function html(): string {
   .spawns { margin-bottom: 1rem; }
   .spawn { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.75rem; }
   .spawn-task { flex: 1; font-weight: 500; font-size: 0.9rem; }
+  .spawn-task-id { font-size: 0.65rem; font-family: monospace; color: #888; background: #1a1a2e; padding: 0.1rem 0.4rem; border-radius: 3px; }
   .spawn-owner { font-size: 0.7rem; color: #6cced4; background: #1a2e2e; padding: 0.1rem 0.4rem; border-radius: 3px; }
+  .spawn-started-at { font-size: 0.65rem; color: #888; font-family: monospace; white-space: nowrap; }
   .spawn-pid { font-size: 0.7rem; color: #888; font-family: monospace; }
   .spawn-status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
   .spawn-running { background: #1a2e2e; color: #6cced4; animation: pulse 2s infinite; }
@@ -522,10 +530,13 @@ function SpawnRow({ s }) {
   const dur = s.finishedAt
     ? formatDuration(new Date(s.finishedAt) - new Date(s.startedAt))
     : formatDuration(Date.now() - new Date(s.startedAt)) + '...';
+  const startedTime = new Date(s.startedAt).toLocaleTimeString();
   return html\`<div class="spawn">
     <span class="spawn-status spawn-\${s.status}">\${s.status}</span>
+    <span class="spawn-task-id">\${s.taskId.slice(0, 8)}</span>
     <span class="spawn-task">\${s.taskTitle}</span>
     <span class="spawn-owner">@\${s.owner}</span>
+    <span class="spawn-started-at" title=\${s.startedAt}>\${startedTime}</span>
     <span class="spawn-pid">PID \${s.pid}</span>
     <span class="spawn-duration">\${dur}</span>
   </div>\`;
@@ -781,6 +792,49 @@ function MissionTaskCard({ task, onUpdate }) {
   </div>\`;
 }
 
+function ActivityDashboard({ runners, spawns }) {
+  const activeRunners = runners.filter(r => r.status !== 'stopped');
+  const runningSpawns = spawns.filter(s => s.status === 'running');
+  const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+  const recentSpawns = spawns.filter(s => s.status !== 'running' && s.finishedAt && new Date(s.finishedAt).getTime() > fiveMinAgo).slice(-10).reverse();
+  if (!activeRunners.length && !runningSpawns.length && !recentSpawns.length) return null;
+
+  const runnerStatusStyle = (status) => {
+    if (status === 'running') return 'background:#1a2e2e;color:#6cced4';
+    if (status === 'idle') return 'background:#2e2e1a;color:#edd76c';
+    return 'background:#2e1a1a;color:#d46c6c';
+  };
+
+  return html\`<div style="margin-bottom:1rem">
+    <h2 style="margin-top:0">Activity</h2>
+    \${activeRunners.length > 0 && html\`<div style="margin-bottom:0.75rem">
+      <div style="font-size:0.75rem;color:#888;margin-bottom:0.35rem;text-transform:uppercase;letter-spacing:0.05em">Mission Runners</div>
+      \${activeRunners.map(r => {
+        const elapsed = formatDuration(Date.now() - new Date(r.startedAt).getTime());
+        const heartbeatAge = Math.floor((Date.now() - new Date(r.lastHeartbeat).getTime()) / 1000);
+        const stale = heartbeatAge > 120;
+        return html\`<div key=\${r.id} class="spawn" style=\${stale ? 'opacity:0.5' : ''}>
+          <span class="spawn-status" style=\${runnerStatusStyle(r.status)}>\${r.status}</span>
+          <span class="spawn-task">\${r.missionName}</span>
+          \${r.currentTaskTitle && html\`<span style="font-size:0.7rem;color:#aaa;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title=\${r.currentTaskTitle}>→ \${r.currentTaskTitle}</span>\`}
+          <span style="font-size:0.7rem;color:#888;font-family:monospace">PID \${r.pid}</span>
+          <span style="font-size:0.7rem;color:#6aed6c">\${r.tasksProcessed} done</span>
+          <span class="spawn-duration">\${elapsed}</span>
+          \${stale && html\`<span style="font-size:0.65rem;color:#d46c6c" title="No heartbeat for \${heartbeatAge}s">stale</span>\`}
+        </div>\`;
+      })}
+    </div>\`}
+    \${runningSpawns.length > 0 && html\`<div style="margin-bottom:0.5rem">
+      <div style="font-size:0.75rem;color:#888;margin-bottom:0.35rem;text-transform:uppercase;letter-spacing:0.05em">Active Spawns</div>
+      \${runningSpawns.map(s => html\`<\${SpawnRow} key=\${s.id} s=\${s} />\`)}
+    </div>\`}
+    \${recentSpawns.length > 0 && html\`<div>
+      <div style="font-size:0.75rem;color:#888;margin-bottom:0.35rem;text-transform:uppercase;letter-spacing:0.05em">Recent</div>
+      \${recentSpawns.map(s => html\`<\${SpawnRow} key=\${s.id} s=\${s} />\`)}
+    </div>\`}
+  </div>\`;
+}
+
 function Board({ tasks, onUpdate }) {
   const [showAllDone, setShowAllDone] = useState(false);
   const [doneSortDesc, setDoneSortDesc] = useState(true);
@@ -889,16 +943,16 @@ function ReportsSection({ reports, onUpdate }) {
 }
 
 function App() {
-  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], reports: [], sleep: null, missions: [] });
+  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], reports: [], sleep: null, missions: [], runners: [] });
   const [tab, setTab] = useState('active');
 
   const refresh = useCallback(async () => {
-    const [tasks, history, principles, heartbeat, spawns, projects, reports, sleep, missions] = await Promise.all([
+    const [tasks, history, principles, heartbeat, spawns, projects, reports, sleep, missions, runners] = await Promise.all([
       api.get('/api/tasks'), api.get('/api/history'), api.get('/api/principles'),
       api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/reports'),
-      api.get('/api/sleep'), api.get('/api/missions'),
+      api.get('/api/sleep'), api.get('/api/missions'), api.get('/api/mission-runners'),
     ]);
-    setData({ tasks, history, principles, heartbeat, spawns, projects, reports, sleep, missions });
+    setData({ tasks, history, principles, heartbeat, spawns, projects, reports, sleep, missions, runners });
   }, []);
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 3000); return () => clearInterval(id); }, [refresh]);
@@ -911,7 +965,7 @@ function App() {
       <\${Heartbeat} heartbeat=\${data.heartbeat} sleepState=\${data.sleep} onUpdate=\${refresh} />
     </div>
     <\${Principles} items=\${data.principles} />
-    <\${SpawnList} spawns=\${data.spawns} />
+    <\${ActivityDashboard} runners=\${data.runners} spawns=\${data.spawns} />
     \${data.reports.length > 0 && html\`<\${ReportsSection} reports=\${data.reports} onUpdate=\${refresh} />\`}
     \${data.projects.length > 0 && html\`<\${FeedbackSection} projects=\${data.projects} onSend=\${refresh} />\`}
     <\${FeedbackForm} onSend=\${refresh} />

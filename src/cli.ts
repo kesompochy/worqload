@@ -117,7 +117,6 @@ OODA phases:
   observe <id> [observations]    Start/record observations
   orient  <id> <analysis>        Record situation analysis
   decide  <id> <decision>        Record decision
-  decide  <id> --human <question>  Escalate to human
   act     <id> [notes]           Mark as acting
   done    <id> [notes]           Mark as done
   fail    <id> [reason]          Mark as failed

@@ -7,6 +7,7 @@ import { TaskQueue } from "./queue";
 import { createMission, loadMissions, saveMissions } from "./mission";
 import type { Mission } from "./mission";
 import { recordSpawnStart, loadSpawns, saveSpawns } from "./spawns";
+import type { SpawnRecord } from "./spawns";
 
 const REAL_STORE = ".worqload/tasks.json";
 const REAL_MISSIONS = ".worqload/missions.json";
@@ -166,5 +167,143 @@ describe("GET /api/missions", () => {
     expect(result[0].tasks[0].spawns[0].status).toBe("running");
     expect(result[0].tasks[0].spawns[0].owner).toBe("agent-1");
     expect(result[0].tasks[1].spawns).toHaveLength(0);
+  });
+});
+
+describe("Activity visibility: spawn detail fields", () => {
+  test("spawn records contain taskId, taskTitle, owner, and startedAt", async () => {
+    const spawnsPath = tmpPath("spawns");
+    const taskId = crypto.randomUUID();
+    const spawn = await recordSpawnStart(taskId, "Build feature X", "agent-alpha", 9999, spawnsPath);
+
+    expect(spawn.taskId).toBe(taskId);
+    expect(spawn.taskTitle).toBe("Build feature X");
+    expect(spawn.owner).toBe("agent-alpha");
+    expect(spawn.startedAt).toBeDefined();
+    expect(new Date(spawn.startedAt).getTime()).not.toBeNaN();
+    expect(spawn.status).toBe("running");
+  });
+
+  test("loadSpawns returns all fields needed for activity view", async () => {
+    const spawnsPath = tmpPath("spawns");
+    const taskId1 = crypto.randomUUID();
+    const taskId2 = crypto.randomUUID();
+    await recordSpawnStart(taskId1, "Task A", "runner-1", 1001, spawnsPath);
+    await recordSpawnStart(taskId2, "Task B", "runner-2", 1002, spawnsPath);
+
+    const spawns = await loadSpawns(spawnsPath);
+    expect(spawns).toHaveLength(2);
+
+    for (const s of spawns) {
+      expect(s).toHaveProperty("taskId");
+      expect(s).toHaveProperty("taskTitle");
+      expect(s).toHaveProperty("owner");
+      expect(s).toHaveProperty("startedAt");
+      expect(s).toHaveProperty("status");
+    }
+  });
+});
+
+describe("Activity visibility: mission status and task count", () => {
+  test("mission response includes status and taskCount for active missions", async () => {
+    const missionsPath = tmpPath("missions");
+    const mission = await createMission("Active mission", {}, missionsPath);
+
+    const storePath = tmpPath("tasks");
+    const queue = new TaskQueue(storePath);
+    const t1 = createTask("task 1");
+    t1.missionId = mission.id;
+    const t2 = createTask("task 2");
+    t2.missionId = mission.id;
+    queue.enqueue(t1);
+    queue.enqueue(t2);
+
+    const missions = await loadMissions(missionsPath);
+    const tasks = queue.list();
+    const spawns: SpawnRecord[] = [];
+
+    const result = missions.map(m => ({
+      ...m,
+      taskCount: tasks.filter(t => t.missionId === m.id).length,
+      tasks: tasks.filter(t => t.missionId === m.id).map(t => ({
+        ...t,
+        spawns: spawns.filter(s => s.taskId === t.id),
+      })),
+    }));
+
+    expect(result[0].status).toBe("active");
+    expect(result[0].taskCount).toBe(2);
+  });
+
+  test("mission response includes status and taskCount for completed missions", async () => {
+    const missionsPath = tmpPath("missions");
+    const mission = await createMission("Done mission", {}, missionsPath);
+    const missions = await loadMissions(missionsPath);
+    missions[0].status = "completed";
+    await saveMissions(missions, missionsPath);
+
+    const storePath = tmpPath("tasks");
+    const queue = new TaskQueue(storePath);
+
+    const updated = await loadMissions(missionsPath);
+    const tasks = queue.list();
+    const spawns: SpawnRecord[] = [];
+
+    const result = updated.map(m => ({
+      ...m,
+      taskCount: tasks.filter(t => t.missionId === m.id).length,
+      tasks: tasks.filter(t => t.missionId === m.id).map(t => ({
+        ...t,
+        spawns: spawns.filter(s => s.taskId === t.id),
+      })),
+    }));
+
+    expect(result[0].status).toBe("completed");
+    expect(result[0].taskCount).toBe(0);
+  });
+
+  test("active and completed missions are distinguishable in response", async () => {
+    const missionsPath = tmpPath("missions");
+    await createMission("Active one", {}, missionsPath);
+    await createMission("Completed one", {}, missionsPath);
+    const missions = await loadMissions(missionsPath);
+    missions[1].status = "completed";
+    await saveMissions(missions, missionsPath);
+
+    const updated = await loadMissions(missionsPath);
+    const activeCount = updated.filter(m => m.status === "active").length;
+    const completedCount = updated.filter(m => m.status === "completed").length;
+
+    expect(activeCount).toBe(1);
+    expect(completedCount).toBe(1);
+  });
+});
+
+describe("Activity visibility: dashboard HTML", () => {
+  test("SpawnRow displays taskId and startedAt", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    // SpawnRow renders taskId (short ID)
+    expect(source).toContain("spawn-task-id");
+    // SpawnRow renders startedAt timestamp
+    expect(source).toContain("spawn-started-at");
+  });
+
+  test("MissionCard displays status and task count", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    expect(source).toContain("mission.status");
+    expect(source).toContain("mission.taskCount");
+  });
+
+  test("ActivityDashboard section exists", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    expect(source).toContain("ActivityDashboard");
+    expect(source).toContain("Mission Runners");
+    expect(source).toContain("Active Spawns");
   });
 });

@@ -38,7 +38,7 @@ bun src/cli.ts iterate
 
 The output tells you what to do next:
 - **waiting_human**: present the listed questions to the user, skip to next iteration
-- **queue empty**: propose next action to the user via `add` + `decide --human`
+- **queue empty**: propose next action to the user via `add` + `orient --human`
 - **mission_run**: start mission runners for listed missions
 - **unassigned**: tasks need a mission assignment before processing
 
@@ -63,9 +63,9 @@ If there are unassigned tasks, assign them to an appropriate mission first:
 bun src/cli.ts mission assign <mission-id> <task-id>
 ```
 
-If a decision is difficult or architectural:
+If a decision is difficult or architectural, escalate during orientation:
 ```sh
-bun src/cli.ts decide <id> --human "<question>"
+bun src/cli.ts orient <id> --human "<question>"
 ```
 
 ### Rules

@@ -236,8 +236,7 @@ describe("handleA2ARequest", () => {
       const task = createTask("need approval", {}, 0, "a2a");
       queue.enqueue(task);
       queue.transition(task.id, "orienting");
-      queue.transition(task.id, "deciding");
-      queue.addLog(task.id, "decide", "[HUMAN REQUIRED] Approve this change?");
+      queue.addLog(task.id, "orient", "[HUMAN REQUIRED] Approve this change?");
       queue.transition(task.id, "waiting_human");
 
       const res = await handleA2ARequest(queue, rpc("message/send", {

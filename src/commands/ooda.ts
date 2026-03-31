@@ -17,6 +17,15 @@ export async function observe(queue: TaskQueue, args: string[]) {
 
 export async function orient(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
+  if (args[1] === "--human") {
+    const question = args.slice(2).join(" ") || "Orientation requires human input";
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "waiting_human");
+    queue.addLog(task.id, "orient", `${HUMAN_REQUIRED_PREFIX}${question}`);
+    await queue.save();
+    console.log(`Waiting for human input: ${question}`);
+    return;
+  }
   const note = args.slice(1).join(" ");
   if (!note) {
     exitWithError("Usage: worqload orient <id> <analysis>");
@@ -29,18 +38,9 @@ export async function orient(queue: TaskQueue, args: string[]) {
 
 export async function decide(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
-  if (args[1] === "--human") {
-    const question = args.slice(2).join(" ") || "Decision required";
-    queue.transition(task.id, "waiting_human");
-    queue.addLog(task.id, "decide", `${HUMAN_REQUIRED_PREFIX}${question}`);
-    await queue.save();
-    console.log(`Waiting for human decision: ${question}`);
-    return;
-  }
   const decision = args.slice(1).join(" ");
   if (!decision) {
-    console.error("Usage: worqload decide <id> <decision>");
-    exitWithError("       worqload decide <id> --human <question>");
+    exitWithError("Usage: worqload decide <id> <decision>");
   }
   queue.transition(task.id, "deciding");
   queue.addLog(task.id, "decide", decision);

@@ -4,7 +4,8 @@ import { join } from "path";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import { createMission, completeMission, addMissionPrinciple, loadMissions, type Mission } from "./mission";
-import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission } from "./mission-runner";
+import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission, orientTask } from "./mission-runner";
+import { HUMAN_REQUIRED_PREFIX } from "./task";
 import { load } from "./store";
 import { loadSpawns } from "./spawns";
 
@@ -18,6 +19,13 @@ async function setupQueue(storePath: string, tasks: ReturnType<typeof createTask
     queue.enqueue(task);
   }
   await queue.save();
+}
+
+async function createMissionWithPrinciple(name: string, missionPath: string, principle = "Execute task"): Promise<Mission> {
+  const mission = await createMission(name, {}, missionPath);
+  await addMissionPrinciple(mission.id, principle, missionPath);
+  const missions = await loadMissions(missionPath);
+  return missions.find(m => m.id === mission.id)!;
 }
 
 describe("findNextMissionTask", () => {
@@ -92,7 +100,7 @@ describe("processTask", () => {
   test("transitions through all OODA phases to done", async () => {
     const storePath = tmpPath("process-done");
     const missionPath = tmpPath("process-done-m");
-    const mission = await createMission("test-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("test-mission", missionPath);
     const task = createTask("process me");
     const taskWithMission = { ...task, missionId: mission.id };
     await setupQueue(storePath, [taskWithMission]);
@@ -127,7 +135,7 @@ describe("processTask", () => {
   test("has logs for all OODA phases", async () => {
     const storePath = tmpPath("all-phases");
     const missionPath = tmpPath("all-phases-m");
-    const mission = await createMission("all-phases", {}, missionPath);
+    const mission = await createMissionWithPrinciple("all-phases", missionPath);
     const task = createTask("all phases task");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -163,7 +171,7 @@ describe("processTask", () => {
   test("sets owner to mission:<name> during processing", async () => {
     const storePath = tmpPath("owner");
     const missionPath = tmpPath("owner-m");
-    const mission = await createMission("owner-test", {}, missionPath);
+    const mission = await createMissionWithPrinciple("owner-test", missionPath);
     const task = createTask("owner task");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -181,7 +189,7 @@ describe("processTask", () => {
   test("spawns process in act phase and captures output", async () => {
     const storePath = tmpPath("spawn-act");
     const missionPath = tmpPath("spawn-act-m");
-    const mission = await createMission("spawn-act", {}, missionPath);
+    const mission = await createMissionWithPrinciple("spawn-act", missionPath);
     const task = createTask("spawn act task");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -197,7 +205,7 @@ describe("processTask", () => {
   test("marks task as failed when act spawn exits non-zero", async () => {
     const storePath = tmpPath("act-fail");
     const missionPath = tmpPath("act-fail-m");
-    const mission = await createMission("act-fail", {}, missionPath);
+    const mission = await createMissionWithPrinciple("act-fail", missionPath);
     const task = createTask("fail act task", { retryCount: 2 });
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -232,7 +240,7 @@ describe("processTask", () => {
   test("includes task context in act prompt", async () => {
     const storePath = tmpPath("act-context");
     const missionPath = tmpPath("act-context-m");
-    const mission = await createMission("act-context", {}, missionPath);
+    const mission = await createMissionWithPrinciple("act-context", missionPath);
     const task = createTask("context task", { detail: "important info" });
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -270,7 +278,7 @@ describe("iterateMission", () => {
   test("returns processed after processing a task", async () => {
     const missionPath = tmpPath("iter-process-m");
     const storePath = tmpPath("iter-process");
-    const mission = await createMission("process-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("process-mission", missionPath);
     const task = createTask("to process");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -293,7 +301,7 @@ describe("iterateMission", () => {
   test("processes multiple tasks sequentially", async () => {
     const missionPath = tmpPath("iter-multi-m");
     const storePath = tmpPath("iter-multi");
-    const mission = await createMission("multi-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("multi-mission", missionPath);
     const task1 = createTask("first task");
     const task2 = createTask("second task");
     await setupQueue(storePath, [
@@ -571,7 +579,7 @@ describe("mission auto-complete", () => {
   test("auto-completes mission when all tasks are done", async () => {
     const missionPath = tmpPath("auto-done-m");
     const storePath = tmpPath("auto-done");
-    const mission = await createMission("auto-done", {}, missionPath);
+    const mission = await createMissionWithPrinciple("auto-done", missionPath);
     const task1 = createTask("task 1");
     const task2 = createTask("task 2");
     await setupQueue(storePath, [
@@ -683,7 +691,7 @@ describe("runMission persistence", () => {
   test("polls for new tasks when initially idle", async () => {
     const missionPath = tmpPath("run-poll-m");
     const storePath = tmpPath("run-poll");
-    const mission = await createMission("poll-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("poll-mission", missionPath);
     const queue = new TaskQueue(storePath);
     await queue.save();
 
@@ -731,7 +739,7 @@ describe("runMission persistence", () => {
   test("exits on mission completion instead of idle timeout", async () => {
     const missionPath = tmpPath("run-complete-m");
     const storePath = tmpPath("run-complete");
-    const mission = await createMission("complete-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("complete-mission", missionPath);
     const task = createTask("the only task");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -753,7 +761,7 @@ describe("runMission persistence", () => {
   test("resets idle timer when a task is processed", async () => {
     const missionPath = tmpPath("run-reset-idle-m");
     const storePath = tmpPath("run-reset-idle");
-    const mission = await createMission("reset-idle", {}, missionPath);
+    const mission = await createMissionWithPrinciple("reset-idle", missionPath);
 
     const task1 = createTask("task1");
     const blocker = createTask("blocker");
@@ -1063,7 +1071,7 @@ describe("processTask auto-complete", () => {
   test("auto-completes mission when last task finishes", async () => {
     const storePath = tmpPath("pt-autocomplete");
     const missionPath = tmpPath("pt-autocomplete-m");
-    const mission = await createMission("auto-pt", {}, missionPath);
+    const mission = await createMissionWithPrinciple("auto-pt", missionPath);
     const task = createTask("last task");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -1076,7 +1084,7 @@ describe("processTask auto-complete", () => {
   test("does not auto-complete when other tasks remain pending", async () => {
     const storePath = tmpPath("pt-no-autocomplete");
     const missionPath = tmpPath("pt-no-autocomplete-m");
-    const mission = await createMission("partial-pt", {}, missionPath);
+    const mission = await createMissionWithPrinciple("partial-pt", missionPath);
     const task1 = createTask("first");
     const task2 = createTask("second");
     await setupQueue(storePath, [
@@ -1093,7 +1101,7 @@ describe("processTask auto-complete", () => {
   test("auto-completes when last task fails", async () => {
     const storePath = tmpPath("pt-autocomplete-fail");
     const missionPath = tmpPath("pt-autocomplete-fail-m");
-    const mission = await createMission("auto-fail-pt", {}, missionPath);
+    const mission = await createMissionWithPrinciple("auto-fail-pt", missionPath);
     const task = createTask("will fail", { retryCount: 2 });
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -1108,7 +1116,7 @@ describe("processTask retry with backoff", () => {
   test("resets to observing with retryCount incremented on first failure", async () => {
     const storePath = tmpPath("retry-first");
     const missionPath = tmpPath("retry-first-m");
-    const mission = await createMission("retry-first", {}, missionPath);
+    const mission = await createMissionWithPrinciple("retry-first", missionPath);
     const task = createTask("will fail once");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -1124,7 +1132,7 @@ describe("processTask retry with backoff", () => {
   test("increments retryCount on second failure", async () => {
     const storePath = tmpPath("retry-second");
     const missionPath = tmpPath("retry-second-m");
-    const mission = await createMission("retry-second", {}, missionPath);
+    const mission = await createMissionWithPrinciple("retry-second", missionPath);
     const task = createTask("fail twice", { retryCount: 1 });
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -1139,7 +1147,7 @@ describe("processTask retry with backoff", () => {
   test("stays failed when retryCount reaches max (2)", async () => {
     const storePath = tmpPath("retry-max");
     const missionPath = tmpPath("retry-max-m");
-    const mission = await createMission("retry-max", {}, missionPath);
+    const mission = await createMissionWithPrinciple("retry-max", missionPath);
     const task = createTask("exhausted retries", { retryCount: 2 });
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -1154,7 +1162,7 @@ describe("processTask retry with backoff", () => {
   test("retries on exception in catch path", async () => {
     const storePath = tmpPath("retry-exc");
     const missionPath = tmpPath("retry-exc-m");
-    const mission = await createMission("retry-exc", {}, missionPath);
+    const mission = await createMissionWithPrinciple("retry-exc", missionPath);
     const task = createTask("exception task");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -1169,7 +1177,7 @@ describe("processTask retry with backoff", () => {
   test("logs [RETRY] with attempt info", async () => {
     const storePath = tmpPath("retry-log");
     const missionPath = tmpPath("retry-log-m");
-    const mission = await createMission("retry-log", {}, missionPath);
+    const mission = await createMissionWithPrinciple("retry-log", missionPath);
     const task = createTask("retry logged");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -1185,7 +1193,7 @@ describe("processTask retry with backoff", () => {
   test("sets retryAfter with 1s backoff on first failure", async () => {
     const storePath = tmpPath("retry-after1");
     const missionPath = tmpPath("retry-after1-m");
-    const mission = await createMission("retry-after1", {}, missionPath);
+    const mission = await createMissionWithPrinciple("retry-after1", missionPath);
     const task = createTask("backoff 1s");
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -1202,7 +1210,7 @@ describe("processTask retry with backoff", () => {
   test("sets retryAfter with 2s backoff on second failure", async () => {
     const storePath = tmpPath("retry-after2");
     const missionPath = tmpPath("retry-after2-m");
-    const mission = await createMission("retry-after2", {}, missionPath);
+    const mission = await createMissionWithPrinciple("retry-after2", missionPath);
     const task = createTask("backoff 2s", { retryCount: 1 });
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
@@ -1276,5 +1284,122 @@ describe("processTask retry with backoff", () => {
 
     const result = findNextMissionTask(queue, missionId);
     expect(result?.id).toBe(task.id);
+  });
+});
+
+describe("orientTask", () => {
+  test("records applicable principles in orient log when principles exist", async () => {
+    const storePath = tmpPath("orient-principles");
+    const missionPath = tmpPath("orient-principles-m");
+    const mission = await createMission("orient-p", {}, missionPath);
+    await addMissionPrinciple(mission.id, "Write tests first", missionPath);
+    await addMissionPrinciple(mission.id, "Keep changes small", missionPath);
+    const missions = await loadMissions(missionPath);
+    const updatedMission = missions[0];
+
+    const task = createTask("implement feature");
+    await setupQueue(storePath, [{ ...task, missionId: updatedMission.id }]);
+
+    const result = await orientTask(task.id, updatedMission, storePath);
+    expect(result).toBe("oriented");
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("orienting");
+    const orientLog = updated?.logs.find(l => l.phase === "orient");
+    expect(orientLog?.content).toContain("Write tests first");
+    expect(orientLog?.content).toContain("Keep changes small");
+  });
+
+  test("transitions to waiting_human when no principles are defined", async () => {
+    const storePath = tmpPath("orient-no-principles");
+    const missionPath = tmpPath("orient-no-principles-m");
+    const mission = await createMission("orient-empty", {}, missionPath);
+
+    const task = createTask("task without guidance");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await orientTask(task.id, mission, storePath);
+    expect(result).toBe("escalated");
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("waiting_human");
+    const orientLog = updated?.logs.find(l => l.phase === "orient");
+    expect(orientLog?.content).toContain(HUMAN_REQUIRED_PREFIX);
+  });
+
+  test("orient log includes mission name", async () => {
+    const storePath = tmpPath("orient-mission-name");
+    const missionPath = tmpPath("orient-mission-name-m");
+    const mission = await createMission("my-named-mission", {}, missionPath);
+    await addMissionPrinciple(mission.id, "Be thorough", missionPath);
+    const missions = await loadMissions(missionPath);
+    const updatedMission = missions[0];
+
+    const task = createTask("named mission task");
+    await setupQueue(storePath, [{ ...task, missionId: updatedMission.id }]);
+
+    await orientTask(task.id, updatedMission, storePath);
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const orientLog = updated?.logs.find(l => l.phase === "orient");
+    expect(orientLog?.content).toContain("my-named-mission");
+  });
+});
+
+describe("processTask orient integration", () => {
+  test("escalates to waiting_human when mission has no principles", async () => {
+    const storePath = tmpPath("process-no-principles");
+    const missionPath = tmpPath("process-no-principles-m");
+    const mission = await createMission("no-principles", {}, missionPath);
+    const task = createTask("needs guidance");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["echo"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("waiting_human");
+    const orientLog = updated?.logs.find(l => l.phase === "orient");
+    expect(orientLog?.content).toContain(HUMAN_REQUIRED_PREFIX);
+  });
+
+  test("proceeds to done when mission has principles", async () => {
+    const storePath = tmpPath("process-with-principles");
+    const missionPath = tmpPath("process-with-principles-m");
+    const mission = await createMission("with-principles", {}, missionPath);
+    await addMissionPrinciple(mission.id, "Test first", missionPath);
+    const missions = await loadMissions(missionPath);
+    const principledMission = missions[0];
+
+    const task = createTask("guided task");
+    await setupQueue(storePath, [{ ...task, missionId: principledMission.id }]);
+
+    await processTask(task, principledMission, { storePath, actCommand: ["echo"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+  });
+
+  test("orient log records principles used for decision in processTask", async () => {
+    const storePath = tmpPath("process-orient-log");
+    const missionPath = tmpPath("process-orient-log-m");
+    const mission = await createMission("orient-log-mission", {}, missionPath);
+    await addMissionPrinciple(mission.id, "Incremental delivery", missionPath);
+    const missions = await loadMissions(missionPath);
+    const principledMission = missions[0];
+
+    const task = createTask("orient logged task");
+    await setupQueue(storePath, [{ ...task, missionId: principledMission.id }]);
+
+    await processTask(task, principledMission, { storePath, actCommand: ["echo"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const orientLog = updated?.logs.find(l => l.phase === "orient");
+    expect(orientLog?.content).toContain("Incremental delivery");
   });
 });

@@ -38,7 +38,6 @@ test("validateTransition allows valid transitions", () => {
     ["orienting", "deciding"],
     ["orienting", "waiting_human"],
     ["deciding", "acting"],
-    ["deciding", "waiting_human"],
     ["waiting_human", "deciding"],
     ["acting", "done"],
     ["acting", "failed"],
@@ -55,6 +54,7 @@ test("validateTransition rejects invalid transitions", () => {
     ["done", "observing"],
     ["done", "failed"],
     ["acting", "observing"],
+    ["deciding", "waiting_human"],
     ["failed", "done"],
   ];
 

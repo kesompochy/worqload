@@ -55,7 +55,7 @@ worqload feedback list
 worqload add "<proposed task>"
 worqload observe <id> "<observations>"
 worqload orient <id> "<analysis>"
-worqload decide <id> --human "<proposal and question>"
+worqload orient <id> --human "<proposal and question>"
 \\\`\\\`\\\`
 This creates a \\\`waiting_human\\\` task. Stop and wait for the user to respond.
 When the human responds, the task returns to \\\`deciding\\\` — continue OODA from there.
@@ -77,9 +77,9 @@ worqload done <id> "<result>"              # mark complete
 
 Use \\\`worqload show <id>\\\` to inspect a task's full logs and context.
 
-If a decision is difficult or architectural:
+If a decision is difficult or architectural, escalate during orientation:
 \\\`\\\`\\\`sh
-worqload decide <id> --human "<question>"
+worqload orient <id> --human "<question>"
 \\\`\\\`\\\`
 
 If execution fails:
@@ -118,7 +118,7 @@ Spawned agents receive these environment variables:
 
 Spawned agents can escalate to human by running:
 \\\`\\\`\\\`sh
-$WORQLOAD_CLI decide $WORQLOAD_TASK_ID --human "<question>"
+$WORQLOAD_CLI orient $WORQLOAD_TASK_ID --human "<question>"
 \\\`\\\`\\\`
 
 Spawn prompts must instruct agents to always create a report summarizing what they did upon completion using \\\`worqload report add <task-id> "<title>" "<content>"\\\`.

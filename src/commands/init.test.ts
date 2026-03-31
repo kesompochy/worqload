@@ -100,8 +100,8 @@ describe("DEFAULT_AGENT_TEMPLATE covers spawned agent env vars", () => {
 });
 
 describe("DEFAULT_AGENT_TEMPLATE covers spawned agent escalation", () => {
-  test("instructs spawned agents to escalate via decide --human", () => {
-    expect(template).toContain("decide");
+  test("instructs spawned agents to escalate via orient --human", () => {
+    expect(template).toContain("orient");
     expect(template).toContain("--human");
     expect(template).toContain("WORQLOAD_CLI");
   });

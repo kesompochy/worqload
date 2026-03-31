@@ -2,10 +2,11 @@ import { loadMissions, completeMission } from "./mission";
 import type { Mission } from "./mission";
 import { TaskQueue } from "./queue";
 import type { Task, OodaPhase } from "./task";
-import { createTask } from "./task";
+import { createTask, HUMAN_REQUIRED_PREFIX } from "./task";
 import { updateTask, load, save } from "./store";
 import { runOnDoneHooks } from "./hooks";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
+import { registerRunner, heartbeatRunner, deregisterRunner } from "./mission-runner-state";
 
 export interface MissionRunnerOptions {
   pollIntervalMs?: number;
@@ -57,6 +58,31 @@ export function findNextMissionTask(queue: TaskQueue, missionId: string): Task |
 
 function phaseLog(phase: OodaPhase, content: string) {
   return { phase, content, timestamp: new Date().toISOString() };
+}
+
+export type OrientResult = "oriented" | "escalated";
+
+export async function orientTask(
+  taskId: string,
+  mission: Mission,
+  storePath?: string,
+): Promise<OrientResult> {
+  if (mission.principles.length === 0) {
+    await updateTask(taskId, (current) => ({
+      status: "waiting_human" as const,
+      logs: [...current.logs, phaseLog("orient",
+        `${HUMAN_REQUIRED_PREFIX}Mission "${mission.name}" has no principles defined. Human guidance needed to orient task.`)],
+    }), storePath);
+    return "escalated";
+  }
+
+  const principlesList = mission.principles.map(p => `- ${p}`).join("\n");
+  await updateTask(taskId, (current) => ({
+    status: "orienting" as const,
+    logs: [...current.logs, phaseLog("orient",
+      `Mission "${mission.name}" principles applied:\n${principlesList}`)],
+  }), storePath);
+  return "oriented";
 }
 
 async function resolveMission(missionId: string, path?: string): Promise<Mission> {
@@ -263,11 +289,12 @@ export async function processTask(task: Task, mission: Mission, options: Process
       logs: [...current.logs, phaseLog("observe", `Task: ${current.title}. Principles: ${principles}`)],
     }), storePath);
 
-    // Orient
-    await updateTask(task.id, (current) => ({
-      status: "orienting" as const,
-      logs: [...current.logs, phaseLog("orient", `Analysis for mission "${mission.name}"`)],
-    }), storePath);
+    // Orient — validate task against mission principles
+    const orientResult = await orientTask(task.id, mission, storePath);
+    if (orientResult === "escalated") {
+      await updateTask(task.id, (current) => ({ owner: undefined }), storePath);
+      return;
+    }
 
     // Decide
     await updateTask(task.id, (current) => ({
@@ -426,43 +453,75 @@ export async function runMission(missionId: string, options: MissionRunnerOption
     console.log(`Principles: ${mission.principles.join("; ")}`);
   }
 
+  const runnerState = await registerRunner(mission.id, mission.name, process.pid);
+
   let idleSince: number | null = null;
   let consecutiveErrors = 0;
+  let consecutiveIdles = 0;
+  let tasksProcessed = 0;
   let lastError: Error | undefined;
 
-  while (true) {
-    let result: IterationResult;
-    try {
-      result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand });
-      consecutiveErrors = 0;
-    } catch (error) {
-      consecutiveErrors++;
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (consecutiveErrors >= maxRetries) {
-        throw new Error(`Retry limit reached (${maxRetries}): ${lastError.message}`);
+  try {
+    while (true) {
+      let result: IterationResult;
+      try {
+        // Find next task to report what we're working on
+        const queue = new TaskQueue(storePath);
+        await queue.load();
+        const nextTask = findNextMissionTask(queue, mission.id);
+
+        await heartbeatRunner(runnerState.id, {
+          status: "running",
+          currentTaskId: nextTask?.id,
+          currentTaskTitle: nextTask?.title,
+          consecutiveIdles,
+          tasksProcessed,
+        });
+
+        result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand });
+        consecutiveErrors = 0;
+      } catch (error) {
+        consecutiveErrors++;
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (consecutiveErrors >= maxRetries) {
+          throw new Error(`Retry limit reached (${maxRetries}): ${lastError.message}`);
+        }
+        await Bun.sleep(retryBaseMs * Math.pow(2, consecutiveErrors - 1));
+        continue;
       }
-      await Bun.sleep(retryBaseMs * Math.pow(2, consecutiveErrors - 1));
-      continue;
-    }
 
-    if (result === "mission_completed") {
-      console.log(`Mission completed: ${mission.name}`);
-      return;
-    }
+      if (result === "mission_completed") {
+        console.log(`Mission completed: ${mission.name}`);
+        return;
+      }
 
-    if (result === "processed" || result === "spawned") {
-      idleSince = null;
-      continue;
-    }
+      if (result === "processed" || result === "spawned") {
+        idleSince = null;
+        consecutiveIdles = 0;
+        tasksProcessed++;
+        continue;
+      }
 
-    // idle
-    if (idleSince === null) {
-      idleSince = Date.now();
-    } else if (Date.now() - idleSince >= idleTimeoutMs) {
-      console.log(`Idle timeout (${idleTimeoutMs / 1000}s), exiting`);
-      return;
-    }
+      // idle
+      consecutiveIdles++;
+      await heartbeatRunner(runnerState.id, {
+        status: "idle",
+        currentTaskId: undefined,
+        currentTaskTitle: undefined,
+        consecutiveIdles,
+        tasksProcessed,
+      });
 
-    await Bun.sleep(pollIntervalMs);
+      if (idleSince === null) {
+        idleSince = Date.now();
+      } else if (Date.now() - idleSince >= idleTimeoutMs) {
+        console.log(`Idle timeout (${idleTimeoutMs / 1000}s), exiting`);
+        return;
+      }
+
+      await Bun.sleep(pollIntervalMs);
+    }
+  } finally {
+    await deregisterRunner(runnerState.id);
   }
 }
