@@ -1495,3 +1495,147 @@ describe("processTask escalation via exit code", () => {
     expect(updated?.context.retryCount).toBeUndefined();
   });
 });
+
+describe("spawn timeout", () => {
+  test("processTask resets to observing on spawn timeout", async () => {
+    const storePath = tmpPath("timeout-process");
+    const missionPath = tmpPath("timeout-process-m");
+    const mission = await createMissionWithPrinciple("timeout-proc", missionPath);
+    const task = createTask("slow task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, {
+      storePath,
+      actCommand: ["sh", "-c", "sleep 10"],
+      spawnTimeoutMs: 100,
+    });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("observing");
+    expect(updated?.context.retryCount).toBe(1);
+    expect(updated?.owner).toBeUndefined();
+    const timeoutLog = updated?.logs.find(l => l.content.includes("[TIMEOUT]"));
+    expect(timeoutLog).toBeDefined();
+  });
+
+  test("processTask timeout respects retry exhaustion", async () => {
+    const storePath = tmpPath("timeout-exhaust");
+    const missionPath = tmpPath("timeout-exhaust-m");
+    const mission = await createMissionWithPrinciple("timeout-exhaust", missionPath);
+    const task = createTask("exhausted timeout", { retryCount: 2 });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, {
+      storePath,
+      actCommand: ["sh", "-c", "sleep 10"],
+      spawnTimeoutMs: 100,
+    });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("failed");
+  });
+
+  test("processTask completes normally when within timeout", async () => {
+    const storePath = tmpPath("timeout-ok");
+    const missionPath = tmpPath("timeout-ok-m");
+    const mission = await createMissionWithPrinciple("timeout-ok", missionPath);
+    const task = createTask("fast task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, {
+      storePath,
+      actCommand: ["echo", "done quickly"],
+      spawnTimeoutMs: 5000,
+    });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+  });
+
+  test("spawnTask resets to observing on spawn timeout", async () => {
+    const storePath = tmpPath("timeout-spawn");
+    const missionPath = tmpPath("timeout-spawn-m");
+    const spawnsPath = tmpPath("timeout-spawn-s");
+    const mission = await createMission("timeout-spawn", {}, missionPath);
+    const task = createTask("slow spawn");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["sh", "-c", "sleep 10"], {
+      storePath,
+      spawnsPath,
+      spawnTimeoutMs: 100,
+    });
+    const completion = await result.completion;
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("observing");
+    expect(updated?.context.retryCount).toBe(1);
+    expect(updated?.owner).toBeUndefined();
+    const timeoutLog = updated?.logs.find(l => l.content.includes("[TIMEOUT]"));
+    expect(timeoutLog).toBeDefined();
+  });
+
+  test("spawnTask timeout respects retry exhaustion", async () => {
+    const storePath = tmpPath("timeout-spawn-exhaust");
+    const missionPath = tmpPath("timeout-spawn-exhaust-m");
+    const spawnsPath = tmpPath("timeout-spawn-exhaust-s");
+    const mission = await createMission("timeout-spawn-exhaust", {}, missionPath);
+    const task = createTask("exhausted spawn timeout", { retryCount: 2 });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["sh", "-c", "sleep 10"], {
+      storePath,
+      spawnsPath,
+      spawnTimeoutMs: 100,
+    });
+    await result.completion;
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("failed");
+  });
+
+  test("spawnTask completes normally when within timeout", async () => {
+    const storePath = tmpPath("timeout-spawn-ok");
+    const missionPath = tmpPath("timeout-spawn-ok-m");
+    const spawnsPath = tmpPath("timeout-spawn-ok-s");
+    const mission = await createMission("timeout-spawn-ok", {}, missionPath);
+    const task = createTask("fast spawn");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["echo", "quick"], {
+      storePath,
+      spawnsPath,
+      spawnTimeoutMs: 5000,
+    });
+    const completion = await result.completion;
+    expect(completion.exitCode).toBe(0);
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+  });
+
+  test("default spawnTimeoutMs is 5 minutes", async () => {
+    const storePath = tmpPath("timeout-default");
+    const missionPath = tmpPath("timeout-default-m");
+    const mission = await createMissionWithPrinciple("timeout-default", missionPath);
+    const task = createTask("default timeout task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    // Process a fast task without specifying spawnTimeoutMs — should use default (5 min)
+    // and complete normally since echo finishes well within 5 min
+    await processTask(task, mission, {
+      storePath,
+      actCommand: ["echo", "ok"],
+    });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+  });
+});

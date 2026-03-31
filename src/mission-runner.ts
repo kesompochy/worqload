@@ -19,6 +19,7 @@ export interface MissionRunnerOptions {
   retryBaseMs?: number;
   actCommand?: string[];
   runnerStatePath?: string;
+  spawnTimeoutMs?: number;
 }
 
 export type IterationResult = "processed" | "idle" | "mission_completed" | "mission_failed" | "spawned";
@@ -38,10 +39,53 @@ export interface ProcessTaskOptions {
   storePath?: string;
   actCommand?: string[];
   missionsPath?: string;
+  spawnTimeoutMs?: number;
 }
 
 const MAX_TASK_RETRIES = 2;
 const RETRY_BASE_MS = 1000;
+const DEFAULT_SPAWN_TIMEOUT_MS = 5 * 60 * 1000;
+
+class SpawnTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Spawn timed out after ${timeoutMs}ms`);
+    this.name = "SpawnTimeoutError";
+  }
+}
+
+interface SpawnWithTimeoutResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+async function spawnWithTimeout(
+  command: string[],
+  env: Record<string, string | undefined>,
+  timeoutMs: number,
+): Promise<SpawnWithTimeoutResult> {
+  const proc = Bun.spawn(command, {
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      proc.kill();
+      reject(new SpawnTimeoutError(timeoutMs));
+    }, timeoutMs);
+  });
+
+  const completionPromise = (async () => {
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    return { stdout, stderr, exitCode };
+  })();
+
+  return Promise.race([completionPromise, timeoutPromise]);
+}
 
 export function findNextMissionTask(queue: TaskQueue, missionId: string): Task | undefined {
   const tasks = queue.getByMission(missionId);
@@ -175,9 +219,9 @@ export async function spawnTask(
   task: Task,
   mission: Mission,
   command: string[],
-  options: { storePath?: string; spawnsPath?: string } = {},
+  options: { storePath?: string; spawnsPath?: string; spawnTimeoutMs?: number } = {},
 ): Promise<SpawnResult> {
-  const { storePath, spawnsPath } = options;
+  const { storePath, spawnsPath, spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS } = options;
   const owner = `mission:${mission.name}`;
 
   const claimed = await updateTask(task.id, (current) => {
@@ -207,71 +251,119 @@ export async function spawnTask(
   const spawnRecord = await recordSpawnStart(task.id, task.title, owner, proc.pid, spawnsPath);
 
   const completion = (async (): Promise<SpawnCompletion> => {
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      proc.kill();
+    }, spawnTimeoutMs);
 
-    await recordSpawnFinish(spawnRecord.id, exitCode, spawnsPath);
+    try {
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
 
-    const output = (stdout + stderr).trim();
-    const truncated = output.length > 2000 ? output.slice(-2000) : output;
+      clearTimeout(timeoutId);
 
-    await updateTask(task.id, (current) => {
-      const logs = [...current.logs, {
-        phase: "act" as OodaPhase,
-        content: truncated,
-        timestamp: new Date().toISOString(),
-      }];
+      await recordSpawnFinish(spawnRecord.id, exitCode, spawnsPath);
 
-      if (exitCode === 0) {
-        return { status: "done" as const, logs, owner: undefined };
-      } else if (exitCode === ESCALATION_EXIT_CODE) {
-        const question = truncated || "Spawned agent requested human escalation";
-        const escalationLogs = [...logs, {
-          phase: "orient" as OodaPhase,
-          content: `${HUMAN_REQUIRED_PREFIX}${question}`,
+      const output = (stdout + stderr).trim();
+      const truncated = output.length > 2000 ? output.slice(-2000) : output;
+
+      if (timedOut) {
+        await updateTask(task.id, (current) => {
+          const retryCount = (current.context.retryCount as number) || 0;
+          if (retryCount < MAX_TASK_RETRIES) {
+            const newRetryCount = retryCount + 1;
+            const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+            return {
+              status: "observing" as const,
+              owner: undefined,
+              context: { ...current.context, retryCount: newRetryCount, retryAfter },
+              logs: [...current.logs, {
+                phase: "act" as OodaPhase,
+                content: `[TIMEOUT] Spawn timed out after ${spawnTimeoutMs}ms`,
+                timestamp: new Date().toISOString(),
+              }],
+            };
+          } else {
+            return {
+              status: "failed" as const,
+              owner: undefined,
+              logs: [...current.logs, {
+                phase: "act" as OodaPhase,
+                content: `[TIMEOUT] Spawn timed out after ${spawnTimeoutMs}ms`,
+                timestamp: new Date().toISOString(),
+              }, {
+                phase: "act" as OodaPhase,
+                content: `[FAILED] timeout after ${MAX_TASK_RETRIES} retries`,
+                timestamp: new Date().toISOString(),
+              }],
+            };
+          }
+        }, storePath);
+        return { exitCode, output };
+      }
+
+      await updateTask(task.id, (current) => {
+        const logs = [...current.logs, {
+          phase: "act" as OodaPhase,
+          content: truncated,
           timestamp: new Date().toISOString(),
         }];
-        return { status: "waiting_human" as const, logs: escalationLogs, owner: undefined };
-      } else {
-        const retryCount = (current.context.retryCount as number) || 0;
-        if (retryCount < MAX_TASK_RETRIES) {
-          const newRetryCount = retryCount + 1;
-          const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
-          const retryLogs = [...logs, {
-            phase: "act" as OodaPhase,
-            content: `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - exit code ${exitCode}`,
+
+        if (exitCode === 0) {
+          return { status: "done" as const, logs, owner: undefined };
+        } else if (exitCode === ESCALATION_EXIT_CODE) {
+          const question = truncated || "Spawned agent requested human escalation";
+          const escalationLogs = [...logs, {
+            phase: "orient" as OodaPhase,
+            content: `${HUMAN_REQUIRED_PREFIX}${question}`,
             timestamp: new Date().toISOString(),
           }];
-          return {
-            status: "observing" as const,
-            logs: retryLogs,
-            owner: undefined,
-            context: { ...current.context, retryCount: newRetryCount, retryAfter },
-          };
+          return { status: "waiting_human" as const, logs: escalationLogs, owner: undefined };
         } else {
-          const failLogs = [...logs, {
-            phase: "act" as OodaPhase,
-            content: `[FAILED] exit code ${exitCode}`,
-            timestamp: new Date().toISOString(),
-          }];
-          return { status: "failed" as const, logs: failLogs, owner: undefined };
+          const retryCount = (current.context.retryCount as number) || 0;
+          if (retryCount < MAX_TASK_RETRIES) {
+            const newRetryCount = retryCount + 1;
+            const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+            const retryLogs = [...logs, {
+              phase: "act" as OodaPhase,
+              content: `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - exit code ${exitCode}`,
+              timestamp: new Date().toISOString(),
+            }];
+            return {
+              status: "observing" as const,
+              logs: retryLogs,
+              owner: undefined,
+              context: { ...current.context, retryCount: newRetryCount, retryAfter },
+            };
+          } else {
+            const failLogs = [...logs, {
+              phase: "act" as OodaPhase,
+              content: `[FAILED] exit code ${exitCode}`,
+              timestamp: new Date().toISOString(),
+            }];
+            return { status: "failed" as const, logs: failLogs, owner: undefined };
+          }
         }
+      }, storePath);
+
+      if (exitCode === 0) {
+        await runOnDoneHooks(task.id, task.title);
       }
-    }, storePath);
 
-    if (exitCode === 0) {
-      await runOnDoneHooks(task.id, task.title);
+      return { exitCode, output };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
     }
-
-    return { exitCode, output };
   })();
 
   return { spawnId: spawnRecord.id, pid: proc.pid, completion };
 }
 
 export async function processTask(task: Task, mission: Mission, options: ProcessTaskOptions = {}): Promise<void> {
-  const { storePath, actCommand, missionsPath } = options;
+  const { storePath, actCommand, missionsPath, spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS } = options;
 
   // Read current state from store to check plan flag
   const tasks = await load(storePath);
@@ -330,15 +422,39 @@ export async function processTask(task: Task, mission: Mission, options: Process
       taskEnv.WORQLOAD_MISSION_PRINCIPLES = mission.principles.join("\n");
     }
 
-    const proc = Bun.spawn(command, {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, ...taskEnv },
-    });
+    let spawnResult: SpawnWithTimeoutResult;
+    try {
+      spawnResult = await spawnWithTimeout(command, { ...process.env, ...taskEnv }, spawnTimeoutMs);
+    } catch (error) {
+      if (error instanceof SpawnTimeoutError) {
+        const retryCount = (claimed.context.retryCount as number) || 0;
+        if (retryCount < MAX_TASK_RETRIES) {
+          const newRetryCount = retryCount + 1;
+          const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+          await updateTask(task.id, (current) => ({
+            status: "observing" as const,
+            owner: undefined,
+            context: { ...current.context, retryCount: newRetryCount, retryAfter },
+            logs: [...current.logs, phaseLog("act", `[TIMEOUT] Spawn timed out after ${spawnTimeoutMs}ms`)],
+          }), storePath);
+          console.log(`Timeout retry ${newRetryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
+        } else {
+          await updateTask(task.id, (current) => ({
+            status: "failed" as const,
+            owner: undefined,
+            logs: [...current.logs,
+              phaseLog("act", `[TIMEOUT] Spawn timed out after ${spawnTimeoutMs}ms`),
+              phaseLog("act", `[FAILED] timeout after ${MAX_TASK_RETRIES} retries`),
+            ],
+          }), storePath);
+          console.error(`Failed (timeout): ${task.title}`);
+        }
+        return;
+      }
+      throw error;
+    }
 
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
+    const { stdout, stderr, exitCode } = spawnResult;
     const output = (stdout + stderr).trim();
     const truncated = output.length > 2000 ? output.slice(-2000) : output;
 
@@ -437,7 +553,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
 // that surveys all tasks across all missions.
 export async function iterateMission(
   missionId: string,
-  options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string; actCommand?: string[] } = {},
+  options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string; actCommand?: string[]; spawnTimeoutMs?: number } = {},
 ): Promise<IterationResult> {
   const mission = await resolveMission(missionId, options.missionsPath);
   if (mission.status === "completed") return "mission_completed";
@@ -467,12 +583,13 @@ export async function iterateMission(
     const spawn = await spawnTask(task, mission, options.spawnCommand, {
       storePath: options.storePath,
       spawnsPath: options.spawnsPath,
+      spawnTimeoutMs: options.spawnTimeoutMs,
     });
     await spawn.completion;
     return "spawned";
   }
 
-  await processTask(task, mission, { storePath: options.storePath, actCommand: options.actCommand, missionsPath: options.missionsPath });
+  await processTask(task, mission, { storePath: options.storePath, actCommand: options.actCommand, missionsPath: options.missionsPath, spawnTimeoutMs: options.spawnTimeoutMs });
   return "processed";
 }
 
@@ -488,6 +605,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
     spawnsPath,
     actCommand,
     runnerStatePath,
+    spawnTimeoutMs,
   } = options;
 
   // Survive terminal closure when running as a daemon
@@ -525,7 +643,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
           tasksProcessed,
         }, runnerStatePath);
 
-        result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand });
+        result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs });
         consecutiveErrors = 0;
       } catch (error) {
         consecutiveErrors++;
