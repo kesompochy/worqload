@@ -8,6 +8,7 @@ import { loadMissions, reactivateMission } from "../mission";
 import type { SourceResult } from "../sources";
 import { runAllSources } from "../sources";
 import { loadPrinciples } from "../principles";
+import type { Report } from "../reports";
 import { loadReports } from "../reports";
 import { runOnDoneHooks } from "../hooks";
 import type { ServerLogSummary } from "../server-log";
@@ -435,6 +436,39 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   return { createdTasks, retriedTasks, resumedTasks, distilledRules, autonomousTasks };
 }
 
+export interface CleanupResult {
+  archivedCount: number;
+  unreadReports: string[];
+}
+
+export async function performActCleanup(queue: TaskQueue, ctx: IterateContext): Promise<CleanupResult> {
+  const archivableIds = queue.list()
+    .filter(t => t.status === "done" || t.status === "failed")
+    .map(t => t.id);
+  const archived = await queue.archive(archivableIds);
+
+  let unreadReports: string[] = [];
+  if (ctx.reportsPath) {
+    const reports = await loadReports(ctx.reportsPath).catch(() => [] as Report[]);
+    unreadReports = reports
+      .filter(r => r.status === "unread")
+      .map(r => r.title);
+  }
+
+  return { archivedCount: archived.length, unreadReports };
+}
+
+export function formatCleanupLog(cleanup: CleanupResult): string {
+  const parts: string[] = [];
+  if (cleanup.archivedCount > 0) {
+    parts.push(`archived ${cleanup.archivedCount} task(s)`);
+  }
+  if (cleanup.unreadReports.length > 0) {
+    parts.push(`${cleanup.unreadReports.length} unread report(s): ${cleanup.unreadReports.join(", ")}`);
+  }
+  return parts.join("; ");
+}
+
 // Queue-wide OODA: surveys all tasks, feedback, missions, and sources to decide
 // the orchestration agent's next action (waiting_human / queue_empty / has_pending).
 // Contrast with mission-runner.ts iterateMission(), which processes a single task
@@ -487,11 +521,14 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
     const decideTag = generated.autonomousTasks.length > 0 ? "autonomous_tasks" : "tasks_created";
     queue.addLog(id, "decide", `${decideTag}: ${genSummary}`);
     queue.transition(id, "acting");
-    queue.addLog(id, "act", genSummary);
+    const cleanup1 = await performActCleanup(queue, ctx);
+    const cleanupLog1 = formatCleanupLog(cleanup1);
+    const actSummary1 = [genSummary, cleanupLog1].filter(Boolean).join("; ");
+    queue.addLog(id, "act", actSummary1);
     queue.transition(id, "done");
     await queue.save();
     await runOnDoneHooks(id, iterationTask.title);
-    console.log(`[${shortId}] Iteration complete: ${decideTag} — ${genSummary}`);
+    console.log(`[${shortId}] Iteration complete: ${decideTag} — ${actSummary1}`);
     return;
   }
 
@@ -505,7 +542,10 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
     });
     queue.addLog(id, "decide", `present waiting_human: ${questions.join("; ")}`);
     queue.transition(id, "acting");
-    queue.addLog(id, "act", "presented waiting_human questions to user");
+    const cleanup2 = await performActCleanup(queue, ctx);
+    const cleanupLog2 = formatCleanupLog(cleanup2);
+    const actSummary2 = ["presented waiting_human questions to user", cleanupLog2].filter(Boolean).join("; ");
+    queue.addLog(id, "act", actSummary2);
     queue.transition(id, "done");
     await queue.save();
     await runOnDoneHooks(id, iterationTask.title);
@@ -513,17 +553,24 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
     for (const q of questions) {
       console.log(`  ${q}`);
     }
+    if (cleanupLog2) console.log(`  ${cleanupLog2}`);
     return;
   }
 
   if (obs.tasks.length === 0) {
     queue.addLog(id, "decide", "queue_empty: propose next action to user");
     queue.transition(id, "acting");
-    queue.addLog(id, "act", "signaled empty queue for user proposal");
+    const cleanup3 = await performActCleanup(queue, ctx);
+    const cleanupLog3 = formatCleanupLog(cleanup3);
+    const actSummary3 = ["signaled empty queue for user proposal", cleanupLog3].filter(Boolean).join("; ");
+    queue.addLog(id, "act", actSummary3);
     queue.transition(id, "done");
     await queue.save();
     await runOnDoneHooks(id, iterationTask.title);
-    console.log(`[${shortId}] Iteration complete: queue empty — propose next action`);
+    const queueEmptyMsg = cleanupLog3
+      ? `queue empty — propose next action; ${cleanupLog3}`
+      : "queue empty — propose next action";
+    console.log(`[${shortId}] Iteration complete: ${queueEmptyMsg}`);
     return;
   }
 
@@ -561,7 +608,10 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   queue.addLog(id, "decide", decision);
 
   queue.transition(id, "acting");
-  queue.addLog(id, "act", decision);
+  const cleanup4 = await performActCleanup(queue, ctx);
+  const cleanupLog4 = formatCleanupLog(cleanup4);
+  const actSummary4 = [decision, cleanupLog4].filter(Boolean).join("; ");
+  queue.addLog(id, "act", actSummary4);
   queue.transition(id, "done");
   await queue.save();
   await runOnDoneHooks(id, iterationTask.title);
@@ -573,6 +623,7 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   for (const t of unassigned) {
     console.log(`  unassigned: [${t.id.slice(0, SHORT_ID_LENGTH)}] ${t.title}`);
   }
+  if (cleanupLog4) console.log(`  ${cleanupLog4}`);
 }
 
 export function formatObserveLog(obs: Observation): string {

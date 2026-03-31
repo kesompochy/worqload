@@ -14,6 +14,8 @@ import {
   deriveAutonomousTasks,
   filterManagedPaths,
   hasHumanAnswer,
+  performActCleanup,
+  formatCleanupLog,
   type IterateContext,
   type Observation,
 } from "./iterate";
@@ -1213,5 +1215,121 @@ describe("deriveAutonomousTasks", () => {
     // Should derive a test fix task, not a general investigation task
     expect(derived.some(t => t.toLowerCase().includes("test"))).toBe(true);
     expect(derived.filter(t => t.includes("Investigate improvements"))).toHaveLength(0);
+  });
+});
+
+describe("performActCleanup", () => {
+  test("archives done and failed tasks and returns count", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const doneTask = createTask("Done task");
+    queue.enqueue(doneTask);
+    queue.transition(doneTask.id, "done");
+    const failedTask = createTask("Failed task");
+    queue.enqueue(failedTask);
+    failedTask.status = "failed" as any;
+    queue.update(failedTask.id, { status: "failed" as any });
+    const activeTask = createTask("Active task");
+    queue.enqueue(activeTask);
+
+    const result = await performActCleanup(queue, {});
+
+    expect(result.archivedCount).toBe(2);
+    expect(queue.list()).toHaveLength(1);
+    expect(queue.list()[0].title).toBe("Active task");
+  });
+
+  test("returns zero archived count when no done/failed tasks", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const activeTask = createTask("Active task");
+    queue.enqueue(activeTask);
+
+    const result = await performActCleanup(queue, {});
+
+    expect(result.archivedCount).toBe(0);
+    expect(queue.list()).toHaveLength(1);
+  });
+
+  test("detects unread reports and returns their titles", async () => {
+    const reportsPath = tmpPath("reports");
+    await addReport("Report A", "content a", "agent", reportsPath);
+    await addReport("Report B", "content b", "agent", reportsPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = await performActCleanup(queue, { reportsPath });
+
+    expect(result.unreadReports).toHaveLength(2);
+    expect(result.unreadReports).toContain("Report A");
+    expect(result.unreadReports).toContain("Report B");
+  });
+
+  test("excludes read reports from unread list", async () => {
+    const reportsPath = tmpPath("reports");
+    await addReport("Unread report", "content", "agent", reportsPath);
+    const { updateReportStatus, loadReports: lr } = await import("../reports");
+    const reports = await lr(reportsPath);
+    await updateReportStatus(reports[0].id, "read", reportsPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = await performActCleanup(queue, { reportsPath });
+
+    expect(result.unreadReports).toHaveLength(0);
+  });
+
+  test("returns empty unread reports when reportsPath is not set", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = await performActCleanup(queue, {});
+
+    expect(result.unreadReports).toHaveLength(0);
+  });
+
+  test("handles both archiving and unread reports together", async () => {
+    const reportsPath = tmpPath("reports");
+    await addReport("New report", "content", "agent", reportsPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const doneTask = createTask("Done task");
+    queue.enqueue(doneTask);
+    queue.transition(doneTask.id, "done");
+
+    const result = await performActCleanup(queue, { reportsPath });
+
+    expect(result.archivedCount).toBe(1);
+    expect(result.unreadReports).toHaveLength(1);
+    expect(result.unreadReports[0]).toBe("New report");
+  });
+
+  test("does not archive observing or orienting tasks", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const observing = createTask("Observing task");
+    queue.enqueue(observing);
+    const orienting = createTask("Orienting task");
+    queue.enqueue(orienting);
+    queue.transition(orienting.id, "orienting");
+
+    const result = await performActCleanup(queue, {});
+
+    expect(result.archivedCount).toBe(0);
+    expect(queue.list()).toHaveLength(2);
+  });
+});
+
+describe("formatCleanupLog", () => {
+  test("returns empty string when nothing to report", () => {
+    expect(formatCleanupLog({ archivedCount: 0, unreadReports: [] })).toBe("");
+  });
+
+  test("includes archived count when tasks were archived", () => {
+    const result = formatCleanupLog({ archivedCount: 3, unreadReports: [] });
+    expect(result).toBe("archived 3 task(s)");
+  });
+
+  test("includes unread report titles", () => {
+    const result = formatCleanupLog({ archivedCount: 0, unreadReports: ["Report A", "Report B"] });
+    expect(result).toBe("2 unread report(s): Report A, Report B");
+  });
+
+  test("combines archived count and unread reports", () => {
+    const result = formatCleanupLog({ archivedCount: 2, unreadReports: ["Report X"] });
+    expect(result).toBe("archived 2 task(s); 1 unread report(s): Report X");
   });
 });
