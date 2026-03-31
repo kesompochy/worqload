@@ -50,10 +50,14 @@ Based on the `iterate` output:
 - **unassigned**: assign tasks to an appropriate mission, then start runners
 - **tasks in progress**: audit progress (see below)
 
-Start mission runners:
-```sh
-worqload mission run <mission-id>
+Start mission runners via Agent tool (NOT Bash background):
 ```
+Use the Agent tool to run `worqload mission run <mission-id>`.
+```
+Mission runners spawn `claude` subprocesses that may run for minutes.
+Running them via Bash `run_in_background` causes the parent process to die
+before the spawn completes. The Agent tool maintains proper parent-child
+process lifecycle.
 
 Assign unassigned tasks:
 ```sh
