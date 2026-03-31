@@ -89,6 +89,63 @@ export interface DistillResult {
   rules: string[];
 }
 
+const ENGLISH_DIRECTIVE_PATTERN = /^(always|never|do not|don't|must|should|use|run|write|add|remove|delete|avoid|ensure|make sure|keep|stop|include|exclude|set|check|verify|update|create|fix|follow|apply|disable|enable|prefer|require|allow|forbid|prohibit)\b/i;
+
+const ENGLISH_CONTAINS_DIRECTIVE_PATTERN = /\b(should|must|shall|always|never)\b/i;
+
+const JAPANESE_DIRECTIVE_PATTERN = /(べき|べきだ|しろ|こと|てくれ|てください|ないでください|するな|しなさい|てほしい|すべし)$/;
+
+function isQuestion(sentence: string): boolean {
+  const trimmed = sentence.trim();
+  if (trimmed.endsWith("?") || trimmed.endsWith("？")) return true;
+  if (/か？$|ですか$|ますか$/.test(trimmed)) return true;
+  if (/^(why|how|what|when|where|who|which|is|are|do|does|did|can|could|would|should)\b.*\?$/i.test(trimmed)) return true;
+  return false;
+}
+
+function isActionableDirective(sentence: string): boolean {
+  const trimmed = sentence.trim();
+  if (trimmed.length === 0) return false;
+  if (isQuestion(trimmed)) return false;
+  if (ENGLISH_DIRECTIVE_PATTERN.test(trimmed)) return true;
+  if (ENGLISH_CONTAINS_DIRECTIVE_PATTERN.test(trimmed)) return true;
+  if (JAPANESE_DIRECTIVE_PATTERN.test(trimmed)) return true;
+  return false;
+}
+
+function splitSentences(message: string): string[] {
+  // Split on period followed by space or end, or Japanese period
+  return message
+    .split(/(?<=\.)\s+|。/)
+    .map((s) => s.replace(/\.$/, "").trim())
+    .filter((s) => s.length > 0);
+}
+
+export function extractActionableRules(message: string): string[] {
+  const sentences = splitSentences(message);
+  const rules: string[] = [];
+  for (const sentence of sentences) {
+    if (isActionableDirective(sentence)) {
+      rules.push(sentence);
+    }
+  }
+  return rules;
+}
+
+function extractExistingRules(templateContent: string): Set<string> {
+  const existingRules = new Set<string>();
+  const ruleLinePattern = /^- (.+)$/gm;
+  let match;
+  while ((match = ruleLinePattern.exec(templateContent)) !== null) {
+    existingRules.add(normalizeRuleForComparison(match[1]));
+  }
+  return existingRules;
+}
+
+function normalizeRuleForComparison(rule: string): string {
+  return rule.toLowerCase().replace(/[.\s]+$/g, "").trim();
+}
+
 export async function distillFeedback(
   feedbackPath: string = DEFAULT_FEEDBACK_PATH,
   templatePath: string = ".claude/agents/worqload.md",
@@ -108,17 +165,31 @@ export async function distillFeedback(
     throw new Error("Agent template has no ## Rules section");
   }
 
-  const rules = resolved.map((f) => f.message);
-  const rulesBlock = rules.map((r) => `- ${r}`).join("\n") + "\n";
+  const existingRules = extractExistingRules(templateContent);
 
-  const updatedContent = templateContent.trimEnd() + "\n" + rulesBlock;
-  await Bun.write(templatePath, updatedContent);
+  const allRules: string[] = [];
+  for (const feedback of resolved) {
+    const extracted = extractActionableRules(feedback.message);
+    for (const rule of extracted) {
+      const normalized = normalizeRuleForComparison(rule);
+      if (!existingRules.has(normalized)) {
+        allRules.push(rule);
+        existingRules.add(normalized);
+      }
+    }
+  }
+
+  if (allRules.length > 0) {
+    const rulesBlock = allRules.map((r) => `- ${r}`).join("\n") + "\n";
+    const updatedContent = templateContent.trimEnd() + "\n" + rulesBlock;
+    await Bun.write(templatePath, updatedContent);
+  }
 
   for (const f of resolved) {
     await store.remove(f.id, feedbackPath);
   }
 
-  return { distilledCount: resolved.length, rules };
+  return { distilledCount: allRules.length, rules: allRules };
 }
 
 export async function sendFeedbackToProject(

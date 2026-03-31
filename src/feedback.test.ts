@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback, distillFeedback, sendFeedbackToProject } from "./feedback";
+import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback, distillFeedback, extractActionableRules, sendFeedbackToProject } from "./feedback";
 import { registerProject, type Project } from "./projects";
 
 function tmpPath(): string {
@@ -128,6 +128,67 @@ test("summarizeFeedback detects repeated themes from same sender", async () => {
   expect(summary.themes[0]).toContain("alice");
 });
 
+describe("extractActionableRules", () => {
+  test("extracts imperative English sentences starting with a verb", () => {
+    expect(extractActionableRules("Always run lint before commit")).toEqual(["Always run lint before commit"]);
+    expect(extractActionableRules("Use Japanese for all reports")).toEqual(["Use Japanese for all reports"]);
+    expect(extractActionableRules("Run tests before pushing")).toEqual(["Run tests before pushing"]);
+  });
+
+  test("extracts sentences with 'should', 'must', 'never'", () => {
+    expect(extractActionableRules("You should write tests first")).toEqual(["You should write tests first"]);
+    expect(extractActionableRules("You must run CI before merge")).toEqual(["You must run CI before merge"]);
+    expect(extractActionableRules("Never skip code review")).toEqual(["Never skip code review"]);
+  });
+
+  test("extracts sentences with 'do not' / 'don't'", () => {
+    expect(extractActionableRules("Do not commit directly to main")).toEqual(["Do not commit directly to main"]);
+    expect(extractActionableRules("Don't use console.log in production")).toEqual(["Don't use console.log in production"]);
+  });
+
+  test("extracts Japanese directive forms", () => {
+    expect(extractActionableRules("テストを先に書くべき")).toEqual(["テストを先に書くべき"]);
+    expect(extractActionableRules("コミット前にlintを実行しろ")).toEqual(["コミット前にlintを実行しろ"]);
+    expect(extractActionableRules("日本語で書くこと")).toEqual(["日本語で書くこと"]);
+    expect(extractActionableRules("テストを書いてくれ")).toEqual(["テストを書いてくれ"]);
+    expect(extractActionableRules("レポートは日本語で書いてください")).toEqual(["レポートは日本語で書いてください"]);
+    expect(extractActionableRules("mainに直接コミットするな")).toEqual(["mainに直接コミットするな"]);
+    expect(extractActionableRules("console.logを使わないでください")).toEqual(["console.logを使わないでください"]);
+    expect(extractActionableRules("CIを通してからマージすること")).toEqual(["CIを通してからマージすること"]);
+  });
+
+  test("rejects questions", () => {
+    expect(extractActionableRules("Should we use TypeScript?")).toEqual([]);
+    expect(extractActionableRules("これはバグですか？")).toEqual([]);
+    expect(extractActionableRules("Why is the build so slow?")).toEqual([]);
+  });
+
+  test("rejects complaints and observations without actionable directive", () => {
+    expect(extractActionableRules("The build is really slow")).toEqual([]);
+    expect(extractActionableRules("I don't like this approach")).toEqual([]);
+    expect(extractActionableRules("今日は疲れた")).toEqual([]);
+    expect(extractActionableRules("ビルドが遅い")).toEqual([]);
+  });
+
+  test("splits multiple directives from a single message", () => {
+    const rules = extractActionableRules("Always run lint before commit. Use Japanese for all reports.");
+    expect(rules).toEqual([
+      "Always run lint before commit",
+      "Use Japanese for all reports",
+    ]);
+  });
+
+  test("splits mixed content and extracts only actionable parts", () => {
+    const rules = extractActionableRules("The build is slow. Always run tests before pushing. Why is CI broken?");
+    expect(rules).toEqual(["Always run tests before pushing"]);
+  });
+
+  test("returns empty array for empty or whitespace input", () => {
+    expect(extractActionableRules("")).toEqual([]);
+    expect(extractActionableRules("   ")).toEqual([]);
+  });
+});
+
 describe("distillFeedback", () => {
   function tmpTemplatePath(): string {
     return join(tmpdir(), `worqload-template-test-${crypto.randomUUID()}.md`);
@@ -159,7 +220,7 @@ name: worqload
     expect(content).toBe(sampleTemplate);
   });
 
-  test("extracts resolved feedback messages as rules and appends to template", async () => {
+  test("extracts actionable rules from resolved feedback and appends to template", async () => {
     const feedbackPath = tmpPath();
     const templatePath = tmpTemplatePath();
     await Bun.write(templatePath, sampleTemplate);
@@ -186,12 +247,79 @@ name: worqload
     expect(content).toContain("- Small, incremental changes.");
   });
 
+  test("skips non-actionable resolved feedback without adding to template", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb1 = await addFeedback("The build is really slow", "user1", feedbackPath);
+    const fb2 = await addFeedback("Why is CI broken?", "user1", feedbackPath);
+    await resolveFeedback(fb1.id, feedbackPath);
+    await resolveFeedback(fb2.id, feedbackPath);
+
+    const result = await distillFeedback(feedbackPath, templatePath);
+    expect(result.distilledCount).toBe(0);
+    expect(result.rules).toEqual([]);
+
+    // Template unchanged
+    const content = await Bun.file(templatePath).text();
+    expect(content).toBe(sampleTemplate);
+  });
+
+  test("non-actionable resolved feedback is still removed from the store", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb1 = await addFeedback("The build is slow", "user1", feedbackPath);
+    const fb2 = await addFeedback("stays unresolved", "user2", feedbackPath);
+    await resolveFeedback(fb1.id, feedbackPath);
+
+    await distillFeedback(feedbackPath, templatePath);
+
+    const remaining = await loadFeedback(feedbackPath);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe(fb2.id);
+  });
+
+  test("splits multi-directive feedback into individual rules", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("Always run tests. Never skip linting.", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+
+    const result = await distillFeedback(feedbackPath, templatePath);
+    expect(result.distilledCount).toBe(2);
+    expect(result.rules).toContain("Always run tests");
+    expect(result.rules).toContain("Never skip linting");
+  });
+
+  test("does not add duplicate rules already in template", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    // "One task at a time." already exists in the template as a rule
+    const fb = await addFeedback("Do one task at a time.", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+
+    const result = await distillFeedback(feedbackPath, templatePath);
+    expect(result.distilledCount).toBe(0);
+    expect(result.rules).toEqual([]);
+
+    // Template not modified
+    const content = await Bun.file(templatePath).text();
+    expect(content).toBe(sampleTemplate);
+  });
+
   test("removes distilled feedback from the store", async () => {
     const feedbackPath = tmpPath();
     const templatePath = tmpTemplatePath();
     await Bun.write(templatePath, sampleTemplate);
 
-    const fb1 = await addFeedback("rule A", "user1", feedbackPath);
+    const fb1 = await addFeedback("Always run tests", "user1", feedbackPath);
     const fb2 = await addFeedback("stays", "user2", feedbackPath);
     await resolveFeedback(fb1.id, feedbackPath);
 
@@ -217,7 +345,7 @@ name: worqload
     const templatePath = tmpTemplatePath();
     await Bun.write(templatePath, "# No rules here\n\nSome content.\n");
 
-    const fb = await addFeedback("rule", "user1", feedbackPath);
+    const fb = await addFeedback("Always run tests", "user1", feedbackPath);
     await resolveFeedback(fb.id, feedbackPath);
 
     expect(distillFeedback(feedbackPath, templatePath)).rejects.toThrow("Rules");
