@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { TaskQueue } from "../queue";
 import { createTask, SHORT_ID_LENGTH } from "../task";
-import { addFeedback } from "../feedback";
+import { addFeedback, resolveFeedback, loadFeedback } from "../feedback";
 import { addReport } from "../reports";
 import {
   collectObservation,
@@ -646,5 +646,61 @@ describe("generateTasksFromObservation", () => {
 
     const missions = await loadMissions(missionsPath);
     expect(missions[0].status).toBe("active");
+  });
+
+  test("distills resolved feedback into agent template rules", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const templatePath = join(tmpdir(), `worqload-iterate-template-${crypto.randomUUID()}.md`);
+    await Bun.write(templatePath, "# Agent\n\n## Rules\n- Existing rule\n");
+    await addFeedback("Always run tests before commit", "user", feedbackPath);
+    const items = await loadFeedback(feedbackPath);
+    await resolveFeedback(items[0].id, feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary.counts.resolved = 1;
+
+    const result = await generateTasksFromObservation(queue, obs, { feedbackPath, templatePath });
+
+    expect(result.distilledRules).toHaveLength(1);
+    expect(result.distilledRules[0]).toBe("Always run tests before commit");
+    const template = await Bun.file(templatePath).text();
+    expect(template).toContain("- Always run tests before commit");
+    const remainingFeedback = await loadFeedback(feedbackPath);
+    expect(remainingFeedback).toHaveLength(0);
+  });
+
+  test("does not distill when no resolved feedback", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const templatePath = join(tmpdir(), `worqload-iterate-template-${crypto.randomUUID()}.md`);
+    await Bun.write(templatePath, "# Agent\n\n## Rules\n- Existing rule\n");
+    await addFeedback("Unresolved feedback", "user", feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary.counts.resolved = 0;
+
+    const result = await generateTasksFromObservation(queue, obs, { feedbackPath, templatePath });
+
+    expect(result.distilledRules).toHaveLength(0);
+    const remaining = await loadFeedback(feedbackPath);
+    expect(remaining).toHaveLength(1);
+  });
+
+  test("does not distill when templatePath is not provided", async () => {
+    const feedbackPath = tmpPath("feedback");
+    await addFeedback("Resolved msg", "user", feedbackPath);
+    const items = await loadFeedback(feedbackPath);
+    await resolveFeedback(items[0].id, feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary.counts.resolved = 1;
+
+    const result = await generateTasksFromObservation(queue, obs, { feedbackPath });
+
+    expect(result.distilledRules).toHaveLength(0);
+    const remaining = await loadFeedback(feedbackPath);
+    expect(remaining).toHaveLength(1);
   });
 });

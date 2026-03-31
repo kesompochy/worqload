@@ -2,7 +2,7 @@ import type { TaskQueue } from "../queue";
 import type { Task } from "../task";
 import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX } from "../task";
 import type { FeedbackSummary } from "../feedback";
-import { loadFeedback, summarizeFeedback } from "../feedback";
+import { loadFeedback, summarizeFeedback, distillFeedback } from "../feedback";
 import type { Mission } from "../mission";
 import { loadMissions, reactivateMission } from "../mission";
 import type { SourceResult } from "../sources";
@@ -12,6 +12,7 @@ import { loadReports } from "../reports";
 import { runOnDoneHooks } from "../hooks";
 import type { ServerLogSummary } from "../server-log";
 import { loadRecentServerLogs, summarizeServerLogs } from "../server-log";
+import { loadConfig } from "../config";
 
 export interface IterateContext {
   feedbackPath?: string;
@@ -20,6 +21,7 @@ export interface IterateContext {
   sourcesPath?: string;
   principlesPath?: string;
   serverLogPath?: string;
+  templatePath?: string;
 }
 
 export interface SuspiciousTask {
@@ -45,6 +47,7 @@ export interface Observation {
 export interface GenerateResult {
   createdTasks: string[];
   retriedTasks: string[];
+  distilledRules: string[];
 }
 
 const MIN_ACT_CONTENT_LENGTH = 10;
@@ -305,7 +308,14 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     }
   }
 
-  return { createdTasks, retriedTasks };
+  // Distill resolved feedback into agent template rules
+  let distilledRules: string[] = [];
+  if (obs.feedbackSummary.counts.resolved > 0 && ctx.templatePath) {
+    const distillResult = await distillFeedback(ctx.feedbackPath, ctx.templatePath);
+    distilledRules = distillResult.rules;
+  }
+
+  return { createdTasks, retriedTasks, distilledRules };
 }
 
 // Queue-wide OODA: surveys all tasks, feedback, missions, and sources to decide
@@ -318,8 +328,12 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   const id = iterationTask.id;
   const shortId = id.slice(0, SHORT_ID_LENGTH);
 
+  const config = await loadConfig();
+  const templatePath = config.init?.agentPath || ".claude/agents/worqload.md";
+  const ctx: IterateContext = { templatePath };
+
   // Observe
-  const obs = await collectObservation(queue, {}, id);
+  const obs = await collectObservation(queue, ctx, id);
   const observeLog = formatObserveLog(obs);
   queue.addLog(id, "observe", observeLog);
 
@@ -331,9 +345,9 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
   // Decide
   queue.transition(id, "deciding");
 
-  // Autonomous task generation from observation
-  const generated = await generateTasksFromObservation(queue, obs, {});
-  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0;
+  // Autonomous task generation and feedback distillation
+  const generated = await generateTasksFromObservation(queue, obs, ctx);
+  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.distilledRules.length > 0;
 
   if (hasGenerated) {
     const genParts: string[] = [];
@@ -342,6 +356,9 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
     }
     if (generated.retriedTasks.length > 0) {
       genParts.push(`retried ${generated.retriedTasks.length} failed task(s)`);
+    }
+    if (generated.distilledRules.length > 0) {
+      genParts.push(`distilled ${generated.distilledRules.length} feedback rule(s) into template`);
     }
     const genSummary = genParts.join("; ");
     queue.addLog(id, "decide", `tasks_created: ${genSummary}`);
@@ -437,7 +454,7 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
 export function formatObserveLog(obs: Observation): string {
   const parts: string[] = [];
   parts.push(`tasks: ${obs.tasks.length} active, ${obs.waitingHumanTasks.length} waiting_human`);
-  parts.push(`feedback: ${obs.feedbackSummary.counts.new} new, ${obs.feedbackSummary.counts.acknowledged} acked`);
+  parts.push(`feedback: ${obs.feedbackSummary.counts.new} new, ${obs.feedbackSummary.counts.acknowledged} acked, ${obs.feedbackSummary.counts.resolved} resolved`);
   parts.push(`missions: ${obs.activeMissions.length} active, ${obs.failedMissions.length} failed`);
   parts.push(`sources: ${obs.sourceResults.length} ran`);
   const principleCount = obs.principles ? obs.principles.split("\n").filter(l => l.startsWith("- ")).length : 0;

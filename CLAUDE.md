@@ -76,7 +76,7 @@ worqload feedback summary                  # check for new human input
 
 ### Rules
 
-- Delegate task execution to mission runners. The main loop manages the queue, not the work itself.
+- Delegate task execution to mission runners. The main loop manages the queue, not the work itself. This includes reports — spawned agents write reports, not the main session.
 - Small, incremental changes. Each task = one commit-sized unit of work.
 - Write tests before implementation (TDD).
 - Reports must be written in Japanese.
