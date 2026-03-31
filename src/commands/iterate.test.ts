@@ -11,6 +11,7 @@ import {
   formatObserveLog,
   auditRecentCompletions,
   generateTasksFromObservation,
+  deriveAutonomousTasks,
   filterManagedPaths,
   hasHumanAnswer,
   type IterateContext,
@@ -1114,5 +1115,103 @@ describe("generateTasksFromObservation", () => {
     const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.autonomousTasks).toEqual([]);
+  });
+});
+
+describe("deriveAutonomousTasks", () => {
+  function emptyObs(): Observation {
+    return {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+  }
+
+  test("derives test fix task when test results contain fail", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Quality first";
+    obs.sourceResults = [
+      { name: "test results", output: "3 pass\n1 fail\nsome error", exitCode: 1 },
+    ];
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    expect(derived.some(t => t.toLowerCase().includes("test"))).toBe(true);
+  });
+
+  test("does not derive test fix task when tests all pass", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Quality first";
+    obs.sourceResults = [
+      { name: "test results", output: "10 pass\n0 fail", exitCode: 0 },
+    ];
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    expect(derived.some(t => t.toLowerCase().includes("fix failing test"))).toBe(false);
+  });
+
+  test("derives investigation task when principles exist but sources have no actionable output", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Improve documentation";
+    obs.sourceResults = [
+      { name: "git status", output: "", exitCode: 0 },
+    ];
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    expect(derived.length).toBe(1);
+    expect(derived[0]).toContain("Principles");
+  });
+
+  test("derives investigation task when principles exist and sources are empty", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Ship small increments";
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    expect(derived.length).toBe(1);
+    expect(derived[0]).toContain("Principles");
+  });
+
+  test("does not duplicate investigation task if one already exists", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const existing = createTask("Investigate improvements based on Principles");
+    queue.enqueue(existing);
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Ship small increments";
+    obs.tasks = [existing];
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    expect(derived.filter(t => t.includes("Principles"))).toHaveLength(0);
+  });
+
+  test("prefers specific source-derived tasks over general investigation", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Quality first";
+    obs.sourceResults = [
+      { name: "test results", output: "5 pass\n2 fail\nError in login.test", exitCode: 1 },
+    ];
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    // Should derive a test fix task, not a general investigation task
+    expect(derived.some(t => t.toLowerCase().includes("test"))).toBe(true);
+    expect(derived.filter(t => t.includes("Investigate improvements"))).toHaveLength(0);
   });
 });

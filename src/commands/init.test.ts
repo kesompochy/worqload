@@ -132,3 +132,42 @@ describe("DEFAULT_AGENT_TEMPLATE covers reports", () => {
     expect(template).toContain("report status");
   });
 });
+
+describe("DEFAULT_AGENT_TEMPLATE covers principle-driven Orient", () => {
+  test("explains that Orient compares observations against Principles", () => {
+    expect(template).toMatch(/[Oo]rient.*[Pp]rinciple/s);
+  });
+
+  test("explains escalation criteria: Principles sufficient vs insufficient", () => {
+    expect(template).toMatch(/[Pp]rinciple.*sufficient/is);
+  });
+
+  test("explains that every decision must trace back to a Principle", () => {
+    expect(template).toMatch(/decision.*trace.*[Pp]rinciple/is);
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers main session role", () => {
+  test("explains main session manages queue, not implementation", () => {
+    expect(template).toMatch(/spawn|delegate/i);
+    expect(template).toMatch(/queue/i);
+  });
+
+  test("mentions iterate command", () => {
+    expect(template).toContain("worqload iterate");
+  });
+
+  test("mentions spawn-cleanup command", () => {
+    expect(template).toContain("worqload spawn-cleanup");
+  });
+});
+
+describe("DEFAULT_AGENT_TEMPLATE covers feedback-to-task flow", () => {
+  test("explains feedback is human Orient output", () => {
+    expect(template).toMatch(/feedback.*human/is);
+  });
+
+  test("explains feedback should be oriented against Principles to derive tasks", () => {
+    expect(template).toMatch(/feedback.*[Pp]rinciple/s);
+  });
+});

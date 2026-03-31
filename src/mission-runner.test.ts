@@ -845,6 +845,7 @@ describe("runMission persistence", () => {
       runMission(mission.id, {
         storePath,
         missionsPath: missionPath,
+        runnerStatePath: tmpPath("runners-default-timeout"),
         pollIntervalMs: 10,
       }).then(() => "runner_exited"),
       Bun.sleep(200).then(() => "timeout"),

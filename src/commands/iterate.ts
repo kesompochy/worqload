@@ -313,10 +313,17 @@ function hasDuplicateTask(queue: TaskQueue, existingTasks: Task[], title: string
 }
 
 const AUTONOMOUS_FEEDBACK_REVIEW_TITLE = "Review unresolved feedback";
-const AUTONOMOUS_PRINCIPLE_PREFIX = "Principle-driven:";
+const AUTONOMOUS_TEST_FIX_TITLE = "Fix failing tests";
+const AUTONOMOUS_INVESTIGATION_TITLE = "Investigate improvements based on Principles";
 
 function parsePrincipleItems(principles: string): string[] {
   return principles.split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2).trim());
+}
+
+function hasTestFailures(sourceResults: SourceResult[]): boolean {
+  return sourceResults.some(sr =>
+    sr.name.toLowerCase().includes("test") && sr.exitCode !== 0 && /\bfail\b/i.test(sr.output),
+  );
 }
 
 export function deriveAutonomousTasks(obs: Observation, queue: TaskQueue, archivedTasks: Task[]): string[] {
@@ -330,39 +337,22 @@ export function deriveAutonomousTasks(obs: Observation, queue: TaskQueue, archiv
     }
   }
 
-  // Principles + source results → improvement tasks
-  const principleItems = parsePrincipleItems(obs.principles);
-  for (const principle of principleItems) {
-    const matchingSource = findSourceForPrinciple(principle, obs.sourceResults);
-    if (matchingSource) {
-      const title = `${AUTONOMOUS_PRINCIPLE_PREFIX} ${principle}`;
-      if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
-        derived.push(title);
-      }
+  // Test failures → test fix task
+  if (hasTestFailures(obs.sourceResults)) {
+    if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_TEST_FIX_TITLE, archivedTasks)) {
+      derived.push(AUTONOMOUS_TEST_FIX_TITLE);
     }
   }
 
-  // If no source-matched tasks but principles exist, derive a general improvement task
-  if (derived.length === 0 && principleItems.length > 0 && obs.sourceResults.length > 0) {
-    const title = `${AUTONOMOUS_PRINCIPLE_PREFIX} ${principleItems[0]}`;
-    if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
-      derived.push(title);
+  // If no actionable tasks derived yet and principles exist, derive a general investigation task
+  const principleItems = parsePrincipleItems(obs.principles);
+  if (derived.length === 0 && principleItems.length > 0) {
+    if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_INVESTIGATION_TITLE, archivedTasks)) {
+      derived.push(AUTONOMOUS_INVESTIGATION_TITLE);
     }
   }
 
   return derived;
-}
-
-function findSourceForPrinciple(principle: string, sourceResults: SourceResult[]): SourceResult | undefined {
-  const lowerPrinciple = principle.toLowerCase();
-  return sourceResults.find(sr => {
-    if (!sr.output) return false;
-    const lowerOutput = sr.output.toLowerCase();
-    const lowerName = sr.name.toLowerCase();
-    // Match source when principle keywords overlap with source name or output
-    const principleWords = lowerPrinciple.split(/\s+/).filter(w => w.length > 3);
-    return principleWords.some(word => lowerName.includes(word) || lowerOutput.includes(word));
-  });
 }
 
 export async function generateTasksFromObservation(queue: TaskQueue, obs: Observation, ctx: IterateContext = {}): Promise<GenerateResult> {
