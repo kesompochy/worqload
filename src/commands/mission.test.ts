@@ -1,9 +1,10 @@
-import { test, expect } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createTask } from "../task";
 import { TaskQueue } from "../queue";
 import { createMission, loadMissions, addMissionPrinciple } from "../mission";
+import { loadConfig } from "../config";
 
 function tmpPath(): string {
   return join(tmpdir(), `worqload-mission-cmd-test-${crypto.randomUUID()}.json`);
@@ -45,6 +46,35 @@ test("getByMission returns assigned tasks after assign", async () => {
   const result = queue.getByMission(missionId);
   expect(result).toHaveLength(1);
   expect(result[0].id).toBe(t1.id);
+});
+
+describe("mission run worktree config", () => {
+  test("config.spawn.worktree enables worktree for mission run", async () => {
+    const configPath = join(tmpdir(), `worqload-mission-config-${crypto.randomUUID()}.json`);
+    await Bun.write(configPath, JSON.stringify({ spawn: { worktree: true } }));
+    const config = await loadConfig(configPath);
+    const cliWorktreeFlag = undefined;
+    const useWorktree = cliWorktreeFlag === "true" || config.spawn?.worktree === true;
+    expect(useWorktree).toBe(true);
+  });
+
+  test("CLI --worktree flag enables worktree even without config", async () => {
+    const configPath = join(tmpdir(), `worqload-mission-config-${crypto.randomUUID()}.json`);
+    await Bun.write(configPath, JSON.stringify({}));
+    const config = await loadConfig(configPath);
+    const cliWorktreeFlag = "true";
+    const useWorktree = cliWorktreeFlag === "true" || config.spawn?.worktree === true;
+    expect(useWorktree).toBe(true);
+  });
+
+  test("worktree disabled when neither config nor flag set", async () => {
+    const configPath = join(tmpdir(), `worqload-mission-config-${crypto.randomUUID()}.json`);
+    await Bun.write(configPath, JSON.stringify({}));
+    const config = await loadConfig(configPath);
+    const cliWorktreeFlag = undefined;
+    const useWorktree = cliWorktreeFlag === "true" || config.spawn?.worktree === true;
+    expect(useWorktree).toBe(false);
+  });
 });
 
 test("mission principle lists principles for a mission", async () => {

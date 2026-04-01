@@ -19,3 +19,11 @@ test("loadConfig returns parsed config from file", async () => {
   const config = await loadConfig(path);
   expect(config).toEqual({ spawn: { pre: ["echo hello"] } });
 });
+
+test("loadConfig reads spawn.worktree boolean", async () => {
+  const path = tmpPath();
+  await Bun.write(path, JSON.stringify({ spawn: { worktree: true } }));
+
+  const config = await loadConfig(path);
+  expect(config.spawn?.worktree).toBe(true);
+});

@@ -4,6 +4,7 @@ import { loadMissions, createMission, completeMission, addMissionPrinciple, remo
 import { SHORT_ID_LENGTH } from "../task";
 import { parseFlags } from "../utils/args";
 import { launchMissionDaemon } from "../daemon";
+import { loadConfig } from "../config";
 
 export async function mission(queue: TaskQueue, args: string[]) {
   if (args[0] === "create") {
@@ -86,8 +87,10 @@ export async function mission(queue: TaskQueue, args: string[]) {
     if (!missionId) exitWithError("Usage: worqload mission run <mission-id> [--foreground] [--worktree]");
 
     if (flags["--foreground"]) {
+      const config = await loadConfig();
+      const useWorktree = flags["--worktree"] === "true" || config.spawn?.worktree === true;
       const { runMission } = await import("../mission-runner");
-      await runMission(missionId, { useWorktree: flags["--worktree"] === "true" });
+      await runMission(missionId, { useWorktree });
     } else {
       const result = await launchMissionDaemon(missionId);
       console.log(`Mission runner started (PID: ${result.pid})`);
