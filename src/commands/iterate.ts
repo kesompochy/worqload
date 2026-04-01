@@ -198,6 +198,13 @@ function extractFeedbackIds(context: Record<string, unknown>): string[] | null {
   return null;
 }
 
+export function needsHumanReport(task: Task): boolean {
+  if (task.title.startsWith(REPORT_HUMAN_PREFIX)) return false;
+  if (extractFeedbackIds(task.context)) return true;
+  if (task.logs.some(l => l.content.startsWith(HUMAN_REQUIRED_PREFIX))) return true;
+  return false;
+}
+
 export async function detectCompletedFeedbackTasks(
   queue: TaskQueue,
   ctx: IterateContext,
@@ -217,14 +224,14 @@ export async function detectCompletedFeedbackTasks(
 
   const result: CompletedFeedbackTask[] = [];
   for (const task of doneTasks) {
-    const feedbackIds = extractFeedbackIds(task.context);
-    if (!feedbackIds) continue;
+    if (!needsHumanReport(task)) continue;
 
     const hasHumanReport = reports.some(
       r => r.taskId === task.id && r.category === "human",
     );
     if (hasHumanReport) continue;
 
+    const feedbackIds = extractFeedbackIds(task.context) ?? [];
     result.push({ taskId: task.id, title: task.title, feedbackIds });
   }
   return result;

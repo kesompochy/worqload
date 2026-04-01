@@ -20,6 +20,7 @@ import {
   performActCleanup,
   formatCleanupLog,
   detectCompletedFeedbackTasks,
+  needsHumanReport,
   ackFeedbackIds,
   iterate,
   type IterateContext,
@@ -2603,5 +2604,141 @@ describe("analyzeObservation - report_human", () => {
     const analysis = analyzeObservation(obs);
 
     expect(analysis).not.toContain("report_human");
+  });
+});
+
+describe("needsHumanReport", () => {
+  test("returns true for task with feedbackIds in context", () => {
+    const task = createTask("Fix login bug", { feedbackIds: ["fb-1"] });
+    expect(needsHumanReport(task)).toBe(true);
+  });
+
+  test("returns true for task with singular feedbackId in context", () => {
+    const task = createTask("Review item", { feedbackId: "fb-99" });
+    expect(needsHumanReport(task)).toBe(true);
+  });
+
+  test("returns true for task that had human escalation", () => {
+    const task = createTask("Investigate issue");
+    task.logs.push({
+      phase: "orient",
+      content: `${HUMAN_REQUIRED_PREFIX}What should we prioritize?`,
+      timestamp: new Date().toISOString(),
+    });
+    expect(needsHumanReport(task)).toBe(true);
+  });
+
+  test("returns false for report task itself", () => {
+    const task = createTask("Report to human: Fix login bug", {
+      sourceTaskId: "t-1",
+      feedbackIds: ["fb-1"],
+    });
+    expect(needsHumanReport(task)).toBe(false);
+  });
+
+  test("returns false for regular task without feedback or escalation", () => {
+    const task = createTask("Refactor module");
+    expect(needsHumanReport(task)).toBe(false);
+  });
+
+  test("returns false for internal maintenance task", () => {
+    const task = createTask("Commit uncommitted changes");
+    expect(needsHumanReport(task)).toBe(false);
+  });
+});
+
+describe("detectCompletedFeedbackTasks - escalated tasks", () => {
+  test("detects done task that had human escalation", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Investigate issue");
+    task.logs.push({
+      phase: "orient",
+      content: `${HUMAN_REQUIRED_PREFIX}What should we do?`,
+      timestamp: new Date().toISOString(),
+    });
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    const result = await detectCompletedFeedbackTasks(queue, {});
+
+    expect(result).toHaveLength(1);
+    expect(result[0].taskId).toBe(task.id);
+    expect(result[0].title).toBe("Investigate issue");
+    expect(result[0].feedbackIds).toEqual([]);
+  });
+
+  test("ignores done report task even if it had escalation", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Report to human: Fix bug", { sourceTaskId: "t-1" });
+    task.logs.push({
+      phase: "orient",
+      content: `${HUMAN_REQUIRED_PREFIX}Need clarification`,
+      timestamp: new Date().toISOString(),
+    });
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    const result = await detectCompletedFeedbackTasks(queue, {});
+
+    expect(result).toHaveLength(0);
+  });
+
+  test("ignores escalated task that already has a human report", async () => {
+    const reportsPath = tmpPath("reports");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Investigate issue");
+    task.logs.push({
+      phase: "orient",
+      content: `${HUMAN_REQUIRED_PREFIX}What priority?`,
+      timestamp: new Date().toISOString(),
+    });
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    await addReport("Investigation report", "Findings here", "agent", {
+      taskId: task.id,
+      path: reportsPath,
+      category: "human",
+    });
+
+    const result = await detectCompletedFeedbackTasks(queue, { reportsPath });
+
+    expect(result).toHaveLength(0);
+  });
+});
+
+describe("generateTasksFromObservation - escalated task report", () => {
+  function emptyObservation(): Observation {
+    return {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      stuckTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+      completedFeedbackTasks: [],
+    };
+  }
+
+  test("creates report task for escalated (non-feedback) completed task", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.completedFeedbackTasks = [
+      { taskId: "task-esc", title: "Investigate issue", feedbackIds: [] },
+    ];
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.humanReportTasks).toHaveLength(1);
+    const reportTask = queue.list().find(t => t.title.includes("Report to human"));
+    expect(reportTask).toBeDefined();
+    expect(reportTask!.context.sourceTaskId).toBe("task-esc");
   });
 });
