@@ -199,5 +199,26 @@ export async function init(_queue: TaskQueue, args: string[]) {
   await Bun.write(agentPath, agentTemplate);
   console.log(`Created: ${agentPath}`);
 
+  await ensureGitignoreEntry(projectPath, ".worktrees");
+
   console.log(`\nDone. Set principles with: worqload principle "<your principle>"`);
+}
+
+async function ensureGitignoreEntry(
+  projectPath: string,
+  entry: string,
+): Promise<void> {
+  const gitignorePath = projectPath + "/.gitignore";
+  const file = Bun.file(gitignorePath);
+
+  if (await file.exists()) {
+    const content = await file.text();
+    const lines = content.split("\n").map((l) => l.replace(/\/+$/, "").trim());
+    if (lines.includes(entry)) return;
+    const separator = content.endsWith("\n") ? "" : "\n";
+    await Bun.write(gitignorePath, content + separator + entry + "\n");
+  } else {
+    await Bun.write(gitignorePath, entry + "\n");
+  }
+  console.log(`Updated: ${gitignorePath}`);
 }
