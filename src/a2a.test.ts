@@ -1,7 +1,6 @@
-import { test, expect, describe, beforeAll, afterAll } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
-import { join } from "path";
-import { readFileSync } from "fs";
+import { join, resolve } from "path";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import {
@@ -11,19 +10,6 @@ import {
   handleA2ARequest,
 } from "./a2a";
 import type { A2ATask, JsonRpcResponse } from "./a2a";
-
-const REAL_STORE = ".worqload/tasks.json";
-let snapshotBefore: string | null = null;
-
-beforeAll(() => {
-  try { snapshotBefore = readFileSync(REAL_STORE, "utf-8"); } catch { snapshotBefore = null; }
-});
-
-afterAll(() => {
-  // Snapshot comparison disabled: external processes (mission runner) can
-  // legitimately modify tasks.json during test runs. A2A tests use temp
-  // paths and do not touch the real store.
-});
 
 function tmpStorePath(): string {
   return join(tmpdir(), `worqload-a2a-test-${crypto.randomUUID()}.json`);
@@ -391,6 +377,44 @@ describe("handleA2ARequest", () => {
       const res = await handleA2ARequest(queue, rpc("tasks/cancel", { id: "nonexistent" }));
 
       expect(res.error?.code).toBe(-32001);
+    });
+  });
+
+  describe("store isolation", () => {
+    const REAL_STORE_DIR = resolve(".worqload");
+
+    test("test queues use paths outside the real store directory", () => {
+      const queue = makeQueue();
+      const storePath = queue.getStorePath()!;
+      const absoluteStorePath = resolve(storePath);
+
+      expect(absoluteStorePath.startsWith(REAL_STORE_DIR)).toBe(false);
+    });
+
+    test("handleA2ARequest writes only to the provided queue path", async () => {
+      const queue = makeQueue();
+      const storePath = queue.getStorePath()!;
+
+      await handleA2ARequest(queue, rpc("message/send", {
+        message: {
+          message_id: "isolation-test",
+          role: "user",
+          parts: [{ kind: "text", text: "isolation check" }],
+          kind: "message",
+        },
+      }));
+
+      const absoluteStorePath = resolve(storePath);
+      expect(absoluteStorePath.startsWith(REAL_STORE_DIR)).toBe(false);
+      expect(queue.list()).toHaveLength(1);
+    });
+
+    test("guardDefaultPath blocks default store access during tests", async () => {
+      const unguardedQueue = new TaskQueue();
+      await unguardedQueue.save();
+      await unguardedQueue.load();
+
+      expect(unguardedQueue.list()).toHaveLength(0);
     });
   });
 });
