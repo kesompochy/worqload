@@ -12,7 +12,7 @@ import type { Project } from "./projects";
 import { loadReports, updateReportStatus } from "./reports";
 import { loadSleep, sleepFor, clearSleep } from "./sleep";
 import { generateAgentCard, handleA2ARequest } from "./a2a";
-import { loadMissions } from "./mission";
+import { loadMissions, archiveMissions } from "./mission";
 import { loadRunnerStatesUnlocked } from "./mission-runner-state";
 import { appendServerLog } from "./server-log";
 
@@ -292,6 +292,12 @@ function buildRoutes(): Route[] {
         const archived = await queue.archive(terminatedIds);
         await queue.save();
         return json({ archived: archived.map(t => t.id) });
+      } },
+
+    { method: "POST", pattern: /^\/api\/missions\/([^/]+)\/archive$/,
+      handler: async (_req, _queue, _port, params) => {
+        const archived = await archiveMissions([params[0]]);
+        return json({ archived: archived.map(m => m.id) });
       } },
 
     { method: "POST", pattern: /^\/api\/tasks\/([^/]+)\/retry$/,
@@ -907,6 +913,7 @@ function MissionCard({ mission, onUpdate }) {
       )}</span>
       <span class="badge" style="background:\${statusColor}20;color:\${statusColor}">\${mission.status}</span>
       <span class="count" style="font-size:0.7rem;color:#888">\${mission.taskCount} tasks</span>
+      \${mission.status !== 'active' && html\`<button style="font-size:0.65rem;padding:0.15rem 0.4rem;background:#333;border:1px solid #555;color:#aaa;border-radius:4px;cursor:pointer" onClick=\${(e) => { e.stopPropagation(); fetch('/api/missions/' + mission.id + '/archive', { method: 'POST' }).then(() => onUpdate()); }}>Archive</button>\`}
     </div>
     \${expanded && html\`<div style="margin-top:0.5rem;border-top:1px solid #2a2a2a;padding-top:0.5rem">
       \${mission.tasks.length === 0

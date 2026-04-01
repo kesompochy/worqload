@@ -102,6 +102,8 @@ Missions:
   mission assign <mid> <tid>     Assign a task to a mission
   mission run <mid>              Run mission agent as daemon (--foreground to block)
   mission complete <mid>         Complete a mission
+  mission archive <mid> [<mid>]  Archive completed/failed missions
+  mission history                List archived missions
 
 Reports:
   report                         List reports

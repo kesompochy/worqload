@@ -4,7 +4,7 @@ import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
-import { createMission, loadMissions, saveMissions } from "./mission";
+import { createMission, loadMissions, saveMissions, completeMission, archiveMissions, loadMissionArchive } from "./mission";
 import type { Mission } from "./mission";
 import { recordSpawnStart, loadSpawns, saveSpawns } from "./spawns";
 import { addFeedback } from "./feedback";
@@ -741,5 +741,28 @@ describe("loadAllProjectFeedback: aggregates feedback across projects with proje
     ];
     const result = await loadAllProjectFeedback(projects);
     expect(result).toEqual([]);
+  });
+});
+
+describe("POST /api/missions/:id/archive", () => {
+  test("archives a completed mission", async () => {
+    const missionsPath = tmpPath("missions");
+    const archivePath = tmpPath("mission-archive");
+    const m = await createMission("To archive", {}, missionsPath);
+    await completeMission(m.id, missionsPath);
+    const archived = await archiveMissions([m.id], missionsPath, archivePath);
+    expect(archived).toHaveLength(1);
+    expect(archived[0].name).toBe("To archive");
+    const remaining = await loadMissions(missionsPath);
+    expect(remaining).toHaveLength(0);
+    const archivedList = await loadMissionArchive(archivePath);
+    expect(archivedList).toHaveLength(1);
+  });
+
+  test("rejects archiving an active mission", async () => {
+    const missionsPath = tmpPath("missions");
+    const archivePath = tmpPath("mission-archive");
+    const m = await createMission("Still active", {}, missionsPath);
+    expect(archiveMissions([m.id], missionsPath, archivePath)).rejects.toThrow("Cannot archive active mission");
   });
 });
