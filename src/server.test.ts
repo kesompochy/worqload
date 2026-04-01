@@ -312,7 +312,7 @@ describe("EditableText: shared editable component with blur-to-save", () => {
     expect(body).not.toContain("editingIndex");
   });
 
-  test("TaskCard uses EditableText for title editing", async () => {
+  test("TaskCard does NOT use EditableText — task cards are read-only", async () => {
     const fs = await import("fs");
     const source = fs.readFileSync("src/server.ts", "utf-8");
 
@@ -320,7 +320,10 @@ describe("EditableText: shared editable component with blur-to-save", () => {
     const nextFunc = source.indexOf("\nfunction ", start + 1);
     const body = source.slice(start, nextFunc);
 
-    expect(body).toContain("EditableText");
+    expect(body).not.toContain("EditableText");
+    expect(body).not.toContain("saveTitle");
+    expect(body).not.toContain("priority-edit");
+    expect(body).not.toContain("setPriority");
   });
 
   test("EditableFeedbackMessage uses EditableText", async () => {

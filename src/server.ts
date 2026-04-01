@@ -757,10 +757,6 @@ function TaskCard({ task, onUpdate }) {
     await api.post('/api/tasks/' + task.id.slice(0, 8) + '/answer', { answer: val });
     onUpdate();
   };
-  const setPriority = async (e) => {
-    await api.patch('/api/tasks/' + task.id.slice(0, 8), { priority: Number(e.target.value) || 0 });
-    onUpdate();
-  };
   const failTask = async () => {
     const reason = prompt('Fail reason:');
     if (reason === null) return;
@@ -776,14 +772,9 @@ function TaskCard({ task, onUpdate }) {
     await fetch('/api/tasks/' + task.id.slice(0, 8), { method: 'DELETE' });
     onUpdate();
   };
-  const saveTitle = async (newTitle) => {
-    await api.patch('/api/tasks/' + task.id.slice(0, 8), { title: newTitle });
-    onUpdate();
-  };
-
   return html\`<div class="task" title=\${task.id.slice(0, 8)}>
     <div class="task-title">
-      <\${EditableText} value=\${task.title} onSave=\${saveTitle} inputClassName="task-title-edit" />
+      <span>\${task.title}</span>
       \${task.status === 'waiting_human' && html\` <span class="badge badge-waiting">waiting</span>\`}
       \${task.status === 'failed' && html\` <span class="badge badge-failed">failed</span>\`}
       \${task.owner && html\` <span class="task-owner">@\${task.owner}</span>\`}
@@ -805,8 +796,6 @@ function TaskCard({ task, onUpdate }) {
       \${task.logs.map((l, i) => html\`<div class="log" key=\${i}><span class="log-phase">[\${l.phase}]</span> \${l.content}</div>\`)}
     </div>\`}
     \${!isTerminal && html\`<div class="task-actions">
-      <label class="action-label">Pri</label>
-      <input type="number" class="priority-edit" defaultValue=\${task.priority} key=\${task.id + '-p-' + task.priority} onChange=\${setPriority} />
       <button class="danger" onClick=\${failTask}>Fail</button>
       <button class="danger" onClick=\${deleteTask}>Del</button>
     </div>\`}
