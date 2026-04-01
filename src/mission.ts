@@ -1,6 +1,8 @@
-import { loadJsonFile, saveJsonFile } from "./utils/json-store";
+import { loadJsonFile, loadJsonFileUnlocked, saveJsonFile } from "./utils/json-store";
+import { withLock } from "./lock";
 
 const DEFAULT_MISSIONS_PATH = ".worqload/missions.json";
+const DEFAULT_MISSION_ARCHIVE_PATH = ".worqload/mission-archive.json";
 
 export type MissionStatus = "active" | "completed" | "failed";
 
@@ -97,4 +99,34 @@ export async function reactivateMission(id: string, path: string = DEFAULT_MISSI
   if (mission.status === "active") throw new Error(`Mission is already active: ${id}`);
   mission.status = "active";
   await saveMissions(missions, path);
+}
+
+export async function loadMissionArchive(archivePath: string = DEFAULT_MISSION_ARCHIVE_PATH): Promise<Mission[]> {
+  return await loadJsonFile<Mission[]>(archivePath, []);
+}
+
+export async function archiveMissions(
+  ids: string[],
+  path: string = DEFAULT_MISSIONS_PATH,
+  archivePath: string = DEFAULT_MISSION_ARCHIVE_PATH,
+): Promise<Mission[]> {
+  const missions = await loadMissions(path);
+  const toArchive: Mission[] = [];
+
+  for (const id of ids) {
+    const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+    if (!mission) throw new Error(`Mission not found: ${id}`);
+    if (mission.status === "active") throw new Error(`Cannot archive active mission: ${mission.name}`);
+    toArchive.push(mission);
+  }
+
+  const remaining = missions.filter(m => !toArchive.includes(m));
+  await saveMissions(remaining, path);
+
+  await withLock(archivePath, async () => {
+    const existing = await loadJsonFileUnlocked<Mission[]>(archivePath, []);
+    await Bun.write(archivePath, JSON.stringify([...existing, ...toArchive], null, 2));
+  });
+
+  return toArchive;
 }

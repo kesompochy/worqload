@@ -1,6 +1,6 @@
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { loadMissions, createMission, completeMission, addMissionPrinciple, removeMissionPrinciple } from "../mission";
+import { loadMissions, createMission, completeMission, addMissionPrinciple, removeMissionPrinciple, archiveMissions, loadMissionArchive } from "../mission";
 import { SHORT_ID_LENGTH } from "../task";
 import { parseFlags } from "../utils/args";
 import { launchMissionDaemon } from "../daemon";
@@ -92,6 +92,27 @@ export async function mission(queue: TaskQueue, args: string[]) {
       const result = await launchMissionDaemon(missionId);
       console.log(`Mission runner started (PID: ${result.pid})`);
       console.log(`Log: ${result.logPath}`);
+    }
+    return;
+  }
+  if (args[0] === "archive") {
+    if (!args[1]) exitWithError("Usage: worqload mission archive <mission-id> [<mission-id>...]");
+    const ids = args.slice(1);
+    const archived = await archiveMissions(ids);
+    for (const m of archived) {
+      console.log(`Archived: ${m.name} (${m.id.slice(0, SHORT_ID_LENGTH)})`);
+    }
+    return;
+  }
+  if (args[0] === "history") {
+    const archived = await loadMissionArchive();
+    if (archived.length === 0) {
+      console.log("No archived missions.");
+      return;
+    }
+    for (const m of archived) {
+      const tags = m.filter.tags ? ` [${m.filter.tags.join(",")}]` : "";
+      console.log(`[${m.status.padEnd(9)}] ${m.name}${tags} (${m.id.slice(0, SHORT_ID_LENGTH)})`);
     }
     return;
   }

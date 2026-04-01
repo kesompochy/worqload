@@ -10,6 +10,8 @@ import {
   reactivateMission,
   addMissionPrinciple,
   removeMissionPrinciple,
+  archiveMissions,
+  loadMissionArchive,
 } from "./mission";
 import type { Mission } from "./mission";
 
@@ -274,4 +276,101 @@ test("reactivateMission throws if already active", async () => {
   expect(reactivateMission(mission.id, path)).rejects.toThrow(
     "already active",
   );
+});
+
+test("archiveMissions moves completed missions to archive file", async () => {
+  const path = tmpPath();
+  const archivePath = tmpPath();
+  const m1 = await createMission("done-mission", {}, path);
+  await completeMission(m1.id, path);
+  const m2 = await createMission("active-mission", {}, path);
+
+  const archived = await archiveMissions([m1.id], path, archivePath);
+
+  expect(archived).toHaveLength(1);
+  expect(archived[0].id).toBe(m1.id);
+  const remaining = await loadMissions(path);
+  expect(remaining).toHaveLength(1);
+  expect(remaining[0].id).toBe(m2.id);
+  const archivedList = await loadMissionArchive(archivePath);
+  expect(archivedList).toHaveLength(1);
+  expect(archivedList[0].id).toBe(m1.id);
+});
+
+test("archiveMissions appends to existing archive", async () => {
+  const path = tmpPath();
+  const archivePath = tmpPath();
+  const m1 = await createMission("first", {}, path);
+  await completeMission(m1.id, path);
+  await archiveMissions([m1.id], path, archivePath);
+
+  const m2 = await createMission("second", {}, path);
+  await completeMission(m2.id, path);
+  await archiveMissions([m2.id], path, archivePath);
+
+  const archivedList = await loadMissionArchive(archivePath);
+  expect(archivedList).toHaveLength(2);
+  expect(archivedList.map(m => m.name)).toEqual(["first", "second"]);
+});
+
+test("archiveMissions throws for active mission", async () => {
+  const path = tmpPath();
+  const archivePath = tmpPath();
+  const m = await createMission("still-active", {}, path);
+
+  expect(archiveMissions([m.id], path, archivePath)).rejects.toThrow(
+    "Cannot archive active mission",
+  );
+});
+
+test("archiveMissions throws for unknown id", async () => {
+  const path = tmpPath();
+  const archivePath = tmpPath();
+
+  expect(archiveMissions(["nonexistent"], path, archivePath)).rejects.toThrow(
+    "Mission not found",
+  );
+});
+
+test("archiveMissions supports id prefix matching", async () => {
+  const path = tmpPath();
+  const archivePath = tmpPath();
+  const m = await createMission("prefix-archive", {}, path);
+  await completeMission(m.id, path);
+
+  const archived = await archiveMissions([m.id.slice(0, 8)], path, archivePath);
+  expect(archived).toHaveLength(1);
+  expect(archived[0].id).toBe(m.id);
+});
+
+test("archiveMissions can archive failed missions", async () => {
+  const path = tmpPath();
+  const archivePath = tmpPath();
+  const m = await createMission("failed-mission", {}, path);
+  await failMission(m.id, path);
+
+  const archived = await archiveMissions([m.id], path, archivePath);
+  expect(archived).toHaveLength(1);
+  expect(archived[0].status).toBe("failed");
+});
+
+test("archiveMissions archives multiple missions at once", async () => {
+  const path = tmpPath();
+  const archivePath = tmpPath();
+  const m1 = await createMission("done-a", {}, path);
+  const m2 = await createMission("done-b", {}, path);
+  await createMission("still-active", {}, path);
+  await completeMission(m1.id, path);
+  await completeMission(m2.id, path);
+
+  const archived = await archiveMissions([m1.id, m2.id], path, archivePath);
+  expect(archived).toHaveLength(2);
+  const remaining = await loadMissions(path);
+  expect(remaining).toHaveLength(1);
+  expect(remaining[0].name).toBe("still-active");
+});
+
+test("loadMissionArchive returns empty array when no archive exists", async () => {
+  const archivePath = tmpPath();
+  expect(await loadMissionArchive(archivePath)).toEqual([]);
 });
