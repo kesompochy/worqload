@@ -96,6 +96,72 @@ export function summarizeFeedback(items: Feedback[]): FeedbackSummary {
 export interface DistillResult {
   distilledCount: number;
   rules: string[];
+  pendingVerification: DistilledRule[];
+}
+
+export type DistilledRuleStatus = "pending_verification" | "verified" | "task_created";
+
+export interface DistilledRule {
+  id: string;
+  rule: string;
+  feedbackIds: string[];
+  distilledAt: string;
+  status: DistilledRuleStatus;
+}
+
+const DEFAULT_DISTILLED_RULES_PATH = ".worqload/distilled-rules.json";
+const distilledRuleStore = new EntityStore<DistilledRule>(DEFAULT_DISTILLED_RULES_PATH, "DistilledRule");
+
+export async function loadDistilledRules(path: string = DEFAULT_DISTILLED_RULES_PATH): Promise<DistilledRule[]> {
+  return distilledRuleStore.load(path);
+}
+
+export async function markRuleTaskCreated(id: string, path: string = DEFAULT_DISTILLED_RULES_PATH): Promise<void> {
+  await distilledRuleStore.update(id, { status: "task_created" }, path);
+}
+
+export type CodeChangeChecker = (since: string) => Promise<boolean>;
+
+export async function hasCodeChangeSince(since: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(
+      ["git", "log", "--oneline", `--since=${since}`, "--", "src/", "*.test.*"],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export interface VerifyResult {
+  verified: DistilledRule[];
+  unverified: DistilledRule[];
+}
+
+export async function verifyDistilledRules(
+  rulesPath: string = DEFAULT_DISTILLED_RULES_PATH,
+  checkCodeChange: CodeChangeChecker = hasCodeChangeSince,
+): Promise<VerifyResult> {
+  const rules = await distilledRuleStore.load(rulesPath);
+  const checkable = rules.filter(r => r.status === "pending_verification" || r.status === "task_created");
+
+  const verified: DistilledRule[] = [];
+  const unverified: DistilledRule[] = [];
+
+  for (const rule of checkable) {
+    const hasChanges = await checkCodeChange(rule.distilledAt);
+    if (hasChanges) {
+      await distilledRuleStore.update(rule.id, { status: "verified" }, rulesPath);
+      verified.push({ ...rule, status: "verified" });
+    } else if (rule.status === "pending_verification") {
+      unverified.push(rule);
+    }
+  }
+
+  return { verified, unverified };
 }
 
 const ENGLISH_DIRECTIVE_PATTERN = /^(always|never|do not|don't|must|should|use|run|write|add|remove|delete|avoid|ensure|make sure|keep|stop|include|exclude|set|check|verify|update|create|fix|follow|apply|disable|enable|prefer|require|allow|forbid|prohibit)\b/i;
@@ -141,6 +207,14 @@ export function extractActionableRules(message: string): string[] {
   return rules;
 }
 
+export function extractObservationalContent(message: string): string[] {
+  const sentences = splitSentences(message);
+  return sentences.filter(s => {
+    const trimmed = s.trim();
+    return trimmed.length > 0 && !isQuestion(trimmed) && !isActionableDirective(trimmed);
+  });
+}
+
 function extractExistingRules(templateContent: string): Set<string> {
   const existingRules = new Set<string>();
   const ruleLinePattern = /^- (.+)$/gm;
@@ -158,12 +232,13 @@ function normalizeRuleForComparison(rule: string): string {
 export async function distillFeedback(
   feedbackPath: string = DEFAULT_FEEDBACK_PATH,
   templatePath: string = ".claude/skills/worqload/SKILL.md",
+  distilledRulesPath: string = DEFAULT_DISTILLED_RULES_PATH,
 ): Promise<DistillResult> {
   const items = await store.load(feedbackPath);
   const resolved = items.filter((f) => f.status === "resolved");
 
   if (resolved.length === 0) {
-    return { distilledCount: 0, rules: [] };
+    return { distilledCount: 0, rules: [], pendingVerification: [] };
   }
 
   const templateFile = Bun.file(templatePath);
@@ -177,6 +252,7 @@ export async function distillFeedback(
   const existingRules = extractExistingRules(templateContent);
 
   const allRules: string[] = [];
+  const ruleOrigins: { rule: string; feedbackId: string }[] = [];
   for (const feedback of resolved) {
     const extracted = extractActionableRules(feedback.message);
     for (const rule of extracted) {
@@ -184,6 +260,7 @@ export async function distillFeedback(
       if (!existingRules.has(normalized)) {
         allRules.push(rule);
         existingRules.add(normalized);
+        ruleOrigins.push({ rule, feedbackId: feedback.id });
       }
     }
   }
@@ -194,11 +271,25 @@ export async function distillFeedback(
     await Bun.write(templatePath, updatedContent);
   }
 
+  const now = new Date().toISOString();
+  const pendingVerification: DistilledRule[] = [];
+  for (const { rule, feedbackId } of ruleOrigins) {
+    const distilledRule: DistilledRule = {
+      id: crypto.randomUUID(),
+      rule,
+      feedbackIds: [feedbackId],
+      distilledAt: now,
+      status: "pending_verification",
+    };
+    await distilledRuleStore.add(distilledRule, distilledRulesPath);
+    pendingVerification.push(distilledRule);
+  }
+
   for (const f of resolved) {
     await store.remove(f.id, feedbackPath);
   }
 
-  return { distilledCount: allRules.length, rules: allRules };
+  return { distilledCount: allRules.length, rules: allRules, pendingVerification };
 }
 
 export async function sendFeedbackToProject(

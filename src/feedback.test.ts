@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { addFeedback, loadFeedback, saveFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback, distillFeedback, extractActionableRules, sendFeedbackToProject } from "./feedback";
+import { addFeedback, loadFeedback, saveFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback, distillFeedback, extractActionableRules, extractObservationalContent, sendFeedbackToProject, loadDistilledRules, verifyDistilledRules, markRuleTaskCreated, type DistilledRule } from "./feedback";
 import { registerProject, type Project } from "./projects";
 
 function tmpPath(): string {
@@ -217,6 +217,40 @@ describe("extractActionableRules", () => {
   });
 });
 
+describe("extractObservationalContent", () => {
+  test("extracts non-directive, non-question sentences", () => {
+    expect(extractObservationalContent("The build is really slow")).toEqual(["The build is really slow"]);
+    expect(extractObservationalContent("報告書出てこない")).toEqual(["報告書出てこない"]);
+    expect(extractObservationalContent("ビルドが遅い")).toEqual(["ビルドが遅い"]);
+  });
+
+  test("returns empty for purely directive messages", () => {
+    expect(extractObservationalContent("Always run lint before commit")).toEqual([]);
+    expect(extractObservationalContent("テストを先に書くべき")).toEqual([]);
+    expect(extractObservationalContent("Never skip code review")).toEqual([]);
+  });
+
+  test("returns empty for questions", () => {
+    expect(extractObservationalContent("Should we use TypeScript?")).toEqual([]);
+    expect(extractObservationalContent("これはバグですか？")).toEqual([]);
+  });
+
+  test("extracts only observational parts from mixed content", () => {
+    const result = extractObservationalContent("The build is slow. Always run tests before pushing. Why is CI broken?");
+    expect(result).toEqual(["The build is slow"]);
+  });
+
+  test("returns empty for empty or whitespace input", () => {
+    expect(extractObservationalContent("")).toEqual([]);
+    expect(extractObservationalContent("   ")).toEqual([]);
+  });
+
+  test("extracts multiple observations from one message", () => {
+    const result = extractObservationalContent("ビルドが遅い。テストが落ちてる");
+    expect(result).toEqual(["ビルドが遅い", "テストが落ちてる"]);
+  });
+});
+
 describe("distillFeedback", () => {
   function tmpTemplatePath(): string {
     return join(tmpdir(), `worqload-template-test-${crypto.randomUUID()}.md`);
@@ -377,6 +411,217 @@ name: worqload
     await resolveFeedback(fb.id, feedbackPath);
 
     expect(distillFeedback(feedbackPath, templatePath)).rejects.toThrow("Rules");
+  });
+});
+
+describe("distilled rule tracking", () => {
+  function tmpTemplatePath(): string {
+    return join(tmpdir(), `worqload-template-test-${crypto.randomUUID()}.md`);
+  }
+  function tmpRulesPath(): string {
+    return join(tmpdir(), `worqload-distilled-rules-test-${crypto.randomUUID()}.json`);
+  }
+
+  const sampleTemplate = `---
+name: worqload
+---
+
+## Rules
+
+- One task at a time.
+- Small, incremental changes.
+`;
+
+  test("distillFeedback saves distilled rules to store with pending_verification status", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    const rulesPath = tmpRulesPath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("Always run lint before commit", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+
+    await distillFeedback(feedbackPath, templatePath, rulesPath);
+
+    const rules = await loadDistilledRules(rulesPath);
+    expect(rules).toHaveLength(1);
+    expect(rules[0].rule).toBe("Always run lint before commit");
+    expect(rules[0].status).toBe("pending_verification");
+    expect(rules[0].feedbackIds).toEqual([fb.id]);
+    expect(rules[0].distilledAt).toBeDefined();
+  });
+
+  test("distillFeedback returns pendingVerification with created DistilledRule objects", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    const rulesPath = tmpRulesPath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("Always run tests. Never skip linting.", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+
+    const result = await distillFeedback(feedbackPath, templatePath, rulesPath);
+
+    expect(result.pendingVerification).toHaveLength(2);
+    expect(result.pendingVerification[0].rule).toBe("Always run tests");
+    expect(result.pendingVerification[1].rule).toBe("Never skip linting");
+    expect(result.pendingVerification.every(r => r.status === "pending_verification")).toBe(true);
+  });
+
+  test("distillFeedback does not create distilled rules when no actionable content", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    const rulesPath = tmpRulesPath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("The build is slow", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+
+    const result = await distillFeedback(feedbackPath, templatePath, rulesPath);
+
+    expect(result.pendingVerification).toHaveLength(0);
+    const rules = await loadDistilledRules(rulesPath);
+    expect(rules).toHaveLength(0);
+  });
+
+  test("distillFeedback returns empty pendingVerification when no resolved feedback", async () => {
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    const rulesPath = tmpRulesPath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const result = await distillFeedback(feedbackPath, templatePath, rulesPath);
+    expect(result.pendingVerification).toEqual([]);
+  });
+
+  test("loadDistilledRules returns empty array when no store exists", async () => {
+    const rules = await loadDistilledRules(tmpRulesPath());
+    expect(rules).toEqual([]);
+  });
+
+  test("verifyDistilledRules marks rules as verified when code changes exist", async () => {
+    const rulesPath = tmpRulesPath();
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("Always run tests", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+    await distillFeedback(feedbackPath, templatePath, rulesPath);
+
+    const alwaysTrue = async () => true;
+    const result = await verifyDistilledRules(rulesPath, alwaysTrue);
+
+    expect(result.verified).toHaveLength(1);
+    expect(result.unverified).toHaveLength(0);
+
+    const stored = await loadDistilledRules(rulesPath);
+    expect(stored[0].status).toBe("verified");
+  });
+
+  test("verifyDistilledRules keeps rules as pending when no code changes", async () => {
+    const rulesPath = tmpRulesPath();
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("Always run tests", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+    await distillFeedback(feedbackPath, templatePath, rulesPath);
+
+    const alwaysFalse = async () => false;
+    const result = await verifyDistilledRules(rulesPath, alwaysFalse);
+
+    expect(result.verified).toHaveLength(0);
+    expect(result.unverified).toHaveLength(1);
+
+    const stored = await loadDistilledRules(rulesPath);
+    expect(stored[0].status).toBe("pending_verification");
+  });
+
+  test("verifyDistilledRules skips already verified rules", async () => {
+    const rulesPath = tmpRulesPath();
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("Always run tests", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+    await distillFeedback(feedbackPath, templatePath, rulesPath);
+
+    const alwaysTrue = async () => true;
+    await verifyDistilledRules(rulesPath, alwaysTrue);
+
+    // Verify again — should not re-process
+    const alwaysFalse = async () => false;
+    const result = await verifyDistilledRules(rulesPath, alwaysFalse);
+
+    expect(result.verified).toHaveLength(0);
+    expect(result.unverified).toHaveLength(0);
+  });
+
+  test("verifyDistilledRules verifies task_created rules when code changes exist", async () => {
+    const rulesPath = tmpRulesPath();
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("Always run tests", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+    await distillFeedback(feedbackPath, templatePath, rulesPath);
+
+    const rules = await loadDistilledRules(rulesPath);
+    await markRuleTaskCreated(rules[0].id, rulesPath);
+
+    const alwaysTrue = async () => true;
+    const result = await verifyDistilledRules(rulesPath, alwaysTrue);
+
+    expect(result.verified).toHaveLength(1);
+    expect(result.verified[0].status).toBe("verified");
+    expect(result.unverified).toHaveLength(0);
+
+    const stored = await loadDistilledRules(rulesPath);
+    expect(stored[0].status).toBe("verified");
+  });
+
+  test("verifyDistilledRules excludes task_created rules from unverified list", async () => {
+    const rulesPath = tmpRulesPath();
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("Always run tests", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+    await distillFeedback(feedbackPath, templatePath, rulesPath);
+
+    const rules = await loadDistilledRules(rulesPath);
+    await markRuleTaskCreated(rules[0].id, rulesPath);
+
+    const alwaysFalse = async () => false;
+    const result = await verifyDistilledRules(rulesPath, alwaysFalse);
+
+    expect(result.verified).toHaveLength(0);
+    expect(result.unverified).toHaveLength(0);
+
+    const stored = await loadDistilledRules(rulesPath);
+    expect(stored[0].status).toBe("task_created");
+  });
+
+  test("markRuleTaskCreated transitions rule to task_created status", async () => {
+    const rulesPath = tmpRulesPath();
+    const feedbackPath = tmpPath();
+    const templatePath = tmpTemplatePath();
+    await Bun.write(templatePath, sampleTemplate);
+
+    const fb = await addFeedback("Always run tests", "user1", feedbackPath);
+    await resolveFeedback(fb.id, feedbackPath);
+    await distillFeedback(feedbackPath, templatePath, rulesPath);
+
+    const rules = await loadDistilledRules(rulesPath);
+    await markRuleTaskCreated(rules[0].id, rulesPath);
+
+    const updated = await loadDistilledRules(rulesPath);
+    expect(updated[0].status).toBe("task_created");
   });
 });
 
