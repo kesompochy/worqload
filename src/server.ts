@@ -239,13 +239,13 @@ function buildRoutes(): Route[] {
         return json(task, 201);
       } },
 
-    { method: "POST", pattern: /^\/api\/tasks\/([^/]+)\/decide$/,
+    { method: "POST", pattern: /^\/api\/tasks\/([^/]+)\/answer$/,
       handler: async (req, queue, _port, params) =>
         withTask(queue, params[0], async (task) => {
           if (task.status !== "waiting_human") return json(NOT_WAITING_HUMAN, 400);
-          const body = await req.json() as { decision: string };
+          const body = await req.json() as { answer: string };
           queue.transition(task.id, "orienting");
-          queue.addLog(task.id, "orient", body.decision);
+          queue.addLog(task.id, "orient", body.answer);
           await queue.save();
           return json(queue.get(task.id));
         }) },
@@ -519,8 +519,8 @@ const html = htm.bind(h);
 
 const COLUMNS = [
   { key: 'observe', label: 'Observe', statuses: ['observing'] },
-  { key: 'orient', label: 'Orient', statuses: ['orienting'] },
-  { key: 'decide', label: 'Decide', statuses: ['deciding', 'waiting_human'] },
+  { key: 'orient', label: 'Orient', statuses: ['orienting', 'waiting_human'] },
+  { key: 'decide', label: 'Decide', statuses: ['deciding'] },
   { key: 'act', label: 'Act', statuses: ['acting'] },
   { key: 'done', label: 'Done', statuses: ['done', 'failed'] },
 ];
@@ -742,13 +742,13 @@ function FeedbackForm({ onSend }) {
 
 function TaskCard({ task, onUpdate }) {
   const question = getHumanQuestion(task);
-  const decideRef = useRef(null);
+  const answerRef = useRef(null);
   const isTerminal = task.status === 'done' || task.status === 'failed';
 
-  const submitDecide = async () => {
-    const val = decideRef.current.value.trim();
+  const submitAnswer = async () => {
+    const val = answerRef.current.value.trim();
     if (!val) return;
-    await api.post('/api/tasks/' + task.id.slice(0, 8) + '/decide', { decision: val });
+    await api.post('/api/tasks/' + task.id.slice(0, 8) + '/answer', { answer: val });
     onUpdate();
   };
   const setPriority = async (e) => {
@@ -791,9 +791,9 @@ function TaskCard({ task, onUpdate }) {
       \${question}
     </div>\`}
     \${task.status === 'waiting_human' && html\`<div class="human-action">
-      <input type="text" ref=\${decideRef} placeholder="Your answer..."
-        onKeyDown=\${(e) => { if (e.key === 'Enter' && e.shiftKey && !e.isComposing) { e.preventDefault(); submitDecide(); }}} />
-      <button class="primary" onClick=\${submitDecide}>Answer</button>
+      <input type="text" ref=\${answerRef} placeholder="Your answer..."
+        onKeyDown=\${(e) => { if (e.key === 'Enter' && e.shiftKey && !e.isComposing) { e.preventDefault(); submitAnswer(); }}} />
+      <button class="primary" onClick=\${submitAnswer}>Answer</button>
     </div>\`}
     \${task.logs.length > 0 && html\`<div class="logs">
       \${task.logs.map((l, i) => html\`<div class="log" key=\${i}><span class="log-phase">[\${l.phase}]</span> \${l.content}</div>\`)}

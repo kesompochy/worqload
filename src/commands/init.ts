@@ -29,7 +29,7 @@ This keeps the OODA cycle running every 2 minutes. Do NOT wait for human instruc
 \\\`\\\`\\\`
 observing → orienting → deciding → acting → done
                                    ↓
-                             waiting_human → deciding (after human responds)
+                             waiting_human → orienting (after human responds)
 Any active status → failed → observing (via retry)
 \\\`\\\`\\\`
 

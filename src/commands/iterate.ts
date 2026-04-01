@@ -1,6 +1,6 @@
 import type { TaskQueue } from "../queue";
 import type { Task } from "../task";
-import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX } from "../task";
+import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX, getHumanQuestion } from "../task";
 import type { FeedbackSummary } from "../feedback";
 import { loadFeedback, summarizeFeedback, distillFeedback, extractObservationalContent, verifyDistilledRules, markRuleTaskCreated, type CodeChangeChecker } from "../feedback";
 import type { Mission } from "../mission";
@@ -218,7 +218,7 @@ export function hasHumanAnswer(task: Task): boolean {
   }
   if (lastHumanRequiredIndex === -1) return false;
   return task.logs.slice(lastHumanRequiredIndex + 1).some(
-    l => (l.phase === "orient" || l.phase === "decide") && !l.content.startsWith(HUMAN_REQUIRED_PREFIX),
+    l => l.phase === "orient" && !l.content.startsWith(HUMAN_REQUIRED_PREFIX),
   );
 }
 
@@ -701,10 +701,7 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
 
   if (obs.waitingHumanTasks.length > 0) {
     const questions = obs.waitingHumanTasks.map(t => {
-      const lastDecideLog = [...t.logs].reverse().find(l => l.phase === "decide");
-      const question = lastDecideLog?.content.startsWith(HUMAN_REQUIRED_PREFIX)
-        ? lastDecideLog.content.slice(HUMAN_REQUIRED_PREFIX.length)
-        : t.title;
+      const question = getHumanQuestion(t) ?? t.title;
       return `[${t.id.slice(0, SHORT_ID_LENGTH)}] ${question}`;
     });
     queue.addLog(id, "decide", `present waiting_human: ${questions.join("; ")}`);

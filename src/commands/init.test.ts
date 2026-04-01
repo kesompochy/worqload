@@ -60,7 +60,7 @@ describe("DEFAULT_AGENT_TEMPLATE covers human escalation", () => {
   });
 
   test("explains what happens after human responds", () => {
-    expect(template).toMatch(/waiting_human.*decid/s);
+    expect(template).toMatch(/waiting_human.*orient/s);
   });
 });
 
