@@ -319,7 +319,7 @@ describe("analyzeObservation", () => {
 
   test("includes server log summary in analysis when logs exist", () => {
     const obs: Observation = {
-      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
       activeMissions: [],
       failedMissions: [],
       sourceResults: [],
@@ -351,7 +351,7 @@ describe("analyzeObservation", () => {
 
   test("omits server log section when no logs", () => {
     const obs: Observation = {
-      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
       activeMissions: [],
       failedMissions: [],
       sourceResults: [],
@@ -696,7 +696,7 @@ describe("collectObservation - answered waiting_human", () => {
 describe("analyzeObservation - answered waiting_human", () => {
   test("reports answered_human tag when answered tasks exist", () => {
     const obs: Observation = {
-      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
       activeMissions: [],
       failedMissions: [],
       sourceResults: [],
@@ -719,7 +719,7 @@ describe("analyzeObservation - answered waiting_human", () => {
 describe("analyzeObservation - deciding tasks", () => {
   function emptyObs(): Observation {
     return {
-      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
       activeMissions: [],
       failedMissions: [],
       sourceResults: [],
@@ -821,7 +821,7 @@ describe("filterManagedPaths", () => {
 describe("generateTasksFromObservation", () => {
   function emptyObservation(): Observation {
     return {
-      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
       activeMissions: [],
       failedMissions: [],
       sourceResults: [],
@@ -893,7 +893,8 @@ describe("generateTasksFromObservation", () => {
         { id: "f2", from: "alice", message: "Login still broken", status: "new", createdAt: new Date().toISOString() },
         { id: "f3", from: "alice", message: "Login page error", status: "new", createdAt: new Date().toISOString() },
       ],
-      themes: ["alice から未解決フィードバックが 3 件"],
+      themes: [{ description: "alice から未解決フィードバックが 3 件", feedbackIds: ["f1", "f2", "f3"] }],
+      unresolvedIds: ["f1", "f2", "f3"],
     };
 
     const result = await generateTasksFromObservation(queue, obs);
@@ -901,6 +902,27 @@ describe("generateTasksFromObservation", () => {
     expect(result.createdTasks.some(t => t.includes("feedback"))).toBe(true);
     const feedbackTasks = queue.list().filter(t => t.title.includes("feedback"));
     expect(feedbackTasks.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("attaches feedbackIds to context when creating feedback theme task", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 3, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: "f1", from: "alice", message: "Fix bug", status: "new", createdAt: new Date().toISOString() },
+        { id: "f2", from: "alice", message: "Still broken", status: "new", createdAt: new Date().toISOString() },
+        { id: "f3", from: "alice", message: "Page error", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [{ description: "alice から未解決フィードバックが 3 件", feedbackIds: ["f1", "f2", "f3"] }],
+      unresolvedIds: ["f1", "f2", "f3"],
+    };
+
+    await generateTasksFromObservation(queue, obs);
+
+    const feedbackTask = queue.list().find(t => t.title.startsWith("Review feedback:"));
+    expect(feedbackTask).toBeDefined();
+    expect(feedbackTask!.context.feedbackIds).toEqual(["f1", "f2", "f3"]);
   });
 
   test("does not recreate feedback task when a matching done task exists", async () => {
@@ -912,7 +934,8 @@ describe("generateTasksFromObservation", () => {
     obs.feedbackSummary = {
       counts: { new: 3, acknowledged: 0, resolved: 0 },
       recentUnresolved: [],
-      themes: ["alice から未解決フィードバックが 3 件"],
+      themes: [{ description: "alice から未解決フィードバックが 3 件", feedbackIds: ["f1", "f2", "f3"] }],
+      unresolvedIds: ["f1", "f2", "f3"],
     };
 
     const result = await generateTasksFromObservation(queue, obs);
@@ -929,7 +952,8 @@ describe("generateTasksFromObservation", () => {
     obs.feedbackSummary = {
       counts: { new: 3, acknowledged: 0, resolved: 0 },
       recentUnresolved: [],
-      themes: ["alice から未解決フィードバックが 3 件"],
+      themes: [{ description: "alice から未解決フィードバックが 3 件", feedbackIds: ["f1", "f2", "f3"] }],
+      unresolvedIds: ["f1", "f2", "f3"],
     };
 
     const result = await generateTasksFromObservation(queue, obs);
@@ -1011,7 +1035,8 @@ describe("generateTasksFromObservation", () => {
     obs.feedbackSummary = {
       counts: { new: 3, acknowledged: 0, resolved: 0 },
       recentUnresolved: [],
-      themes: ["alice から未解決フィードバックが 3 件"],
+      themes: [{ description: "alice から未解決フィードバックが 3 件", feedbackIds: ["f1", "f2", "f3"] }],
+      unresolvedIds: ["f1", "f2", "f3"],
     };
 
     const result = await generateTasksFromObservation(queue, obs);
@@ -1146,13 +1171,16 @@ describe("generateTasksFromObservation", () => {
         { id: "f2", from: "user", message: "Improve error messages", status: "new", createdAt: new Date().toISOString() },
       ],
       themes: [],
+      unresolvedIds: ["f1", "f2", "f3"],
     };
 
     const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.autonomousTasks.length).toBeGreaterThanOrEqual(1);
     expect(result.autonomousTasks.some(t => t.includes("feedback"))).toBe(true);
-    expect(queue.list().some(t => t.title.toLowerCase().includes("feedback"))).toBe(true);
+    const feedbackTask = queue.list().find(t => t.title.toLowerCase().includes("feedback"));
+    expect(feedbackTask).toBeDefined();
+    expect(feedbackTask!.context.feedbackIds).toEqual(["f1", "f2", "f3"]);
   });
 
   test("derives improvement task from principles and source results when queue is empty", async () => {
@@ -1239,7 +1267,7 @@ describe("generateTasksFromObservation", () => {
 describe("deriveAutonomousTasks", () => {
   function emptyObs(): Observation {
     return {
-      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
       activeMissions: [],
       failedMissions: [],
       sourceResults: [],
@@ -1264,7 +1292,7 @@ describe("deriveAutonomousTasks", () => {
 
     const derived = deriveAutonomousTasks(obs, queue, []);
 
-    expect(derived.some(t => t.toLowerCase().includes("test"))).toBe(true);
+    expect(derived.some(t => t.title.toLowerCase().includes("test"))).toBe(true);
   });
 
   test("does not derive test fix task when tests all pass", () => {
@@ -1277,7 +1305,7 @@ describe("deriveAutonomousTasks", () => {
 
     const derived = deriveAutonomousTasks(obs, queue, []);
 
-    expect(derived.some(t => t.toLowerCase().includes("fix failing test"))).toBe(false);
+    expect(derived.some(t => t.title.toLowerCase().includes("fix failing test"))).toBe(false);
   });
 
   test("derives investigation task when principles exist but sources have no actionable output", () => {
@@ -1291,7 +1319,7 @@ describe("deriveAutonomousTasks", () => {
     const derived = deriveAutonomousTasks(obs, queue, []);
 
     expect(derived.length).toBe(1);
-    expect(derived[0]).toContain("Principles");
+    expect(derived[0].title).toContain("Principles");
   });
 
   test("derives investigation task when principles exist and sources are empty", () => {
@@ -1302,7 +1330,7 @@ describe("deriveAutonomousTasks", () => {
     const derived = deriveAutonomousTasks(obs, queue, []);
 
     expect(derived.length).toBe(1);
-    expect(derived[0]).toContain("Principles");
+    expect(derived[0].title).toContain("Principles");
   });
 
   test("does not duplicate investigation task if one already exists", () => {
@@ -1315,7 +1343,7 @@ describe("deriveAutonomousTasks", () => {
 
     const derived = deriveAutonomousTasks(obs, queue, []);
 
-    expect(derived.filter(t => t.includes("Principles"))).toHaveLength(0);
+    expect(derived.filter(t => t.title.includes("Principles"))).toHaveLength(0);
   });
 
   test("prefers specific source-derived tasks over general investigation", () => {
@@ -1329,8 +1357,8 @@ describe("deriveAutonomousTasks", () => {
     const derived = deriveAutonomousTasks(obs, queue, []);
 
     // Should derive a test fix task, not a general investigation task
-    expect(derived.some(t => t.toLowerCase().includes("test"))).toBe(true);
-    expect(derived.filter(t => t.includes("Investigate improvements"))).toHaveLength(0);
+    expect(derived.some(t => t.title.toLowerCase().includes("test"))).toBe(true);
+    expect(derived.filter(t => t.title.includes("Investigate improvements"))).toHaveLength(0);
   });
 
   test("derives investigation task even when same title exists in archive", () => {
@@ -1343,7 +1371,7 @@ describe("deriveAutonomousTasks", () => {
     const derived = deriveAutonomousTasks(obs, queue, [archived]);
 
     expect(derived.length).toBe(1);
-    expect(derived[0]).toContain("Principles");
+    expect(derived[0].title).toContain("Principles");
   });
 
   test("still checks active queue for investigation task duplicates", () => {
@@ -1356,7 +1384,7 @@ describe("deriveAutonomousTasks", () => {
 
     const derived = deriveAutonomousTasks(obs, queue, []);
 
-    expect(derived.filter(t => t.includes("Principles"))).toHaveLength(0);
+    expect(derived.filter(t => t.title.includes("Principles"))).toHaveLength(0);
   });
 
   test("returns empty array when no principles exist", () => {
@@ -1367,6 +1395,18 @@ describe("deriveAutonomousTasks", () => {
     const derived = deriveAutonomousTasks(obs, queue, []);
 
     expect(derived).toHaveLength(0);
+  });
+
+  test("investigation task includes parsedPrincipleItems in context.principles", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Improve documentation\n- Ship small increments";
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    expect(derived).toHaveLength(1);
+    expect(derived[0].title).toContain("Principles");
+    expect(derived[0].context.principles).toEqual(["Improve documentation", "Ship small increments"]);
   });
 });
 
@@ -1489,7 +1529,7 @@ describe("formatCleanupLog", () => {
 describe("iterate - waiting_human suppresses chat output", () => {
   function waitingHumanObservation(waitingTasks: Task[]): Observation {
     return {
-      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
       activeMissions: [],
       failedMissions: [],
       sourceResults: [],

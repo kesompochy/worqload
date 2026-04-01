@@ -3,6 +3,7 @@ import { EntityStore } from "./utils/entity-store";
 const DEFAULT_REPORTS_PATH = ".worqload/reports.json";
 
 export type ReportStatus = "unread" | "reading" | "read" | "archived";
+export type ReportCategory = "internal" | "human";
 
 export interface Report {
   id: string;
@@ -12,6 +13,7 @@ export interface Report {
   createdBy: string;
   createdAt: string;
   taskId?: string;
+  category?: ReportCategory;
 }
 
 const store = new EntityStore<Report>(DEFAULT_REPORTS_PATH, "Report");
@@ -27,11 +29,13 @@ export async function saveReports(reports: Report[], path?: string): Promise<voi
 export interface AddReportOptions {
   taskId?: string;
   path?: string;
+  category?: ReportCategory;
 }
 
 export async function addReport(title: string, content: string, createdBy: string, pathOrOptions?: string | AddReportOptions): Promise<Report> {
   const resolvedPath = typeof pathOrOptions === "string" ? pathOrOptions : pathOrOptions?.path;
-  const taskId = typeof pathOrOptions === "string" ? undefined : pathOrOptions.taskId;
+  const taskId = typeof pathOrOptions === "string" ? undefined : pathOrOptions?.taskId;
+  const category: ReportCategory = typeof pathOrOptions === "string" ? "internal" : (pathOrOptions?.category ?? "internal");
   const report: Report = {
     id: crypto.randomUUID(),
     title,
@@ -39,6 +43,7 @@ export async function addReport(title: string, content: string, createdBy: strin
     status: "unread",
     createdBy,
     createdAt: new Date().toISOString(),
+    category,
     ...(taskId ? { taskId } : {}),
   };
   return store.add(report, resolvedPath);

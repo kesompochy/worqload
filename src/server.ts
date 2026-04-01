@@ -186,7 +186,13 @@ function buildRoutes(): Route[] {
       } },
 
     { method: "GET", pattern: "/api/reports",
-      handler: async () => json(await loadReports()) },
+      handler: async (req) => {
+        const url = new URL(req.url);
+        const category = url.searchParams.get("category");
+        const reports = await loadReports();
+        const filtered = category ? reports.filter(r => r.category === category) : reports;
+        return json(filtered);
+      } },
 
     { method: "PATCH", pattern: /^\/api\/reports\/([^/]+)\/status$/,
       handler: async (req, _queue, _port, params) => {
@@ -1021,7 +1027,7 @@ function App() {
   const refresh = useCallback(async () => {
     const [tasks, history, principles, heartbeat, spawns, projects, projectFeedback, reports, sleep, missions, runners] = await Promise.all([
       api.get('/api/tasks'), api.get('/api/history'), api.get('/api/principles'),
-      api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/projects/feedback'), api.get('/api/reports'),
+      api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/projects/feedback'), api.get('/api/reports?category=human'),
       api.get('/api/sleep'), api.get('/api/missions'), api.get('/api/mission-runners'),
     ]);
     setData({ tasks, history, principles, heartbeat, spawns, projects, projectFeedback, reports, sleep, missions, runners });

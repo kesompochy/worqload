@@ -51,10 +51,16 @@ export async function removeFeedback(id: string, path: string = DEFAULT_FEEDBACK
   await store.remove(id, path);
 }
 
+export interface FeedbackTheme {
+  description: string;
+  feedbackIds: string[];
+}
+
 export interface FeedbackSummary {
   counts: Record<FeedbackStatus, number>;
   recentUnresolved: Feedback[];
-  themes: string[];
+  themes: FeedbackTheme[];
+  unresolvedIds: string[];
 }
 
 export function summarizeFeedback(items: Feedback[]): FeedbackSummary {
@@ -68,7 +74,7 @@ export function summarizeFeedback(items: Feedback[]): FeedbackSummary {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const recentUnresolved = unresolved.slice(0, 5);
 
-  const themes: string[] = [];
+  const themes: FeedbackTheme[] = [];
   const bySender = new Map<string, Feedback[]>();
   for (const item of unresolved) {
     const group = bySender.get(item.from) || [];
@@ -77,11 +83,14 @@ export function summarizeFeedback(items: Feedback[]): FeedbackSummary {
   }
   for (const [sender, group] of bySender) {
     if (group.length >= 3) {
-      themes.push(`${sender} から未解決フィードバックが ${group.length} 件`);
+      themes.push({
+        description: `${sender} から未解決フィードバックが ${group.length} 件`,
+        feedbackIds: group.map(f => f.id),
+      });
     }
   }
 
-  return { counts, recentUnresolved, themes };
+  return { counts, recentUnresolved, themes, unresolvedIds: unresolved.map(f => f.id) };
 }
 
 export interface DistillResult {

@@ -52,6 +52,59 @@ test("addReport creates an unread report", async () => {
   expect(reports[0].id).toBe(report.id);
 });
 
+describe("report category", () => {
+  test("addReport defaults category to internal when path string is passed", async () => {
+    const path = tmpReportsPath();
+    const report = await addReport("内部監査", "監査ログ", "agent-1", path);
+    expect(report.category).toBe("internal");
+  });
+
+  test("addReport defaults category to internal when options without category", async () => {
+    const path = tmpReportsPath();
+    const report = await addReport("内部監査", "監査ログ", "agent-1", { path });
+    expect(report.category).toBe("internal");
+  });
+
+  test("addReport accepts category in options", async () => {
+    const path = tmpReportsPath();
+    const report = await addReport("人間向けレポート", "読んでください", "agent-1", { path, category: "human" });
+    expect(report.category).toBe("human");
+  });
+
+  test("addReport accepts internal category explicitly", async () => {
+    const path = tmpReportsPath();
+    const report = await addReport("内部レポート", "内部用", "agent-1", { path, category: "internal" });
+    expect(report.category).toBe("internal");
+  });
+
+  test("category is persisted through save/load", async () => {
+    const path = tmpReportsPath();
+    await addReport("人間向け", "内容", "agent-1", { path, category: "human" });
+    await addReport("内部用", "内容", "agent-1", { path, category: "internal" });
+
+    const reports = await loadReports(path);
+    expect(reports).toHaveLength(2);
+    expect(reports[0].category).toBe("human");
+    expect(reports[1].category).toBe("internal");
+  });
+
+  test("legacy reports without category are treated as internal", async () => {
+    const path = tmpReportsPath();
+    const legacyReport: Report = {
+      id: "legacy-id",
+      title: "旧レポート",
+      content: "旧形式",
+      status: "unread",
+      createdBy: "agent-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    await saveReports([legacyReport], path);
+
+    const reports = await loadReports(path);
+    expect(reports[0].category).toBeUndefined();
+  });
+});
+
 test("updateReportStatus changes status", async () => {
   const path = tmpReportsPath();
   const report = await addReport("状態変更テスト", "内容", "agent-1", path);

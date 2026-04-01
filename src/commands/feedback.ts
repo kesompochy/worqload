@@ -21,7 +21,7 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
     if (summary.themes.length > 0) {
       console.log("\nThemes:");
       for (const t of summary.themes) {
-        console.log(`  - ${t}`);
+        console.log(`  - ${t.description}`);
       }
     }
     return;

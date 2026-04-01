@@ -37,7 +37,7 @@ export async function collectResumeState(queue: TaskQueue, options: ResumeOption
     activeTasks: tasks.filter(t => ACTIVE_STATUSES.has(t.status)),
     waitingHumanTasks: tasks.filter(t => t.status === "waiting_human"),
     activeMissions: missions.filter(m => m.status === "active"),
-    unreadReports: reports.filter(r => r.status === "unread"),
+    unreadReports: reports.filter(r => r.status === "unread" && r.category === "human"),
     newFeedback: feedback.filter(f => f.status === "new"),
   };
 }

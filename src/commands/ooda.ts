@@ -3,6 +3,7 @@ import type { TaskQueue } from "../queue";
 import { HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "../task";
 import { resolveTask } from "./resolve";
 import { runOnDoneHooks } from "../hooks";
+import { resolveFeedback } from "../feedback";
 
 export async function observe(queue: TaskQueue, args: string[]) {
   const task = resolveTask(queue, args[0]);
@@ -65,13 +66,25 @@ export async function act(queue: TaskQueue, args: string[]) {
   console.log(`Acting: ${task.title}`);
 }
 
-export async function done(queue: TaskQueue, args: string[]) {
+export async function done(queue: TaskQueue, args: string[], feedbackPath?: string) {
   const task = resolveTask(queue, args[0]);
   const note = args.slice(1).join(" ");
   if (note) {
     queue.addLog(task.id, "act", note);
   }
   queue.transition(task.id, "done");
+
+  const feedbackIds = task.context.feedbackIds as string[] | undefined;
+  if (feedbackIds && feedbackIds.length > 0) {
+    for (const fId of feedbackIds) {
+      try {
+        await resolveFeedback(fId, feedbackPath);
+      } catch {
+        // Feedback may already be resolved or removed
+      }
+    }
+  }
+
   await queue.save();
   console.log(`Done: ${task.title}`);
   await runOnDoneHooks(task.id, task.title);

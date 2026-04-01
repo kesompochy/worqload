@@ -2,9 +2,10 @@ import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
 import { TaskQueue } from "../queue";
-import { observe, orient } from "./ooda";
+import { observe, orient, done } from "./ooda";
 import { createTask, HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "../task";
 import { EscalationError } from "../utils/errors";
+import { addFeedback, loadFeedback } from "../feedback";
 
 function tmpPath(label: string): string {
   return join(tmpdir(), `worqload-ooda-cmd-${label}-${crypto.randomUUID()}.json`);
@@ -113,5 +114,54 @@ describe("orient --human", () => {
     expect(updated.status).toBe("orienting");
     expect(updated.logs[0].phase).toBe("orient");
     expect(updated.logs[0].content).toBe("Analysis complete");
+  });
+});
+
+describe("done", () => {
+  test("auto-resolves feedback when task has context.feedbackIds", async () => {
+    const feedbackPath = join(tmpdir(), `worqload-ooda-done-feedback-${crypto.randomUUID()}.json`);
+    const f1 = await addFeedback("Bug report 1", "alice", feedbackPath);
+    const f2 = await addFeedback("Bug report 2", "alice", feedbackPath);
+    const f3 = await addFeedback("Unrelated feedback", "bob", feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("done-resolve"));
+    const task = createTask("Review feedback: alice", { feedbackIds: [f1.id, f2.id] });
+    queue.enqueue(task);
+
+    await done(queue, [task.id, "Reviewed and addressed"], feedbackPath);
+
+    const remaining = await loadFeedback(feedbackPath);
+    const resolved = remaining.filter(f => f.status === "resolved");
+    expect(resolved).toHaveLength(2);
+    expect(resolved.map(f => f.id)).toEqual(expect.arrayContaining([f1.id, f2.id]));
+    // f3 remains unaffected
+    const bob = remaining.find(f => f.id === f3.id);
+    expect(bob!.status).toBe("new");
+  });
+
+  test("does not fail when task has no feedbackIds", async () => {
+    const queue = new TaskQueue(tmpPath("done-no-feedback"));
+    const task = createTask("Normal task");
+    queue.enqueue(task);
+
+    await done(queue, [task.id, "Completed"]);
+
+    expect(queue.get(task.id)!.status).toBe("done");
+  });
+
+  test("silently ignores already-removed feedback IDs", async () => {
+    const feedbackPath = join(tmpdir(), `worqload-ooda-done-missing-${crypto.randomUUID()}.json`);
+    const f1 = await addFeedback("Will be removed", "alice", feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("done-missing-feedback"));
+    const task = createTask("Review feedback", { feedbackIds: [f1.id, "nonexistent-id"] });
+    queue.enqueue(task);
+
+    // Should not throw
+    await done(queue, [task.id], feedbackPath);
+
+    expect(queue.get(task.id)!.status).toBe("done");
+    const remaining = await loadFeedback(feedbackPath);
+    expect(remaining[0].status).toBe("resolved");
   });
 });

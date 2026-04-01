@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { addFeedback, loadFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback, distillFeedback, extractActionableRules, sendFeedbackToProject } from "./feedback";
+import { addFeedback, loadFeedback, saveFeedback, acknowledgeFeedback, resolveFeedback, updateFeedbackMessage, summarizeFeedback, distillFeedback, extractActionableRules, sendFeedbackToProject } from "./feedback";
 import { registerProject, type Project } from "./projects";
 
 function tmpPath(): string {
@@ -104,14 +104,15 @@ test("summarizeFeedback counts by status", async () => {
 
 test("summarizeFeedback returns up to 5 recent unresolved items", async () => {
   const path = tmpPath();
+  const items = [];
   for (let i = 0; i < 7; i++) {
-    await addFeedback(`msg${i}`, "user1", path);
+    const f = await addFeedback(`msg${i}`, "user1", path);
+    f.createdAt = new Date(Date.now() + i * 1000).toISOString();
+    items.push(f);
   }
-  const items = await loadFeedback(path);
-  // resolve one
+  await saveFeedback(items, path);
   items[0].status = "resolved";
   const summary = summarizeFeedback(items);
-  // 6 unresolved, but only 5 returned (most recent first)
   expect(summary.recentUnresolved).toHaveLength(5);
   expect(summary.recentUnresolved[0].message).toBe("msg6");
 });
@@ -125,7 +126,34 @@ test("summarizeFeedback detects repeated themes from same sender", async () => {
   const summary = summarizeFeedback(items);
   // Repeated sender with 3+ items is a theme
   expect(summary.themes.length).toBeGreaterThanOrEqual(1);
-  expect(summary.themes[0]).toContain("alice");
+  expect(summary.themes[0].description).toContain("alice");
+});
+
+test("summarizeFeedback themes include feedbackIds of unresolved items from that sender", async () => {
+  const path = tmpPath();
+  const f1 = await addFeedback("UI is slow", "alice", path);
+  const f2 = await addFeedback("UI loading is slow", "alice", path);
+  const f3 = await addFeedback("UI performance is slow", "alice", path);
+  const items = await loadFeedback(path);
+  const summary = summarizeFeedback(items);
+
+  expect(summary.themes).toHaveLength(1);
+  expect(summary.themes[0].feedbackIds).toEqual(expect.arrayContaining([f1.id, f2.id, f3.id]));
+  expect(summary.themes[0].feedbackIds).toHaveLength(3);
+});
+
+test("summarizeFeedback returns unresolvedIds for all unresolved items", async () => {
+  const path = tmpPath();
+  const f1 = await addFeedback("msg1", "alice", path);
+  const f2 = await addFeedback("msg2", "bob", path);
+  const f3 = await addFeedback("msg3", "alice", path);
+  const items = await loadFeedback(path);
+  items[1].status = "resolved";
+  const summary = summarizeFeedback(items);
+
+  expect(summary.unresolvedIds).toEqual(expect.arrayContaining([f1.id, f3.id]));
+  expect(summary.unresolvedIds).not.toContain(f2.id);
+  expect(summary.unresolvedIds).toHaveLength(2);
 });
 
 describe("extractActionableRules", () => {

@@ -258,7 +258,7 @@ export function analyzeObservation(obs: Observation): string {
     lines.push(`new feedback: ${obs.feedbackSummary.counts.new}`);
   }
   for (const theme of obs.feedbackSummary.themes) {
-    lines.push(`feedback theme: ${theme}`);
+    lines.push(`feedback theme: ${theme.description}`);
   }
 
   if (obs.activeMissions.length > 0) {
@@ -345,21 +345,27 @@ function hasTestFailures(sourceResults: SourceResult[]): boolean {
   );
 }
 
-export function deriveAutonomousTasks(obs: Observation, queue: TaskQueue, archivedTasks: Task[]): string[] {
-  const derived: string[] = [];
+export interface DerivedTask {
+  title: string;
+  context: Record<string, unknown>;
+}
+
+export function deriveAutonomousTasks(obs: Observation, queue: TaskQueue, archivedTasks: Task[]): DerivedTask[] {
+  const derived: DerivedTask[] = [];
 
   // Unresolved feedback → feedback review task
   const unresolvedCount = obs.feedbackSummary.counts.new + obs.feedbackSummary.counts.acknowledged;
   if (unresolvedCount > 0) {
     if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_FEEDBACK_REVIEW_TITLE, archivedTasks)) {
-      derived.push(AUTONOMOUS_FEEDBACK_REVIEW_TITLE);
+      const feedbackIds = obs.feedbackSummary.unresolvedIds ?? [];
+      derived.push({ title: AUTONOMOUS_FEEDBACK_REVIEW_TITLE, context: { feedbackIds } });
     }
   }
 
   // Test failures → test fix task
   if (hasTestFailures(obs.sourceResults)) {
     if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_TEST_FIX_TITLE, archivedTasks)) {
-      derived.push(AUTONOMOUS_TEST_FIX_TITLE);
+      derived.push({ title: AUTONOMOUS_TEST_FIX_TITLE, context: {} });
     }
   }
 
@@ -369,7 +375,7 @@ export function deriveAutonomousTasks(obs: Observation, queue: TaskQueue, archiv
   const principleItems = parsePrincipleItems(obs.principles);
   if (derived.length === 0 && principleItems.length > 0) {
     if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_INVESTIGATION_TITLE, [])) {
-      derived.push(AUTONOMOUS_INVESTIGATION_TITLE);
+      derived.push({ title: AUTONOMOUS_INVESTIGATION_TITLE, context: { principles: principleItems } });
     }
   }
 
@@ -393,9 +399,9 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
 
   // New feedback themes → review tasks
   for (const theme of obs.feedbackSummary.themes) {
-    const title = `Review feedback: ${theme}`;
+    const title = `Review feedback: ${theme.description}`;
     if (!hasDuplicateTask(queue, obs.tasks, REVIEW_FEEDBACK_PREFIX, archivedTasks, { prefixMatch: true, includeDone: true })) {
-      const task = createTask(title, {}, 0, "iterate");
+      const task = createTask(title, { feedbackIds: theme.feedbackIds }, 0, "iterate");
       queue.enqueue(task);
       createdTasks.push(task.title);
     }
@@ -446,8 +452,8 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
 
   if (isQueueEmpty && nothingGeneratedYet && obs.principles) {
     const derived = deriveAutonomousTasks(obs, queue, archivedTasks);
-    for (const title of derived) {
-      const task = createTask(title, {}, 0, "iterate");
+    for (const { title, context } of derived) {
+      const task = createTask(title, context, 0, "iterate");
       queue.enqueue(task);
       autonomousTasks.push(task.title);
     }

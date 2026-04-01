@@ -88,10 +88,11 @@ describe("collectResumeState", () => {
     expect(state.activeMissions[0].name).toBe("Active mission");
   });
 
-  test("collects unread reports only", async () => {
+  test("collects unread human reports only", async () => {
     const reportsPath = tmpPath("reports");
-    await addReport("Unread report", "content", "agent", reportsPath);
-    const r2 = await addReport("Read report", "content", "agent", reportsPath);
+    await addReport("Unread human report", "content", "agent", { path: reportsPath, category: "human" });
+    const r2 = await addReport("Read human report", "content", "agent", { path: reportsPath, category: "human" });
+    await addReport("Unread internal report", "content", "agent", { path: reportsPath, category: "internal" });
     const { updateReportStatus } = await import("./reports");
     await updateReportStatus(r2.id, "read", reportsPath);
 
@@ -105,7 +106,7 @@ describe("collectResumeState", () => {
     });
 
     expect(state.unreadReports).toHaveLength(1);
-    expect(state.unreadReports[0].title).toBe("Unread report");
+    expect(state.unreadReports[0].title).toBe("Unread human report");
   });
 
   test("collects new feedback only", async () => {

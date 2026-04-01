@@ -12,7 +12,8 @@ export async function report(_queue: TaskQueue, args: string[]) {
       return;
     }
     for (const r of reports) {
-      console.log(`[${r.status.padEnd(7)}] ${r.title} (by: ${r.createdBy}, ${r.id.slice(0, SHORT_ID_LENGTH)})`);
+      const cat = r.category || "internal";
+      console.log(`[${r.status.padEnd(7)}] [${cat}] ${r.title} (by: ${r.createdBy}, ${r.id.slice(0, SHORT_ID_LENGTH)})`);
     }
     return;
   }
@@ -25,12 +26,14 @@ export async function report(_queue: TaskQueue, args: string[]) {
     return;
   }
   if (args[0] === "add") {
-    const { flags, rest } = parseFlags(args.slice(1), ["--by"]);
+    const { flags, rest } = parseFlags(args.slice(1), ["--by", "--category"]);
     const title = rest[0];
     const content = rest.slice(1).join(" ");
-    if (!title || !content) exitWithError("Usage: worqload report add <title> <content> [--by <creator>]");
-    const r = await addReport(title, content, flags["--by"] || "agent");
-    console.log(`Report added: ${r.title} (${r.id.slice(0, SHORT_ID_LENGTH)})`);
+    if (!title || !content) exitWithError("Usage: worqload report add <title> <content> [--by <creator>] [--category <internal|human>]");
+    const category = flags["--category"] as "internal" | "human" | undefined;
+    if (category && category !== "internal" && category !== "human") exitWithError(`Invalid category: ${category}. Valid: internal, human`);
+    const r = await addReport(title, content, flags["--by"] || "agent", { category });
+    console.log(`Report added: ${r.title} (${r.id.slice(0, SHORT_ID_LENGTH)}, ${r.category})`);
     return;
   }
   if (args[0] === "status") {
@@ -53,6 +56,7 @@ export async function report(_queue: TaskQueue, args: string[]) {
     return;
   }
   for (const r of reports) {
-    console.log(`[${r.status.padEnd(7)}] ${r.title} (by: ${r.createdBy}, ${r.id.slice(0, SHORT_ID_LENGTH)})`);
+    const cat = r.category || "internal";
+    console.log(`[${r.status.padEnd(7)}] [${cat}] ${r.title} (by: ${r.createdBy}, ${r.id.slice(0, SHORT_ID_LENGTH)})`);
   }
 }
