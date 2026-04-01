@@ -38,7 +38,7 @@ test("validateTransition allows valid transitions", () => {
     ["orienting", "deciding"],
     ["orienting", "waiting_human"],
     ["deciding", "acting"],
-    ["waiting_human", "deciding"],
+    ["waiting_human", "orienting"],
     ["acting", "done"],
     ["acting", "failed"],
     ["failed", "observing"],
@@ -55,6 +55,7 @@ test("validateTransition rejects invalid transitions", () => {
     ["done", "failed"],
     ["acting", "observing"],
     ["deciding", "waiting_human"],
+    ["waiting_human", "deciding"],
     ["failed", "done"],
   ];
 
@@ -67,14 +68,14 @@ describe("getHumanQuestion", () => {
   test("returns question from waiting_human task with HUMAN REQUIRED log", () => {
     const task = createTask("test task");
     task.status = "waiting_human";
-    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] Should we proceed?", timestamp: "2025-01-01T00:00:00Z" });
+    task.logs.push({ phase: "orient", content: "[HUMAN REQUIRED] Should we proceed?", timestamp: "2025-01-01T00:00:00Z" });
 
     expect(getHumanQuestion(task)).toBe("Should we proceed?");
   });
 
   test("returns null for non-waiting_human task", () => {
     const task = createTask("test task");
-    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] question", timestamp: "2025-01-01T00:00:00Z" });
+    task.logs.push({ phase: "orient", content: "[HUMAN REQUIRED] question", timestamp: "2025-01-01T00:00:00Z" });
 
     expect(getHumanQuestion(task)).toBeNull();
   });
@@ -82,7 +83,7 @@ describe("getHumanQuestion", () => {
   test("returns null for waiting_human task without HUMAN REQUIRED log", () => {
     const task = createTask("test task");
     task.status = "waiting_human";
-    task.logs.push({ phase: "decide", content: "some decision", timestamp: "2025-01-01T00:00:00Z" });
+    task.logs.push({ phase: "orient", content: "some analysis", timestamp: "2025-01-01T00:00:00Z" });
 
     expect(getHumanQuestion(task)).toBeNull();
   });
@@ -90,9 +91,9 @@ describe("getHumanQuestion", () => {
   test("returns latest HUMAN REQUIRED question when multiple exist", () => {
     const task = createTask("test task");
     task.status = "waiting_human";
-    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] First question?", timestamp: "2025-01-01T00:00:00Z" });
-    task.logs.push({ phase: "decide", content: "user answered", timestamp: "2025-01-01T00:01:00Z" });
-    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] Second question?", timestamp: "2025-01-01T00:02:00Z" });
+    task.logs.push({ phase: "orient", content: "[HUMAN REQUIRED] First question?", timestamp: "2025-01-01T00:00:00Z" });
+    task.logs.push({ phase: "orient", content: "user answered", timestamp: "2025-01-01T00:01:00Z" });
+    task.logs.push({ phase: "orient", content: "[HUMAN REQUIRED] Second question?", timestamp: "2025-01-01T00:02:00Z" });
 
     expect(getHumanQuestion(task)).toBe("Second question?");
   });
@@ -110,7 +111,7 @@ describe("getHumanQuestion", () => {
     task.status = "waiting_human";
     task.logs.push({ phase: "observe", content: "found the issue", timestamp: "2025-01-01T00:00:00Z" });
     task.logs.push({ phase: "orient", content: "needs human input", timestamp: "2025-01-01T00:01:00Z" });
-    task.logs.push({ phase: "decide", content: "[HUMAN REQUIRED] Approve this change?", timestamp: "2025-01-01T00:02:00Z" });
+    task.logs.push({ phase: "orient", content: "[HUMAN REQUIRED] Approve this change?", timestamp: "2025-01-01T00:02:00Z" });
 
     expect(getHumanQuestion(task)).toBe("Approve this change?");
   });
