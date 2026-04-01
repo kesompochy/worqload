@@ -8,6 +8,7 @@ import {
   updateReportStatus,
   removeReport,
   isVacuousContent,
+  humanFriendlyReportTitle,
 } from "./reports";
 import type { Report } from "./reports";
 
@@ -146,6 +147,45 @@ test("multiple reports are tracked independently", async () => {
   expect(reports).toHaveLength(2);
   expect(reports.find(r => r.id === r1.id)!.status).toBe("archived");
   expect(reports.find(r => r.id === r2.id)!.status).toBe("unread");
+});
+
+describe("humanFriendlyReportTitle", () => {
+  test("strips 'Report to human:' prefix", () => {
+    expect(humanFriendlyReportTitle("Report to human: タスク完了")).toBe("タスク完了");
+  });
+
+  test("strips 'Investigate feedback:' prefix", () => {
+    expect(humanFriendlyReportTitle("Investigate feedback: ログ出力の改善")).toBe("ログ出力の改善");
+  });
+
+  test("strips 'Review feedback:' prefix", () => {
+    expect(humanFriendlyReportTitle("Review feedback: テスト品質の向上")).toBe("テスト品質の向上");
+  });
+
+  test("strips 'Implement distilled rule:' prefix", () => {
+    expect(humanFriendlyReportTitle("Implement distilled rule: エラーハンドリング統一")).toBe("エラーハンドリング統一");
+  });
+
+  test("strips nested prefixes", () => {
+    expect(humanFriendlyReportTitle("Report to human: Investigate feedback: レポートタイトルの改善"))
+      .toBe("レポートタイトルの改善");
+  });
+
+  test("strips all known prefix combinations", () => {
+    expect(humanFriendlyReportTitle("Report to human: Review feedback: UIの改善"))
+      .toBe("UIの改善");
+    expect(humanFriendlyReportTitle("Report to human: Implement distilled rule: コード品質"))
+      .toBe("コード品質");
+  });
+
+  test("returns title unchanged when no known prefix", () => {
+    expect(humanFriendlyReportTitle("タスク完了報告")).toBe("タスク完了報告");
+    expect(humanFriendlyReportTitle("Custom report title")).toBe("Custom report title");
+  });
+
+  test("handles empty string", () => {
+    expect(humanFriendlyReportTitle("")).toBe("");
+  });
 });
 
 describe("isVacuousContent", () => {

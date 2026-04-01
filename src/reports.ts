@@ -57,6 +57,23 @@ export async function removeReport(id: string, path?: string): Promise<void> {
   await store.remove(id, path);
 }
 
+const INTERNAL_TITLE_PREFIXES = [
+  "Report to human:",
+  "Investigate feedback:",
+  "Review feedback:",
+  "Implement distilled rule:",
+];
+
+export function humanFriendlyReportTitle(title: string): string {
+  let cleaned = title;
+  for (const prefix of INTERNAL_TITLE_PREFIXES) {
+    if (cleaned.startsWith(prefix)) {
+      cleaned = cleaned.slice(prefix.length).trimStart();
+    }
+  }
+  return cleaned;
+}
+
 const VACUOUS_PATTERNS: RegExp[] = [
   // Japanese: explicitly claiming no work / no changes
   /^変化\s*なし$/,
