@@ -589,6 +589,17 @@ describe("hasHumanAnswer", () => {
 
     expect(hasHumanAnswer(task)).toBe(true);
   });
+
+  test("returns true when orient log (non-HUMAN_REQUIRED) exists after HUMAN_REQUIRED log", () => {
+    const task = createTask("Waiting task");
+    task.status = "waiting_human";
+    task.logs = [
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Should we proceed?`, timestamp: new Date().toISOString() },
+      { phase: "orient", content: "Yes, approved by PM", timestamp: new Date().toISOString() },
+    ];
+
+    expect(hasHumanAnswer(task)).toBe(true);
+  });
 });
 
 describe("collectObservation - answered waiting_human", () => {
@@ -653,6 +664,62 @@ describe("analyzeObservation - answered waiting_human", () => {
     const analysis = analyzeObservation(obs);
 
     expect(analysis).toContain("answered_human");
+  });
+});
+
+describe("analyzeObservation - deciding tasks", () => {
+  function emptyObs(): Observation {
+    return {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+  }
+
+  test("reports deciding tasks individually in analysis output", () => {
+    const decidingTask = createTask("Need to choose action");
+    decidingTask.status = "deciding";
+    const obs = emptyObs();
+    obs.tasks = [decidingTask];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("deciding");
+    expect(analysis).toContain(decidingTask.id.slice(0, SHORT_ID_LENGTH));
+    expect(analysis).toContain("Need to choose action");
+  });
+
+  test("reports multiple deciding tasks", () => {
+    const d1 = createTask("Task A deciding");
+    d1.status = "deciding";
+    const d2 = createTask("Task B deciding");
+    d2.status = "deciding";
+    const obs = emptyObs();
+    obs.tasks = [d1, d2];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain(d1.id.slice(0, SHORT_ID_LENGTH));
+    expect(analysis).toContain(d2.id.slice(0, SHORT_ID_LENGTH));
+  });
+
+  test("does not report deciding tag when no deciding tasks exist", () => {
+    const observingTask = createTask("Regular task");
+    const obs = emptyObs();
+    obs.tasks = [observingTask];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).not.toContain("has_deciding");
   });
 });
 
@@ -983,14 +1050,14 @@ describe("generateTasksFromObservation", () => {
     expect(remaining).toHaveLength(1);
   });
 
-  test("transitions answered waiting_human tasks to deciding", async () => {
+  test("transitions answered waiting_human tasks to orienting", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const task = createTask("Needs approval");
     queue.enqueue(task);
     queue.transition(task.id, "orienting");
     queue.transition(task.id, "waiting_human");
     queue.addLog(task.id, "orient", `${HUMAN_REQUIRED_PREFIX}Should we proceed?`);
-    queue.addLog(task.id, "decide", "Yes, proceed with the plan");
+    queue.addLog(task.id, "orient", "Yes, proceed with the plan");
 
     const obs = emptyObservation();
     obs.answeredHumanTasks = [queue.get(task.id)!];
@@ -999,7 +1066,7 @@ describe("generateTasksFromObservation", () => {
 
     expect(result.resumedTasks).toHaveLength(1);
     expect(result.resumedTasks[0]).toBe(task.id);
-    expect(queue.get(task.id)!.status).toBe("deciding");
+    expect(queue.get(task.id)!.status).toBe("orienting");
   });
 
   test("does not transition waiting_human tasks without human answer", async () => {

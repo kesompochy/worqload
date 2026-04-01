@@ -216,8 +216,8 @@ async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: num
         return withTask(queue, decideMatch[1], async (task) => {
           if (task.status !== "waiting_human") return json(NOT_WAITING_HUMAN, 400);
           const body = await req.json() as { decision: string };
-          queue.transition(task.id, "deciding");
-          queue.addLog(task.id, "decide", body.decision);
+          queue.transition(task.id, "orienting");
+          queue.addLog(task.id, "orient", body.decision);
           await queue.save();
           return json(queue.get(task.id));
         });

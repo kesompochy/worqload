@@ -142,7 +142,7 @@ export function hasHumanAnswer(task: Task): boolean {
   }
   if (lastHumanRequiredIndex === -1) return false;
   return task.logs.slice(lastHumanRequiredIndex + 1).some(
-    l => l.phase === "decide" && !l.content.startsWith(HUMAN_REQUIRED_PREFIX),
+    l => (l.phase === "orient" || l.phase === "decide") && !l.content.startsWith(HUMAN_REQUIRED_PREFIX),
   );
 }
 
@@ -228,6 +228,14 @@ export function analyzeObservation(obs: Observation): string {
     }
     if (unassignedCount > 0) {
       lines.push(`unassigned: ${unassignedCount} task${unassignedCount > 1 ? "s" : ""}`);
+    }
+  }
+
+  const decidingTasks = obs.tasks.filter(t => t.status === "deciding");
+  if (decidingTasks.length > 0) {
+    tags.push("has_deciding");
+    for (const t of decidingTasks) {
+      lines.push(`deciding: [${t.id.slice(0, SHORT_ID_LENGTH)}] ${t.title}`);
     }
   }
 
@@ -404,9 +412,9 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     }
   }
 
-  // Answered waiting_human tasks → resume to deciding
+  // Answered waiting_human tasks → resume to orienting (answer is Orient output)
   for (const answeredTask of obs.answeredHumanTasks) {
-    queue.transition(answeredTask.id, "deciding");
+    queue.transition(answeredTask.id, "orienting");
     resumedTasks.push(answeredTask.id);
   }
 

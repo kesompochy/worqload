@@ -249,8 +249,8 @@ async function handleMessageSend(queue: TaskQueue, params: Record<string, unknow
     if (existing.status !== "waiting_human") {
       throw { code: INVALID_REQUEST, message: `Task is not waiting for human input (current: ${existing.status})` };
     }
-    queue.addLog(existing.id, "decide", text);
-    queue.transition(existing.id, "deciding");
+    queue.addLog(existing.id, "orient", text);
+    queue.transition(existing.id, "orienting");
     await queue.save();
     return toA2ATask(queue.get(existing.id)!);
   }

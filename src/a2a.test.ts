@@ -231,7 +231,7 @@ describe("handleA2ARequest", () => {
       expect(res.error?.code).toBe(-32600);
     });
 
-    test("responds to waiting_human task via task_id, transitions to deciding", async () => {
+    test("responds to waiting_human task via task_id, transitions to orienting", async () => {
       const queue = makeQueue();
       const task = createTask("need approval", {}, 0, "a2a");
       queue.enqueue(task);
@@ -256,9 +256,9 @@ describe("handleA2ARequest", () => {
       expect(a2aTask.status.state).toBe("working");
 
       const updated = queue.get(task.id)!;
-      expect(updated.status).toBe("deciding");
+      expect(updated.status).toBe("orienting");
       const lastLog = updated.logs[updated.logs.length - 1];
-      expect(lastLog.phase).toBe("decide");
+      expect(lastLog.phase).toBe("orient");
       expect(lastLog.content).toBe("Yes, approved");
     });
 
