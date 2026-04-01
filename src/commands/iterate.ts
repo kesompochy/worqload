@@ -203,9 +203,13 @@ export async function detectCompletedFeedbackTasks(
   ctx: IterateContext,
   excludeTaskId?: string,
 ): Promise<CompletedFeedbackTask[]> {
-  const doneTasks = queue.list().filter(t =>
+  const queueDone = queue.list().filter(t =>
     t.status === "done" && t.id !== excludeTaskId,
   );
+  const archivedDone = (await queue.history()).filter(t =>
+    t.status === "done" && t.id !== excludeTaskId,
+  );
+  const doneTasks = [...queueDone, ...archivedDone];
 
   const reports = ctx.reportsPath
     ? await loadReports(ctx.reportsPath).catch(() => [] as Report[])
