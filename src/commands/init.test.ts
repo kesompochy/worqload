@@ -1,5 +1,10 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { readFileSync } from "fs";
+import { mkdtemp, rm, readFile, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import { TaskQueue } from "../queue";
+import { init } from "./init";
 
 const initSource = readFileSync(
   new URL("./init.ts", import.meta.url),
@@ -169,5 +174,66 @@ describe("DEFAULT_AGENT_TEMPLATE covers feedback-to-task flow", () => {
 
   test("explains feedback should be oriented against Principles to derive tasks", () => {
     expect(template).toMatch(/feedback.*[Pp]rinciple/s);
+  });
+});
+
+describe("init adds .worktrees to .gitignore", () => {
+  let tempDir: string;
+  let origCwd: string;
+  const origLog = console.log;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "worqload-init-gitignore-"));
+    origCwd = process.cwd();
+    process.chdir(tempDir);
+    console.log = () => {};
+  });
+
+  afterEach(async () => {
+    process.chdir(origCwd);
+    console.log = origLog;
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  function tmpQueuePath(): string {
+    return join(tempDir, `queue-${crypto.randomUUID()}.json`);
+  }
+
+  test("creates .gitignore with .worktrees when no .gitignore exists", async () => {
+    const queue = new TaskQueue(tmpQueuePath());
+    await init(queue, [tempDir]);
+
+    const content = await readFile(join(tempDir, ".gitignore"), "utf-8");
+    expect(content).toContain(".worktrees");
+  });
+
+  test("appends .worktrees to existing .gitignore that lacks it", async () => {
+    await writeFile(join(tempDir, ".gitignore"), "node_modules\n");
+    const queue = new TaskQueue(tmpQueuePath());
+    await init(queue, [tempDir]);
+
+    const content = await readFile(join(tempDir, ".gitignore"), "utf-8");
+    expect(content).toContain("node_modules");
+    expect(content).toContain(".worktrees");
+  });
+
+  test("does not duplicate .worktrees if already present", async () => {
+    await writeFile(join(tempDir, ".gitignore"), ".worktrees\nnode_modules\n");
+    const queue = new TaskQueue(tmpQueuePath());
+    await init(queue, [tempDir]);
+
+    const content = await readFile(join(tempDir, ".gitignore"), "utf-8");
+    const matches = content.match(/\.worktrees/g);
+    expect(matches).toHaveLength(1);
+  });
+
+  test("handles .worktrees/ with trailing slash as already present", async () => {
+    await writeFile(join(tempDir, ".gitignore"), ".worktrees/\n");
+    const queue = new TaskQueue(tmpQueuePath());
+    await init(queue, [tempDir]);
+
+    const content = await readFile(join(tempDir, ".gitignore"), "utf-8");
+    const matches = content.match(/\.worktrees/g);
+    expect(matches).toHaveLength(1);
   });
 });
