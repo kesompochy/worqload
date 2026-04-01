@@ -31,6 +31,24 @@ async function withMergeLock<T>(repoDir: string, fn: () => Promise<T>): Promise<
   }
 }
 
+export async function untrackWorktrees(repoDir: string): Promise<void> {
+  const env = cleanGitEnv();
+  const lsProc = Bun.spawn(
+    ["git", "ls-files", ".worktrees/"],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env },
+  );
+  const tracked = await new Response(lsProc.stdout).text();
+  await lsProc.exited;
+
+  if (!tracked.trim()) return;
+
+  const rmProc = Bun.spawn(
+    ["git", "rm", "-r", "--cached", ".worktrees/"],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env },
+  );
+  await rmProc.exited;
+}
+
 export async function createWorktree(
   taskId: string,
   repoDir: string = process.cwd(),
@@ -86,6 +104,18 @@ export async function mergeWorktreeBranch(
     if (mergeExit !== 0) {
       Bun.spawnSync(["git", "merge", "--abort"], { cwd: repoDir, stdout: "pipe", stderr: "pipe", env });
       return false;
+    }
+
+    // Strip .worktrees/ files that the branch may have committed
+    const lsProc = Bun.spawn(
+      ["git", "ls-files", ".worktrees/"],
+      { stdout: "pipe", stderr: "pipe", cwd: repoDir, env },
+    );
+    const trackedWorktrees = await new Response(lsProc.stdout).text();
+    await lsProc.exited;
+    if (trackedWorktrees.trim()) {
+      Bun.spawnSync(["git", "rm", "-r", "--cached", ".worktrees/"], { cwd: repoDir, stdout: "pipe", stderr: "pipe", env });
+      Bun.spawnSync(["git", "commit", "--amend", "--no-edit"], { cwd: repoDir, stdout: "pipe", stderr: "pipe", env });
     }
 
     return true;

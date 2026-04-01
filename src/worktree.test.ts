@@ -2,7 +2,7 @@ import { test, expect, describe, afterEach } from "bun:test";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { mkdirSync, existsSync, readlinkSync, lstatSync, writeFileSync } from "fs";
-import { createWorktree, removeWorktree, mergeWorktreeBranch } from "./worktree";
+import { createWorktree, removeWorktree, mergeWorktreeBranch, untrackWorktrees } from "./worktree";
 
 const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
 
@@ -42,6 +42,38 @@ afterEach(async () => {
     } catch { /* ignore */ }
   }
   cleanupDirs.length = 0;
+});
+
+describe("untrackWorktrees", () => {
+  test("removes .worktrees/ from git index when tracked", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+
+    mkdirSync(join(repoDir, ".worktrees"), { recursive: true });
+    writeFileSync(join(repoDir, ".worktrees", "abc123"), "ref");
+    git(["add", "--force", ".worktrees/abc123"], repoDir);
+    git(["commit", "-m", "accidentally tracked"], repoDir);
+
+    // Verify it's tracked
+    const before = git(["ls-files", ".worktrees/"], repoDir);
+    expect(new TextDecoder().decode(before.stdout).trim()).toContain("abc123");
+
+    await untrackWorktrees(repoDir);
+
+    const after = git(["ls-files", ".worktrees/"], repoDir);
+    expect(new TextDecoder().decode(after.stdout).trim()).toBe("");
+  });
+
+  test("does nothing when .worktrees/ is not tracked", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+
+    // No .worktrees/ tracked — should not throw
+    await untrackWorktrees(repoDir);
+
+    const lsFiles = git(["ls-files", ".worktrees/"], repoDir);
+    expect(new TextDecoder().decode(lsFiles.stdout).trim()).toBe("");
+  });
 });
 
 describe("createWorktree", () => {
@@ -207,6 +239,30 @@ describe("mergeWorktreeBranch", () => {
     expect(mergedB).toBe(true);
     expect(existsSync(join(repoDir, "fileA.txt"))).toBe(true);
     expect(existsSync(join(repoDir, "fileB.txt"))).toBe(true);
+  });
+
+  test("does not merge .worktrees/ files into main branch", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const taskId = crypto.randomUUID();
+
+    const { worktreePath, branchName } = await createWorktree(taskId, repoDir);
+
+    // Agent accidentally commits .worktrees/ files
+    mkdirSync(join(worktreePath, ".worktrees"), { recursive: true });
+    writeFileSync(join(worktreePath, ".worktrees", "stale-ref"), "ref");
+    writeFileSync(join(worktreePath, "real-work.txt"), "real content\n");
+    git(["add", "--force", ".worktrees/stale-ref", "real-work.txt"], worktreePath);
+    git(["commit", "-m", "agent commit with .worktrees"], worktreePath);
+
+    const merged = await mergeWorktreeBranch(branchName, repoDir);
+
+    expect(merged).toBe(true);
+    expect(existsSync(join(repoDir, "real-work.txt"))).toBe(true);
+    // .worktrees/ should NOT appear in the main branch index
+    const lsFiles = git(["ls-files", ".worktrees/"], repoDir);
+    const tracked = new TextDecoder().decode(lsFiles.stdout).trim();
+    expect(tracked).toBe("");
   });
 
   test("sequential merges succeed when HEAD advances between merges", async () => {
