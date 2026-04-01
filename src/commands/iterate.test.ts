@@ -2498,7 +2498,7 @@ describe("detectCompletedFeedbackTasks", () => {
   });
 });
 
-describe.skip("generateTasksFromObservation - human report tasks", () => {
+describe("generateTasksFromObservation - human report tasks", () => {
   function emptyObservation(): Observation {
     return {
       feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
@@ -2565,7 +2565,7 @@ describe.skip("generateTasksFromObservation - human report tasks", () => {
   });
 });
 
-describe.skip("analyzeObservation - report_human", () => {
+describe("analyzeObservation - report_human", () => {
   function emptyObservation(): Observation {
     return {
       feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },

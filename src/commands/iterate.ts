@@ -413,6 +413,13 @@ export function analyzeObservation(obs: Observation): string {
     lines.push(`failed: ${obs.failedTasks.length} task${obs.failedTasks.length > 1 ? "s" : ""}`);
   }
 
+  if (obs.completedFeedbackTasks?.length > 0) {
+    tags.push("report_human");
+    for (const ct of obs.completedFeedbackTasks) {
+      lines.push(`report_human: [${ct.taskId.slice(0, SHORT_ID_LENGTH)}] ${ct.title}`);
+    }
+  }
+
   if (obs.uncommittedChanges) {
     lines.push("uncommitted changes detected");
   }
@@ -609,6 +616,21 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     }
   }
 
+  // Completed feedback tasks → human report tasks
+  const humanReportTasks: string[] = [];
+  for (const completed of obs.completedFeedbackTasks ?? []) {
+    const title = `${REPORT_HUMAN_PREFIX} ${completed.title}`;
+    if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
+      const task = createTask(title, {
+        sourceTaskId: completed.taskId,
+        sourceTaskTitle: completed.title,
+        feedbackIds: completed.feedbackIds,
+      }, 0, "iterate");
+      queue.enqueue(task);
+      humanReportTasks.push(task.title);
+    }
+  }
+
   // Autonomous task derivation from principles when queue is empty
   const autonomousTasks: string[] = [];
   const isQueueEmpty = obs.tasks.length === 0
@@ -630,7 +652,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     }
   }
 
-  return { createdTasks, retriedTasks, resumedTasks, recoveredTasks: stuckRecovery.recoveredTasks, distilledRules, autonomousTasks, unverifiedRules, feedbackIdsToAck: Array.from(feedbackIdsToAck) };
+  return { createdTasks, retriedTasks, resumedTasks, recoveredTasks: stuckRecovery.recoveredTasks, distilledRules, autonomousTasks, unverifiedRules, humanReportTasks, feedbackIdsToAck: Array.from(feedbackIdsToAck) };
 }
 
 export async function ackFeedbackIds(ids: string[], feedbackPath: string): Promise<void> {
