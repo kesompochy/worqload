@@ -154,6 +154,37 @@ describe("spawn escalation via exit code", () => {
   });
 });
 
+describe("echo immediate completion", () => {
+  test("echo task completes with status done, captures output, and clears owner", async () => {
+    const storePath = tmpPath("echo-immediate");
+    const queue = new TaskQueue(storePath);
+    const task = createTask("Lightweight echo task");
+    queue.enqueue(task);
+    await queue.save();
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    console.error = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await spawn(queue, [task.id, "echo", "hello from echo"]);
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+    expect(updated?.owner).toBeUndefined();
+
+    const actLog = updated?.logs.find(l => l.phase === "act");
+    expect(actLog).toBeDefined();
+    expect(actLog!.content).toContain("hello from echo");
+  });
+});
+
 describe("spawn timeout", () => {
   test("spawn kills process and marks task failed on timeout", async () => {
     const storePath = tmpPath("spawn-timeout");
