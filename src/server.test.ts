@@ -285,6 +285,56 @@ describe("Activity visibility: mission status and task count", () => {
   });
 });
 
+describe("EditableText: shared editable component with blur-to-save", () => {
+  test("EditableText component is defined with onBlur save and Escape cancel", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    const start = source.indexOf("function EditableText(");
+    expect(start).toBeGreaterThan(-1);
+
+    const nextFunc = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, nextFunc > -1 ? nextFunc : undefined);
+    expect(body).toContain("onBlur");
+    expect(body).toContain("Escape");
+    expect(body).toContain("onSave");
+  });
+
+  test("Principles uses EditableText instead of manual editingIndex state", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    const start = source.indexOf("function Principles(");
+    const nextFunc = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, nextFunc);
+
+    expect(body).toContain("EditableText");
+    expect(body).not.toContain("editingIndex");
+  });
+
+  test("TaskCard uses EditableText for title editing", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    const start = source.indexOf("function TaskCard(");
+    const nextFunc = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, nextFunc);
+
+    expect(body).toContain("EditableText");
+  });
+
+  test("EditableFeedbackMessage uses EditableText", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    const start = source.indexOf("function EditableFeedbackMessage(");
+    const nextFunc = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, nextFunc);
+
+    expect(body).toContain("EditableText");
+  });
+});
+
 describe("Activity visibility: dashboard HTML", () => {
   test("SpawnRow displays taskId and startedAt", async () => {
     const fs = await import("fs");

@@ -175,9 +175,14 @@ export async function orientTask(
   }
 
   // Orient requires human expertise — force periodic escalation
+  // Skip if this task already has a human answer (avoid re-escalation loop)
   const allTasks = await load(storePath);
+  const currentTask = allTasks.find(t => t.id === taskId);
+  const alreadyHasHumanAnswer = currentTask?.logs.some(
+    l => l.phase === "orient" && !l.content.startsWith(HUMAN_REQUIRED_PREFIX),
+  );
   const missionTasks = allTasks.filter(t => t.missionId === mission.id && t.id !== taskId);
-  if (shouldForceEscalation(missionTasks)) {
+  if (!alreadyHasHumanAnswer && shouldForceEscalation(missionTasks)) {
     await updateTask(taskId, (current) => ({
       status: "waiting_human" as const,
       logs: [...current.logs, phaseLog("orient",

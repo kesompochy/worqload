@@ -1,7 +1,7 @@
 import { TaskQueue } from "./queue";
 import type { Task } from "./task";
 import { createTask } from "./task";
-import { loadPrinciples } from "./principles";
+import { loadPrinciples, parsePrincipleLines, addPrinciple, editPrinciple, removePrinciple } from "./principles";
 import { loadSpawns } from "./spawns";
 import type { SpawnRecord } from "./spawns";
 import type { RunnerState } from "./mission-runner-state";
@@ -132,7 +132,24 @@ function buildRoutes(): Route[] {
     { method: "GET", pattern: "/api/principles",
       handler: async () => {
         const content = await loadPrinciples();
-        return json(content.split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2)));
+        return json(parsePrincipleLines(content).map(l => l.slice(2)));
+      } },
+
+    { method: "POST", pattern: "/api/principles",
+      handler: async (req) => {
+        const body = await req.json() as { text: string };
+        return json(await addPrinciple(body.text), 201);
+      } },
+
+    { method: "PATCH", pattern: /^\/api\/principles\/(\d+)$/,
+      handler: async (req, _queue, _port, params) => {
+        const body = await req.json() as { text: string };
+        return json(await editPrinciple(Number(params[0]), body.text));
+      } },
+
+    { method: "DELETE", pattern: /^\/api\/principles\/(\d+)$/,
+      handler: async (_req, _queue, _port, params) => {
+        return json(await removePrinciple(Number(params[0])));
       } },
 
     { method: "GET", pattern: "/api/spawns",
@@ -415,7 +432,17 @@ function html(): string {
 
   .principles { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; }
   .principles ol { padding-left: 1.5rem; }
-  .principles li { margin: 0.2rem 0; padding-left: 0.5rem; font-size: 0.85rem; }
+  .principles li { margin: 0.2rem 0; padding-left: 0.5rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.4rem; }
+  .principles li .principle-text { flex: 1; cursor: pointer; padding: 0.15rem 0.3rem; border-radius: 4px; }
+  .principles li .principle-text:hover { background: #1a1a1a; }
+  .principles li .principle-actions { display: flex; gap: 0.2rem; opacity: 0; transition: opacity 0.15s; }
+  .principles li:hover .principle-actions { opacity: 1; }
+  .principles li .principle-actions button { font-size: 0.65rem; padding: 0.1rem 0.3rem; }
+  .principle-edit-input { flex: 1; background: #0a0a0a; border: 1px solid #6c7aed; border-radius: 4px; padding: 0.3rem 0.5rem; color: #e0e0e0; font-size: 0.85rem; }
+  .principle-edit-input:focus { outline: none; }
+  .principle-add { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+  .principle-add input { flex: 1; background: #0a0a0a; border: 1px solid #2a2a2a; border-radius: 4px; padding: 0.3rem 0.5rem; color: #e0e0e0; font-size: 0.8rem; }
+  .principle-add input:focus { outline: none; border-color: #6c7aed; }
 
   .empty { color: #444; font-style: italic; font-size: 0.8rem; }
 
@@ -502,6 +529,7 @@ const api = {
   get: (url) => fetch(url).then(r => r.json()),
   post: (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   patch: (url, body) => fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  del: (url) => fetch(url, { method: 'DELETE' }),
 };
 
 function timeAgo(iso) {
@@ -593,9 +621,59 @@ function Heartbeat({ heartbeat, sleepState, onUpdate }) {
   </span>\`;
 }
 
-function Principles({ items }) {
-  if (!items.length) return html\`<div class="principles"><div class="empty">No principles defined.</div></div>\`;
-  return html\`<div class="principles"><h2 style="margin-top:0">Principles</h2><ol>\${items.map(p => html\`<li key=\${p}>\${p}</li>\`)}</ol></div>\`;
+function EditableText({ value, onSave, className, inputClassName }) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(value);
+  const startEdit = () => { setEditValue(value); setEditing(true); };
+  const save = () => {
+    setEditing(false);
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== value) onSave(trimmed);
+  };
+  const onKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); save(); }
+    if (e.key === 'Escape') setEditing(false);
+  };
+  if (editing) {
+    return html\`<input value=\${editValue} onInput=\${(e) => setEditValue(e.target.value)} onKeyDown=\${onKeyDown} onBlur=\${save} ref=\${(el) => el && el.focus()} class=\${inputClassName || ''} style="width:100%;box-sizing:border-box" />\`;
+  }
+  return html\`<span class=\${className || ''} style="cursor:pointer" onClick=\${startEdit}>\${value}</span>\`;
+}
+
+function Principles({ items, onUpdate }) {
+  const addRef = useRef(null);
+
+  const savePrinciple = async (i, newText) => {
+    await api.patch('/api/principles/' + i, { text: newText });
+    onUpdate();
+  };
+  const remove = async (i) => {
+    await api.del('/api/principles/' + i);
+    onUpdate();
+  };
+  const add = async () => {
+    const text = addRef.current.value.trim();
+    if (!text) return;
+    await api.post('/api/principles', { text });
+    addRef.current.value = '';
+    onUpdate();
+  };
+  const onAddKey = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); add(); } };
+
+  return html\`<div class="principles">
+    <h2 style="margin-top:0">Principles</h2>
+    \${items.length === 0 && html\`<div class="empty">No principles defined.</div>\`}
+    <ol>\${items.map((p, i) => html\`<li key=\${i}>
+      <\${EditableText} value=\${p} onSave=\${(newText) => savePrinciple(i, newText)} className="principle-text" inputClassName="principle-edit-input" />
+      <span class="principle-actions">
+        <button class="danger" onClick=\${() => remove(i)}>Del</button>
+      </span>
+    </li>\`)}</ol>
+    <div class="principle-add">
+      <input type="text" ref=\${addRef} placeholder="Add a new principle..." onKeyDown=\${onAddKey} />
+      <button class="primary" onClick=\${add} style="font-size:0.75rem">Add</button>
+    </div>
+  </div>\`;
 }
 
 function SpawnList({ spawns }) {
@@ -673,38 +751,18 @@ function TaskCard({ task, onUpdate }) {
     await fetch('/api/tasks/' + task.id.slice(0, 8), { method: 'DELETE' });
     onUpdate();
   };
-  const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState(task.title);
-  const startEdit = () => { setEditValue(task.title); setEditing(true); };
-  const cancelEdit = () => setEditing(false);
-  const saveEdit = async () => {
-    setEditing(false);
-    const trimmed = editValue.trim();
-    if (!trimmed || trimmed === task.title) return;
-    await api.patch('/api/tasks/' + task.id.slice(0, 8), { title: trimmed });
+  const saveTitle = async (newTitle) => {
+    await api.patch('/api/tasks/' + task.id.slice(0, 8), { title: newTitle });
     onUpdate();
-  };
-  const onEditKeyDown = (e) => {
-    if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); saveEdit(); }
-    if (e.key === 'Escape') cancelEdit();
   };
 
   return html\`<div class="task" title=\${task.id.slice(0, 8)}>
-    \${editing ? html\`<div class="task-title">
-      <input
-        value=\${editValue}
-        onInput=\${(e) => setEditValue(e.target.value)}
-        onKeyDown=\${onEditKeyDown}
-        onBlur=\${saveEdit}
-        ref=\${(el) => el && el.focus()}
-        style="width:100%; font-size:inherit; font-weight:inherit; padding:2px 4px; box-sizing:border-box;"
-      />
-    </div>\` : html\`<div class="task-title">
-      \${task.title}
+    <div class="task-title">
+      <\${EditableText} value=\${task.title} onSave=\${saveTitle} inputClassName="task-title-edit" />
       \${task.status === 'waiting_human' && html\` <span class="badge badge-waiting">waiting</span>\`}
       \${task.status === 'failed' && html\` <span class="badge badge-failed">failed</span>\`}
       \${task.owner && html\` <span class="task-owner">@\${task.owner}</span>\`}
-    </div>\`}
+    </div>
     <div class="task-meta">
       \${timeAgo(task.createdAt)} · p\${task.priority}
       \${task.createdBy && html\` <span class="task-created-by">by \${task.createdBy}</span>\`}
@@ -952,25 +1010,11 @@ function Board({ tasks, onUpdate }) {
 }
 
 function EditableFeedbackMessage({ fb, onSend }) {
-  const [editing, setEditing] = useState(false);
-  const inputRef = useRef(null);
-  const save = async () => {
-    const val = inputRef.current.value.trim();
-    if (val && val !== fb.message) {
-      await api.patch('/api/feedback/' + fb.id.slice(0, 8), { message: val });
-      onSend();
-    }
-    setEditing(false);
+  const saveFeedback = async (newMessage) => {
+    await api.patch('/api/feedback/' + fb.id.slice(0, 8), { message: newMessage });
+    onSend();
   };
-  const onKey = (e) => {
-    if (e.key === 'Enter' && e.shiftKey && !e.isComposing) { e.preventDefault(); save(); }
-    if (e.key === 'Escape') setEditing(false);
-  };
-  useEffect(() => { if (editing && inputRef.current) inputRef.current.focus(); }, [editing]);
-  if (editing) {
-    return html\`<input type="text" ref=\${inputRef} defaultValue=\${fb.message} onBlur=\${save} onKeyDown=\${onKey} style="width:100%;background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:0.3rem 0.5rem;color:#e0e0e0;font-size:0.85rem;box-sizing:border-box" />\`;
-  }
-  return html\`<div class="task-title" style="cursor:pointer" onClick=\${() => setEditing(true)}>\${fb.message}</div>\`;
+  return html\`<\${EditableText} value=\${fb.message} onSave=\${saveFeedback} className="task-title" />\`;
 }
 
 function FeedbackSection({ projectFeedback, onSend }) {

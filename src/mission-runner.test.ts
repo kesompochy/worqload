@@ -22,6 +22,14 @@ async function setupQueue(storePath: string, tasks: ReturnType<typeof createTask
   await queue.save();
 }
 
+function makeHumanReviewedTask(missionId: string): ReturnType<typeof createTask> {
+  const task = createTask("human-reviewed seed");
+  task.status = "done" as const;
+  task.missionId = missionId;
+  task.logs.push({ phase: "orient" as const, content: `${HUMAN_REQUIRED_PREFIX}reviewed`, timestamp: new Date().toISOString() });
+  return task;
+}
+
 async function createMissionWithPrinciple(name: string, missionPath: string, principle = "Execute task"): Promise<Mission> {
   const mission = await createMission(name, {}, missionPath);
   await addMissionPrinciple(mission.id, principle, missionPath);
@@ -104,7 +112,7 @@ describe("processTask", () => {
     const mission = await createMissionWithPrinciple("test-mission", missionPath);
     const task = createTask("process me");
     const taskWithMission = { ...task, missionId: mission.id };
-    await setupQueue(storePath, [taskWithMission]);
+    await setupQueue(storePath, [makeHumanReviewedTask(mission.id), taskWithMission]);
 
     await processTask(task, mission, { storePath, actCommand: ["echo"] });
 
@@ -138,7 +146,7 @@ describe("processTask", () => {
     const missionPath = tmpPath("all-phases-m");
     const mission = await createMissionWithPrinciple("all-phases", missionPath);
     const task = createTask("all phases task");
-    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+    await setupQueue(storePath, [makeHumanReviewedTask(mission.id), { ...task, missionId: mission.id }]);
 
     await processTask(task, mission, { storePath, actCommand: ["echo"] });
 
@@ -174,7 +182,7 @@ describe("processTask", () => {
     const missionPath = tmpPath("owner-m");
     const mission = await createMissionWithPrinciple("owner-test", missionPath);
     const task = createTask("owner task");
-    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+    await setupQueue(storePath, [makeHumanReviewedTask(mission.id), { ...task, missionId: mission.id }]);
 
     await processTask(task, mission, { storePath, actCommand: ["echo"] });
 
@@ -192,7 +200,7 @@ describe("processTask", () => {
     const missionPath = tmpPath("spawn-act-m");
     const mission = await createMissionWithPrinciple("spawn-act", missionPath);
     const task = createTask("spawn act task");
-    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+    await setupQueue(storePath, [makeHumanReviewedTask(mission.id), { ...task, missionId: mission.id }]);
 
     await processTask(task, mission, { storePath, actCommand: ["echo"] });
 
@@ -1398,10 +1406,14 @@ describe("shouldForceEscalation", () => {
     return task;
   }
 
-  test("returns false when fewer completed tasks than window size", () => {
+  test("returns false when fewer completed tasks than window", () => {
     const missionId = crypto.randomUUID();
     const tasks = Array.from({ length: ORIENT_ESCALATION_WINDOW - 1 }, () => makeDoneTask(missionId, false));
     expect(shouldForceEscalation(tasks)).toBe(false);
+  });
+
+  test("returns false when no completed tasks exist (new mission)", () => {
+    expect(shouldForceEscalation([])).toBe(false);
   });
 
   test("returns true when all recent tasks lack human escalation", () => {
@@ -1430,11 +1442,11 @@ describe("shouldForceEscalation", () => {
     expect(shouldForceEscalation([...recentTasks, oldEscalated])).toBe(true);
   });
 
-  test("ignores non-terminal tasks", () => {
+  test("returns false when all tasks are non-terminal", () => {
     const missionId = crypto.randomUUID();
     const tasks = Array.from({ length: ORIENT_ESCALATION_WINDOW + 3 }, () => {
       const t = makeDoneTask(missionId, false);
-      t.status = "acting"; // in-progress, not completed
+      t.status = "acting";
       return t;
     });
     expect(shouldForceEscalation(tasks)).toBe(false);
