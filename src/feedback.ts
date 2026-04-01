@@ -170,6 +170,8 @@ const ENGLISH_CONTAINS_DIRECTIVE_PATTERN = /\b(should|must|shall|always|never)\b
 
 const JAPANESE_DIRECTIVE_PATTERN = /(べき|べきだ|しろ|こと|てくれ|てください|ないでください|するな|しなさい|てほしい|すべし)$/;
 
+const JAPANESE_CONTAINS_DIRECTIVE_PATTERN = /方がいい|べき|なければならない|ないといけない|してはいけない/;
+
 function isQuestion(sentence: string): boolean {
   const trimmed = sentence.trim();
   if (trimmed.endsWith("?") || trimmed.endsWith("？")) return true;
@@ -185,6 +187,7 @@ function isActionableDirective(sentence: string): boolean {
   if (ENGLISH_DIRECTIVE_PATTERN.test(trimmed)) return true;
   if (ENGLISH_CONTAINS_DIRECTIVE_PATTERN.test(trimmed)) return true;
   if (JAPANESE_DIRECTIVE_PATTERN.test(trimmed)) return true;
+  if (JAPANESE_CONTAINS_DIRECTIVE_PATTERN.test(trimmed)) return true;
   return false;
 }
 

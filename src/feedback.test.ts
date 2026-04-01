@@ -191,6 +191,15 @@ describe("extractActionableRules", () => {
     expect(extractActionableRules("Why is the build so slow?")).toEqual([]);
   });
 
+  test("extracts Japanese recommendation/suggestion forms with directive markers mid-sentence", () => {
+    expect(extractActionableRules("やめた方がいいですよ")).toEqual(["やめた方がいいですよ"]);
+    expect(extractActionableRules("テストを書いた方がいい")).toEqual(["テストを書いた方がいい"]);
+    expect(extractActionableRules("やるべきことは、タスク化した後にackです")).toEqual(["やるべきことは、タスク化した後にackです"]);
+    expect(extractActionableRules("それはしてはいけない")).toEqual(["それはしてはいけない"]);
+    expect(extractActionableRules("テストを書かなければならない")).toEqual(["テストを書かなければならない"]);
+    expect(extractActionableRules("CIを通さないといけない")).toEqual(["CIを通さないといけない"]);
+  });
+
   test("rejects complaints and observations without actionable directive", () => {
     expect(extractActionableRules("The build is really slow")).toEqual([]);
     expect(extractActionableRules("I don't like this approach")).toEqual([]);
@@ -228,6 +237,8 @@ describe("extractObservationalContent", () => {
     expect(extractObservationalContent("Always run lint before commit")).toEqual([]);
     expect(extractObservationalContent("テストを先に書くべき")).toEqual([]);
     expect(extractObservationalContent("Never skip code review")).toEqual([]);
+    expect(extractObservationalContent("やめた方がいいですよ")).toEqual([]);
+    expect(extractObservationalContent("やるべきことは、タスク化した後にackです")).toEqual([]);
   });
 
   test("returns empty for questions", () => {
