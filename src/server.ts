@@ -1043,7 +1043,6 @@ function App() {
       <\${Heartbeat} heartbeat=\${data.heartbeat} sleepState=\${data.sleep} onUpdate=\${refresh} />
     </div>
     <\${Principles} items=\${data.principles} />
-    <\${ActivityDashboard} runners=\${data.runners} spawns=\${data.spawns} />
     \${data.reports.length > 0 && html\`<\${ReportsSection} reports=\${data.reports} onUpdate=\${refresh} />\`}
     \${data.projectFeedback.length > 0 && html\`<\${FeedbackSection} projectFeedback=\${data.projectFeedback} onSend=\${refresh} />\`}
     <\${FeedbackForm} onSend=\${refresh} />
@@ -1054,6 +1053,7 @@ function App() {
     </div>
     \${tab === 'active' && html\`<\${Board} tasks=\${data.tasks.filter(t => !missionTaskIds.has(t.id))} onUpdate=\${refresh} />\`}
     \${tab === 'history' && html\`<\${HistoryView} history=\${data.history} />\`}
+    <\${ActivityDashboard} runners=\${data.runners} spawns=\${data.spawns} />
   \`;
 }
 

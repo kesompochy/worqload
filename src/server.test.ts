@@ -312,6 +312,46 @@ describe("Activity visibility: dashboard HTML", () => {
     expect(source).toContain("Mission Runners");
     expect(source).toContain("Active Spawns");
   });
+
+  test("dashboard layout: Principles → Feedback → Missions/Tasks → Activity", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    // Extract the App() function body to verify rendering order
+    const appStart = source.indexOf("function App()");
+    expect(appStart).toBeGreaterThan(-1);
+    const appBody = source.slice(appStart);
+
+    // Find first occurrence of each component after "return html"
+    const returnPos = appBody.indexOf("return html");
+    const layout = appBody.slice(returnPos);
+
+    const principlesPos = layout.indexOf("Principles");
+    const feedbackSectionPos = layout.indexOf("FeedbackSection");
+    const feedbackFormPos = layout.indexOf("FeedbackForm");
+    const reportsPos = layout.indexOf("ReportsSection");
+    const missionPos = layout.indexOf("MissionSection");
+    const boardPos = layout.indexOf("Board");
+    const activityPos = layout.indexOf("ActivityDashboard");
+
+    // All components must exist
+    for (const [name, pos] of Object.entries({ principlesPos, feedbackSectionPos, feedbackFormPos, reportsPos, missionPos, boardPos, activityPos })) {
+      expect(pos).toBeGreaterThan(-1);
+    }
+
+    // Principles first
+    expect(principlesPos).toBeLessThan(feedbackSectionPos);
+    expect(principlesPos).toBeLessThan(reportsPos);
+
+    // Feedback/Reports before Missions/Tasks
+    expect(feedbackSectionPos).toBeLessThan(missionPos);
+    expect(reportsPos).toBeLessThan(missionPos);
+    expect(feedbackFormPos).toBeLessThan(missionPos);
+
+    // Missions/Tasks before Activity
+    expect(missionPos).toBeLessThan(activityPos);
+    expect(boardPos).toBeLessThan(activityPos);
+  });
 });
 
 describe("API spawn filtering: filterSpawnsForDashboard", () => {
