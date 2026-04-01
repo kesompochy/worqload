@@ -190,6 +190,7 @@ function buildActPrompt(task: Task, mission: Mission): string {
   if (mission.principles.length > 0) {
     parts.push(`Principles:\n${mission.principles.map(p => `- ${p}`).join("\n")}`);
   }
+  parts.push(`\nInstructions:\n- Use $WORQLOAD_CLI to interact with worqload (e.g. $WORQLOAD_CLI report add $WORQLOAD_TASK_ID "title" "content")\n- Write tests first (TDD), then implement\n- Commit your changes when done\n- Keep scope small — one commit-sized unit of work\n- Reports must be in Japanese`);
   return parts.join("\n");
 }
 
@@ -449,7 +450,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
 
     // Act — spawn agent process
     const prompt = buildActPrompt(claimed, mission);
-    const command = [...(actCommand ?? ["claude", "-p"]), prompt];
+    const command = [...(actCommand ?? ["claude", "-p", "--max-turns", "30"]), prompt];
 
     await updateTask(task.id, (current) => ({
       status: "acting" as const,
