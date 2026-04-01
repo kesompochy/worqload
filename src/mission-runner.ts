@@ -7,7 +7,7 @@ import { updateTask, load, save } from "./store";
 import { runOnDoneHooks } from "./hooks";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
 import { registerRunner, heartbeatRunner, deregisterRunner } from "./mission-runner-state";
-import { loadReports, addReport } from "./reports";
+import { loadReports, addReport, isVacuousContent } from "./reports";
 
 export interface MissionRunnerOptions {
   pollIntervalMs?: number;
@@ -47,7 +47,7 @@ export interface ProcessTaskOptions {
 
 const MAX_TASK_RETRIES = 2;
 const RETRY_BASE_MS = 1000;
-const DEFAULT_SPAWN_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_SPAWN_TIMEOUT_MS = 30 * 60 * 1000;
 
 class SpawnTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -60,6 +60,14 @@ interface SpawnWithTimeoutResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+}
+
+function killProcessTree(pid: number): void {
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already dead */ }
+  }
 }
 
 async function spawnWithTimeout(
@@ -75,7 +83,7 @@ async function spawnWithTimeout(
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => {
-      proc.kill();
+      killProcessTree(proc.pid);
       reject(new SpawnTimeoutError(timeoutMs));
     }, timeoutMs);
   });
@@ -128,11 +136,10 @@ export async function ensureReportForDoneTask(
     .map(l => l.content)
     .filter(c => !c.startsWith("[RETRY]") && !c.startsWith("[FAILED]") && !c.startsWith("[TIMEOUT]"));
 
-  const content = actLogs.length > 0
-    ? actLogs.join("\n\n")
-    : "（ログなし）";
+  const substantiveLogs = actLogs.filter(c => !isVacuousContent(c));
+  if (substantiveLogs.length === 0) return;
 
-  await addReport(task.title, content, `mission:${missionName}`, {
+  await addReport(task.title, substantiveLogs.join("\n\n"), `mission:${missionName}`, {
     taskId: task.id,
     path: reportsPath,
   });
@@ -287,7 +294,7 @@ export async function spawnTask(
     let timedOut = false;
     const timeoutId = setTimeout(() => {
       timedOut = true;
-      proc.kill();
+      killProcessTree(proc.pid);
     }, spawnTimeoutMs);
 
     try {

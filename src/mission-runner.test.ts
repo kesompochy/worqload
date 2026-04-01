@@ -1702,6 +1702,34 @@ describe("ensureReportForDoneTask", () => {
     expect(reports[0].content).toContain("First action output");
     expect(reports[0].content).toContain("Second action output");
   });
+
+  test("skips report generation when act logs lack substance", async () => {
+    const reportsPath = tmpPath("ensure-report-vacuous");
+    const task = createTask("vacuous act task");
+    task.status = "done";
+    task.logs = [
+      { phase: "act", content: "done", timestamp: new Date().toISOString() },
+    ];
+
+    await ensureReportForDoneTask(task, "test-mission", { reportsPath });
+
+    const reports = await loadReports(reportsPath);
+    expect(reports).toHaveLength(0);
+  });
+
+  test("skips report generation when no act logs exist", async () => {
+    const reportsPath = tmpPath("ensure-report-no-act");
+    const task = createTask("no act log task");
+    task.status = "done";
+    task.logs = [
+      { phase: "observe", content: "Observed", timestamp: new Date().toISOString() },
+    ];
+
+    await ensureReportForDoneTask(task, "test-mission", { reportsPath });
+
+    const reports = await loadReports(reportsPath);
+    expect(reports).toHaveLength(0);
+  });
 });
 
 describe("processTask report generation", () => {

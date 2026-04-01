@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -7,6 +7,7 @@ import {
   addReport,
   updateReportStatus,
   removeReport,
+  isVacuousContent,
 } from "./reports";
 import type { Report } from "./reports";
 
@@ -92,4 +93,67 @@ test("multiple reports are tracked independently", async () => {
   expect(reports).toHaveLength(2);
   expect(reports.find(r => r.id === r1.id)!.status).toBe("archived");
   expect(reports.find(r => r.id === r2.id)!.status).toBe("unread");
+});
+
+describe("isVacuousContent", () => {
+  test("detects empty and whitespace-only content", () => {
+    expect(isVacuousContent("")).toBe(true);
+    expect(isVacuousContent("  ")).toBe(true);
+    expect(isVacuousContent("\n")).toBe(true);
+  });
+
+  test("detects Japanese vacuous phrases", () => {
+    expect(isVacuousContent("変化なし")).toBe(true);
+    expect(isVacuousContent("アクションなし")).toBe(true);
+    expect(isVacuousContent("特になし")).toBe(true);
+    expect(isVacuousContent("特になし")).toBe(true);
+    expect(isVacuousContent("問題なし")).toBe(true);
+    expect(isVacuousContent("対応不要")).toBe(true);
+    expect(isVacuousContent("実行なし")).toBe(true);
+    expect(isVacuousContent("該当なし")).toBe(true);
+    expect(isVacuousContent("なし")).toBe(true);
+    expect(isVacuousContent("（ログなし）")).toBe(true);
+    expect(isVacuousContent("確認済み")).toBe(true);
+    expect(isVacuousContent("確認済")).toBe(true);
+  });
+
+  test("detects English vacuous phrases", () => {
+    expect(isVacuousContent("no changes")).toBe(true);
+    expect(isVacuousContent("No Change")).toBe(true);
+    expect(isVacuousContent("nothing to do")).toBe(true);
+    expect(isVacuousContent("no action needed")).toBe(true);
+    expect(isVacuousContent("no action required")).toBe(true);
+    expect(isVacuousContent("no action taken")).toBe(true);
+    expect(isVacuousContent("no issues")).toBe(true);
+    expect(isVacuousContent("no issue")).toBe(true);
+    expect(isVacuousContent("no updates")).toBe(true);
+    expect(isVacuousContent("N/A")).toBe(true);
+    expect(isVacuousContent("n/a")).toBe(true);
+    expect(isVacuousContent("none")).toBe(true);
+  });
+
+  test("strips trailing punctuation before matching", () => {
+    expect(isVacuousContent("変化なし。")).toBe(true);
+    expect(isVacuousContent("no changes.")).toBe(true);
+    expect(isVacuousContent("none!")).toBe(true);
+    expect(isVacuousContent("問題なし！")).toBe(true);
+  });
+
+  test("strips surrounding whitespace before matching", () => {
+    expect(isVacuousContent("  変化なし  ")).toBe(true);
+    expect(isVacuousContent("  no changes  ")).toBe(true);
+  });
+
+  test("does not flag substantive content", () => {
+    expect(isVacuousContent("Implemented the new feature with full test coverage")).toBe(false);
+    expect(isVacuousContent("テスト追加とリファクタリングを実施")).toBe(false);
+    expect(isVacuousContent("Fixed bug in authentication flow")).toBe(false);
+    expect(isVacuousContent("変化なしの理由を調査した結果、設定ファイルに問題があった")).toBe(false);
+  });
+
+  test("does not flag system markers", () => {
+    expect(isVacuousContent("[RETRY] 1/2 - exit code 1")).toBe(false);
+    expect(isVacuousContent("[TIMEOUT] Spawn timed out after 300000ms")).toBe(false);
+    expect(isVacuousContent("[FAILED] exit code 1")).toBe(false);
+  });
 });

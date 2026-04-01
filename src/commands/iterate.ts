@@ -9,7 +9,7 @@ import type { SourceResult } from "../sources";
 import { runAllSources } from "../sources";
 import { loadPrinciples } from "../principles";
 import type { Report } from "../reports";
-import { loadReports } from "../reports";
+import { loadReports, isVacuousContent } from "../reports";
 import { runOnDoneHooks } from "../hooks";
 import type { ServerLogSummary } from "../server-log";
 import { loadRecentServerLogs, summarizeServerLogs } from "../server-log";
@@ -56,6 +56,7 @@ export interface GenerateResult {
 }
 
 const MIN_ACT_CONTENT_LENGTH = 10;
+const MIN_REPORT_CONTENT_LENGTH = 50;
 const DEFAULT_AUDIT_WINDOW_MINUTES = 10;
 
 export async function auditRecentCompletions(
@@ -83,16 +84,25 @@ export async function auditRecentCompletions(
       reasons.push("no act log");
     } else if (!actLogs.some(l => l.content.length >= MIN_ACT_CONTENT_LENGTH)) {
       reasons.push("act log lacks substance");
+    } else {
+      const substantiveLogs = actLogs.filter(l =>
+        !l.content.startsWith("[RETRY]") && !l.content.startsWith("[FAILED]") && !l.content.startsWith("[TIMEOUT]"),
+      );
+      if (substantiveLogs.length > 0 && substantiveLogs.every(l => isVacuousContent(l.content))) {
+        reasons.push("act log is vacuous");
+      }
     }
 
     if (ctx.reportsPath) {
       const shortId = task.id.slice(0, SHORT_ID_LENGTH);
-      const hasReport = reports.some(
+      const matchingReport = reports.find(
         r => r.content.includes(task.id) || r.content.includes(shortId)
           || r.title.includes(task.id) || r.title.includes(shortId),
       );
-      if (!hasReport) {
+      if (!matchingReport) {
         reasons.push("no report found");
+      } else if (matchingReport.content.length < MIN_REPORT_CONTENT_LENGTH || isVacuousContent(matchingReport.content)) {
+        reasons.push("report lacks substance");
       }
     }
 
@@ -483,7 +493,12 @@ export function formatCleanupLog(cleanup: CleanupResult): string {
 // the orchestration agent's next action (waiting_human / queue_empty / has_pending).
 // Contrast with mission-runner.ts iterateMission(), which processes a single task
 // within one mission.
-export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
+export interface IterateOptions {
+  ctxOverride?: Partial<IterateContext>;
+  observationOverride?: Observation;
+}
+
+export async function iterate(queue: TaskQueue, args: string[], options?: IterateOptions): Promise<void> {
   const iterationTask = createTask("Iterate: OODA cycle", {}, 0, "worqload");
   queue.enqueue(iterationTask);
   const id = iterationTask.id;
@@ -491,10 +506,10 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
 
   const config = await loadConfig();
   const templatePath = config.init?.agentPath || ".claude/skills/worqload/SKILL.md";
-  const ctx: IterateContext = { templatePath };
+  const ctx: IterateContext = { templatePath, ...options?.ctxOverride };
 
   // Observe
-  const obs = await collectObservation(queue, ctx, id);
+  const obs = options?.observationOverride ?? await collectObservation(queue, ctx, id);
   const observeLog = formatObserveLog(obs);
   queue.addLog(id, "observe", observeLog);
 
@@ -554,16 +569,12 @@ export async function iterate(queue: TaskQueue, args: string[]): Promise<void> {
     queue.transition(id, "acting");
     const cleanup2 = await performActCleanup(queue, ctx);
     const cleanupLog2 = formatCleanupLog(cleanup2);
-    const actSummary2 = ["presented waiting_human questions to user", cleanupLog2].filter(Boolean).join("; ");
+    const actSummary2 = [`${obs.waitingHumanTasks.length} waiting_human task(s) on dashboard`, cleanupLog2].filter(Boolean).join("; ");
     queue.addLog(id, "act", actSummary2);
     queue.transition(id, "done");
     await queue.save();
     await runOnDoneHooks(id, iterationTask.title);
-    console.log(`[${shortId}] Iteration complete: waiting_human tasks presented`);
-    for (const q of questions) {
-      console.log(`  ${q}`);
-    }
-    if (cleanupLog2) console.log(`  ${cleanupLog2}`);
+    console.log(`[${shortId}] Iteration complete: ${obs.waitingHumanTasks.length} waiting_human task(s) on dashboard`);
     return;
   }
 

@@ -16,11 +16,11 @@ export interface Report {
 
 const store = new EntityStore<Report>(DEFAULT_REPORTS_PATH, "Report");
 
-export async function loadReports(path: string = DEFAULT_REPORTS_PATH): Promise<Report[]> {
+export async function loadReports(path?: string): Promise<Report[]> {
   return store.load(path);
 }
 
-export async function saveReports(reports: Report[], path: string = DEFAULT_REPORTS_PATH): Promise<void> {
+export async function saveReports(reports: Report[], path?: string): Promise<void> {
   await store.save(reports, path);
 }
 
@@ -29,8 +29,8 @@ export interface AddReportOptions {
   path?: string;
 }
 
-export async function addReport(title: string, content: string, createdBy: string, pathOrOptions: string | AddReportOptions = DEFAULT_REPORTS_PATH): Promise<Report> {
-  const resolvedPath = typeof pathOrOptions === "string" ? pathOrOptions : (pathOrOptions.path ?? DEFAULT_REPORTS_PATH);
+export async function addReport(title: string, content: string, createdBy: string, pathOrOptions?: string | AddReportOptions): Promise<Report> {
+  const resolvedPath = typeof pathOrOptions === "string" ? pathOrOptions : pathOrOptions?.path;
   const taskId = typeof pathOrOptions === "string" ? undefined : pathOrOptions.taskId;
   const report: Report = {
     id: crypto.randomUUID(),
@@ -44,10 +44,41 @@ export async function addReport(title: string, content: string, createdBy: strin
   return store.add(report, resolvedPath);
 }
 
-export async function updateReportStatus(id: string, status: ReportStatus, path: string = DEFAULT_REPORTS_PATH): Promise<void> {
+export async function updateReportStatus(id: string, status: ReportStatus, path?: string): Promise<void> {
   await store.update(id, { status }, path);
 }
 
-export async function removeReport(id: string, path: string = DEFAULT_REPORTS_PATH): Promise<void> {
+export async function removeReport(id: string, path?: string): Promise<void> {
   await store.remove(id, path);
+}
+
+const VACUOUS_PATTERNS: RegExp[] = [
+  // Japanese: explicitly claiming no work / no changes
+  /^変化\s*なし$/,
+  /^アクション\s*なし$/,
+  /^特に?\s*なし$/,
+  /^問題\s*なし$/,
+  /^対応\s*不要$/,
+  /^実行\s*なし$/,
+  /^該当\s*なし$/,
+  /^なし$/,
+  /^（ログなし）$/,
+  /^確認\s*済み?$/,
+  // English: explicitly claiming no work / no changes
+  /^no\s+changes?$/i,
+  /^nothing\s+to\s+do$/i,
+  /^no\s+action\s+(needed|required|taken)$/i,
+  /^no\s+issues?$/i,
+  /^no\s+updates?$/i,
+  /^n\/?a$/i,
+  /^none$/i,
+  /^done$/i,
+  /^completed?$/i,
+  /^ok$/i,
+];
+
+export function isVacuousContent(content: string): boolean {
+  const normalized = content.trim().replace(/[.。！!]+$/, "").trim();
+  if (normalized.length === 0) return true;
+  return VACUOUS_PATTERNS.some(pattern => pattern.test(normalized));
 }

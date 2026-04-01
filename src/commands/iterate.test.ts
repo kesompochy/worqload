@@ -16,7 +16,9 @@ import {
   hasHumanAnswer,
   performActCleanup,
   formatCleanupLog,
+  iterate,
   type IterateContext,
+  type IterateOptions,
   type Observation,
 } from "./iterate";
 
@@ -497,7 +499,7 @@ describe("auditRecentCompletions", () => {
     queue.enqueue(t1);
     queue.addLog(t1.id, "act", "Implemented the full feature correctly");
     queue.transition(t1.id, "done");
-    await addReport("Report", `Completed task ${t1.id.slice(0, SHORT_ID_LENGTH)}`, "agent", reportsPath);
+    await addReport("Report", `Completed task ${t1.id.slice(0, SHORT_ID_LENGTH)}: 認証ミドルウェアにJWTトークン検証を追加し、全テストを通過しました。`, "agent", reportsPath);
     const ctx = makeContext({ reportsPath });
 
     const suspicious = await auditRecentCompletions(queue, ctx);
@@ -518,6 +520,53 @@ describe("auditRecentCompletions", () => {
     expect(suspicious).toHaveLength(1);
     expect(suspicious[0].reasons).toContain("no act log");
     expect(suspicious[0].reasons).toContain("no report found");
+  });
+
+  test("flags report with vacuous content", async () => {
+    const reportsPath = tmpPath("reports");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Vacuous report task");
+    queue.enqueue(t1);
+    queue.addLog(t1.id, "act", "Implemented the full feature correctly");
+    queue.transition(t1.id, "done");
+    await addReport("Report", `（ログなし） ${t1.id.slice(0, SHORT_ID_LENGTH)}`, "agent", reportsPath);
+    const ctx = makeContext({ reportsPath });
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].reasons).toContain("report lacks substance");
+  });
+
+  test("flags report with too-short content", async () => {
+    const reportsPath = tmpPath("reports");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Short report task");
+    queue.enqueue(t1);
+    queue.addLog(t1.id, "act", "Implemented the full feature correctly");
+    queue.transition(t1.id, "done");
+    await addReport("Report", `done ${t1.id.slice(0, SHORT_ID_LENGTH)}`, "agent", reportsPath);
+    const ctx = makeContext({ reportsPath });
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].reasons).toContain("report lacks substance");
+  });
+
+  test("does not flag report with substantive content", async () => {
+    const reportsPath = tmpPath("reports");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const t1 = createTask("Good report task");
+    queue.enqueue(t1);
+    queue.addLog(t1.id, "act", "Implemented the full feature correctly");
+    queue.transition(t1.id, "done");
+    await addReport("Report", `タスク ${t1.id.slice(0, SHORT_ID_LENGTH)} を完了しました。認証ミドルウェアにJWTトークン検証を追加し、テストを通過しました。`, "agent", reportsPath);
+    const ctx = makeContext({ reportsPath });
+
+    const suspicious = await auditRecentCompletions(queue, ctx);
+
+    expect(suspicious).toEqual([]);
   });
 });
 
@@ -1434,5 +1483,75 @@ describe("formatCleanupLog", () => {
   test("combines archived count and unread reports", () => {
     const result = formatCleanupLog({ archivedCount: 2, unreadReports: ["Report X"] });
     expect(result).toBe("archived 2 task(s); 1 unread report(s): Report X");
+  });
+});
+
+describe("iterate - waiting_human suppresses chat output", () => {
+  function waitingHumanObservation(waitingTasks: Task[]): Observation {
+    return {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: waitingTasks,
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+  }
+
+  test("does not print individual questions to console when waiting_human tasks exist", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Blocked task");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "waiting_human");
+    queue.addLog(task.id, "orient", `${HUMAN_REQUIRED_PREFIX}What should we do?`);
+
+    const obs = waitingHumanObservation([queue.get(task.id)!]);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await iterate(queue, [], { observationOverride: obs });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(logs.length).toBe(1);
+    expect(logs[0]).toContain("waiting_human");
+    expect(logs[0]).not.toContain("What should we do?");
+  });
+
+  test("logs dashboard reference instead of 'presented to user'", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Needs input");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "waiting_human");
+    queue.addLog(task.id, "orient", `${HUMAN_REQUIRED_PREFIX}Approve this?`);
+
+    const obs = waitingHumanObservation([queue.get(task.id)!]);
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      await iterate(queue, [], { observationOverride: obs });
+    } finally {
+      console.log = originalLog;
+    }
+
+    const allTasks = [...queue.list(), ...await queue.history()];
+    const iterateTask = allTasks.find(t => t.title.startsWith("Iterate:"));
+    expect(iterateTask).toBeDefined();
+    const actLog = iterateTask!.logs.find(l => l.phase === "act");
+    expect(actLog).toBeDefined();
+    expect(actLog!.content).not.toContain("presented waiting_human questions to user");
+    expect(actLog!.content).toContain("dashboard");
   });
 });
