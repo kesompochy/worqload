@@ -624,18 +624,37 @@ function Heartbeat({ heartbeat, sleepState, onUpdate }) {
 function EditableText({ value, onSave, className, inputClassName }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(value);
-  const startEdit = () => { setEditValue(value); setEditing(true); };
-  const save = () => {
+  const inputRef = useRef(null);
+  const exitedRef = useRef(false);
+  const startEdit = () => { setEditValue(value); setEditing(true); exitedRef.current = false; };
+  const saveAndExit = () => {
+    if (exitedRef.current) return;
+    exitedRef.current = true;
     setEditing(false);
     const trimmed = editValue.trim();
     if (trimmed && trimmed !== value) onSave(trimmed);
   };
-  const onKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); save(); }
-    if (e.key === 'Escape') setEditing(false);
+  const cancelEdit = () => {
+    if (exitedRef.current) return;
+    exitedRef.current = true;
+    setEditing(false);
   };
+  const saveAndExitRef = useRef(saveAndExit);
+  saveAndExitRef.current = saveAndExit;
+  const onKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); saveAndExit(); }
+    if (e.key === 'Escape') cancelEdit();
+  };
+  useEffect(() => {
+    if (!editing) return;
+    const onMouseDown = (e) => {
+      if (inputRef.current && !inputRef.current.contains(e.target)) saveAndExitRef.current();
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [editing]);
   if (editing) {
-    return html\`<input value=\${editValue} onInput=\${(e) => setEditValue(e.target.value)} onKeyDown=\${onKeyDown} onBlur=\${save} ref=\${(el) => el && el.focus()} class=\${inputClassName || ''} style="width:100%;box-sizing:border-box" />\`;
+    return html\`<input value=\${editValue} onInput=\${(e) => setEditValue(e.target.value)} onKeyDown=\${onKeyDown} onBlur=\${saveAndExit} ref=\${(el) => { inputRef.current = el; if (el) el.focus(); }} class=\${inputClassName || ''} style="width:100%;box-sizing:border-box" />\`;
   }
   return html\`<span class=\${className || ''} style="cursor:pointer" onClick=\${startEdit}>\${value}</span>\`;
 }
