@@ -16,6 +16,34 @@ import { loadMissions } from "./mission";
 import { loadRunnerStatesUnlocked } from "./mission-runner-state";
 import { appendServerLog } from "./server-log";
 
+export interface Route {
+  method: string;
+  pattern: string | RegExp;
+  handler: (req: Request, queue: TaskQueue, port: number, params: string[]) => Promise<Response>;
+}
+
+export interface RouteMatch {
+  route: Route;
+  params: string[];
+}
+
+export function matchRoute(method: string, pathname: string, routes: Route[]): RouteMatch | null {
+  for (const route of routes) {
+    if (route.method !== method) continue;
+    if (typeof route.pattern === "string") {
+      if (pathname === route.pattern) {
+        return { route, params: [] };
+      }
+    } else {
+      const match = pathname.match(route.pattern);
+      if (match) {
+        return { route, params: match.slice(1) };
+      }
+    }
+  }
+  return null;
+}
+
 const TASK_NOT_FOUND = { error: "Task not found" } as const;
 const NOT_WAITING_HUMAN = { error: "Task is not waiting for human" } as const;
 const NOT_FAILED = { error: "Task is not failed" } as const;
@@ -65,167 +93,143 @@ export function startServer(basePort = 3456): void {
   process.exit(1);
 }
 
-async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: number): Promise<Response> {
-      if (req.method === "GET" && url.pathname === "/.well-known/agent.json") {
-        const card = generateAgentCard(`http://localhost:${port}`);
-        return json(card);
-      }
+function buildRoutes(): Route[] {
+  return [
+    { method: "GET", pattern: "/.well-known/agent.json",
+      handler: async (_req, _queue, port) => json(generateAgentCard(`http://localhost:${port}`)) },
 
-      if (req.method === "POST" && url.pathname === "/a2a") {
-        const body = await req.json();
-        const result = await handleA2ARequest(queue, body);
-        return json(result);
-      }
+    { method: "POST", pattern: "/a2a",
+      handler: async (req, queue) => json(await handleA2ARequest(queue, await req.json())) },
 
-      if (req.method === "GET" && url.pathname === "/") {
-        return new Response(html(), { headers: { "Content-Type": "text/html; charset=utf-8" } });
-      }
+    { method: "GET", pattern: "/",
+      handler: async () => new Response(html(), { headers: { "Content-Type": "text/html; charset=utf-8" } }) },
 
-      if (req.method === "GET" && url.pathname === "/api/tasks") {
-        await queue.load();
-        return json(queue.list());
-      }
+    { method: "GET", pattern: "/api/tasks",
+      handler: async (_req, queue) => { await queue.load(); return json(queue.list()); } },
 
-      if (req.method === "GET" && url.pathname === "/api/history") {
-        const history = await queue.history();
-        return json(history);
-      }
+    { method: "GET", pattern: "/api/history",
+      handler: async (_req, queue) => json(await queue.history()) },
 
-      if (req.method === "GET" && url.pathname === "/api/heartbeat") {
+    { method: "GET", pattern: "/api/heartbeat",
+      handler: async () => {
         const file = Bun.file(".worqload/heartbeat.json");
         if (!(await file.exists())) return json(null);
         return json(await file.json());
-      }
+      } },
 
-      if (req.method === "GET" && url.pathname === "/api/sleep") {
-        const state = await loadSleep();
-        return json(state);
-      }
+    { method: "GET", pattern: "/api/sleep",
+      handler: async () => json(await loadSleep()) },
 
-      if (req.method === "POST" && url.pathname === "/api/sleep") {
+    { method: "POST", pattern: "/api/sleep",
+      handler: async (req) => {
         const body = await req.json() as { minutes: number };
-        const state = await sleepFor(body.minutes);
-        return json(state, 201);
-      }
+        return json(await sleepFor(body.minutes), 201);
+      } },
 
-      if (req.method === "DELETE" && url.pathname === "/api/sleep") {
-        await clearSleep();
-        return json({ cleared: true });
-      }
+    { method: "DELETE", pattern: "/api/sleep",
+      handler: async () => { await clearSleep(); return json({ cleared: true }); } },
 
-      if (req.method === "GET" && url.pathname === "/api/principles") {
+    { method: "GET", pattern: "/api/principles",
+      handler: async () => {
         const content = await loadPrinciples();
-        const lines = content.split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2));
-        return json(lines);
-      }
+        return json(content.split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2)));
+      } },
 
-      if (req.method === "GET" && url.pathname === "/api/spawns") {
-        const spawns = await loadSpawns();
-        return json(filterSpawnsForDashboard(spawns));
-      }
+    { method: "GET", pattern: "/api/spawns",
+      handler: async () => json(filterSpawnsForDashboard(await loadSpawns())) },
 
-      if (req.method === "GET" && url.pathname === "/api/missions") {
+    { method: "GET", pattern: "/api/missions",
+      handler: async (_req, queue) => {
         await queue.load();
         const missions = await loadMissions();
         const tasks = queue.list();
         const spawns = await loadSpawns();
-        const result = missions.map(m => ({
+        return json(missions.map(m => ({
           ...m,
           taskCount: tasks.filter(t => t.missionId === m.id).length,
           tasks: tasks.filter(t => t.missionId === m.id).map(t => ({
             ...t,
             spawns: spawns.filter(s => s.taskId === t.id),
           })),
-        }));
-        return json(result);
-      }
+        })));
+      } },
 
-      if (req.method === "GET" && url.pathname === "/api/mission-runners") {
-        const runners = await loadRunnerStatesUnlocked();
-        return json(filterRunnersForDashboard(runners));
-      }
+    { method: "GET", pattern: "/api/mission-runners",
+      handler: async () => json(filterRunnersForDashboard(await loadRunnerStatesUnlocked())) },
 
-      if (req.method === "GET" && url.pathname === "/api/projects") {
-        const projects = await loadProjects();
-        return json(await buildProjectsSummary(projects));
-      }
+    { method: "GET", pattern: "/api/projects",
+      handler: async () => json(await buildProjectsSummary(await loadProjects())) },
 
-      if (req.method === "GET" && url.pathname === "/api/projects/feedback") {
-        const projects = await loadProjects();
-        return json(await loadAllProjectFeedback(projects));
-      }
+    { method: "GET", pattern: "/api/projects/feedback",
+      handler: async () => json(await loadAllProjectFeedback(await loadProjects())) },
 
-      if (req.method === "GET" && url.pathname === "/api/feedback") {
-        const items = await loadFeedback();
-        return json(items);
-      }
+    { method: "GET", pattern: "/api/feedback",
+      handler: async () => json(await loadFeedback()) },
 
-      if (req.method === "POST" && url.pathname === "/api/feedback") {
+    { method: "POST", pattern: "/api/feedback",
+      handler: async (req) => {
         const body = await req.json() as { message: string; from?: string };
-        const fb = await addFeedback(body.message, body.from || "web-ui");
-        return json(fb, 201);
-      }
+        return json(await addFeedback(body.message, body.from || "web-ui"), 201);
+      } },
 
-      const feedbackIdMatch = url.pathname.match(/^\/api\/feedback\/([^/]+)$/);
-      if (req.method === "PATCH" && feedbackIdMatch) {
+    { method: "PATCH", pattern: /^\/api\/feedback\/([^/]+)$/,
+      handler: async (req, _queue, _port, params) => {
         const body = await req.json() as { message: string };
-        await updateFeedbackMessage(feedbackIdMatch[1], body.message);
-        return json({ updated: feedbackIdMatch[1] });
-      }
+        await updateFeedbackMessage(params[0], body.message);
+        return json({ updated: params[0] });
+      } },
 
-      if (req.method === "DELETE" && feedbackIdMatch) {
-        await removeFeedback(feedbackIdMatch[1]);
-        return json({ deleted: feedbackIdMatch[1] });
-      }
+    { method: "DELETE", pattern: /^\/api\/feedback\/([^/]+)$/,
+      handler: async (_req, _queue, _port, params) => {
+        await removeFeedback(params[0]);
+        return json({ deleted: params[0] });
+      } },
 
-      if (req.method === "GET" && url.pathname === "/api/reports") {
-        const reports = await loadReports();
-        return json(reports);
-      }
+    { method: "GET", pattern: "/api/reports",
+      handler: async () => json(await loadReports()) },
 
-      const reportStatusMatch = url.pathname.match(/^\/api\/reports\/([^/]+)\/status$/);
-      if (req.method === "PATCH" && reportStatusMatch) {
+    { method: "PATCH", pattern: /^\/api\/reports\/([^/]+)\/status$/,
+      handler: async (req, _queue, _port, params) => {
         const body = await req.json() as { status: string };
-        await updateReportStatus(reportStatusMatch[1], body.status as "unread" | "reading" | "read" | "archived");
+        await updateReportStatus(params[0], body.status as "unread" | "reading" | "read" | "archived");
         return json({ updated: true });
-      }
+      } },
 
-      const projectFeedbackMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/feedback$/);
-      if (req.method === "POST" && projectFeedbackMatch) {
-        const projectName = decodeURIComponent(projectFeedbackMatch[1]);
+    { method: "POST", pattern: /^\/api\/projects\/([^/]+)\/feedback$/,
+      handler: async (req, _queue, _port, params) => {
+        const projectName = decodeURIComponent(params[0]);
         const projects = await loadProjects();
         const project = projects.find(p => p.name === projectName);
         if (!project) return json(PROJECT_NOT_FOUND, 404);
         const feedbackPath = project.path + "/.worqload/feedback.json";
         const body = await req.json() as { message: string; from?: string };
-        const fb = await addFeedback(body.message, body.from || "dashboard", feedbackPath);
-        return json(fb, 201);
-      }
+        return json(await addFeedback(body.message, body.from || "dashboard", feedbackPath), 201);
+      } },
 
-      if (req.method === "POST" && url.pathname === "/api/tasks") {
+    { method: "POST", pattern: "/api/tasks",
+      handler: async (req, queue) => {
         await queue.load();
         const body = await req.json() as { title: string; priority?: number; createdBy?: string };
         const task = createTask(body.title, {}, body.priority ?? 0, body.createdBy);
         queue.enqueue(task);
         await queue.save();
         return json(task, 201);
-      }
+      } },
 
-      const decideMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/decide$/);
-      if (req.method === "POST" && decideMatch) {
-        return withTask(queue, decideMatch[1], async (task) => {
+    { method: "POST", pattern: /^\/api\/tasks\/([^/]+)\/decide$/,
+      handler: async (req, queue, _port, params) =>
+        withTask(queue, params[0], async (task) => {
           if (task.status !== "waiting_human") return json(NOT_WAITING_HUMAN, 400);
           const body = await req.json() as { decision: string };
           queue.transition(task.id, "orienting");
           queue.addLog(task.id, "orient", body.decision);
           await queue.save();
           return json(queue.get(task.id));
-        });
-      }
+        }) },
 
-      const taskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
-      if (req.method === "PATCH" && taskMatch) {
-        return withTask(queue, taskMatch[1], async (task) => {
+    { method: "PATCH", pattern: /^\/api\/tasks\/([^/]+)$/,
+      handler: async (req, queue, _port, params) =>
+        withTask(queue, params[0], async (task) => {
           const body = await req.json() as { priority?: number; title?: string };
           const patch: Record<string, unknown> = {};
           if (body.priority !== undefined) patch.priority = body.priority;
@@ -235,29 +239,28 @@ async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: num
             await queue.save();
           }
           return json(queue.get(task.id));
-        });
-      }
+        }) },
 
-      if (req.method === "DELETE" && taskMatch) {
-        return withTask(queue, taskMatch[1], async (task) => {
+    { method: "DELETE", pattern: /^\/api\/tasks\/([^/]+)$/,
+      handler: async (_req, queue, _port, params) =>
+        withTask(queue, params[0], async (task) => {
           queue.remove(task.id);
           await queue.save();
           return json({ deleted: task.id });
-        });
-      }
+        }) },
 
-      const failMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/fail$/);
-      if (req.method === "POST" && failMatch) {
-        return withTask(queue, failMatch[1], async (task) => {
+    { method: "POST", pattern: /^\/api\/tasks\/([^/]+)\/fail$/,
+      handler: async (req, queue, _port, params) =>
+        withTask(queue, params[0], async (task) => {
           const body = await req.json() as { reason?: string };
           queue.addLog(task.id, "act", `[FAILED] ${body.reason || "No reason given"}`);
           queue.transition(task.id, "failed");
           await queue.save();
           return json(queue.get(task.id));
-        });
-      }
+        }) },
 
-      if (req.method === "POST" && url.pathname === "/api/clean") {
+    { method: "POST", pattern: "/api/clean",
+      handler: async (_req, queue) => {
         await queue.load();
         const terminatedIds = queue.list()
           .filter(t => t.status === "done" || t.status === "failed")
@@ -266,20 +269,28 @@ async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: num
         const archived = await queue.archive(terminatedIds);
         await queue.save();
         return json({ archived: archived.map(t => t.id) });
-      }
+      } },
 
-      const retryMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/retry$/);
-      if (req.method === "POST" && retryMatch) {
-        return withTask(queue, retryMatch[1], async (task) => {
+    { method: "POST", pattern: /^\/api\/tasks\/([^/]+)\/retry$/,
+      handler: async (_req, queue, _port, params) =>
+        withTask(queue, params[0], async (task) => {
           if (task.status !== "failed") return json(NOT_FAILED, 400);
           queue.addLog(task.id, "act", "[RETRY]");
           queue.transition(task.id, "observing");
           await queue.save();
           return json(queue.get(task.id));
-        });
-      }
+        }) },
+  ];
+}
 
-      return new Response("Not Found", { status: 404 });
+const apiRoutes = buildRoutes();
+
+async function handleRequest(req: Request, url: URL, queue: TaskQueue, port: number): Promise<Response> {
+  const matched = matchRoute(req.method, url.pathname, apiRoutes);
+  if (matched) {
+    return matched.route.handler(req, queue, port, matched.params);
+  }
+  return new Response("Not Found", { status: 404 });
 }
 
 const RECENT_SPAWN_LIMIT = 10;

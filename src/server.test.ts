@@ -12,7 +12,8 @@ import { registerProject } from "./projects";
 import type { Project } from "./projects";
 import type { SpawnRecord } from "./spawns";
 import type { RunnerState } from "./mission-runner-state";
-import { filterSpawnsForDashboard, filterRunnersForDashboard, buildProjectsSummary, loadAllProjectFeedback } from "./server";
+import { filterSpawnsForDashboard, filterRunnersForDashboard, buildProjectsSummary, loadAllProjectFeedback, matchRoute } from "./server";
+import type { Route } from "./server";
 
 const REAL_STORE = ".worqload/tasks.json";
 const REAL_MISSIONS = ".worqload/missions.json";
@@ -494,6 +495,77 @@ describe("buildProjectsSummary: /api/projects returns counts instead of raw data
     expect(result[0].feedbackCount).toBe(2);
     expect(result[1].taskCount).toBe(3);
     expect(result[1].feedbackCount).toBe(0);
+  });
+});
+
+describe("matchRoute: table-driven routing", () => {
+  const routes: Route[] = [
+    { method: "GET", pattern: "/api/tasks", handler: async () => new Response("tasks list") },
+    { method: "POST", pattern: "/api/tasks", handler: async () => new Response("task created", { status: 201 }) },
+    { method: "GET", pattern: /^\/api\/tasks\/([^/]+)$/, handler: async (_req, _queue, _port, params) => new Response(`task ${params[0]}`) },
+    { method: "PATCH", pattern: /^\/api\/tasks\/([^/]+)$/, handler: async (_req, _queue, _port, params) => new Response(`updated ${params[0]}`) },
+    { method: "DELETE", pattern: /^\/api\/tasks\/([^/]+)$/, handler: async (_req, _queue, _port, params) => new Response(`deleted ${params[0]}`) },
+  ];
+
+  test("matches exact string path with correct method", () => {
+    const result = matchRoute("GET", "/api/tasks", routes);
+    expect(result).not.toBeNull();
+    expect(result!.route.method).toBe("GET");
+    expect(result!.params).toEqual([]);
+  });
+
+  test("matches POST on same path separately from GET", () => {
+    const result = matchRoute("POST", "/api/tasks", routes);
+    expect(result).not.toBeNull();
+    expect(result!.route.method).toBe("POST");
+  });
+
+  test("matches regex pattern and extracts params", () => {
+    const result = matchRoute("GET", "/api/tasks/abc123", routes);
+    expect(result).not.toBeNull();
+    expect(result!.params).toEqual(["abc123"]);
+  });
+
+  test("matches correct method for regex patterns", () => {
+    const get = matchRoute("GET", "/api/tasks/abc123", routes);
+    const patch = matchRoute("PATCH", "/api/tasks/abc123", routes);
+    const del = matchRoute("DELETE", "/api/tasks/abc123", routes);
+    expect(get).not.toBeNull();
+    expect(patch).not.toBeNull();
+    expect(del).not.toBeNull();
+    expect(get!.route.method).toBe("GET");
+    expect(patch!.route.method).toBe("PATCH");
+    expect(del!.route.method).toBe("DELETE");
+  });
+
+  test("returns null when no route matches", () => {
+    const result = matchRoute("GET", "/api/nonexistent", routes);
+    expect(result).toBeNull();
+  });
+
+  test("returns null when method does not match", () => {
+    const result = matchRoute("PUT", "/api/tasks", routes);
+    expect(result).toBeNull();
+  });
+
+  test("does not match partial string paths", () => {
+    const result = matchRoute("GET", "/api/tasks/extra", routes);
+    // Should match the regex pattern, not the exact string
+    expect(result).not.toBeNull();
+    expect(result!.params).toEqual(["extra"]);
+  });
+
+  test("exact string match takes priority over regex when both match", () => {
+    const result = matchRoute("GET", "/api/tasks", routes);
+    expect(result).not.toBeNull();
+    expect(result!.params).toEqual([]);
+  });
+
+  test("handler receives extracted params", async () => {
+    const result = matchRoute("GET", "/api/tasks/my-task-id", routes);
+    expect(result).not.toBeNull();
+    const response = await result!.route.handler(new Request("http://localhost/api/tasks/my-task-id"), null as any, 3456, result!.params);
+    expect(await response.text()).toBe("task my-task-id");
   });
 });
 
