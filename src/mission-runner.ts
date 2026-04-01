@@ -130,6 +130,28 @@ function phaseLog(phase: OodaPhase, content: string) {
   return { phase, content, timestamp: new Date().toISOString() };
 }
 
+function formatContextForOrient(context: Record<string, unknown>): string {
+  const keys = Object.keys(context);
+  if (keys.length === 0) return "";
+  const parts: string[] = [];
+  if (Array.isArray(context.observations)) {
+    parts.push(context.observations.join("; "));
+  }
+  if (typeof context.feedbackId === "string") {
+    parts.push(`feedback: ${context.feedbackId}`);
+  }
+  if (Array.isArray(context.feedbackIds)) {
+    parts.push(`feedback: ${context.feedbackIds.join(", ")}`);
+  }
+  if (Array.isArray(context.principles)) {
+    parts.push(`principles: ${context.principles.join(", ")}`);
+  }
+  if (parts.length === 0) {
+    return JSON.stringify(context);
+  }
+  return parts.join("; ");
+}
+
 export interface EnsureReportOptions {
   reportsPath?: string;
 }
@@ -209,11 +231,22 @@ export async function orientTask(
   }
 
   const principlesList = mission.principles.map(p => `- ${p}`).join("\n");
-  await updateTask(taskId, (current) => ({
-    status: "orienting" as const,
-    logs: [...current.logs, phaseLog("orient",
-      `Mission "${mission.name}" principles applied:\n${principlesList}`)],
-  }), storePath);
+  await updateTask(taskId, (current) => {
+    const taskTitle = current.title;
+    const contextSummary = formatContextForOrient(current.context);
+    const orientLines = [
+      `Mission "${mission.name}" orient:`,
+      `Task: ${taskTitle}`,
+    ];
+    if (contextSummary) {
+      orientLines.push(`Context: ${contextSummary}`);
+    }
+    orientLines.push(`Principles:\n${principlesList}`);
+    return {
+      status: "orienting" as const,
+      logs: [...current.logs, phaseLog("orient", orientLines.join("\n"))],
+    };
+  }, storePath);
   return "oriented";
 }
 
