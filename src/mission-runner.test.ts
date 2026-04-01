@@ -1407,6 +1407,45 @@ describe("orientTask", () => {
     const orientLog = updated?.logs.find(l => l.phase === "orient");
     expect(orientLog?.content).toContain("my-named-mission");
   });
+
+  test("orient log includes task title for principle-task comparison", async () => {
+    const storePath = tmpPath("orient-task-title");
+    const missionPath = tmpPath("orient-task-title-m");
+    const mission = await createMission("orient-title-m", {}, missionPath);
+    await addMissionPrinciple(mission.id, "Write tests first", missionPath);
+    const missions = await loadMissions(missionPath);
+    const updatedMission = missions[0];
+
+    const task = createTask("Add validation to user input");
+    await setupQueue(storePath, [{ ...task, missionId: updatedMission.id }]);
+
+    await orientTask(task.id, updatedMission, storePath);
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const orientLog = updated?.logs.find(l => l.phase === "orient");
+    expect(orientLog?.content).toContain("Add validation to user input");
+  });
+
+  test("orient log includes task context when present", async () => {
+    const storePath = tmpPath("orient-task-ctx");
+    const missionPath = tmpPath("orient-task-ctx-m");
+    const mission = await createMission("orient-ctx-m", {}, missionPath);
+    await addMissionPrinciple(mission.id, "Keep changes small", missionPath);
+    const missions = await loadMissions(missionPath);
+    const updatedMission = missions[0];
+
+    const task = createTask("Investigate feedback: slow tests");
+    task.context = { feedbackIds: ["fb-1"], observations: ["tests are slow"] };
+    await setupQueue(storePath, [{ ...task, missionId: updatedMission.id }]);
+
+    await orientTask(task.id, updatedMission, storePath);
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    const orientLog = updated?.logs.find(l => l.phase === "orient");
+    expect(orientLog?.content).toContain("tests are slow");
+  });
 });
 
 describe("shouldForceEscalation", () => {
