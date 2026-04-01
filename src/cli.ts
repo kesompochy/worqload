@@ -3,7 +3,7 @@ import type { TaskQueue as TaskQueueType } from "./queue";
 import { EscalationError } from "./utils/errors";
 import { init } from "./commands/init";
 import { principle } from "./commands/principle";
-import { add, list, show, context, next, clean, history, claim, unclaim } from "./commands/task";
+import { add, list, show, context, next, clean, history, claim, unclaim, priority } from "./commands/task";
 import { observe, orient, decide, act, done, fail, retry } from "./commands/ooda";
 import { spawn, spawnCleanup } from "./commands/spawn";
 import { project } from "./commands/project";
@@ -14,12 +14,13 @@ import { report } from "./commands/report";
 import { mission } from "./commands/mission";
 import { resume } from "./commands/resume";
 import { iterate } from "./commands/iterate";
+import { audit } from "./commands/audit";
 
 type CommandHandler = (queue: TaskQueueType, args: string[]) => Promise<void>;
 
 const commands: Record<string, CommandHandler> = {
   init, principle,
-  add, list, show, context, next, clean, history, claim, unclaim,
+  add, list, show, context, next, clean, history, claim, unclaim, priority,
   observe, orient, decide, act, done, fail, retry,
   spawn,
   "spawn-cleanup": spawnCleanup,
@@ -30,6 +31,7 @@ const commands: Record<string, CommandHandler> = {
   mission,
   resume,
   iterate,
+  audit,
   heartbeat, serve, sleep, wake,
 };
 
@@ -66,7 +68,8 @@ Principles:
 
 Tasks:
   add <title> [--priority N] [--by <creator>]  Add a new task
-  list [status]                  List tasks (optionally filter by status)
+  list [status]                  List tasks (sorted by priority)
+  priority <id> <N>              Set task priority
   next                           Show next unassigned observing task
   clean                          Archive done/failed tasks
   history                        List archived tasks
@@ -120,6 +123,7 @@ Sources (observation data):
 
 Iteration:
   iterate                        Run one managed OODA iteration as a tracked task
+  audit                          Audit task health: stuck, suspicious, stale runners
 
 OODA phases:
   observe <id> [observations]    Start/record observations

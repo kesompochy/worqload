@@ -70,11 +70,17 @@ export interface RecoverResult {
   permanentlyFailed: string[];
 }
 
+export interface RequeueResult {
+  requeuedTasks: string[];
+  permanentlyFailed: string[];
+}
+
 export interface GenerateResult {
   createdTasks: string[];
   retriedTasks: string[];
   resumedTasks: string[];
   recoveredTasks: string[];
+  requeuedSuspiciousTasks: string[];
   distilledRules: string[];
   autonomousTasks: string[];
   unverifiedRules: string[];
@@ -128,6 +134,40 @@ export function recoverStuckTasks(queue: TaskQueue, stuckTasks: StuckTask[]): Re
   }
 
   return { recoveredTasks, permanentlyFailed };
+}
+
+const MAX_SUSPICIOUS_RETRIES = 2;
+const ITERATE_CREATOR = "iterate";
+const WORQLOAD_CREATOR = "worqload";
+
+// Requeue suspicious done tasks directly in iterate (main session),
+// avoiding the "who monitors the monitors?" problem by keeping audit
+// as a systemic guarantee rather than a delegated task.
+export function requeueSuspiciousTasks(queue: TaskQueue, suspiciousTasks: SuspiciousTask[]): RequeueResult {
+  const requeuedTasks: string[] = [];
+  const permanentlyFailed: string[] = [];
+
+  for (const suspicious of suspiciousTasks) {
+    const task = queue.get(suspicious.taskId);
+    if (!task) continue;
+
+    // Skip system-generated iterate/worqload tasks — they are internal bookkeeping
+    if (task.createdBy === ITERATE_CREATOR || task.createdBy === WORQLOAD_CREATOR) continue;
+
+    const actLogCount = task.logs.filter(l => l.phase === "act").length;
+    queue.addLog(task.id, "act", `[SUSPICIOUS] requeued: ${suspicious.reasons.join(", ")}`);
+    queue.transition(task.id, "failed");
+    queue.update(task.id, { owner: undefined });
+
+    if (actLogCount < MAX_SUSPICIOUS_RETRIES) {
+      queue.transition(task.id, "observing");
+      requeuedTasks.push(task.id);
+    } else {
+      permanentlyFailed.push(task.id);
+    }
+  }
+
+  return { requeuedTasks, permanentlyFailed };
 }
 
 const MIN_ACT_CONTENT_LENGTH = 10;

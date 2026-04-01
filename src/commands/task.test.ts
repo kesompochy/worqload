@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { TaskQueue } from "../queue";
 import { createTask } from "../task";
-import { add, clean } from "./task";
+import { add, clean, list, priority } from "./task";
 
 function tmpPath(label: string): string {
   return join(tmpdir(), `worqload-task-cmd-${label}-${crypto.randomUUID()}.json`);
@@ -86,6 +86,77 @@ describe("add rejects CLI subcommands as titles", () => {
     const queue = new TaskQueue(tmpPath("allow-normal"));
     await add(queue, ["Fix the feedback rendering bug"]);
     expect(queue.list()).toHaveLength(1);
+  });
+});
+
+describe("priority", () => {
+  const origExit = process.exit;
+  const origErr = console.error;
+
+  function trapExit(): { code: number | undefined; errors: string[] } {
+    const result = { code: undefined as number | undefined, errors: [] as string[] };
+    console.error = (...args: unknown[]) => result.errors.push(args.join(" "));
+    process.exit = ((c?: number) => { result.code = c ?? 0; throw new Error("exit"); }) as never;
+    return result;
+  }
+
+  function restoreExit() {
+    process.exit = origExit;
+    console.error = origErr;
+  }
+
+  test("updates task priority", async () => {
+    const queue = new TaskQueue(tmpPath("priority-set"));
+    const task = createTask("test task", {}, 0);
+    queue.enqueue(task);
+    const shortId = task.id.slice(0, 8);
+
+    await priority(queue, [shortId, "5"]);
+
+    const updated = queue.get(task.id)!;
+    expect(updated.priority).toBe(5);
+  });
+
+  test("rejects non-numeric priority", async () => {
+    const queue = new TaskQueue(tmpPath("priority-nan"));
+    const task = createTask("test task", {}, 0);
+    queue.enqueue(task);
+    const shortId = task.id.slice(0, 8);
+
+    const trap = trapExit();
+    try { await priority(queue, [shortId, "abc"]); } catch {} finally { restoreExit(); }
+    expect(trap.code).toBe(1);
+  });
+
+  test("rejects missing arguments", async () => {
+    const queue = new TaskQueue(tmpPath("priority-missing"));
+
+    const trap = trapExit();
+    try { await priority(queue, []); } catch {} finally { restoreExit(); }
+    expect(trap.code).toBe(1);
+  });
+});
+
+describe("list sorts by priority", () => {
+  test("lists tasks sorted by priority descending, then by createdAt ascending", async () => {
+    const queue = new TaskQueue(tmpPath("list-sorted"));
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+
+    const low = createTask("low priority", {}, 0);
+    const high = createTask("high priority", {}, 10);
+    const mid = createTask("mid priority", {}, 5);
+    queue.enqueue(low);
+    queue.enqueue(high);
+    queue.enqueue(mid);
+
+    await list(queue, []);
+    console.log = origLog;
+
+    expect(logs[0]).toContain("high priority");
+    expect(logs[1]).toContain("mid priority");
+    expect(logs[2]).toContain("low priority");
   });
 });
 

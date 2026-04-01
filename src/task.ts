@@ -30,7 +30,7 @@ const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   deciding: ["acting", "done", "failed"],
   waiting_human: ["orienting", "done", "failed"],
   acting: ["done", "failed"],
-  done: [],
+  done: ["failed"],
   failed: ["observing"],
 };
 

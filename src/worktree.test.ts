@@ -180,4 +180,61 @@ describe("mergeWorktreeBranch", () => {
     const conflictLines = statusOutput.split("\n").filter(l => /^(UU|AA|DD|AU|UA) /.test(l));
     expect(conflictLines).toEqual([]);
   });
+
+  test("concurrent merges of non-conflicting branches both succeed", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+
+    const taskA = crypto.randomUUID();
+    const taskB = crypto.randomUUID();
+    const wtA = await createWorktree(taskA, repoDir);
+    const wtB = await createWorktree(taskB, repoDir);
+
+    writeFileSync(join(wtA.worktreePath, "fileA.txt"), "content A\n");
+    git(["add", "fileA.txt"], wtA.worktreePath);
+    git(["commit", "-m", "add fileA"], wtA.worktreePath);
+
+    writeFileSync(join(wtB.worktreePath, "fileB.txt"), "content B\n");
+    git(["add", "fileB.txt"], wtB.worktreePath);
+    git(["commit", "-m", "add fileB"], wtB.worktreePath);
+
+    const [mergedA, mergedB] = await Promise.all([
+      mergeWorktreeBranch(wtA.branchName, repoDir),
+      mergeWorktreeBranch(wtB.branchName, repoDir),
+    ]);
+
+    expect(mergedA).toBe(true);
+    expect(mergedB).toBe(true);
+    expect(existsSync(join(repoDir, "fileA.txt"))).toBe(true);
+    expect(existsSync(join(repoDir, "fileB.txt"))).toBe(true);
+  });
+
+  test("sequential merges succeed when HEAD advances between merges", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+
+    const taskA = crypto.randomUUID();
+    const taskB = crypto.randomUUID();
+    const wtA = await createWorktree(taskA, repoDir);
+    const wtB = await createWorktree(taskB, repoDir);
+
+    writeFileSync(join(wtA.worktreePath, "fileA.txt"), "content A\n");
+    git(["add", "fileA.txt"], wtA.worktreePath);
+    git(["commit", "-m", "add fileA"], wtA.worktreePath);
+
+    writeFileSync(join(wtB.worktreePath, "fileB.txt"), "content B\n");
+    git(["add", "fileB.txt"], wtB.worktreePath);
+    git(["commit", "-m", "add fileB"], wtB.worktreePath);
+
+    // Merge A first — HEAD advances
+    const mergedA = await mergeWorktreeBranch(wtA.branchName, repoDir);
+    expect(mergedA).toBe(true);
+
+    // Merge B after HEAD advanced — should still succeed (non-overlapping files)
+    const mergedB = await mergeWorktreeBranch(wtB.branchName, repoDir);
+    expect(mergedB).toBe(true);
+
+    expect(existsSync(join(repoDir, "fileA.txt"))).toBe(true);
+    expect(existsSync(join(repoDir, "fileB.txt"))).toBe(true);
+  });
 });

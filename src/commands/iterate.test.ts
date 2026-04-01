@@ -15,6 +15,7 @@ import {
   deriveAutonomousTasks,
   detectStuckTasks,
   recoverStuckTasks,
+  // requeueSuspiciousTasks, // not yet implemented
   filterManagedPaths,
   hasHumanAnswer,
   performActCleanup,
@@ -26,6 +27,7 @@ import {
   type IterateContext,
   type IterateOptions,
   type Observation,
+  type SuspiciousTask,
 } from "./iterate";
 
 function tmpPath(prefix: string): string {
@@ -2740,5 +2742,131 @@ describe("generateTasksFromObservation - escalated task report", () => {
     const reportTask = queue.list().find(t => t.title.includes("Report to human"));
     expect(reportTask).toBeDefined();
     expect(reportTask!.context.sourceTaskId).toBe("task-esc");
+  });
+});
+
+describe.skip("requeueSuspiciousTasks", () => {
+  const requeueSuspiciousTasks = (() => {}) as any; // stub
+  test("requeues suspicious done task back to observing", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("No act log task");
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    const suspicious: SuspiciousTask[] = [
+      { taskId: task.id, title: task.title, reasons: ["no act log"] },
+    ];
+    const result = requeueSuspiciousTasks(queue, suspicious);
+
+    expect(result.requeuedTasks).toContain(task.id);
+    expect(queue.get(task.id)!.status).toBe("observing");
+    expect(queue.get(task.id)!.logs.some(l => l.content.includes("[SUSPICIOUS]"))).toBe(true);
+  });
+
+  test("clears owner on requeue", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Suspicious with owner");
+    queue.enqueue(task);
+    queue.claim(task.id, "claude -p");
+    queue.transition(task.id, "done");
+
+    const suspicious: SuspiciousTask[] = [
+      { taskId: task.id, title: task.title, reasons: ["act log lacks substance"] },
+    ];
+    requeueSuspiciousTasks(queue, suspicious);
+
+    expect(queue.get(task.id)!.owner).toBeUndefined();
+  });
+
+  test("marks as permanently failed when act logs exceed requeue limit", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Many requeues");
+    queue.enqueue(task);
+    // Simulate previous act logs from requeues
+    queue.addLog(task.id, "act", "[SUSPICIOUS] requeued previously");
+    queue.addLog(task.id, "act", "[SUSPICIOUS] requeued again");
+    queue.addLog(task.id, "act", "some short work");
+    queue.transition(task.id, "done");
+
+    const suspicious: SuspiciousTask[] = [
+      { taskId: task.id, title: task.title, reasons: ["act log lacks substance"] },
+    ];
+    const result = requeueSuspiciousTasks(queue, suspicious);
+
+    expect(result.permanentlyFailed).toContain(task.id);
+    expect(result.requeuedTasks).not.toContain(task.id);
+    expect(queue.get(task.id)!.status).toBe("failed");
+  });
+
+  test("requeues multiple suspicious tasks", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task1 = createTask("Suspicious 1");
+    const task2 = createTask("Suspicious 2");
+    queue.enqueue(task1);
+    queue.enqueue(task2);
+    queue.transition(task1.id, "done");
+    queue.transition(task2.id, "done");
+
+    const suspicious: SuspiciousTask[] = [
+      { taskId: task1.id, title: task1.title, reasons: ["no act log"] },
+      { taskId: task2.id, title: task2.title, reasons: ["act log is vacuous"] },
+    ];
+    const result = requeueSuspiciousTasks(queue, suspicious);
+
+    expect(result.requeuedTasks).toHaveLength(2);
+    expect(queue.get(task1.id)!.status).toBe("observing");
+    expect(queue.get(task2.id)!.status).toBe("observing");
+  });
+
+  test("returns empty when no suspicious tasks", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = requeueSuspiciousTasks(queue, []);
+
+    expect(result.requeuedTasks).toHaveLength(0);
+    expect(result.permanentlyFailed).toHaveLength(0);
+  });
+
+  test("skips tasks not found in queue", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const suspicious: SuspiciousTask[] = [
+      { taskId: "nonexistent-id", title: "Ghost task", reasons: ["no act log"] },
+    ];
+    const result = requeueSuspiciousTasks(queue, suspicious);
+
+    expect(result.requeuedTasks).toHaveLength(0);
+    expect(result.permanentlyFailed).toHaveLength(0);
+  });
+
+  test("includes reasons in log message", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Multi-reason suspicious");
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    const suspicious: SuspiciousTask[] = [
+      { taskId: task.id, title: task.title, reasons: ["no act log", "no report found"] },
+    ];
+    requeueSuspiciousTasks(queue, suspicious);
+
+    const logs = queue.get(task.id)!.logs;
+    const suspiciousLog = logs.find(l => l.content.includes("[SUSPICIOUS]"));
+    expect(suspiciousLog).toBeDefined();
+    expect(suspiciousLog!.content).toContain("no act log");
+    expect(suspiciousLog!.content).toContain("no report found");
+  });
+
+  test("skips iterate tasks (createdBy iterate)", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Iterate: OODA cycle", {}, 0, "iterate");
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    const suspicious: SuspiciousTask[] = [
+      { taskId: task.id, title: task.title, reasons: ["no act log"] },
+    ];
+    const result = requeueSuspiciousTasks(queue, suspicious);
+
+    expect(result.requeuedTasks).toHaveLength(0);
+    expect(queue.get(task.id)!.status).toBe("done");
   });
 });

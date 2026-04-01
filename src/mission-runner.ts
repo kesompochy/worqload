@@ -562,16 +562,33 @@ export async function processTask(task: Task, mission: Mission, options: Process
     const truncated = output.length > 2000 ? output.slice(-2000) : output;
 
     // Merge worktree changes back to main before updating task status
+    let mergeConflicted = false;
     if (worktreeInfo) {
       try {
         const merged = await mergeWorktreeBranch(worktreeInfo.branchName);
-        if (!merged) {
+        if (merged) {
+          await removeWorktree(worktreeInfo.worktreePath, worktreeInfo.branchName);
+        } else {
+          mergeConflicted = true;
           console.error(`Merge conflict on ${worktreeInfo.branchName}, changes preserved in worktree`);
         }
-        await removeWorktree(worktreeInfo.worktreePath, worktreeInfo.branchName);
       } catch (error) {
-        console.error(`Worktree cleanup failed: ${error instanceof Error ? error.message : error}`);
+        mergeConflicted = true;
+        console.error(`Worktree merge failed: ${error instanceof Error ? error.message : error}`);
       }
+    }
+
+    if (mergeConflicted) {
+      await updateTask(task.id, (current) => ({
+        status: "observing" as const,
+        owner: undefined,
+        context: { ...current.context, worktreeDisabled: true },
+        logs: [...current.logs,
+          phaseLog("act", truncated),
+          phaseLog("act", `[MERGE_CONFLICT] ${worktreeInfo!.branchName} — retrying without worktree`),
+        ],
+      }), storePath);
+      return;
     }
 
     if (exitCode === 0) {

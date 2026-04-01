@@ -36,7 +36,8 @@ export async function list(queue: TaskQueue, args: string[]) {
   if (statusFilter && !validStatuses.includes(statusFilter)) {
     exitWithError(`Invalid status: ${statusFilter}\nValid statuses: ${validStatuses.join(", ")}`);
   }
-  const tasks = statusFilter ? queue.list().filter(t => t.status === statusFilter) : queue.list();
+  const tasks = (statusFilter ? queue.list().filter(t => t.status === statusFilter) : queue.list())
+    .sort((a, b) => b.priority - a.priority || a.createdAt.localeCompare(b.createdAt));
   if (tasks.length === 0) {
     console.log("No tasks.");
     return;
@@ -122,4 +123,18 @@ export async function unclaim(queue: TaskQueue, args: string[]) {
   queue.unclaim(task.id);
   await queue.save();
   console.log(`Unclaimed: ${task.title}`);
+}
+
+export async function priority(queue: TaskQueue, args: string[]) {
+  if (args.length < 2) {
+    exitWithError("Usage: worqload priority <id> <N>");
+  }
+  const task = resolveTask(queue, args[0]);
+  const value = Number(args[1]);
+  if (!Number.isFinite(value)) {
+    exitWithError("Priority must be a number.");
+  }
+  queue.update(task.id, { priority: value });
+  await queue.save();
+  console.log(`Priority: ${task.title} → ${value}`);
 }

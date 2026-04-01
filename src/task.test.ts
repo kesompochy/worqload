@@ -52,7 +52,6 @@ test("validateTransition allows valid transitions", () => {
 test("validateTransition rejects invalid transitions", () => {
   const invalid: [TaskStatus, TaskStatus][] = [
     ["done", "observing"],
-    ["done", "failed"],
     ["acting", "observing"],
     ["deciding", "waiting_human"],
     ["waiting_human", "deciding"],
