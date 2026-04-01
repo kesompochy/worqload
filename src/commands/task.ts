@@ -18,6 +18,9 @@ export async function add(queue: TaskQueue, args: string[]) {
   if (!title) {
     exitWithError("Usage: worqload add <title> [--priority N] [--by <creator>] [--plan]");
   }
+  if (title.startsWith("-") || /^(add|list|show|done|fail|retry|observe|orient|decide|act|iterate|resume|mission|feedback|report|source|serve|heartbeat|sleep|wake|project|spawn-cleanup|principle)\b/.test(title)) {
+    exitWithError(`Rejected: "${title}" looks like a CLI subcommand, not a task title.`);
+  }
   const context: Record<string, unknown> = isPlan ? { plan: true } : {};
   const task = createTask(title, context, priority, createdBy);
   queue.enqueue(task);

@@ -147,6 +147,22 @@ export async function ensureReportForDoneTask(
 
 export type OrientResult = "oriented" | "escalated";
 
+export const ORIENT_ESCALATION_WINDOW = 5;
+
+export function shouldForceEscalation(missionTasks: Task[], window: number = ORIENT_ESCALATION_WINDOW): boolean {
+  const terminalTasks = missionTasks
+    .filter(t => t.status === "done" || t.status === "failed")
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+  if (terminalTasks.length < window) return false;
+
+  const recentTasks = terminalTasks.slice(0, window);
+  const hasEscalation = recentTasks.some(t =>
+    t.logs.some(l => l.phase === "orient" && l.content.includes(HUMAN_REQUIRED_PREFIX)));
+
+  return !hasEscalation;
+}
+
 export async function orientTask(
   taskId: string,
   mission: Mission,
@@ -157,6 +173,18 @@ export async function orientTask(
       status: "waiting_human" as const,
       logs: [...current.logs, phaseLog("orient",
         `${HUMAN_REQUIRED_PREFIX}Mission "${mission.name}" has no principles defined. Human guidance needed to orient task.`)],
+    }), storePath);
+    return "escalated";
+  }
+
+  // Orient requires human expertise — force periodic escalation
+  const allTasks = await load(storePath);
+  const missionTasks = allTasks.filter(t => t.missionId === mission.id && t.id !== taskId);
+  if (shouldForceEscalation(missionTasks)) {
+    await updateTask(taskId, (current) => ({
+      status: "waiting_human" as const,
+      logs: [...current.logs, phaseLog("orient",
+        `${HUMAN_REQUIRED_PREFIX}Mission "${mission.name}": orient requires human expertise. No human-reviewed orient in recent ${ORIENT_ESCALATION_WINDOW} completed tasks.`)],
     }), storePath);
     return "escalated";
   }

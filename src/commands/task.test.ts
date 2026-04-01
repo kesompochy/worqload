@@ -47,6 +47,48 @@ describe("add --plan", () => {
   });
 });
 
+describe("add rejects CLI subcommands as titles", () => {
+  const origExit = process.exit;
+  const origErr = console.error;
+
+  function trapExit(): { code: number | undefined; errors: string[] } {
+    const result = { code: undefined as number | undefined, errors: [] as string[] };
+    console.error = (...args: unknown[]) => result.errors.push(args.join(" "));
+    process.exit = ((c?: number) => { result.code = c ?? 0; throw new Error("exit"); }) as never;
+    return result;
+  }
+
+  function restore() {
+    process.exit = origExit;
+    console.error = origErr;
+  }
+
+  test("rejects --help", async () => {
+    const trap = trapExit();
+    try { await add(new TaskQueue(tmpPath("reject-help")), ["--help"]); } catch {} finally { restore(); }
+    expect(trap.code).toBe(1);
+    expect(trap.errors[0]).toContain("looks like a CLI subcommand");
+  });
+
+  test("rejects show <uuid>", async () => {
+    const trap = trapExit();
+    try { await add(new TaskQueue(tmpPath("reject-show")), ["show", "66911412"]); } catch {} finally { restore(); }
+    expect(trap.code).toBe(1);
+  });
+
+  test("rejects feedback list", async () => {
+    const trap = trapExit();
+    try { await add(new TaskQueue(tmpPath("reject-fb")), ["feedback", "list"]); } catch {} finally { restore(); }
+    expect(trap.code).toBe(1);
+  });
+
+  test("allows normal task titles", async () => {
+    const queue = new TaskQueue(tmpPath("allow-normal"));
+    await add(queue, ["Fix the feedback rendering bug"]);
+    expect(queue.list()).toHaveLength(1);
+  });
+});
+
 describe("clean", () => {
   test("archives done tasks", async () => {
     const storePath = tmpPath("clean-done");

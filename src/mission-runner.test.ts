@@ -4,7 +4,7 @@ import { join } from "path";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import { createMission, completeMission, addMissionPrinciple, loadMissions, type Mission } from "./mission";
-import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission, orientTask, ensureReportForDoneTask } from "./mission-runner";
+import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission, orientTask, ensureReportForDoneTask, shouldForceEscalation, ORIENT_ESCALATION_WINDOW } from "./mission-runner";
 import { HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "./task";
 import { load } from "./store";
 import { loadSpawns } from "./spawns";
@@ -1384,6 +1384,130 @@ describe("orientTask", () => {
     const updated = tasks.find(t => t.id === task.id);
     const orientLog = updated?.logs.find(l => l.phase === "orient");
     expect(orientLog?.content).toContain("my-named-mission");
+  });
+});
+
+describe("shouldForceEscalation", () => {
+  function makeDoneTask(missionId: string, hadEscalation: boolean): ReturnType<typeof createTask> {
+    const task = createTask("done task");
+    task.status = "done";
+    task.missionId = missionId;
+    if (hadEscalation) {
+      task.logs.push({ phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}question`, timestamp: new Date().toISOString() });
+    }
+    return task;
+  }
+
+  test("returns false when fewer completed tasks than window size", () => {
+    const missionId = crypto.randomUUID();
+    const tasks = Array.from({ length: ORIENT_ESCALATION_WINDOW - 1 }, () => makeDoneTask(missionId, false));
+    expect(shouldForceEscalation(tasks)).toBe(false);
+  });
+
+  test("returns true when all recent tasks lack human escalation", () => {
+    const missionId = crypto.randomUUID();
+    const tasks = Array.from({ length: ORIENT_ESCALATION_WINDOW }, () => makeDoneTask(missionId, false));
+    expect(shouldForceEscalation(tasks)).toBe(true);
+  });
+
+  test("returns false when at least one recent task had human escalation", () => {
+    const missionId = crypto.randomUUID();
+    const tasks = Array.from({ length: ORIENT_ESCALATION_WINDOW }, (_, i) =>
+      makeDoneTask(missionId, i === 0));
+    expect(shouldForceEscalation(tasks)).toBe(false);
+  });
+
+  test("only considers most recent tasks within window", () => {
+    const missionId = crypto.randomUUID();
+    // Old escalated task outside window + recent non-escalated tasks filling the window
+    const oldEscalated = makeDoneTask(missionId, true);
+    oldEscalated.updatedAt = new Date("2020-01-01").toISOString();
+    const recentTasks = Array.from({ length: ORIENT_ESCALATION_WINDOW }, () => {
+      const t = makeDoneTask(missionId, false);
+      t.updatedAt = new Date().toISOString();
+      return t;
+    });
+    expect(shouldForceEscalation([...recentTasks, oldEscalated])).toBe(true);
+  });
+
+  test("ignores non-terminal tasks", () => {
+    const missionId = crypto.randomUUID();
+    const tasks = Array.from({ length: ORIENT_ESCALATION_WINDOW + 3 }, () => {
+      const t = makeDoneTask(missionId, false);
+      t.status = "acting"; // in-progress, not completed
+      return t;
+    });
+    expect(shouldForceEscalation(tasks)).toBe(false);
+  });
+
+  test("counts failed tasks as completed for escalation tracking", () => {
+    const missionId = crypto.randomUUID();
+    const tasks = Array.from({ length: ORIENT_ESCALATION_WINDOW }, () => {
+      const t = makeDoneTask(missionId, false);
+      t.status = "failed";
+      return t;
+    });
+    expect(shouldForceEscalation(tasks)).toBe(true);
+  });
+});
+
+describe("orientTask forced escalation", () => {
+  test("forces escalation when recent tasks lack human involvement", async () => {
+    const storePath = tmpPath("orient-force-escalate");
+    const missionPath = tmpPath("orient-force-escalate-m");
+    const mission = await createMission("force-esc", {}, missionPath);
+    await addMissionPrinciple(mission.id, "Test first", missionPath);
+    const missions = await loadMissions(missionPath);
+    const updatedMission = missions[0];
+
+    // Create completed tasks without escalation to fill the window
+    const doneTasks = Array.from({ length: ORIENT_ESCALATION_WINDOW }, () => {
+      const t = createTask("past task");
+      t.missionId = updatedMission.id;
+      t.status = "done" as const;
+      t.updatedAt = new Date().toISOString();
+      return t;
+    });
+    const newTask = createTask("new task");
+    newTask.missionId = updatedMission.id;
+    await setupQueue(storePath, [...doneTasks, newTask]);
+
+    const result = await orientTask(newTask.id, updatedMission, storePath);
+    expect(result).toBe("escalated");
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === newTask.id);
+    expect(updated?.status).toBe("waiting_human");
+    const orientLog = updated?.logs.find(l => l.phase === "orient");
+    expect(orientLog?.content).toContain(HUMAN_REQUIRED_PREFIX);
+  });
+
+  test("proceeds normally when recent tasks include escalation", async () => {
+    const storePath = tmpPath("orient-has-escalation");
+    const missionPath = tmpPath("orient-has-escalation-m");
+    const mission = await createMission("has-esc", {}, missionPath);
+    await addMissionPrinciple(mission.id, "Test first", missionPath);
+    const missions = await loadMissions(missionPath);
+    const updatedMission = missions[0];
+
+    // One task with escalation in the window
+    const escalatedTask = createTask("escalated task");
+    escalatedTask.missionId = updatedMission.id;
+    escalatedTask.status = "done" as const;
+    escalatedTask.logs.push({ phase: "orient" as const, content: `${HUMAN_REQUIRED_PREFIX}some question`, timestamp: new Date().toISOString() });
+
+    const doneTasks = Array.from({ length: ORIENT_ESCALATION_WINDOW - 1 }, () => {
+      const t = createTask("past task");
+      t.missionId = updatedMission.id;
+      t.status = "done" as const;
+      return t;
+    });
+    const newTask = createTask("new task");
+    newTask.missionId = updatedMission.id;
+    await setupQueue(storePath, [escalatedTask, ...doneTasks, newTask]);
+
+    const result = await orientTask(newTask.id, updatedMission, storePath);
+    expect(result).toBe("oriented");
   });
 });
 
