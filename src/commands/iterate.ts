@@ -409,6 +409,16 @@ export function analyzeObservation(obs: Observation): string {
     }
   }
 
+  const executingTasks = obs.tasks.filter(t => t.status === "orienting" || t.status === "acting");
+  if (executingTasks.length > 0) {
+    tags.push("has_executing");
+    const now = Date.now();
+    for (const t of executingTasks) {
+      const elapsedMinutes = Math.floor((now - new Date(t.updatedAt).getTime()) / 60000);
+      lines.push(`${t.status}: [${t.id.slice(0, SHORT_ID_LENGTH)}] ${t.title} (${elapsedMinutes}m)`);
+    }
+  }
+
   const decidingTasks = obs.tasks.filter(t => t.status === "deciding");
   if (decidingTasks.length > 0) {
     tags.push("has_deciding");
@@ -493,6 +503,15 @@ const INVESTIGATE_FEEDBACK_PREFIX = "Investigate feedback:";
 const IMPLEMENT_RULE_PREFIX = "Implement distilled rule:";
 const REPORT_HUMAN_PREFIX = "Report to human:";
 
+export const TASK_PRIORITY = {
+  FEEDBACK_INVESTIGATE: 30,
+  FEEDBACK_REVIEW: 20,
+  HUMAN_REPORT: 15,
+  COMMIT: 10,
+  IMPLEMENT_RULE: 10,
+  AUTONOMOUS: 0,
+} as const;
+
 interface DuplicateCheckOptions {
   prefixMatch?: boolean;
   includeDone?: boolean;
@@ -574,10 +593,13 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   // Recover stuck tasks before other processing
   const stuckRecovery = recoverStuckTasks(queue, obs.stuckTasks);
 
+  // Requeue suspicious done tasks (no act logs, vacuous content, etc.)
+  const suspiciousRequeue = requeueSuspiciousTasks(queue, obs.suspiciousTasks);
+
   // Uncommitted changes → commit task
   if (obs.uncommittedChanges.length > 0) {
     if (!hasDuplicateTask(queue, obs.tasks, COMMIT_TASK_TITLE, archivedTasks)) {
-      const task = createTask(COMMIT_TASK_TITLE, { gitStatus: obs.uncommittedChanges }, 0, "iterate");
+      const task = createTask(COMMIT_TASK_TITLE, { gitStatus: obs.uncommittedChanges }, TASK_PRIORITY.COMMIT, "iterate");
       queue.enqueue(task);
       createdTasks.push(task.title);
     }
@@ -590,7 +612,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   for (const theme of obs.feedbackSummary.themes) {
     const title = `Review feedback: ${theme.description}`;
     if (!hasDuplicateTask(queue, obs.tasks, REVIEW_FEEDBACK_PREFIX, archivedTasks, { prefixMatch: true, includeDone: true })) {
-      const task = createTask(title, { feedbackIds: theme.feedbackIds }, 0, "iterate");
+      const task = createTask(title, { feedbackIds: theme.feedbackIds }, TASK_PRIORITY.FEEDBACK_REVIEW, "iterate");
       queue.enqueue(task);
       createdTasks.push(task.title);
       for (const fid of theme.feedbackIds) feedbackIdsToAck.add(fid);
@@ -603,7 +625,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     if (observations.length > 0) {
       const title = `${INVESTIGATE_FEEDBACK_PREFIX} ${observations[0]}`;
       if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
-        const task = createTask(title, { feedbackIds: [feedback.id], observations }, 0, "iterate");
+        const task = createTask(title, { feedbackIds: [feedback.id], observations }, TASK_PRIORITY.FEEDBACK_INVESTIGATE, "iterate");
         queue.enqueue(task);
         createdTasks.push(task.title);
         feedbackIdsToAck.add(feedback.id);
@@ -658,7 +680,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
       if (justDistilledRuleIds.has(rule.id)) continue;
       const title = `${IMPLEMENT_RULE_PREFIX} ${rule.rule}`;
       if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
-        const task = createTask(title, { distilledRuleId: rule.id, rule: rule.rule }, 0, "iterate");
+        const task = createTask(title, { distilledRuleId: rule.id, rule: rule.rule }, TASK_PRIORITY.IMPLEMENT_RULE, "iterate");
         queue.enqueue(task);
         createdTasks.push(task.title);
         unverifiedRules.push(rule.rule);
@@ -676,7 +698,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
         sourceTaskId: completed.taskId,
         sourceTaskTitle: completed.title,
         feedbackIds: completed.feedbackIds,
-      }, 0, "iterate");
+      }, TASK_PRIORITY.HUMAN_REPORT, "iterate");
       queue.enqueue(task);
       humanReportTasks.push(task.title);
     }
@@ -695,7 +717,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   if (isQueueEmpty && nothingGeneratedYet && obs.principles) {
     const derived = deriveAutonomousTasks(obs, queue, archivedTasks);
     for (const { title, context } of derived) {
-      const task = createTask(title, context, 0, "iterate");
+      const task = createTask(title, context, TASK_PRIORITY.AUTONOMOUS, "iterate");
       queue.enqueue(task);
       autonomousTasks.push(task.title);
       const fids = extractFeedbackIds(context);
@@ -703,7 +725,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     }
   }
 
-  return { createdTasks, retriedTasks, resumedTasks, recoveredTasks: stuckRecovery.recoveredTasks, distilledRules, autonomousTasks, unverifiedRules, humanReportTasks, feedbackIdsToAck: Array.from(feedbackIdsToAck) };
+  return { createdTasks, retriedTasks, resumedTasks, recoveredTasks: stuckRecovery.recoveredTasks, requeuedSuspiciousTasks: suspiciousRequeue.requeuedTasks, distilledRules, autonomousTasks, unverifiedRules, humanReportTasks, feedbackIdsToAck: Array.from(feedbackIdsToAck) };
 }
 
 export async function ackFeedbackIds(ids: string[], feedbackPath: string): Promise<void> {
@@ -799,7 +821,7 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
 
   // Autonomous task generation and feedback distillation
   const generated = await generateTasksFromObservation(queue, obs, ctx);
-  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.resumedTasks.length > 0 || generated.recoveredTasks.length > 0 || generated.distilledRules.length > 0 || generated.autonomousTasks.length > 0 || generated.unverifiedRules.length > 0;
+  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.resumedTasks.length > 0 || generated.recoveredTasks.length > 0 || generated.requeuedSuspiciousTasks.length > 0 || generated.distilledRules.length > 0 || generated.autonomousTasks.length > 0 || generated.unverifiedRules.length > 0;
 
   if (hasGenerated) {
     const genParts: string[] = [];
@@ -811,6 +833,9 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
     }
     if (generated.recoveredTasks.length > 0) {
       genParts.push(`recovered ${generated.recoveredTasks.length} stuck task(s)`);
+    }
+    if (generated.requeuedSuspiciousTasks.length > 0) {
+      genParts.push(`requeued ${generated.requeuedSuspiciousTasks.length} suspicious task(s)`);
     }
     if (generated.retriedTasks.length > 0) {
       genParts.push(`retried ${generated.retriedTasks.length} failed task(s)`);

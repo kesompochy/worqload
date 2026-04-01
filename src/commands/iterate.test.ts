@@ -15,7 +15,7 @@ import {
   deriveAutonomousTasks,
   detectStuckTasks,
   recoverStuckTasks,
-  // requeueSuspiciousTasks, // not yet implemented
+  requeueSuspiciousTasks,
   filterManagedPaths,
   hasHumanAnswer,
   performActCleanup,
@@ -24,6 +24,7 @@ import {
   needsHumanReport,
   ackFeedbackIds,
   iterate,
+  TASK_PRIORITY,
   type IterateContext,
   type IterateOptions,
   type Observation,
@@ -1031,6 +1032,87 @@ describe("analyzeObservation - deciding tasks", () => {
     const analysis = analyzeObservation(obs);
 
     expect(analysis).not.toContain("has_deciding");
+  });
+});
+
+describe("analyzeObservation - executing tasks", () => {
+  function emptyObs(): Observation {
+    return {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      stuckTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+  }
+
+  test("reports orienting tasks with elapsed time", () => {
+    const task = createTask("Analyzing feedback");
+    task.status = "orienting" as any;
+    task.owner = "agent-1";
+    task.updatedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const obs = emptyObs();
+    obs.tasks = [task];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("has_executing");
+    expect(analysis).toContain("orienting");
+    expect(analysis).toContain(task.id.slice(0, SHORT_ID_LENGTH));
+    expect(analysis).toContain("Analyzing feedback");
+    expect(analysis).toContain("5m");
+  });
+
+  test("reports acting tasks with elapsed time", () => {
+    const task = createTask("Implement feature");
+    task.status = "acting" as any;
+    task.owner = "agent-2";
+    task.updatedAt = new Date(Date.now() - 12 * 60 * 1000).toISOString();
+    const obs = emptyObs();
+    obs.tasks = [task];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("has_executing");
+    expect(analysis).toContain("acting");
+    expect(analysis).toContain(task.id.slice(0, SHORT_ID_LENGTH));
+    expect(analysis).toContain("12m");
+  });
+
+  test("reports multiple executing tasks", () => {
+    const t1 = createTask("Task A");
+    t1.status = "orienting" as any;
+    t1.owner = "agent-1";
+    t1.updatedAt = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const t2 = createTask("Task B");
+    t2.status = "acting" as any;
+    t2.owner = "agent-2";
+    t2.updatedAt = new Date(Date.now() - 7 * 60 * 1000).toISOString();
+    const obs = emptyObs();
+    obs.tasks = [t1, t2];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain(t1.id.slice(0, SHORT_ID_LENGTH));
+    expect(analysis).toContain(t2.id.slice(0, SHORT_ID_LENGTH));
+  });
+
+  test("does not report has_executing when no orienting or acting tasks", () => {
+    const task = createTask("Pending task");
+    const obs = emptyObs();
+    obs.tasks = [task];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).not.toContain("has_executing");
   });
 });
 
@@ -2745,8 +2827,7 @@ describe("generateTasksFromObservation - escalated task report", () => {
   });
 });
 
-describe.skip("requeueSuspiciousTasks", () => {
-  const requeueSuspiciousTasks = (() => {}) as any; // stub
+describe("requeueSuspiciousTasks", () => {
   test("requeues suspicious done task back to observing", () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const task = createTask("No act log task");
@@ -2868,5 +2949,130 @@ describe.skip("requeueSuspiciousTasks", () => {
 
     expect(result.requeuedTasks).toHaveLength(0);
     expect(queue.get(task.id)!.status).toBe("done");
+  });
+});
+
+describe("generateTasksFromObservation - task priority", () => {
+  function emptyObservation(): Observation {
+    return {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      stuckTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+  }
+
+  test("feedback investigation tasks get higher priority than commit tasks", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.uncommittedChanges = " M src/foo.ts";
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: "f1", from: "user", message: "優先度が機能していない", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: ["f1"],
+    };
+
+    await generateTasksFromObservation(queue, obs);
+
+    const tasks = queue.list();
+    const commitTask = tasks.find(t => t.title.includes("Commit"));
+    const investigateTask = tasks.find(t => t.title.includes("Investigate feedback:"));
+    expect(commitTask).toBeDefined();
+    expect(investigateTask).toBeDefined();
+    expect(investigateTask!.priority).toBeGreaterThan(commitTask!.priority);
+  });
+
+  test("commit task gets COMMIT priority", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.uncommittedChanges = " M src/foo.ts";
+
+    await generateTasksFromObservation(queue, obs);
+
+    const commitTask = queue.list().find(t => t.title.includes("Commit"));
+    expect(commitTask!.priority).toBe(TASK_PRIORITY.COMMIT);
+  });
+
+  test("feedback theme review task gets FEEDBACK_REVIEW priority", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [],
+      themes: [{ description: "テーマ", feedbackIds: ["f1"] }],
+      unresolvedIds: ["f1"],
+    };
+
+    await generateTasksFromObservation(queue, obs);
+
+    const reviewTask = queue.list().find(t => t.title.startsWith("Review feedback:"));
+    expect(reviewTask).toBeDefined();
+    expect(reviewTask!.priority).toBe(TASK_PRIORITY.FEEDBACK_REVIEW);
+  });
+
+  test("feedback investigation task gets FEEDBACK_INVESTIGATE priority", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: "f1", from: "user", message: "バグがある", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: ["f1"],
+    };
+
+    await generateTasksFromObservation(queue, obs);
+
+    const investigateTask = queue.list().find(t => t.title.startsWith("Investigate feedback:"));
+    expect(investigateTask).toBeDefined();
+    expect(investigateTask!.priority).toBe(TASK_PRIORITY.FEEDBACK_INVESTIGATE);
+  });
+
+  test("human report task gets HUMAN_REPORT priority", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.completedFeedbackTasks = [
+      { taskId: "t1", title: "Fix bug", feedbackIds: ["f1"] },
+    ];
+
+    await generateTasksFromObservation(queue, obs);
+
+    const reportTask = queue.list().find(t => t.title.startsWith("Report to human:"));
+    expect(reportTask).toBeDefined();
+    expect(reportTask!.priority).toBe(TASK_PRIORITY.HUMAN_REPORT);
+  });
+
+  test("autonomous tasks get AUTONOMOUS priority (lowest)", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.principles = "- テスト駆動で品質を維持せよ\n- feedbackをソフトウェアに反映する仕組みを作れ";
+
+    await generateTasksFromObservation(queue, obs);
+
+    const tasks = queue.list();
+    expect(tasks.length).toBeGreaterThanOrEqual(1);
+    for (const task of tasks) {
+      expect(task.priority).toBe(TASK_PRIORITY.AUTONOMOUS);
+    }
+  });
+
+  test("priority ordering: FEEDBACK_INVESTIGATE > FEEDBACK_REVIEW > HUMAN_REPORT > COMMIT > AUTONOMOUS", () => {
+    expect(TASK_PRIORITY.FEEDBACK_INVESTIGATE).toBeGreaterThan(TASK_PRIORITY.FEEDBACK_REVIEW);
+    expect(TASK_PRIORITY.FEEDBACK_REVIEW).toBeGreaterThan(TASK_PRIORITY.HUMAN_REPORT);
+    expect(TASK_PRIORITY.HUMAN_REPORT).toBeGreaterThan(TASK_PRIORITY.COMMIT);
+    expect(TASK_PRIORITY.COMMIT).toBeGreaterThan(TASK_PRIORITY.AUTONOMOUS);
   });
 });
