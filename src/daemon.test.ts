@@ -21,9 +21,9 @@ describe("buildDaemonCommand", () => {
     expect(cmd[missionIdx + 2]).toBe("abc123");
   });
 
-  test("starts with process.execPath", () => {
+  test("starts with nohup to survive parent death", () => {
     const cmd = buildDaemonCommand("abc123");
-    expect(cmd[0]).toBe(process.execPath);
+    expect(cmd[0]).toBe("nohup");
   });
 });
 
@@ -61,7 +61,7 @@ describe("launchMissionDaemon", () => {
     const start = Date.now();
     const result = await launchMissionDaemon("test-unref", {
       logDir,
-      command: ["sh", "-c", "sleep 2 && echo done"],
+      command: ["nohup", "sh", "-c", "sleep 2 && echo done"],
     });
     const elapsed = Date.now() - start;
 
@@ -71,5 +71,22 @@ describe("launchMissionDaemon", () => {
 
     // Clean up: kill the background process
     try { process.kill(result.pid, 9); } catch {}
+  });
+
+  test("child process survives SIGHUP", async () => {
+    const logDir = tmpDir("sighup");
+    const result = await launchMissionDaemon("test-sighup", {
+      logDir,
+      command: ["nohup", "sh", "-c", "sleep 1 && echo survived"],
+    });
+
+    // Allow nohup to set up signal handling before sending SIGHUP
+    await Bun.sleep(200);
+    try { process.kill(result.pid, "SIGHUP"); } catch {}
+
+    // Wait for process to finish
+    await Bun.sleep(1500);
+    const logContent = await Bun.file(result.logPath).text();
+    expect(logContent).toContain("survived");
   });
 });

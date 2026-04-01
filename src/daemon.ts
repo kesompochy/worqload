@@ -7,7 +7,7 @@ export interface DaemonResult {
 }
 
 export function buildDaemonCommand(missionId: string): string[] {
-  return [process.execPath, process.argv[1], "mission", "run", missionId, "--foreground"];
+  return ["nohup", process.execPath, process.argv[1], "mission", "run", missionId, "--foreground"];
 }
 
 export async function launchMissionDaemon(
