@@ -63,11 +63,8 @@ interface SpawnWithTimeoutResult {
 }
 
 function killProcessTree(pid: number): void {
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    try { process.kill(pid, "SIGKILL"); } catch { /* already dead */ }
-  }
+  try { process.kill(-pid, "SIGKILL"); } catch {}
+  try { process.kill(pid, "SIGKILL"); } catch {}
 }
 
 async function spawnWithTimeout(

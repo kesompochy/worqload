@@ -82,6 +82,9 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
   if (!message) {
     exitWithError("Usage: worqload feedback <message> [--from <sender>]");
   }
+  if (/^(show|list|ack|resolve|send|distill|summary)\s/i.test(message) || /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(message)) {
+    exitWithError(`Rejected: "${message.slice(0, 40)}" looks like a CLI subcommand output, not feedback.`);
+  }
   const fb = await addFeedback(message, from);
   console.log(`Feedback added: ${fb.message} (from: ${fb.from}, ${fb.id.slice(0, SHORT_ID_LENGTH)})`);
 }

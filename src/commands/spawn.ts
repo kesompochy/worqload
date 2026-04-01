@@ -30,7 +30,9 @@ function parseEnvOutput(output: string): Record<string, string> {
   return vars;
 }
 
-export async function spawn(queue: TaskQueue, args: string[]) {
+const DEFAULT_SPAWN_TIMEOUT_MS = 30 * 60 * 1000;
+
+export async function spawn(queue: TaskQueue, args: string[], options?: { spawnTimeoutMs?: number }) {
   const task = resolveTask(queue, args[0]);
   const commandArgs = args.slice(1);
   if (commandArgs.length === 0) {
@@ -102,9 +104,27 @@ export async function spawn(queue: TaskQueue, args: string[]) {
   });
   const spawnRecord = await recordSpawnStart(task.id, task.title, owner, proc.pid);
 
+  const timeoutMs = options?.spawnTimeoutMs ?? DEFAULT_SPAWN_TIMEOUT_MS;
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    killProcessTree(proc.pid);
+  }, timeoutMs);
+
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;
+  clearTimeout(timeoutId);
+
+  if (timedOut) {
+    await recordSpawnFinish(spawnRecord.id, -1);
+    queue.addLog(task.id, "act", `[TIMEOUT] Spawn timed out after ${timeoutMs}ms`);
+    queue.transition(task.id, "failed");
+    queue.update(task.id, { owner: undefined });
+    await queue.save();
+    console.error(`Timeout: ${task.title}`);
+    return;
+  }
 
   await recordSpawnFinish(spawnRecord.id, exitCode);
 
