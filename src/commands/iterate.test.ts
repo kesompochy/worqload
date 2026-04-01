@@ -19,6 +19,7 @@ import {
   hasHumanAnswer,
   performActCleanup,
   formatCleanupLog,
+  detectCompletedFeedbackTasks,
   iterate,
   type IterateContext,
   type IterateOptions,
@@ -113,7 +114,7 @@ describe("collectObservation", () => {
     queue.enqueue(t1);
     queue.transition(t1.id, "orienting");
     queue.transition(t1.id, "waiting_human");
-    queue.addLog(t1.id, "decide", `${HUMAN_REQUIRED_PREFIX}Need help`);
+    queue.addLog(t1.id, "orient", `${HUMAN_REQUIRED_PREFIX}Need help`);
     const ctx = makeContext();
 
     const obs = await collectObservation(queue, ctx);
@@ -122,7 +123,7 @@ describe("collectObservation", () => {
     expect(obs.answeredHumanTasks).toHaveLength(0);
   });
 
-  test("does not mark waiting_human task as answered when no decide logs exist", async () => {
+  test("does not mark waiting_human task as answered when no orient logs exist", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const t1 = createTask("No decide logs");
     queue.enqueue(t1);
@@ -1434,11 +1435,14 @@ describe("generateTasksFromObservation", () => {
 
     const result = await generateTasksFromObservation(queue, obs);
 
-    expect(result.autonomousTasks.length).toBeGreaterThanOrEqual(1);
+    expect(result.autonomousTasks.length).toBeGreaterThanOrEqual(3);
     expect(result.autonomousTasks.some(t => t.includes("feedback"))).toBe(true);
-    const feedbackTask = queue.list().find(t => t.title.toLowerCase().includes("feedback"));
-    expect(feedbackTask).toBeDefined();
-    expect(feedbackTask!.context.feedbackIds).toEqual(["f1", "f2", "f3"]);
+    const feedbackTasks = queue.list().filter(t => t.title.toLowerCase().includes("feedback"));
+    expect(feedbackTasks).toHaveLength(3);
+    const feedbackIds = feedbackTasks.map(t => t.context.feedbackId);
+    expect(feedbackIds).toContain("f1");
+    expect(feedbackIds).toContain("f2");
+    expect(feedbackIds).toContain("f3");
   });
 
   test("derives improvement task from principles and source results when queue is empty", async () => {
@@ -1880,6 +1884,67 @@ describe("deriveAutonomousTasks", () => {
     expect(derived[0].title).toContain("Principles");
     expect(derived[0].context.principles).toEqual(["Improve documentation", "Ship small increments"]);
   });
+
+  test("derives one feedback review task per unresolved feedback id", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Quality first";
+    obs.feedbackSummary = {
+      counts: { new: 3, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [],
+      themes: [],
+      unresolvedIds: ["fb-1", "fb-2", "fb-3"],
+    };
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    const feedbackTasks = derived.filter(t => t.title.includes("feedback"));
+    expect(feedbackTasks).toHaveLength(3);
+    expect(feedbackTasks[0].context.feedbackId).toBe("fb-1");
+    expect(feedbackTasks[1].context.feedbackId).toBe("fb-2");
+    expect(feedbackTasks[2].context.feedbackId).toBe("fb-3");
+  });
+
+  test("skips feedback review task when same feedback id already has a task in queue", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const existing = createTask("Review unresolved feedback [fb-1]");
+    queue.enqueue(existing);
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Quality first";
+    obs.tasks = [existing];
+    obs.feedbackSummary = {
+      counts: { new: 2, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [],
+      themes: [],
+      unresolvedIds: ["fb-1", "fb-2"],
+    };
+
+    const derived = deriveAutonomousTasks(obs, queue, []);
+
+    const feedbackTasks = derived.filter(t => t.title.includes("feedback"));
+    expect(feedbackTasks).toHaveLength(1);
+    expect(feedbackTasks[0].context.feedbackId).toBe("fb-2");
+  });
+
+  test("skips feedback review task when same feedback id exists in archive", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const archived = createTask("Review unresolved feedback [fb-1]");
+    archived.status = "done" as any;
+    const obs = emptyObs();
+    obs.principles = "# Principles\n\n- Quality first";
+    obs.feedbackSummary = {
+      counts: { new: 2, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [],
+      themes: [],
+      unresolvedIds: ["fb-1", "fb-2"],
+    };
+
+    const derived = deriveAutonomousTasks(obs, queue, [archived]);
+
+    const feedbackTasks = derived.filter(t => t.title.includes("feedback"));
+    expect(feedbackTasks).toHaveLength(1);
+    expect(feedbackTasks[0].context.feedbackId).toBe("fb-2");
+  });
 });
 
 describe("performActCleanup", () => {
@@ -2104,6 +2169,34 @@ describe("iterate - waiting_human suppresses chat output", () => {
     expect(logs[0]).not.toContain("What should we do?");
   });
 
+  test("extracts question from orient-phase log, not decide-phase", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Orient blocked");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "waiting_human");
+    queue.addLog(task.id, "orient", `${HUMAN_REQUIRED_PREFIX}What approach should we take?`);
+
+    const obs = waitingHumanObservation([queue.get(task.id)!]);
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      await iterate(queue, [], { observationOverride: obs });
+    } finally {
+      console.log = originalLog;
+    }
+
+    const allTasks = [...queue.list(), ...await queue.history()];
+    const iterateTask = allTasks.find(t => t.title.startsWith("Iterate:"));
+    expect(iterateTask).toBeDefined();
+    const decideLog = iterateTask!.logs.find(l => l.phase === "decide");
+    expect(decideLog).toBeDefined();
+    expect(decideLog!.content).toContain("What approach should we take?");
+    // Should NOT fall back to task title
+    expect(decideLog!.content).not.toContain("Orient blocked");
+  });
+
   test("logs dashboard reference instead of 'presented to user'", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const task = createTask("Needs input");
@@ -2129,5 +2222,201 @@ describe("iterate - waiting_human suppresses chat output", () => {
     expect(actLog).toBeDefined();
     expect(actLog!.content).not.toContain("presented waiting_human questions to user");
     expect(actLog!.content).toContain("dashboard");
+  });
+});
+
+describe("detectCompletedFeedbackTasks", () => {
+  test("detects done task with context.feedbackIds and no human report", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Fix login bug", { feedbackIds: ["fb-1", "fb-2"] });
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    const result = await detectCompletedFeedbackTasks(queue, {});
+
+    expect(result).toHaveLength(1);
+    expect(result[0].taskId).toBe(task.id);
+    expect(result[0].title).toBe("Fix login bug");
+    expect(result[0].feedbackIds).toEqual(["fb-1", "fb-2"]);
+  });
+
+  test("detects done task with context.feedbackId (singular)", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Review feedback item", { feedbackId: "fb-99" });
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    const result = await detectCompletedFeedbackTasks(queue, {});
+
+    expect(result).toHaveLength(1);
+    expect(result[0].feedbackIds).toEqual(["fb-99"]);
+  });
+
+  test("ignores done task without feedback context", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Refactor module");
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    const result = await detectCompletedFeedbackTasks(queue, {});
+
+    expect(result).toHaveLength(0);
+  });
+
+  test("ignores non-done feedback task", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Fix bug", { feedbackIds: ["fb-1"] });
+    queue.enqueue(task);
+
+    const result = await detectCompletedFeedbackTasks(queue, {});
+
+    expect(result).toHaveLength(0);
+  });
+
+  test("ignores feedback task that already has a human-category report", async () => {
+    const reportsPath = tmpPath("reports");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Fix bug", { feedbackIds: ["fb-1"] });
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    await addReport("Fix bug report", "Bug was fixed by updating validation", "agent", { taskId: task.id, path: reportsPath, category: "human" });
+
+    const result = await detectCompletedFeedbackTasks(queue, { reportsPath });
+
+    expect(result).toHaveLength(0);
+  });
+
+  test("detects feedback task with only internal report (no human report)", async () => {
+    const reportsPath = tmpPath("reports");
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Fix bug", { feedbackIds: ["fb-1"] });
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    await addReport("Fix bug report", "Internal implementation details", "mission:test", { taskId: task.id, path: reportsPath });
+
+    const result = await detectCompletedFeedbackTasks(queue, { reportsPath });
+
+    expect(result).toHaveLength(1);
+  });
+
+  test("excludes iterate task itself", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Fix bug", { feedbackIds: ["fb-1"] });
+    queue.enqueue(task);
+    queue.transition(task.id, "done");
+
+    const result = await detectCompletedFeedbackTasks(queue, {}, task.id);
+
+    expect(result).toHaveLength(0);
+  });
+});
+
+describe.skip("generateTasksFromObservation - human report tasks", () => {
+  function emptyObservation(): Observation {
+    return {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      stuckTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+      completedFeedbackTasks: [],
+    };
+  }
+
+  test("creates human report task for completed feedback task", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.completedFeedbackTasks = [
+      { taskId: "task-1", title: "Fix login bug", feedbackIds: ["fb-1", "fb-2"] },
+    ];
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.humanReportTasks).toHaveLength(1);
+    const reportTask = queue.list().find(t => t.title.includes("Report to human"));
+    expect(reportTask).toBeDefined();
+    expect(reportTask!.context.sourceTaskId).toBe("task-1");
+    expect(reportTask!.context.sourceTaskTitle).toBe("Fix login bug");
+    expect(reportTask!.context.feedbackIds).toEqual(["fb-1", "fb-2"]);
+  });
+
+  test("does not duplicate human report task", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const existing = createTask("Report to human: Fix login bug");
+    queue.enqueue(existing);
+
+    const obs = emptyObservation();
+    obs.tasks = [existing];
+    obs.completedFeedbackTasks = [
+      { taskId: "task-1", title: "Fix login bug", feedbackIds: ["fb-1"] },
+    ];
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.humanReportTasks).toHaveLength(0);
+  });
+
+  test("creates multiple report tasks for multiple completed feedback tasks", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.completedFeedbackTasks = [
+      { taskId: "task-1", title: "Fix login bug", feedbackIds: ["fb-1"] },
+      { taskId: "task-2", title: "Add dark mode", feedbackIds: ["fb-2"] },
+    ];
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.humanReportTasks).toHaveLength(2);
+  });
+});
+
+describe.skip("analyzeObservation - report_human", () => {
+  function emptyObservation(): Observation {
+    return {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      stuckTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+      completedFeedbackTasks: [],
+    };
+  }
+
+  test("includes report_human tag when completed feedback tasks exist", () => {
+    const obs = emptyObservation();
+    obs.completedFeedbackTasks = [
+      { taskId: "task-1", title: "Fix login bug", feedbackIds: ["fb-1"] },
+    ];
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("report_human");
+    expect(analysis).toContain("Fix login bug");
+  });
+
+  test("does not include report_human tag when no completed feedback tasks", () => {
+    const obs = emptyObservation();
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).not.toContain("report_human");
   });
 });

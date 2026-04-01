@@ -29,6 +29,12 @@ export interface IterateContext {
   codeChangeChecker?: CodeChangeChecker;
 }
 
+export interface CompletedFeedbackTask {
+  taskId: string;
+  title: string;
+  feedbackIds: string[];
+}
+
 export interface SuspiciousTask {
   taskId: string;
   title: string;
@@ -54,6 +60,7 @@ export interface Observation {
   suspiciousTasks: SuspiciousTask[];
   stuckTasks: StuckTask[];
   failedTasks: Task[];
+  completedFeedbackTasks: CompletedFeedbackTask[];
   uncommittedChanges: string;
   serverLogSummary: ServerLogSummary | null;
 }
@@ -71,6 +78,7 @@ export interface GenerateResult {
   distilledRules: string[];
   autonomousTasks: string[];
   unverifiedRules: string[];
+  humanReportTasks: string[];
 }
 
 const IN_PROGRESS_STATUSES = new Set(["orienting", "deciding", "acting"]);
@@ -179,6 +187,44 @@ export async function auditRecentCompletions(
   return suspicious;
 }
 
+function extractFeedbackIds(context: Record<string, unknown>): string[] | null {
+  if (Array.isArray(context.feedbackIds) && context.feedbackIds.length > 0) {
+    return context.feedbackIds as string[];
+  }
+  if (typeof context.feedbackId === "string") {
+    return [context.feedbackId];
+  }
+  return null;
+}
+
+export async function detectCompletedFeedbackTasks(
+  queue: TaskQueue,
+  ctx: IterateContext,
+  excludeTaskId?: string,
+): Promise<CompletedFeedbackTask[]> {
+  const doneTasks = queue.list().filter(t =>
+    t.status === "done" && t.id !== excludeTaskId,
+  );
+
+  const reports = ctx.reportsPath
+    ? await loadReports(ctx.reportsPath).catch(() => [] as Report[])
+    : [];
+
+  const result: CompletedFeedbackTask[] = [];
+  for (const task of doneTasks) {
+    const feedbackIds = extractFeedbackIds(task.context);
+    if (!feedbackIds) continue;
+
+    const hasHumanReport = reports.some(
+      r => r.taskId === task.id && r.category === "human",
+    );
+    if (hasHumanReport) continue;
+
+    result.push({ taskId: task.id, title: task.title, feedbackIds });
+  }
+  return result;
+}
+
 export async function getUncommittedChanges(): Promise<string> {
   try {
     const proc = Bun.spawn(["git", "status", "--porcelain"], {
@@ -232,12 +278,13 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
 
   const SERVER_LOG_OBSERVE_WINDOW_MS = 10 * 60 * 1000;
 
-  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, rawUncommittedChanges, serverLogs] = await Promise.all([
+  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, completedFeedbackTasks, rawUncommittedChanges, serverLogs] = await Promise.all([
     loadFeedback(ctx.feedbackPath),
     loadMissions(ctx.missionsPath),
     runAllSources(ctx.sourcesPath).catch(() => [] as SourceResult[]),
     loadPrinciples(ctx.principlesPath),
     auditRecentCompletions(queue, ctx),
+    detectCompletedFeedbackTasks(queue, ctx, excludeTaskId),
     getUncommittedChanges(),
     loadRecentServerLogs(SERVER_LOG_OBSERVE_WINDOW_MS, ctx.serverLogPath).catch(() => [] as import("../server-log").ServerLogEntry[]),
   ]);
@@ -258,6 +305,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     suspiciousTasks,
     stuckTasks,
     failedTasks,
+    completedFeedbackTasks,
     uncommittedChanges,
     serverLogSummary,
   };
@@ -384,6 +432,7 @@ const COMMIT_TASK_TITLE = "Commit uncommitted changes";
 const REVIEW_FEEDBACK_PREFIX = "Review feedback:";
 const INVESTIGATE_FEEDBACK_PREFIX = "Investigate feedback:";
 const IMPLEMENT_RULE_PREFIX = "Implement distilled rule:";
+const REPORT_HUMAN_PREFIX = "Report to human:";
 
 interface DuplicateCheckOptions {
   prefixMatch?: boolean;
@@ -428,12 +477,12 @@ export interface DerivedTask {
 export function deriveAutonomousTasks(obs: Observation, queue: TaskQueue, archivedTasks: Task[]): DerivedTask[] {
   const derived: DerivedTask[] = [];
 
-  // Unresolved feedback → feedback review task
-  const unresolvedCount = obs.feedbackSummary.counts.new + obs.feedbackSummary.counts.acknowledged;
-  if (unresolvedCount > 0) {
-    if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_FEEDBACK_REVIEW_TITLE, archivedTasks)) {
-      const feedbackIds = obs.feedbackSummary.unresolvedIds ?? [];
-      derived.push({ title: AUTONOMOUS_FEEDBACK_REVIEW_TITLE, context: { feedbackIds } });
+  // Unresolved feedback → one review task per feedback
+  const unresolvedFeedbackIds = obs.feedbackSummary.unresolvedIds ?? [];
+  for (const feedbackId of unresolvedFeedbackIds) {
+    const title = `${AUTONOMOUS_FEEDBACK_REVIEW_TITLE} [${feedbackId}]`;
+    if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
+      derived.push({ title, context: { feedbackId } });
     }
   }
 
