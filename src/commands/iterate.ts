@@ -240,9 +240,7 @@ function extractFeedbackIds(context: Record<string, unknown>): string[] | null {
 
 export function needsHumanReport(task: Task): boolean {
   if (task.title.startsWith(REPORT_HUMAN_PREFIX)) return false;
-  if (extractFeedbackIds(task.context)) return true;
-  if (task.logs.some(l => l.content.startsWith(HUMAN_REQUIRED_PREFIX))) return true;
-  return false;
+  return extractFeedbackIds(task.context) !== null;
 }
 
 export async function detectCompletedFeedbackTasks(

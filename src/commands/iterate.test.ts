@@ -2702,14 +2702,14 @@ describe("needsHumanReport", () => {
     expect(needsHumanReport(task)).toBe(true);
   });
 
-  test("returns true for task that had human escalation", () => {
+  test("returns false for task that only had human escalation without feedbackIds", () => {
     const task = createTask("Investigate issue");
     task.logs.push({
       phase: "orient",
       content: `${HUMAN_REQUIRED_PREFIX}What should we prioritize?`,
       timestamp: new Date().toISOString(),
     });
-    expect(needsHumanReport(task)).toBe(true);
+    expect(needsHumanReport(task)).toBe(false);
   });
 
   test("returns false for report task itself", () => {
@@ -2732,7 +2732,7 @@ describe("needsHumanReport", () => {
 });
 
 describe("detectCompletedFeedbackTasks - escalated tasks", () => {
-  test("detects done task that had human escalation", async () => {
+  test("ignores done task with only human escalation and no feedbackIds", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const task = createTask("Investigate issue");
     task.logs.push({
@@ -2745,10 +2745,7 @@ describe("detectCompletedFeedbackTasks - escalated tasks", () => {
 
     const result = await detectCompletedFeedbackTasks(queue, {});
 
-    expect(result).toHaveLength(1);
-    expect(result[0].taskId).toBe(task.id);
-    expect(result[0].title).toBe("Investigate issue");
-    expect(result[0].feedbackIds).toEqual([]);
+    expect(result).toHaveLength(0);
   });
 
   test("ignores done report task even if it had escalation", async () => {
