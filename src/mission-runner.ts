@@ -7,7 +7,7 @@ import { updateTask, load, save } from "./store";
 import { runOnDoneHooks } from "./hooks";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
 import { registerRunner, heartbeatRunner, deregisterRunner } from "./mission-runner-state";
-import { loadReports, addReport, isVacuousContent } from "./reports";
+import { loadReports, addReport, isVacuousContent, humanFriendlyReportTitle } from "./reports";
 import { createWorktree, mergeWorktreeBranch, removeWorktree } from "./worktree";
 
 export interface MissionRunnerOptions {
@@ -153,7 +153,7 @@ export async function ensureReportForDoneTask(
   const substantiveLogs = actLogs.filter(c => !isVacuousContent(c));
   if (substantiveLogs.length === 0) return;
 
-  await addReport(task.title, substantiveLogs.join("\n\n"), `mission:${missionName}`, {
+  await addReport(humanFriendlyReportTitle(task.title), substantiveLogs.join("\n\n"), `mission:${missionName}`, {
     taskId: task.id,
     path: reportsPath,
   });
