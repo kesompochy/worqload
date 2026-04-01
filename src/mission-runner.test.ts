@@ -1913,3 +1913,97 @@ describe("processTask report generation", () => {
     expect(reports).toHaveLength(0);
   });
 });
+
+describe.skip("worktree fallback on spawn failure", () => {
+  test("sets worktreeDisabled in context when worktree spawn fails", async () => {
+    const storePath = tmpPath("wt-fallback");
+    const missionPath = tmpPath("wt-fallback-m");
+    const mission = await createMissionWithPrinciple("wt-fallback", missionPath);
+    const task = createTask("worktree fail task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    console.error = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      // useWorktree=true but actCommand fails — task should retry with worktreeDisabled
+      await processTask(task, mission, {
+        storePath,
+        actCommand: ["sh", "-c", "exit 1"],
+        useWorktree: true,
+      });
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("observing");
+    expect(updated?.context.worktreeDisabled).toBe(true);
+  });
+
+  test("skips worktree creation when worktreeDisabled is set in context", async () => {
+    const storePath = tmpPath("wt-disabled");
+    const missionPath = tmpPath("wt-disabled-m");
+    const mission = await createMissionWithPrinciple("wt-disabled", missionPath);
+    // Task already has worktreeDisabled from a previous failed worktree attempt
+    const task = createTask("retry without wt", { retryCount: 1, worktreeDisabled: true });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    console.error = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await processTask(task, mission, {
+        storePath,
+        actCommand: ["sh", "-c", "echo no-worktree; exit 0"],
+        useWorktree: true,
+      });
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+    // Spawn log should NOT mention "worktree:" since worktree was skipped
+    const actLogs = updated?.logs.filter(l => l.phase === "act") ?? [];
+    const spawnLog = actLogs.find(l => l.content.includes("Spawning:"));
+    expect(spawnLog?.content).not.toContain("worktree:");
+  });
+
+  test("does not set worktreeDisabled when spawn succeeds with worktree", async () => {
+    const storePath = tmpPath("wt-success");
+    const missionPath = tmpPath("wt-success-m");
+    const mission = await createMissionWithPrinciple("wt-success", missionPath);
+    const task = createTask("worktree success task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    console.error = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await processTask(task, mission, {
+        storePath,
+        actCommand: ["sh", "-c", "echo ok; exit 0"],
+        useWorktree: true,
+      });
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+    expect(updated?.context.worktreeDisabled).toBeUndefined();
+  });
+});

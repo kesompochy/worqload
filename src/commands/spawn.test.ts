@@ -1,11 +1,13 @@
 import { test, expect, describe } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { TaskQueue } from "../queue";
 import { createTask, ESCALATION_EXIT_CODE, HUMAN_REQUIRED_PREFIX } from "../task";
 import { spawn, spawnCleanup } from "./spawn";
 import { recordSpawnStart } from "../spawns";
 import { load } from "../store";
+import { createWorktree } from "../worktree";
 
 test("spawn skips task that is already done", async () => {
   const queue = new TaskQueue();
@@ -152,6 +154,59 @@ describe("spawn escalation via exit code", () => {
   });
 });
 
+describe("spawn timeout", () => {
+  test("spawn kills process and marks task failed on timeout", async () => {
+    const storePath = tmpPath("spawn-timeout");
+    const queue = new TaskQueue(storePath);
+    const task = createTask("slow cli task");
+    queue.enqueue(task);
+    await queue.save();
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    console.error = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await spawn(queue, [task.id, "sleep", "30"], { spawnTimeoutMs: 200 });
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("failed");
+    expect(updated?.owner).toBeUndefined();
+    const timeoutLog = updated?.logs.find(l => l.content.includes("[TIMEOUT]"));
+    expect(timeoutLog).toBeDefined();
+  });
+
+  test("spawn completes normally when within timeout", async () => {
+    const storePath = tmpPath("spawn-timeout-ok");
+    const queue = new TaskQueue(storePath);
+    const task = createTask("fast cli task");
+    queue.enqueue(task);
+    await queue.save();
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    console.error = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await spawn(queue, [task.id, "echo", "quick"], { spawnTimeoutMs: 5000 });
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("done");
+  });
+});
+
 describe("spawnCleanup", () => {
   test("cleans up task in orienting status with dead owner process", async () => {
     const queue = new TaskQueue(tmpPath("cleanup-orienting"));
@@ -289,5 +344,69 @@ describe("spawnCleanup", () => {
     } finally {
       try { process.kill(sleepProc.pid, "SIGKILL"); } catch {}
     }
+  });
+
+  test("cleans up orphaned worktree directory and branch", async () => {
+    const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
+    function git(args: string[], cwd: string) {
+      return Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: cleanGitEnv });
+    }
+
+    // Create a temp git repo with a worktree
+    const repoDir = join(tmpdir(), `worqload-cleanup-wt-${crypto.randomUUID()}`);
+    mkdirSync(repoDir, { recursive: true });
+    git(["init"], repoDir);
+    git(["config", "user.email", "test@test.com"], repoDir);
+    git(["config", "user.name", "Test"], repoDir);
+    writeFileSync(join(repoDir, "README.md"), "# test\n");
+    mkdirSync(join(repoDir, ".worqload"), { recursive: true });
+    writeFileSync(join(repoDir, ".worqload", "tasks.json"), "[]");
+    git(["add", "."], repoDir);
+    git(["commit", "-m", "initial"], repoDir);
+
+    const taskId = crypto.randomUUID();
+    const { worktreePath, branchName } = await createWorktree(taskId, repoDir);
+    expect(existsSync(worktreePath)).toBe(true);
+
+    // Create a stuck task with worktree info in spawn record
+    const queue = new TaskQueue(tmpPath("cleanup-worktree"));
+    const task = createTask("Stuck worktree task");
+    (task as any).id = taskId;
+    queue.enqueue(task);
+    queue.claim(task.id, "claude -p");
+    queue.transition(task.id, "orienting");
+    await queue.save();
+
+    const spawnsPath = tmpPath("spawns-worktree");
+    await recordSpawnStart(task.id, task.title, "claude -p", 999999, spawnsPath, {
+      worktreePath,
+      branchName,
+    });
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await spawnCleanup(queue, [], spawnsPath, repoDir);
+    } finally {
+      console.log = origLog;
+    }
+
+    const updated = queue.get(task.id);
+    expect(updated?.status).toBe("failed");
+
+    // Worktree directory should be removed
+    expect(existsSync(worktreePath)).toBe(false);
+
+    // Branch should be deleted
+    const branchResult = git(["branch", "--list", branchName], repoDir);
+    const branchOutput = new TextDecoder().decode(branchResult.stdout).trim();
+    expect(branchOutput).toBe("");
+
+    // Cleanup
+    try {
+      const { rmSync } = await import("fs");
+      rmSync(repoDir, { recursive: true, force: true });
+    } catch { /* ignore */ }
   });
 });

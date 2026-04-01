@@ -86,6 +86,29 @@ test("recordSpawnFinish with unknown id is a no-op", async () => {
   expect(spawns[0].status).toBe("running");
 });
 
+test("recordSpawnStart stores worktree info when provided", async () => {
+  const path = tmpSpawnsPath();
+  const record = await recordSpawnStart("task-1", "WT task", "owner", 100, path, {
+    worktreePath: "/tmp/wt/abc12345",
+    branchName: "worqload/abc12345",
+  });
+
+  expect(record.worktreePath).toBe("/tmp/wt/abc12345");
+  expect(record.branchName).toBe("worqload/abc12345");
+
+  const spawns = await loadSpawns(path);
+  expect(spawns[0].worktreePath).toBe("/tmp/wt/abc12345");
+  expect(spawns[0].branchName).toBe("worqload/abc12345");
+});
+
+test("recordSpawnStart omits worktree fields when not provided", async () => {
+  const path = tmpSpawnsPath();
+  const record = await recordSpawnStart("task-1", "No WT", "owner", 100, path);
+
+  expect(record.worktreePath).toBeUndefined();
+  expect(record.branchName).toBeUndefined();
+});
+
 test("multiple spawns are tracked independently", async () => {
   const path = tmpSpawnsPath();
   const r1 = await recordSpawnStart("task-1", "Task A", "agent-1", 100, path);

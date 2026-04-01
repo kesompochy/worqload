@@ -12,6 +12,8 @@ export interface SpawnRecord {
   startedAt: string;
   finishedAt?: string;
   exitCode?: number;
+  worktreePath?: string;
+  branchName?: string;
 }
 
 const store = new EntityStore<SpawnRecord>(DEFAULT_SPAWNS_PATH, "Spawn");
@@ -24,7 +26,7 @@ export async function saveSpawns(spawns: SpawnRecord[], path: string = DEFAULT_S
   await store.save(spawns, path);
 }
 
-export async function recordSpawnStart(taskId: string, taskTitle: string, owner: string, pid: number, path: string = DEFAULT_SPAWNS_PATH): Promise<SpawnRecord> {
+export async function recordSpawnStart(taskId: string, taskTitle: string, owner: string, pid: number, path: string = DEFAULT_SPAWNS_PATH, worktreeInfo?: { worktreePath: string; branchName: string }): Promise<SpawnRecord> {
   const record: SpawnRecord = {
     id: crypto.randomUUID(),
     taskId,
@@ -33,6 +35,7 @@ export async function recordSpawnStart(taskId: string, taskTitle: string, owner:
     pid,
     status: "running",
     startedAt: new Date().toISOString(),
+    ...(worktreeInfo ? { worktreePath: worktreeInfo.worktreePath, branchName: worktreeInfo.branchName } : {}),
   };
   return store.add(record, path);
 }

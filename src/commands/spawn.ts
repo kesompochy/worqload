@@ -114,7 +114,10 @@ export async function spawn(queue: TaskQueue, args: string[], options?: { spawnT
     env: { ...process.env, ...taskEnv },
     ...(spawnCwd ? { cwd: spawnCwd } : {}),
   });
-  const spawnRecord = await recordSpawnStart(task.id, task.title, owner, proc.pid);
+  const spawnRecord = await recordSpawnStart(
+    task.id, task.title, owner, proc.pid, undefined,
+    worktreeInfo ? { worktreePath: worktreeInfo.worktreePath, branchName: worktreeInfo.branchName } : undefined,
+  );
 
   const timeoutMs = options?.spawnTimeoutMs ?? DEFAULT_SPAWN_TIMEOUT_MS;
   let timedOut = false;
@@ -128,77 +131,79 @@ export async function spawn(queue: TaskQueue, args: string[], options?: { spawnT
   const exitCode = await proc.exited;
   clearTimeout(timeoutId);
 
-  if (timedOut) {
-    await recordSpawnFinish(spawnRecord.id, -1);
-    queue.addLog(task.id, "act", `[TIMEOUT] Spawn timed out after ${timeoutMs}ms`);
-    queue.transition(task.id, "failed");
-    queue.update(task.id, { owner: undefined });
-    await queue.save();
-    console.error(`Timeout: ${task.title}`);
-    return;
-  }
-
-  await recordSpawnFinish(spawnRecord.id, exitCode);
-
-  const postEnv: Record<string, string> = {
-    ...taskEnv,
-    WORQLOAD_SPAWN_EXIT_CODE: String(exitCode),
-    ...(spawnCwd ? { WORQLOAD_SPAWN_CWD: spawnCwd } : {}),
-  };
-
-  if (config.spawn?.post) {
-    for (const hook of config.spawn.post) {
-      console.log(`Running post-spawn hook: ${hook}`);
-      const result = await runHook(hook, postEnv);
-      if (result.exitCode !== 0) {
-        console.error(`Post-spawn hook failed (exit ${result.exitCode}): ${result.output}`);
-      }
-      if (result.output) {
-        queue.addLog(task.id, "act", `[post-spawn] ${result.output}`);
-      }
+  try {
+    if (timedOut) {
+      await recordSpawnFinish(spawnRecord.id, -1);
+      queue.addLog(task.id, "act", `[TIMEOUT] Spawn timed out after ${timeoutMs}ms`);
+      queue.transition(task.id, "failed");
+      queue.update(task.id, { owner: undefined });
+      await queue.save();
+      console.error(`Timeout: ${task.title}`);
+      return;
     }
-  }
 
-  const output = (stdout + stderr).trim();
-  const truncated = output.length > 2000 ? output.slice(-2000) : output;
+    await recordSpawnFinish(spawnRecord.id, exitCode);
 
-  // Atomically update only this task in tasks.json to avoid overwriting other changes
-  const updated = await updateTask(task.id, (current) => {
-    const logs = [...current.logs, { phase: "act" as OodaPhase, content: truncated, timestamp: new Date().toISOString() }];
-    const alreadyTerminal = current.status === "done" || current.status === "failed";
-    if (alreadyTerminal) {
-      console.log(`Already ${current.status}: ${task.title}`);
-      return { logs, owner: undefined };
-    } else if (exitCode === 0) {
-      console.log(`Done: ${task.title}`);
-      return { status: "done" as const, logs, owner: undefined };
-    } else if (exitCode === ESCALATION_EXIT_CODE) {
-      const question = truncated || "Spawned agent requested human escalation";
-      const escalationLogs = [...logs, { phase: "orient" as OodaPhase, content: `${HUMAN_REQUIRED_PREFIX}${question}`, timestamp: new Date().toISOString() }];
-      console.log(`Escalated: ${task.title}`);
-      return { status: "waiting_human" as const, logs: escalationLogs, owner: undefined };
-    } else {
-      console.log(`Failed: ${task.title} (exit: ${exitCode})`);
-      const failLogs = [...logs, { phase: "act" as OodaPhase, content: `[FAILED] exit code ${exitCode}`, timestamp: new Date().toISOString() }];
-      return { status: "failed" as const, logs: failLogs, owner: undefined };
-    }
-  }, queue.getStorePath());
+    const postEnv: Record<string, string> = {
+      ...taskEnv,
+      WORQLOAD_SPAWN_EXIT_CODE: String(exitCode),
+      ...(spawnCwd ? { WORQLOAD_SPAWN_CWD: spawnCwd } : {}),
+    };
 
-  if (updated?.status === "done") {
-    await runOnDoneHooks(task.id, task.title);
-  }
-
-  if (worktreeInfo) {
-    try {
-      if (exitCode === 0) {
-        const merged = await mergeWorktreeBranch(worktreeInfo.branchName);
-        if (!merged) {
-          console.error(`Worktree merge conflict: branch ${worktreeInfo.branchName} retained for manual merge`);
+    if (config.spawn?.post) {
+      for (const hook of config.spawn.post) {
+        console.log(`Running post-spawn hook: ${hook}`);
+        const result = await runHook(hook, postEnv);
+        if (result.exitCode !== 0) {
+          console.error(`Post-spawn hook failed (exit ${result.exitCode}): ${result.output}`);
+        }
+        if (result.output) {
+          queue.addLog(task.id, "act", `[post-spawn] ${result.output}`);
         }
       }
-      await removeWorktree(worktreeInfo.worktreePath, worktreeInfo.branchName);
-    } catch (err) {
-      console.error(`Worktree cleanup failed: ${err}`);
+    }
+
+    const output = (stdout + stderr).trim();
+    const truncated = output.length > 2000 ? output.slice(-2000) : output;
+
+    // Atomically update only this task in tasks.json to avoid overwriting other changes
+    const updated = await updateTask(task.id, (current) => {
+      const logs = [...current.logs, { phase: "act" as OodaPhase, content: truncated, timestamp: new Date().toISOString() }];
+      const alreadyTerminal = current.status === "done" || current.status === "failed";
+      if (alreadyTerminal) {
+        console.log(`Already ${current.status}: ${task.title}`);
+        return { logs, owner: undefined };
+      } else if (exitCode === 0) {
+        console.log(`Done: ${task.title}`);
+        return { status: "done" as const, logs, owner: undefined };
+      } else if (exitCode === ESCALATION_EXIT_CODE) {
+        const question = truncated || "Spawned agent requested human escalation";
+        const escalationLogs = [...logs, { phase: "orient" as OodaPhase, content: `${HUMAN_REQUIRED_PREFIX}${question}`, timestamp: new Date().toISOString() }];
+        console.log(`Escalated: ${task.title}`);
+        return { status: "waiting_human" as const, logs: escalationLogs, owner: undefined };
+      } else {
+        console.log(`Failed: ${task.title} (exit: ${exitCode})`);
+        const failLogs = [...logs, { phase: "act" as OodaPhase, content: `[FAILED] exit code ${exitCode}`, timestamp: new Date().toISOString() }];
+        return { status: "failed" as const, logs: failLogs, owner: undefined };
+      }
+    }, queue.getStorePath());
+
+    if (updated?.status === "done") {
+      await runOnDoneHooks(task.id, task.title);
+    }
+  } finally {
+    if (worktreeInfo) {
+      try {
+        if (!timedOut && exitCode === 0) {
+          const merged = await mergeWorktreeBranch(worktreeInfo.branchName);
+          if (!merged) {
+            console.error(`Worktree merge conflict: branch ${worktreeInfo.branchName} retained for manual merge`);
+          }
+        }
+        await removeWorktree(worktreeInfo.worktreePath, worktreeInfo.branchName);
+      } catch (err) {
+        console.error(`Worktree cleanup failed: ${err}`);
+      }
     }
   }
 }
@@ -223,7 +228,7 @@ function killProcessTree(pid: number): void {
   }
 }
 
-export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?: string): Promise<void> {
+export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?: string, repoDir?: string): Promise<void> {
   const spawns = await loadSpawns(spawnsPath);
   const stuckTasks = queue.list().filter(
     t => IN_PROGRESS_STATUSES.has(t.status) && t.owner,
@@ -247,6 +252,15 @@ export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?
 
     if (spawnRecord) {
       await recordSpawnFinish(spawnRecord.id, -1, spawnsPath);
+
+      if (spawnRecord.worktreePath && spawnRecord.branchName) {
+        try {
+          await removeWorktree(spawnRecord.worktreePath, spawnRecord.branchName, repoDir);
+          console.log(`Worktree cleaned: ${spawnRecord.branchName}`);
+        } catch (err) {
+          console.error(`Worktree cleanup failed: ${err}`);
+        }
+      }
     }
 
     cleaned++;
