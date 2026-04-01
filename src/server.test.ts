@@ -361,6 +361,20 @@ describe("Activity visibility: dashboard HTML", () => {
     expect(body).not.toContain("useState(false)");
   });
 
+  test("MissionCard syncs expansion state via useEffect when hasActiveTasks changes", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    const start = source.indexOf("function MissionCard(");
+    expect(start).toBeGreaterThan(-1);
+    const nextFunc = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, nextFunc > -1 ? nextFunc : undefined);
+
+    expect(body).toContain("useEffect");
+    expect(body).toContain("hasActiveTasks");
+    expect(body).toMatch(/useEffect\s*\(\s*\(\)\s*=>\s*\{[^}]*setExpanded\(true\)/);
+  });
+
   test("MissionCard displays status and task count", async () => {
     const fs = await import("fs");
     const source = fs.readFileSync("src/server.ts", "utf-8");

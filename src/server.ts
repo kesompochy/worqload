@@ -889,6 +889,7 @@ function MissionSection({ missions, onUpdate }) {
 function MissionCard({ mission, onUpdate }) {
   const hasActiveTasks = mission.tasks.some(t => t.status !== 'done' && t.status !== 'failed');
   const [expanded, setExpanded] = useState(hasActiveTasks);
+  useEffect(() => { if (hasActiveTasks) setExpanded(true); }, [hasActiveTasks]);
   const statusColor = mission.status === 'active' ? '#6c7aed' : '#666';
   const oodaColors = { observing: '#4caf50', orienting: '#4caf50', deciding: '#ffc107', waiting_human: '#ed6c6c', acting: '#00bcd4', done: '#666', failed: '#d46c6c' };
   const oodaLabels = { observing: 'O', orienting: 'Or', deciding: 'D', waiting_human: 'W', acting: 'A', done: '✓', failed: '✗' };
