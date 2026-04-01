@@ -2,7 +2,7 @@ import type { TaskQueue } from "../queue";
 import type { Task } from "../task";
 import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX, getHumanQuestion } from "../task";
 import type { FeedbackSummary } from "../feedback";
-import { loadFeedback, summarizeFeedback, distillFeedback, extractObservationalContent, verifyDistilledRules, markRuleTaskCreated, type CodeChangeChecker } from "../feedback";
+import { loadFeedback, summarizeFeedback, distillFeedback, extractObservationalContent, verifyDistilledRules, markRuleTaskCreated, acknowledgeFeedback, type CodeChangeChecker } from "../feedback";
 import type { Mission } from "../mission";
 import { loadMissions, reactivateMission, archiveMissions } from "../mission";
 import type { SourceResult } from "../sources";
@@ -79,6 +79,7 @@ export interface GenerateResult {
   autonomousTasks: string[];
   unverifiedRules: string[];
   humanReportTasks: string[];
+  feedbackIdsToAck: string[];
 }
 
 const IN_PROGRESS_STATUSES = new Set(["orienting", "deciding", "acting"]);
@@ -524,6 +525,9 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     }
   }
 
+  // Feedback IDs to auto-acknowledge when tasks are created
+  const feedbackIdsToAck = new Set<string>();
+
   // New feedback themes → review tasks
   for (const theme of obs.feedbackSummary.themes) {
     const title = `Review feedback: ${theme.description}`;
@@ -531,6 +535,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
       const task = createTask(title, { feedbackIds: theme.feedbackIds }, 0, "iterate");
       queue.enqueue(task);
       createdTasks.push(task.title);
+      for (const fid of theme.feedbackIds) feedbackIdsToAck.add(fid);
     }
   }
 
@@ -543,6 +548,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
         const task = createTask(title, { feedbackIds: [feedback.id], observations }, 0, "iterate");
         queue.enqueue(task);
         createdTasks.push(task.title);
+        feedbackIdsToAck.add(feedback.id);
       }
     }
   }
@@ -619,10 +625,22 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
       const task = createTask(title, context, 0, "iterate");
       queue.enqueue(task);
       autonomousTasks.push(task.title);
+      const fids = extractFeedbackIds(context);
+      if (fids) for (const fid of fids) feedbackIdsToAck.add(fid);
     }
   }
 
-  return { createdTasks, retriedTasks, resumedTasks, recoveredTasks: stuckRecovery.recoveredTasks, distilledRules, autonomousTasks, unverifiedRules };
+  return { createdTasks, retriedTasks, resumedTasks, recoveredTasks: stuckRecovery.recoveredTasks, distilledRules, autonomousTasks, unverifiedRules, feedbackIdsToAck: Array.from(feedbackIdsToAck) };
+}
+
+export async function ackFeedbackIds(ids: string[], feedbackPath: string): Promise<void> {
+  for (const fid of ids) {
+    try {
+      await acknowledgeFeedback(fid, feedbackPath);
+    } catch {
+      // Feedback may have already been resolved or removed
+    }
+  }
 }
 
 export interface CleanupResult {
@@ -745,6 +763,9 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
     await queue.save();
     await runOnDoneHooks(id, iterationTask.title);
     console.log(`[${shortId}] Iteration complete: ${decideTag} — ${actSummary1}`);
+    if (obs.feedbackSummary.counts.new > 0) {
+      console.log(`  new feedback: ${obs.feedbackSummary.counts.new}`);
+    }
     return;
   }
 
@@ -763,6 +784,9 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
     await queue.save();
     await runOnDoneHooks(id, iterationTask.title);
     console.log(`[${shortId}] Iteration complete: ${obs.waitingHumanTasks.length} waiting_human task(s) on dashboard`);
+    if (obs.feedbackSummary.counts.new > 0) {
+      console.log(`  new feedback: ${obs.feedbackSummary.counts.new}`);
+    }
     return;
   }
 
@@ -780,6 +804,9 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
       ? `queue empty — no principles defined, add principles to continue; ${cleanupLog3}`
       : "queue empty — no principles defined, add principles to continue";
     console.log(`[${shortId}] Iteration complete: ${queueEmptyMsg}`);
+    if (obs.feedbackSummary.counts.new > 0) {
+      console.log(`  new feedback: ${obs.feedbackSummary.counts.new}`);
+    }
     return;
   }
 
@@ -831,6 +858,9 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
   }
   for (const t of unassigned) {
     console.log(`  unassigned: [${t.id.slice(0, SHORT_ID_LENGTH)}] ${t.title}`);
+  }
+  if (obs.feedbackSummary.counts.new > 0) {
+    console.log(`  new feedback: ${obs.feedbackSummary.counts.new}`);
   }
   if (cleanupLog4) console.log(`  ${cleanupLog4}`);
 }

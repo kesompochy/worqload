@@ -20,6 +20,7 @@ import {
   performActCleanup,
   formatCleanupLog,
   detectCompletedFeedbackTasks,
+  ackFeedbackIds,
   iterate,
   type IterateContext,
   type IterateOptions,
@@ -1719,6 +1720,118 @@ describe("generateTasksFromObservation", () => {
     expect(queue.list().filter(t => t.title.startsWith("Implement distilled rule:"))).toHaveLength(1);
   });
 
+  test("returns feedbackIdsToAck for theme tasks without acking", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const fb1 = await addFeedback("Issue 1", "alice", feedbackPath);
+    const fb2 = await addFeedback("Issue 2", "alice", feedbackPath);
+    const fb3 = await addFeedback("Issue 3", "alice", feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 3, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [],
+      themes: [{ description: "alice から未解決フィードバックが 3 件", feedbackIds: [fb1.id, fb2.id, fb3.id] }],
+      unresolvedIds: [fb1.id, fb2.id, fb3.id],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs, { feedbackPath });
+
+    expect(result.feedbackIdsToAck).toEqual(expect.arrayContaining([fb1.id, fb2.id, fb3.id]));
+    const items = await loadFeedback(feedbackPath);
+    for (const item of items) {
+      expect(item.status).toBe("new");
+    }
+  });
+
+  test("returns feedbackIdsToAck for observational feedback without acking", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const fb = await addFeedback("報告書出てこない", "user", feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: fb.id, from: "user", message: "報告書出てこない", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: [fb.id],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs, { feedbackPath });
+
+    expect(result.feedbackIdsToAck).toContain(fb.id);
+    const items = await loadFeedback(feedbackPath);
+    expect(items[0].status).toBe("new");
+  });
+
+  test("returns feedbackIdsToAck for autonomous feedback review tasks without acking", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const fb1 = await addFeedback("Always run tests", "user", feedbackPath);
+    const fb2 = await addFeedback("Never skip review", "user", feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.principles = "# Principles\n\n- Improve quality";
+    obs.feedbackSummary = {
+      counts: { new: 2, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: fb1.id, from: "user", message: "Always run tests", status: "new", createdAt: new Date().toISOString() },
+        { id: fb2.id, from: "user", message: "Never skip review", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: [fb1.id, fb2.id],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs, { feedbackPath });
+
+    expect(result.feedbackIdsToAck).toEqual(expect.arrayContaining([fb1.id, fb2.id]));
+    const items = await loadFeedback(feedbackPath);
+    for (const item of items) {
+      expect(item.status).toBe("new");
+    }
+  });
+
+  test("returns empty feedbackIdsToAck when no task is created (duplicate exists)", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const fb = await addFeedback("報告書出てこない", "user", feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const existing = createTask("Investigate feedback: 報告書出てこない", { feedbackIds: [fb.id] });
+    queue.enqueue(existing);
+
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: fb.id, from: "user", message: "報告書出てこない", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: [fb.id],
+    };
+    obs.tasks = [existing];
+
+    const result = await generateTasksFromObservation(queue, obs, { feedbackPath });
+
+    expect(result.feedbackIdsToAck).toHaveLength(0);
+    const items = await loadFeedback(feedbackPath);
+    expect(items[0].status).toBe("new");
+  });
+
+  test("ackFeedbackIds acks feedback after being called separately", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const fb1 = await addFeedback("Issue 1", "alice", feedbackPath);
+    const fb2 = await addFeedback("Issue 2", "alice", feedbackPath);
+
+    await ackFeedbackIds([fb1.id, fb2.id], feedbackPath);
+
+    const items = await loadFeedback(feedbackPath);
+    for (const item of items) {
+      expect(item.status).toBe("acknowledged");
+    }
+  });
+
   test("recovers stuck tasks and reports them in result", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const stuckTask = createTask("Stuck acting task");
@@ -2222,6 +2335,78 @@ describe("iterate - waiting_human suppresses chat output", () => {
     expect(actLog).toBeDefined();
     expect(actLog!.content).not.toContain("presented waiting_human questions to user");
     expect(actLog!.content).toContain("dashboard");
+  });
+});
+
+describe("iterate - new feedback count in output", () => {
+  function obsWithFeedback(newCount: number): Observation {
+    return {
+      feedbackSummary: { counts: { new: newCount, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      stuckTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+      completedFeedbackTasks: [],
+    };
+  }
+
+  test("prints new feedback count when there are new feedback items", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = obsWithFeedback(3);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await iterate(queue, [], { observationOverride: obs });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(logs.some(l => l.includes("new feedback: 3"))).toBe(true);
+  });
+
+  test("does not print feedback line when new feedback count is 0", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = obsWithFeedback(0);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await iterate(queue, [], { observationOverride: obs });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(logs.some(l => l.includes("new feedback:"))).toBe(false);
+  });
+
+  test("prints new feedback count alongside has_pending output", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = obsWithFeedback(2);
+    const task = createTask("Some task");
+    queue.enqueue(task);
+    obs.tasks = [task];
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await iterate(queue, [], { observationOverride: obs });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(logs.some(l => l.includes("new feedback: 2"))).toBe(true);
   });
 });
 

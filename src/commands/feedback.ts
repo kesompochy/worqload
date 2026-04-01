@@ -1,7 +1,7 @@
 import { basename } from "path";
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback, summarizeFeedback, distillFeedback, sendFeedbackToProject } from "../feedback";
+import { loadFeedback, addFeedback, resolveFeedback, summarizeFeedback, distillFeedback, sendFeedbackToProject } from "../feedback";
 import { parseFlags } from "../utils/args";
 import { SHORT_ID_LENGTH } from "../task";
 import { loadConfig } from "../config";
@@ -38,9 +38,7 @@ export async function feedback(_queue: TaskQueue, args: string[]) {
     return;
   }
   if (args[0] === "ack") {
-    await acknowledgeFeedback(args[1]);
-    console.log("Acknowledged.");
-    return;
+    exitWithError("Standalone ack is not allowed. Feedback is auto-acknowledged when a task is created from it. Use 'feedback resolve' to resolve feedback.");
   }
   if (args[0] === "resolve") {
     await resolveFeedback(args[1]);

@@ -172,32 +172,23 @@ describe("feedback command", () => {
   });
 
   describe("ack", () => {
-    test("acknowledges feedback and prints confirmation", async () => {
+    test("standalone ack is rejected with error", async () => {
       const fb = makeFeedback();
       await saveFeedback([fb]);
       const out = captureOutput();
+      let exitCode: number | undefined;
       try {
         await feedback(queue, ["ack", fb.id]);
+      } catch (e) {
+        if (e instanceof ExitError) exitCode = e.code;
+        else throw e;
       } finally {
         out.restore();
       }
-      expect(out.logs).toEqual(["Acknowledged."]);
+      expect(exitCode).toBe(1);
+      expect(out.errors[0]).toContain("ack");
       const items = await loadFeedback();
-      expect(items[0].status).toBe("acknowledged");
-    });
-
-    test("acknowledges by prefix id", async () => {
-      const fb = makeFeedback();
-      await saveFeedback([fb]);
-      const out = captureOutput();
-      try {
-        await feedback(queue, ["ack", fb.id.slice(0, SHORT_ID_LENGTH)]);
-      } finally {
-        out.restore();
-      }
-      expect(out.logs).toEqual(["Acknowledged."]);
-      const items = await loadFeedback();
-      expect(items[0].status).toBe("acknowledged");
+      expect(items[0].status).toBe("new");
     });
   });
 
