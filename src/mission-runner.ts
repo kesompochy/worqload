@@ -83,8 +83,11 @@ async function spawnWithTimeout(
     ...(cwd ? { cwd } : {}),
   });
 
+  console.log(`[spawn] PID ${proc.pid} started: ${command[0]} (timeout: ${Math.round(timeoutMs / 1000)}s${cwd ? `, cwd: ${cwd}` : ""})`);
+
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => {
+      console.log(`[spawn] PID ${proc.pid} timed out after ${Math.round(timeoutMs / 1000)}s`);
       killProcessTree(proc.pid);
       reject(new SpawnTimeoutError(timeoutMs));
     }, timeoutMs);
@@ -94,6 +97,7 @@ async function spawnWithTimeout(
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
+    console.log(`[spawn] PID ${proc.pid} exited: code=${exitCode}, stdout=${stdout.length}B, stderr=${stderr.length}B`);
     return { stdout, stderr, exitCode };
   })();
 
