@@ -8,6 +8,7 @@ import { validateTransition, ESCALATION_EXIT_CODE, HUMAN_REQUIRED_PREFIX } from 
 import { resolveTask } from "./resolve";
 import { loadMissions } from "../mission";
 import { runOnDoneHooks } from "../hooks";
+import { createWorktree, removeWorktree, mergeWorktreeBranch } from "../worktree";
 
 async function runHook(command: string, env: Record<string, string>): Promise<{ output: string; exitCode: number }> {
   const proc = Bun.spawn(["sh", "-c", command], {
@@ -94,6 +95,17 @@ export async function spawn(queue: TaskQueue, args: string[], options?: { spawnT
     }
   }
 
+  let worktreeInfo: { worktreePath: string; branchName: string } | undefined;
+  if (config.spawn?.worktree && !spawnCwd) {
+    try {
+      worktreeInfo = await createWorktree(task.id);
+      spawnCwd = worktreeInfo.worktreePath;
+      console.log(`Worktree created: ${spawnCwd}`);
+    } catch (err) {
+      console.error(`Worktree creation failed, spawning in main directory: ${err}`);
+    }
+  }
+
   console.log(`Spawning: ${task.title} (${owner}${spawnCwd ? `, cwd: ${spawnCwd}` : ''})`);
 
   const proc = Bun.spawn(commandArgs, {
@@ -174,6 +186,20 @@ export async function spawn(queue: TaskQueue, args: string[], options?: { spawnT
 
   if (updated?.status === "done") {
     await runOnDoneHooks(task.id, task.title);
+  }
+
+  if (worktreeInfo) {
+    try {
+      if (exitCode === 0) {
+        const merged = await mergeWorktreeBranch(worktreeInfo.branchName);
+        if (!merged) {
+          console.error(`Worktree merge conflict: branch ${worktreeInfo.branchName} retained for manual merge`);
+        }
+      }
+      await removeWorktree(worktreeInfo.worktreePath, worktreeInfo.branchName);
+    } catch (err) {
+      console.error(`Worktree cleanup failed: ${err}`);
+    }
   }
 }
 

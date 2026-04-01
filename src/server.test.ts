@@ -346,6 +346,21 @@ describe("Activity visibility: dashboard HTML", () => {
     expect(source).toContain("spawn-started-at");
   });
 
+  test("MissionCard auto-expands when mission has active tasks", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    const start = source.indexOf("function MissionCard(");
+    expect(start).toBeGreaterThan(-1);
+    const nextFunc = source.indexOf("\nfunction ", start + 1);
+    const body = source.slice(start, nextFunc > -1 ? nextFunc : undefined);
+
+    expect(body).toContain("done");
+    expect(body).toContain("failed");
+    expect(body).toContain("useState(");
+    expect(body).not.toContain("useState(false)");
+  });
+
   test("MissionCard displays status and task count", async () => {
     const fs = await import("fs");
     const source = fs.readFileSync("src/server.ts", "utf-8");

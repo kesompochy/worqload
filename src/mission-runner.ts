@@ -8,6 +8,7 @@ import { runOnDoneHooks } from "./hooks";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
 import { registerRunner, heartbeatRunner, deregisterRunner } from "./mission-runner-state";
 import { loadReports, addReport, isVacuousContent } from "./reports";
+import { createWorktree, mergeWorktreeBranch, removeWorktree } from "./worktree";
 
 export interface MissionRunnerOptions {
   pollIntervalMs?: number;
@@ -22,6 +23,7 @@ export interface MissionRunnerOptions {
   runnerStatePath?: string;
   spawnTimeoutMs?: number;
   reportsPath?: string;
+  useWorktree?: boolean;
 }
 
 export type IterationResult = "processed" | "idle" | "mission_completed" | "mission_failed" | "spawned";
@@ -43,6 +45,7 @@ export interface ProcessTaskOptions {
   missionsPath?: string;
   spawnTimeoutMs?: number;
   reportsPath?: string;
+  useWorktree?: boolean;
 }
 
 const MAX_TASK_RETRIES = 2;
@@ -71,11 +74,13 @@ async function spawnWithTimeout(
   command: string[],
   env: Record<string, string | undefined>,
   timeoutMs: number,
+  cwd?: string,
 ): Promise<SpawnWithTimeoutResult> {
   const proc = Bun.spawn(command, {
     stdout: "pipe",
     stderr: "pipe",
     env,
+    ...(cwd ? { cwd } : {}),
   });
 
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -438,7 +443,7 @@ export async function spawnTask(
 }
 
 export async function processTask(task: Task, mission: Mission, options: ProcessTaskOptions = {}): Promise<void> {
-  const { storePath, actCommand, missionsPath, spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS, reportsPath } = options;
+  const { storePath, actCommand, missionsPath, spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS, reportsPath, useWorktree } = options;
 
   // Read current state from store to check plan flag
   const tasks = await load(storePath);
@@ -482,13 +487,24 @@ export async function processTask(task: Task, mission: Mission, options: Process
       logs: [...current.logs, phaseLog("decide", "Proceeding with execution")],
     }), storePath);
 
-    // Act — spawn agent process
+    // Act — spawn agent process, optionally in a git worktree for isolation
+    let worktreeInfo: { worktreePath: string; branchName: string } | undefined;
+    if (useWorktree) {
+      try {
+        worktreeInfo = await createWorktree(task.id);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`Worktree creation failed, falling back to main tree: ${msg}`);
+      }
+    }
+
     const prompt = buildActPrompt(claimed, mission);
     const command = [...(actCommand ?? ["claude", "-p", "--max-turns", "30"]), prompt];
 
+    const spawnCwd = worktreeInfo?.worktreePath;
     await updateTask(task.id, (current) => ({
       status: "acting" as const,
-      logs: [...current.logs, phaseLog("act", `Spawning: ${command[0]}`)],
+      logs: [...current.logs, phaseLog("act", `Spawning: ${command[0]}${spawnCwd ? ` (worktree: ${worktreeInfo!.branchName})` : ""}`)],
     }), storePath);
 
     const taskEnv: Record<string, string> = {
@@ -503,7 +519,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
 
     let spawnResult: SpawnWithTimeoutResult;
     try {
-      spawnResult = await spawnWithTimeout(command, { ...process.env, ...taskEnv }, spawnTimeoutMs);
+      spawnResult = await spawnWithTimeout(command, { ...process.env, ...taskEnv }, spawnTimeoutMs, spawnCwd);
     } catch (error) {
       if (error instanceof SpawnTimeoutError) {
         const retryCount = (claimed.context.retryCount as number) || 0;
@@ -536,6 +552,19 @@ export async function processTask(task: Task, mission: Mission, options: Process
     const { stdout, stderr, exitCode } = spawnResult;
     const output = (stdout + stderr).trim();
     const truncated = output.length > 2000 ? output.slice(-2000) : output;
+
+    // Merge worktree changes back to main before updating task status
+    if (worktreeInfo) {
+      try {
+        const merged = await mergeWorktreeBranch(worktreeInfo.branchName);
+        if (!merged) {
+          console.error(`Merge conflict on ${worktreeInfo.branchName}, changes preserved in worktree`);
+        }
+        await removeWorktree(worktreeInfo.worktreePath, worktreeInfo.branchName);
+      } catch (error) {
+        console.error(`Worktree cleanup failed: ${error instanceof Error ? error.message : error}`);
+      }
+    }
 
     if (exitCode === 0) {
       await updateTask(task.id, (current) => ({
@@ -636,7 +665,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
 // that surveys all tasks across all missions.
 export async function iterateMission(
   missionId: string,
-  options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string; actCommand?: string[]; spawnTimeoutMs?: number; reportsPath?: string } = {},
+  options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string; actCommand?: string[]; spawnTimeoutMs?: number; reportsPath?: string; useWorktree?: boolean } = {},
 ): Promise<IterationResult> {
   const mission = await resolveMission(missionId, options.missionsPath);
   if (mission.status === "completed") return "mission_completed";
@@ -673,7 +702,7 @@ export async function iterateMission(
     return "spawned";
   }
 
-  await processTask(task, mission, { storePath: options.storePath, actCommand: options.actCommand, missionsPath: options.missionsPath, spawnTimeoutMs: options.spawnTimeoutMs, reportsPath: options.reportsPath });
+  await processTask(task, mission, { storePath: options.storePath, actCommand: options.actCommand, missionsPath: options.missionsPath, spawnTimeoutMs: options.spawnTimeoutMs, reportsPath: options.reportsPath, useWorktree: options.useWorktree });
   return "processed";
 }
 
@@ -691,6 +720,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
     runnerStatePath,
     spawnTimeoutMs,
     reportsPath,
+    useWorktree,
   } = options;
 
   // Survive terminal closure when running as a daemon
@@ -728,7 +758,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
           tasksProcessed,
         }, runnerStatePath);
 
-        result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs, reportsPath });
+        result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs, reportsPath, useWorktree });
         consecutiveErrors = 0;
       } catch (error) {
         consecutiveErrors++;
