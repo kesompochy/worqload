@@ -1103,7 +1103,7 @@ function App() {
       <h1 style="margin:0">worqload</h1>
       <\${Heartbeat} heartbeat=\${data.heartbeat} sleepState=\${data.sleep} onUpdate=\${refresh} />
     </div>
-    <\${Principles} items=\${data.principles} />
+    <\${Principles} items=\${data.principles} onUpdate=\${refresh} />
     \${data.reports.length > 0 && html\`<\${ReportsSection} reports=\${data.reports} onUpdate=\${refresh} />\`}
     \${data.projectFeedback.length > 0 && html\`<\${FeedbackSection} projectFeedback=\${data.projectFeedback} onSend=\${refresh} />\`}
     <\${FeedbackForm} onSend=\${refresh} />

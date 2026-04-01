@@ -395,6 +395,18 @@ describe("Activity visibility: dashboard HTML", () => {
     expect(source).toContain("Active Spawns");
   });
 
+  test("Principles component receives onUpdate prop for refresh after edits", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync("src/server.ts", "utf-8");
+
+    const appStart = source.indexOf("function App()");
+    expect(appStart).toBeGreaterThan(-1);
+    const appBody = source.slice(appStart);
+
+    // The Principles component must receive onUpdate={refresh} so the UI refreshes after add/edit/delete
+    expect(appBody).toMatch(/<\\\$\{Principles\}[^/]*onUpdate=\\\$\{refresh\}/);
+  });
+
   test("dashboard layout: Principles → Feedback → Missions/Tasks → Activity", async () => {
     const fs = await import("fs");
     const source = fs.readFileSync("src/server.ts", "utf-8");
