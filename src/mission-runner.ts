@@ -7,6 +7,7 @@ import { updateTask, load, save } from "./store";
 import { runOnDoneHooks } from "./hooks";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
 import { registerRunner, heartbeatRunner, deregisterRunner } from "./mission-runner-state";
+import { loadReports, addReport } from "./reports";
 
 export interface MissionRunnerOptions {
   pollIntervalMs?: number;
@@ -20,6 +21,7 @@ export interface MissionRunnerOptions {
   actCommand?: string[];
   runnerStatePath?: string;
   spawnTimeoutMs?: number;
+  reportsPath?: string;
 }
 
 export type IterationResult = "processed" | "idle" | "mission_completed" | "mission_failed" | "spawned";
@@ -40,6 +42,7 @@ export interface ProcessTaskOptions {
   actCommand?: string[];
   missionsPath?: string;
   spawnTimeoutMs?: number;
+  reportsPath?: string;
 }
 
 const MAX_TASK_RETRIES = 2;
@@ -103,6 +106,36 @@ export function findNextMissionTask(queue: TaskQueue, missionId: string): Task |
 
 function phaseLog(phase: OodaPhase, content: string) {
   return { phase, content, timestamp: new Date().toISOString() };
+}
+
+export interface EnsureReportOptions {
+  reportsPath?: string;
+}
+
+export async function ensureReportForDoneTask(
+  task: Task,
+  missionName: string,
+  options: EnsureReportOptions = {},
+): Promise<void> {
+  const { reportsPath } = options;
+
+  const reports = await loadReports(reportsPath);
+  const existingReport = reports.find(r => r.taskId === task.id);
+  if (existingReport) return;
+
+  const actLogs = task.logs
+    .filter(l => l.phase === "act")
+    .map(l => l.content)
+    .filter(c => !c.startsWith("[RETRY]") && !c.startsWith("[FAILED]") && !c.startsWith("[TIMEOUT]"));
+
+  const content = actLogs.length > 0
+    ? actLogs.join("\n\n")
+    : "（ログなし）";
+
+  await addReport(task.title, content, `mission:${missionName}`, {
+    taskId: task.id,
+    path: reportsPath,
+  });
 }
 
 export type OrientResult = "oriented" | "escalated";
@@ -219,9 +252,9 @@ export async function spawnTask(
   task: Task,
   mission: Mission,
   command: string[],
-  options: { storePath?: string; spawnsPath?: string; spawnTimeoutMs?: number } = {},
+  options: { storePath?: string; spawnsPath?: string; spawnTimeoutMs?: number; reportsPath?: string } = {},
 ): Promise<SpawnResult> {
-  const { storePath, spawnsPath, spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS } = options;
+  const { storePath, spawnsPath, spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS, reportsPath } = options;
   const owner = `mission:${mission.name}`;
 
   const claimed = await updateTask(task.id, (current) => {
@@ -350,6 +383,10 @@ export async function spawnTask(
 
       if (exitCode === 0) {
         await runOnDoneHooks(task.id, task.title);
+        const doneTask = (await load(storePath)).find(t => t.id === task.id);
+        if (doneTask) {
+          await ensureReportForDoneTask(doneTask, mission.name, { reportsPath });
+        }
       }
 
       return { exitCode, output };
@@ -363,7 +400,7 @@ export async function spawnTask(
 }
 
 export async function processTask(task: Task, mission: Mission, options: ProcessTaskOptions = {}): Promise<void> {
-  const { storePath, actCommand, missionsPath, spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS } = options;
+  const { storePath, actCommand, missionsPath, spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS, reportsPath } = options;
 
   // Read current state from store to check plan flag
   const tasks = await load(storePath);
@@ -466,6 +503,10 @@ export async function processTask(task: Task, mission: Mission, options: Process
       }), storePath);
       console.log(`Completed: ${task.title}`);
       await runOnDoneHooks(task.id, task.title);
+      const doneTask = (await load(storePath)).find(t => t.id === task.id);
+      if (doneTask) {
+        await ensureReportForDoneTask(doneTask, mission.name, { reportsPath });
+      }
     } else if (exitCode === ESCALATION_EXIT_CODE) {
       const question = truncated || "Spawned agent requested human escalation";
       await updateTask(task.id, (current) => ({
@@ -553,7 +594,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
 // that surveys all tasks across all missions.
 export async function iterateMission(
   missionId: string,
-  options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string; actCommand?: string[]; spawnTimeoutMs?: number } = {},
+  options: { storePath?: string; missionsPath?: string; spawnCommand?: string[]; spawnsPath?: string; actCommand?: string[]; spawnTimeoutMs?: number; reportsPath?: string } = {},
 ): Promise<IterationResult> {
   const mission = await resolveMission(missionId, options.missionsPath);
   if (mission.status === "completed") return "mission_completed";
@@ -584,12 +625,13 @@ export async function iterateMission(
       storePath: options.storePath,
       spawnsPath: options.spawnsPath,
       spawnTimeoutMs: options.spawnTimeoutMs,
+      reportsPath: options.reportsPath,
     });
     await spawn.completion;
     return "spawned";
   }
 
-  await processTask(task, mission, { storePath: options.storePath, actCommand: options.actCommand, missionsPath: options.missionsPath, spawnTimeoutMs: options.spawnTimeoutMs });
+  await processTask(task, mission, { storePath: options.storePath, actCommand: options.actCommand, missionsPath: options.missionsPath, spawnTimeoutMs: options.spawnTimeoutMs, reportsPath: options.reportsPath });
   return "processed";
 }
 
@@ -606,6 +648,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
     actCommand,
     runnerStatePath,
     spawnTimeoutMs,
+    reportsPath,
   } = options;
 
   // Survive terminal closure when running as a daemon
@@ -643,7 +686,7 @@ export async function runMission(missionId: string, options: MissionRunnerOption
           tasksProcessed,
         }, runnerStatePath);
 
-        result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs });
+        result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs, reportsPath });
         consecutiveErrors = 0;
       } catch (error) {
         consecutiveErrors++;

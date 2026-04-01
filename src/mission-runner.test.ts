@@ -4,10 +4,11 @@ import { join } from "path";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import { createMission, completeMission, addMissionPrinciple, loadMissions, type Mission } from "./mission";
-import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission, orientTask } from "./mission-runner";
+import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission, orientTask, ensureReportForDoneTask } from "./mission-runner";
 import { HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "./task";
 import { load } from "./store";
 import { loadSpawns } from "./spawns";
+import { loadReports, addReport } from "./reports";
 
 function tmpPath(label: string): string {
   return join(tmpdir(), `worqload-mrunner-${label}-${crypto.randomUUID()}.json`);
@@ -1637,5 +1638,100 @@ describe("spawn timeout", () => {
     const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
     expect(updated?.status).toBe("done");
+  });
+});
+
+describe("ensureReportForDoneTask", () => {
+  test("generates report from task logs when no report exists", async () => {
+    const reportsPath = tmpPath("ensure-report-new");
+    const task = createTask("completed task");
+    task.status = "done";
+    task.logs = [
+      { phase: "observe", content: "Observed the task", timestamp: new Date().toISOString() },
+      { phase: "orient", content: "Oriented against principles", timestamp: new Date().toISOString() },
+      { phase: "decide", content: "Decided to proceed", timestamp: new Date().toISOString() },
+      { phase: "act", content: "Executed successfully", timestamp: new Date().toISOString() },
+    ];
+
+    await ensureReportForDoneTask(task, "test-mission", { reportsPath });
+
+    const reports = await loadReports(reportsPath);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].taskId).toBe(task.id);
+    expect(reports[0].title).toContain(task.title);
+    expect(reports[0].createdBy).toBe("mission:test-mission");
+    expect(reports[0].status).toBe("unread");
+    expect(reports[0].content).toContain("Executed successfully");
+  });
+
+  test("skips report generation when report for task already exists", async () => {
+    const reportsPath = tmpPath("ensure-report-exists");
+    const task = createTask("already reported task");
+    task.status = "done";
+    task.logs = [
+      { phase: "act", content: "Done", timestamp: new Date().toISOString() },
+    ];
+
+    await addReport(task.title, "Existing report", "agent", reportsPath);
+    const existingReports = await loadReports(reportsPath);
+    existingReports[0].taskId = task.id;
+    const { saveReports } = await import("./reports");
+    await saveReports(existingReports, reportsPath);
+
+    await ensureReportForDoneTask(task, "test-mission", { reportsPath });
+
+    const reports = await loadReports(reportsPath);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].content).toBe("Existing report");
+  });
+
+  test("includes act phase logs in report content", async () => {
+    const reportsPath = tmpPath("ensure-report-act");
+    const task = createTask("act log task");
+    task.status = "done";
+    task.logs = [
+      { phase: "observe", content: "Observed", timestamp: new Date().toISOString() },
+      { phase: "act", content: "First action output", timestamp: new Date().toISOString() },
+      { phase: "act", content: "Second action output", timestamp: new Date().toISOString() },
+    ];
+
+    await ensureReportForDoneTask(task, "my-mission", { reportsPath });
+
+    const reports = await loadReports(reportsPath);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].content).toContain("First action output");
+    expect(reports[0].content).toContain("Second action output");
+  });
+});
+
+describe("processTask report generation", () => {
+  test("generates report when task completes successfully", async () => {
+    const storePath = tmpPath("report-gen");
+    const missionPath = tmpPath("report-gen-m");
+    const reportsPath = tmpPath("report-gen-r");
+    const mission = await createMissionWithPrinciple("report-gen", missionPath);
+    const task = createTask("report gen task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["echo", "task output"], reportsPath });
+
+    const reports = await loadReports(reportsPath);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].taskId).toBe(task.id);
+    expect(reports[0].createdBy).toBe(`mission:${mission.name}`);
+  });
+
+  test("does not generate report when task fails", async () => {
+    const storePath = tmpPath("report-fail");
+    const missionPath = tmpPath("report-fail-m");
+    const reportsPath = tmpPath("report-fail-r");
+    const mission = await createMissionWithPrinciple("report-fail", missionPath);
+    const task = createTask("failing task", { retryCount: 2 });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"], reportsPath });
+
+    const reports = await loadReports(reportsPath);
+    expect(reports).toHaveLength(0);
   });
 });
