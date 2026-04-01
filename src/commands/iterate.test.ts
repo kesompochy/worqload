@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { TaskQueue } from "../queue";
 import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX } from "../task";
-import { addFeedback, resolveFeedback, loadFeedback } from "../feedback";
+import { addFeedback, resolveFeedback, loadFeedback, loadDistilledRules } from "../feedback";
 import { addReport } from "../reports";
 import {
   collectObservation,
@@ -12,6 +12,8 @@ import {
   auditRecentCompletions,
   generateTasksFromObservation,
   deriveAutonomousTasks,
+  detectStuckTasks,
+  recoverStuckTasks,
   filterManagedPaths,
   hasHumanAnswer,
   performActCleanup,
@@ -328,6 +330,7 @@ describe("analyzeObservation", () => {
       waitingHumanTasks: [],
       answeredHumanTasks: [],
       suspiciousTasks: [],
+      stuckTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: {
@@ -360,6 +363,7 @@ describe("analyzeObservation", () => {
       waitingHumanTasks: [],
       answeredHumanTasks: [],
       suspiciousTasks: [],
+      stuckTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
@@ -406,6 +410,256 @@ describe("analyzeObservation", () => {
     const log = formatObserveLog(obs);
 
     expect(log).toContain("suspicious: 0");
+  });
+});
+
+describe("detectStuckTasks", () => {
+  function backdateTask(queue: TaskQueue, taskId: string, minutesAgo: number): void {
+    const past = new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
+    queue.get(taskId)!.updatedAt = past;
+  }
+
+  test("detects task stuck in orienting status beyond threshold", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Stuck orienting");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    backdateTask(queue, task.id, 40);
+
+    const stuck = detectStuckTasks(queue.list(), 30);
+
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0].taskId).toBe(task.id);
+    expect(stuck[0].status).toBe("orienting");
+    expect(stuck[0].stuckMinutes).toBeGreaterThanOrEqual(40);
+  });
+
+  test("detects task stuck in acting status", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Stuck acting");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "deciding");
+    queue.transition(task.id, "acting");
+    backdateTask(queue, task.id, 60);
+
+    const stuck = detectStuckTasks(queue.list(), 30);
+
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0].status).toBe("acting");
+  });
+
+  test("does not flag tasks within threshold", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Recent task");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+
+    const stuck = detectStuckTasks(queue.list(), 30);
+
+    expect(stuck).toHaveLength(0);
+  });
+
+  test("does not flag observing tasks (they are queued, not stuck)", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Queued task");
+    queue.enqueue(task);
+    backdateTask(queue, task.id, 40);
+
+    const stuck = detectStuckTasks(queue.list(), 30);
+
+    expect(stuck).toHaveLength(0);
+  });
+
+  test("does not flag done or failed tasks", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const doneTask = createTask("Done task");
+    queue.enqueue(doneTask);
+    queue.transition(doneTask.id, "orienting");
+    queue.transition(doneTask.id, "deciding");
+    queue.transition(doneTask.id, "acting");
+    queue.transition(doneTask.id, "done");
+    backdateTask(queue, doneTask.id, 40);
+
+    const stuck = detectStuckTasks(queue.list(), 30);
+
+    expect(stuck).toHaveLength(0);
+  });
+
+  test("detects multiple stuck tasks", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task1 = createTask("Stuck 1");
+    const task2 = createTask("Stuck 2");
+    queue.enqueue(task1);
+    queue.enqueue(task2);
+    queue.transition(task1.id, "orienting");
+    queue.transition(task2.id, "orienting");
+    queue.transition(task2.id, "deciding");
+    backdateTask(queue, task1.id, 40);
+    backdateTask(queue, task2.id, 40);
+
+    const stuck = detectStuckTasks(queue.list(), 30);
+
+    expect(stuck).toHaveLength(2);
+  });
+});
+
+describe("recoverStuckTasks", () => {
+  function backdateTask(queue: TaskQueue, taskId: string, minutesAgo: number): void {
+    const past = new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
+    queue.get(taskId)!.updatedAt = past;
+  }
+
+  test("recovers stuck task by transitioning to failed then observing", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Stuck orienting");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    backdateTask(queue, task.id, 40);
+
+    const stuckTasks = detectStuckTasks(queue.list(), 30);
+    const result = recoverStuckTasks(queue, stuckTasks);
+
+    expect(result.recoveredTasks).toContain(task.id);
+    const recovered = queue.get(task.id)!;
+    expect(recovered.status).toBe("observing");
+    expect(recovered.owner).toBeUndefined();
+    expect(recovered.logs.some(l => l.content.includes("[STUCK]"))).toBe(true);
+  });
+
+  test("clears owner on recovery", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Stuck with owner");
+    queue.enqueue(task);
+    queue.claim(task.id, "claude -p");
+    queue.transition(task.id, "orienting");
+    backdateTask(queue, task.id, 40);
+
+    const stuckTasks = detectStuckTasks(queue.list(), 30);
+    recoverStuckTasks(queue, stuckTasks);
+
+    const recovered = queue.get(task.id)!;
+    expect(recovered.owner).toBeUndefined();
+  });
+
+  test("marks as permanently failed when act logs exceed retry limit", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Stuck many retries");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    // Simulate previous act logs from retries
+    queue.addLog(task.id, "act", "[STUCK] recovered previously");
+    queue.addLog(task.id, "act", "[STUCK] recovered again");
+    queue.addLog(task.id, "act", "some work done");
+    backdateTask(queue, task.id, 40);
+
+    const stuckTasks = detectStuckTasks(queue.list(), 30);
+    const result = recoverStuckTasks(queue, stuckTasks);
+
+    expect(result.permanentlyFailed).toContain(task.id);
+    expect(result.recoveredTasks).not.toContain(task.id);
+    expect(queue.get(task.id)!.status).toBe("failed");
+  });
+
+  test("recovers multiple stuck tasks", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task1 = createTask("Stuck 1");
+    const task2 = createTask("Stuck 2");
+    queue.enqueue(task1);
+    queue.enqueue(task2);
+    queue.transition(task1.id, "orienting");
+    queue.transition(task2.id, "orienting");
+    queue.transition(task2.id, "deciding");
+    backdateTask(queue, task1.id, 40);
+    backdateTask(queue, task2.id, 40);
+
+    const stuckTasks = detectStuckTasks(queue.list(), 30);
+    const result = recoverStuckTasks(queue, stuckTasks);
+
+    expect(result.recoveredTasks).toHaveLength(2);
+    expect(queue.get(task1.id)!.status).toBe("observing");
+    expect(queue.get(task2.id)!.status).toBe("observing");
+  });
+
+  test("returns empty when no stuck tasks", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = recoverStuckTasks(queue, []);
+
+    expect(result.recoveredTasks).toHaveLength(0);
+    expect(result.permanentlyFailed).toHaveLength(0);
+  });
+});
+
+describe("analyzeObservation - stuck tasks", () => {
+  test("includes stuck tasks in analysis output", () => {
+    const obs: Observation = {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      stuckTasks: [{ taskId: "abc12345-xxxx", title: "Stuck task", status: "acting", stuckMinutes: 45 }],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("stuck");
+    expect(analysis).toContain("Stuck task");
+    expect(analysis).toContain("acting");
+    expect(analysis).toContain("45m");
+  });
+});
+
+describe("formatObserveLog - stuck tasks", () => {
+  test("includes stuck task count in observe log", () => {
+    const obs: Observation = {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      stuckTasks: [{ taskId: "abc12345", title: "Stuck", status: "orienting", stuckMinutes: 35 }],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+
+    const log = formatObserveLog(obs);
+
+    expect(log).toContain("stuck: 1");
+  });
+
+  test("shows stuck: 0 when no stuck tasks", () => {
+    const obs: Observation = {
+      feedbackSummary: { counts: { new: 0, acknowledged: 0, resolved: 0 }, recentUnresolved: [], themes: [], unresolvedIds: [] },
+      activeMissions: [],
+      failedMissions: [],
+      sourceResults: [],
+      principles: "",
+      tasks: [],
+      waitingHumanTasks: [],
+      answeredHumanTasks: [],
+      suspiciousTasks: [],
+      stuckTasks: [],
+      failedTasks: [],
+      uncommittedChanges: "",
+      serverLogSummary: null,
+    };
+
+    const log = formatObserveLog(obs);
+
+    expect(log).toContain("stuck: 0");
   });
 });
 
@@ -705,6 +959,7 @@ describe("analyzeObservation - answered waiting_human", () => {
       waitingHumanTasks: [],
       answeredHumanTasks: [createTask("Answered task")],
       suspiciousTasks: [],
+      stuckTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
@@ -728,6 +983,7 @@ describe("analyzeObservation - deciding tasks", () => {
       waitingHumanTasks: [],
       answeredHumanTasks: [],
       suspiciousTasks: [],
+      stuckTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
@@ -830,6 +1086,7 @@ describe("generateTasksFromObservation", () => {
       waitingHumanTasks: [],
       answeredHumanTasks: [],
       suspiciousTasks: [],
+      stuckTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
@@ -1160,15 +1417,15 @@ describe("generateTasksFromObservation", () => {
     expect(queue.get(task.id)!.status).toBe("waiting_human");
   });
 
-  test("derives feedback review task when queue is empty and unresolved feedback exists", async () => {
+  test("derives feedback review task when queue is empty and unresolved directive-only feedback exists", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const obs = emptyObservation();
     obs.principles = "# Principles\n\n- Improve quality continuously";
     obs.feedbackSummary = {
       counts: { new: 2, acknowledged: 1, resolved: 0 },
       recentUnresolved: [
-        { id: "f1", from: "user", message: "Fix latency issue", status: "new", createdAt: new Date().toISOString() },
-        { id: "f2", from: "user", message: "Improve error messages", status: "new", createdAt: new Date().toISOString() },
+        { id: "f1", from: "user", message: "Always run tests before deploy", status: "new", createdAt: new Date().toISOString() },
+        { id: "f2", from: "user", message: "Never skip code review", status: "new", createdAt: new Date().toISOString() },
       ],
       themes: [],
       unresolvedIds: ["f1", "f2", "f3"],
@@ -1262,6 +1519,219 @@ describe("generateTasksFromObservation", () => {
 
     expect(result.autonomousTasks).toEqual([]);
   });
+
+  test("creates investigation task from observational (non-directive) feedback", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: "f1", from: "user", message: "報告書出てこない", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: ["f1"],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.createdTasks.some(t => t.includes("Investigate"))).toBe(true);
+    const task = queue.list().find(t => t.title.startsWith("Investigate feedback:"));
+    expect(task).toBeDefined();
+    expect(task!.context.feedbackIds).toEqual(["f1"]);
+    expect(task!.context.observations).toEqual(["報告書出てこない"]);
+  });
+
+  test("does not create investigation task from directive feedback", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: "f1", from: "user", message: "Always run tests before commit", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: ["f1"],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.createdTasks.filter(t => t.includes("Investigate"))).toHaveLength(0);
+  });
+
+  test("does not create investigation task from question feedback", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: "f1", from: "user", message: "これはバグですか？", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: ["f1"],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.createdTasks.filter(t => t.includes("Investigate"))).toHaveLength(0);
+  });
+
+  test("does not duplicate investigation tasks", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: "f1", from: "user", message: "報告書出てこない", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: ["f1"],
+    };
+
+    await generateTasksFromObservation(queue, obs);
+    obs.tasks = queue.list();
+
+    const result2 = await generateTasksFromObservation(queue, obs);
+
+    expect(result2.createdTasks.filter(t => t.includes("Investigate"))).toHaveLength(0);
+    expect(queue.list().filter(t => t.title.startsWith("Investigate feedback:"))).toHaveLength(1);
+  });
+
+  test("extracts only observational parts from mixed feedback", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary = {
+      counts: { new: 1, acknowledged: 0, resolved: 0 },
+      recentUnresolved: [
+        { id: "f1", from: "user", message: "ビルドが遅い。テストを先に書くべき", status: "new", createdAt: new Date().toISOString() },
+      ],
+      themes: [],
+      unresolvedIds: ["f1"],
+    };
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    const task = queue.list().find(t => t.title.startsWith("Investigate feedback:"));
+    expect(task).toBeDefined();
+    expect(task!.context.observations).toEqual(["ビルドが遅い"]);
+  });
+
+  test("creates implementation tasks for unverified distilled rules", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const templatePath = join(tmpdir(), `worqload-iterate-template-${crypto.randomUUID()}.md`);
+    const distilledRulesPath = tmpPath("distilled-rules");
+    await Bun.write(templatePath, "# Agent\n\n## Rules\n- Existing rule\n");
+    await addFeedback("Always run tests before commit", "user", feedbackPath);
+    const items = await loadFeedback(feedbackPath);
+    await resolveFeedback(items[0].id, feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary.counts.resolved = 1;
+
+    // First call: distills feedback and saves pending rules
+    await generateTasksFromObservation(queue, obs, { feedbackPath, templatePath, distilledRulesPath });
+
+    // Second call: no resolved feedback, but pending rules exist with no code changes
+    const obs2 = emptyObservation();
+    const result = await generateTasksFromObservation(queue, obs2, {
+      feedbackPath,
+      templatePath,
+      distilledRulesPath,
+      codeChangeChecker: async () => false,
+    });
+
+    expect(result.unverifiedRules).toHaveLength(1);
+    expect(result.unverifiedRules[0]).toContain("Always run tests before commit");
+    const implTask = queue.list().find(t => t.title.startsWith("Implement distilled rule:"));
+    expect(implTask).toBeDefined();
+    expect(implTask!.context.distilledRuleId).toBeDefined();
+  });
+
+  test("does not create implementation task when code changes verify the rule", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const templatePath = join(tmpdir(), `worqload-iterate-template-${crypto.randomUUID()}.md`);
+    const distilledRulesPath = tmpPath("distilled-rules");
+    await Bun.write(templatePath, "# Agent\n\n## Rules\n- Existing rule\n");
+    await addFeedback("Always run tests before commit", "user", feedbackPath);
+    const items = await loadFeedback(feedbackPath);
+    await resolveFeedback(items[0].id, feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary.counts.resolved = 1;
+
+    await generateTasksFromObservation(queue, obs, { feedbackPath, templatePath, distilledRulesPath });
+
+    // Code changes exist → rule should be verified, no task created
+    const obs2 = emptyObservation();
+    const result = await generateTasksFromObservation(queue, obs2, {
+      feedbackPath,
+      templatePath,
+      distilledRulesPath,
+      codeChangeChecker: async () => true,
+    });
+
+    expect(result.unverifiedRules).toHaveLength(0);
+    const implTask = queue.list().find(t => t.title.startsWith("Implement distilled rule:"));
+    expect(implTask).toBeUndefined();
+  });
+
+  test("does not create duplicate implementation tasks for already task_created rules", async () => {
+    const feedbackPath = tmpPath("feedback");
+    const templatePath = join(tmpdir(), `worqload-iterate-template-${crypto.randomUUID()}.md`);
+    const distilledRulesPath = tmpPath("distilled-rules");
+    await Bun.write(templatePath, "# Agent\n\n## Rules\n- Existing rule\n");
+    await addFeedback("Always run tests before commit", "user", feedbackPath);
+    const items = await loadFeedback(feedbackPath);
+    await resolveFeedback(items[0].id, feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.feedbackSummary.counts.resolved = 1;
+
+    await generateTasksFromObservation(queue, obs, { feedbackPath, templatePath, distilledRulesPath });
+
+    // First verify pass: creates task
+    const obs2 = emptyObservation();
+    await generateTasksFromObservation(queue, obs2, {
+      feedbackPath,
+      templatePath,
+      distilledRulesPath,
+      codeChangeChecker: async () => false,
+    });
+
+    // Second verify pass: should not create another task (rule is already task_created)
+    const obs3 = emptyObservation();
+    obs3.tasks = queue.list();
+    const result = await generateTasksFromObservation(queue, obs3, {
+      feedbackPath,
+      templatePath,
+      distilledRulesPath,
+      codeChangeChecker: async () => false,
+    });
+
+    expect(result.unverifiedRules).toHaveLength(0);
+    expect(queue.list().filter(t => t.title.startsWith("Implement distilled rule:"))).toHaveLength(1);
+  });
+
+  test("recovers stuck tasks and reports them in result", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const stuckTask = createTask("Stuck acting task");
+    queue.enqueue(stuckTask);
+    queue.transition(stuckTask.id, "orienting");
+    queue.transition(stuckTask.id, "deciding");
+    queue.transition(stuckTask.id, "acting");
+    const past = new Date(Date.now() - 45 * 60 * 1000).toISOString();
+    queue.get(stuckTask.id)!.updatedAt = past;
+
+    const obs = emptyObservation();
+    obs.stuckTasks = [{ taskId: stuckTask.id, title: stuckTask.title, status: "acting", stuckMinutes: 45 }];
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.recoveredTasks).toContain(stuckTask.id);
+    expect(queue.get(stuckTask.id)!.status).toBe("observing");
+  });
 });
 
 describe("deriveAutonomousTasks", () => {
@@ -1276,6 +1746,7 @@ describe("deriveAutonomousTasks", () => {
       waitingHumanTasks: [],
       answeredHumanTasks: [],
       suspiciousTasks: [],
+      stuckTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
@@ -1538,6 +2009,7 @@ describe("iterate - waiting_human suppresses chat output", () => {
       waitingHumanTasks: waitingTasks,
       answeredHumanTasks: [],
       suspiciousTasks: [],
+      stuckTasks: [],
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,

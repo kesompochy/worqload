@@ -41,29 +41,41 @@ describe("observe", () => {
 
 describe("orient --human", () => {
   test("transitions task to waiting_human and logs the question", async () => {
-    const queue = new TaskQueue(tmpPath("orient-human"));
-    const task = createTask("test task");
-    queue.enqueue(task);
+    const original = process.env.WORQLOAD_TASK_ID;
+    delete process.env.WORQLOAD_TASK_ID;
+    try {
+      const queue = new TaskQueue(tmpPath("orient-human"));
+      const task = createTask("test task");
+      queue.enqueue(task);
 
-    await orient(queue, [task.id, "--human", "Is this approach correct?"]);
+      await orient(queue, [task.id, "--human", "Is this approach correct?"]);
 
-    const updated = queue.get(task.id)!;
-    expect(updated.status).toBe("waiting_human");
-    expect(updated.logs).toHaveLength(1);
-    expect(updated.logs[0].phase).toBe("orient");
-    expect(updated.logs[0].content).toBe(`${HUMAN_REQUIRED_PREFIX}Is this approach correct?`);
+      const updated = queue.get(task.id)!;
+      expect(updated.status).toBe("waiting_human");
+      expect(updated.logs).toHaveLength(1);
+      expect(updated.logs[0].phase).toBe("orient");
+      expect(updated.logs[0].content).toBe(`${HUMAN_REQUIRED_PREFIX}Is this approach correct?`);
+    } finally {
+      if (original !== undefined) process.env.WORQLOAD_TASK_ID = original;
+    }
   });
 
   test("uses default message when no question is provided", async () => {
-    const queue = new TaskQueue(tmpPath("orient-human-default"));
-    const task = createTask("test task");
-    queue.enqueue(task);
+    const original = process.env.WORQLOAD_TASK_ID;
+    delete process.env.WORQLOAD_TASK_ID;
+    try {
+      const queue = new TaskQueue(tmpPath("orient-human-default"));
+      const task = createTask("test task");
+      queue.enqueue(task);
 
-    await orient(queue, [task.id, "--human"]);
+      await orient(queue, [task.id, "--human"]);
 
-    const updated = queue.get(task.id)!;
-    expect(updated.status).toBe("waiting_human");
-    expect(updated.logs[0].content).toBe(`${HUMAN_REQUIRED_PREFIX}Orientation requires human input`);
+      const updated = queue.get(task.id)!;
+      expect(updated.status).toBe("waiting_human");
+      expect(updated.logs[0].content).toBe(`${HUMAN_REQUIRED_PREFIX}Orientation requires human input`);
+    } finally {
+      if (original !== undefined) process.env.WORQLOAD_TASK_ID = original;
+    }
   });
 
   test("rejects --human when called from spawned agent context with EscalationError", async () => {

@@ -166,10 +166,21 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
+const IN_PROGRESS_STATUSES = new Set(["observing", "orienting", "deciding", "acting"]);
+const SPAWN_CLEANUP_TIMEOUT_MS = 30 * 60 * 1000;
+
+function killProcessTree(pid: number): void {
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already dead */ }
+  }
+}
+
 export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?: string): Promise<void> {
   const spawns = await loadSpawns(spawnsPath);
   const stuckTasks = queue.list().filter(
-    t => (t.status === "observing" || t.status === "acting") && t.owner
+    t => IN_PROGRESS_STATUSES.has(t.status) && t.owner,
   );
 
   let cleaned = 0;
@@ -177,7 +188,11 @@ export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?
     const spawnRecord = spawns.find(s => s.taskId === task.id && s.status === "running");
 
     if (spawnRecord && isProcessRunning(spawnRecord.pid)) {
-      continue;
+      const elapsed = Date.now() - new Date(spawnRecord.startedAt).getTime();
+      if (elapsed < SPAWN_CLEANUP_TIMEOUT_MS) {
+        continue;
+      }
+      killProcessTree(spawnRecord.pid);
     }
 
     queue.addLog(task.id, "act", "[FAILED] Spawn process killed (timeout)");

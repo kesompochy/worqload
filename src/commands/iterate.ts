@@ -2,7 +2,7 @@ import type { TaskQueue } from "../queue";
 import type { Task } from "../task";
 import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX } from "../task";
 import type { FeedbackSummary } from "../feedback";
-import { loadFeedback, summarizeFeedback, distillFeedback } from "../feedback";
+import { loadFeedback, summarizeFeedback, distillFeedback, extractObservationalContent, verifyDistilledRules, markRuleTaskCreated, type CodeChangeChecker } from "../feedback";
 import type { Mission } from "../mission";
 import { loadMissions, reactivateMission } from "../mission";
 import type { SourceResult } from "../sources";
@@ -24,12 +24,21 @@ export interface IterateContext {
   principlesPath?: string;
   serverLogPath?: string;
   templatePath?: string;
+  distilledRulesPath?: string;
+  codeChangeChecker?: CodeChangeChecker;
 }
 
 export interface SuspiciousTask {
   taskId: string;
   title: string;
   reasons: string[];
+}
+
+export interface StuckTask {
+  taskId: string;
+  title: string;
+  status: string;
+  stuckMinutes: number;
 }
 
 export interface Observation {
@@ -42,17 +51,73 @@ export interface Observation {
   waitingHumanTasks: Task[];
   answeredHumanTasks: Task[];
   suspiciousTasks: SuspiciousTask[];
+  stuckTasks: StuckTask[];
   failedTasks: Task[];
   uncommittedChanges: string;
   serverLogSummary: ServerLogSummary | null;
+}
+
+export interface RecoverResult {
+  recoveredTasks: string[];
+  permanentlyFailed: string[];
 }
 
 export interface GenerateResult {
   createdTasks: string[];
   retriedTasks: string[];
   resumedTasks: string[];
+  recoveredTasks: string[];
   distilledRules: string[];
   autonomousTasks: string[];
+  unverifiedRules: string[];
+}
+
+const IN_PROGRESS_STATUSES = new Set(["orienting", "deciding", "acting"]);
+const DEFAULT_STUCK_THRESHOLD_MINUTES = 30;
+
+export function detectStuckTasks(tasks: Task[], thresholdMinutes: number = DEFAULT_STUCK_THRESHOLD_MINUTES): StuckTask[] {
+  const now = Date.now();
+  const thresholdMs = thresholdMinutes * 60 * 1000;
+  const stuck: StuckTask[] = [];
+  for (const task of tasks) {
+    if (!IN_PROGRESS_STATUSES.has(task.status)) continue;
+    const elapsed = now - new Date(task.updatedAt).getTime();
+    if (elapsed > thresholdMs) {
+      stuck.push({
+        taskId: task.id,
+        title: task.title,
+        status: task.status,
+        stuckMinutes: Math.floor(elapsed / 60000),
+      });
+    }
+  }
+  return stuck;
+}
+
+const MAX_STUCK_RETRIES = 2;
+
+export function recoverStuckTasks(queue: TaskQueue, stuckTasks: StuckTask[]): RecoverResult {
+  const recoveredTasks: string[] = [];
+  const permanentlyFailed: string[] = [];
+
+  for (const stuck of stuckTasks) {
+    const task = queue.get(stuck.taskId);
+    if (!task) continue;
+
+    const actLogCount = task.logs.filter(l => l.phase === "act").length;
+    queue.addLog(task.id, "act", `[STUCK] recovered after ${stuck.stuckMinutes}m in ${stuck.status}`);
+    queue.transition(task.id, "failed");
+    queue.update(task.id, { owner: undefined });
+
+    if (actLogCount < MAX_STUCK_RETRIES) {
+      queue.transition(task.id, "observing");
+      recoveredTasks.push(task.id);
+    } else {
+      permanentlyFailed.push(task.id);
+    }
+  }
+
+  return { recoveredTasks, permanentlyFailed };
 }
 
 const MIN_ACT_CONTENT_LENGTH = 10;
@@ -178,6 +243,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
   const uncommittedChanges = filterManagedPaths(rawUncommittedChanges, queue.getStorePath());
 
   const serverLogSummary = serverLogs.length > 0 ? summarizeServerLogs(serverLogs) : null;
+  const stuckTasks = detectStuckTasks(activeTasks);
 
   return {
     feedbackSummary: summarizeFeedback(feedbackItems),
@@ -189,6 +255,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     waitingHumanTasks,
     answeredHumanTasks,
     suspiciousTasks,
+    stuckTasks,
     failedTasks,
     uncommittedChanges,
     serverLogSummary,
@@ -287,6 +354,11 @@ export function analyzeObservation(obs: Observation): string {
     lines.push(`suspicious: [${shortId}] ${st.title} (${st.reasons.join(", ")})`);
   }
 
+  for (const st of obs.stuckTasks) {
+    const shortId = st.taskId.slice(0, SHORT_ID_LENGTH);
+    lines.push(`stuck: [${shortId}] ${st.title} (${st.status}, ${st.stuckMinutes}m)`);
+  }
+
   if (obs.failedTasks.length > 0) {
     lines.push(`failed: ${obs.failedTasks.length} task${obs.failedTasks.length > 1 ? "s" : ""}`);
   }
@@ -309,6 +381,8 @@ export function analyzeObservation(obs: Observation): string {
 const MAX_RETRY_ATTEMPTS = 2;
 const COMMIT_TASK_TITLE = "Commit uncommitted changes";
 const REVIEW_FEEDBACK_PREFIX = "Review feedback:";
+const INVESTIGATE_FEEDBACK_PREFIX = "Investigate feedback:";
+const IMPLEMENT_RULE_PREFIX = "Implement distilled rule:";
 
 interface DuplicateCheckOptions {
   prefixMatch?: boolean;
@@ -388,6 +462,9 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   const resumedTasks: string[] = [];
   const archivedTasks = await queue.history();
 
+  // Recover stuck tasks before other processing
+  const stuckRecovery = recoverStuckTasks(queue, obs.stuckTasks);
+
   // Uncommitted changes → commit task
   if (obs.uncommittedChanges.length > 0) {
     if (!hasDuplicateTask(queue, obs.tasks, COMMIT_TASK_TITLE, archivedTasks)) {
@@ -404,6 +481,19 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
       const task = createTask(title, { feedbackIds: theme.feedbackIds }, 0, "iterate");
       queue.enqueue(task);
       createdTasks.push(task.title);
+    }
+  }
+
+  // Observational (non-directive) feedback → investigation tasks
+  for (const feedback of obs.feedbackSummary.recentUnresolved) {
+    const observations = extractObservationalContent(feedback.message);
+    if (observations.length > 0) {
+      const title = `${INVESTIGATE_FEEDBACK_PREFIX} ${observations[0]}`;
+      if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
+        const task = createTask(title, { feedbackIds: [feedback.id], observations }, 0, "iterate");
+        queue.enqueue(task);
+        createdTasks.push(task.title);
+      }
     }
   }
 
@@ -436,9 +526,31 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
 
   // Distill resolved feedback into agent template rules
   let distilledRules: string[] = [];
+  const justDistilledRuleIds = new Set<string>();
   if (obs.feedbackSummary.counts.resolved > 0 && ctx.templatePath) {
-    const distillResult = await distillFeedback(ctx.feedbackPath, ctx.templatePath);
+    const distillResult = await distillFeedback(ctx.feedbackPath, ctx.templatePath, ctx.distilledRulesPath);
     distilledRules = distillResult.rules;
+    for (const rule of distillResult.pendingVerification) {
+      justDistilledRuleIds.add(rule.id);
+    }
+  }
+
+  // Verify distilled rules and create tasks for unverified ones
+  // Rules distilled in this iteration are skipped — they need time to be implemented
+  const unverifiedRules: string[] = [];
+  if (ctx.distilledRulesPath) {
+    const verifyResult = await verifyDistilledRules(ctx.distilledRulesPath, ctx.codeChangeChecker);
+    for (const rule of verifyResult.unverified) {
+      if (justDistilledRuleIds.has(rule.id)) continue;
+      const title = `${IMPLEMENT_RULE_PREFIX} ${rule.rule}`;
+      if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
+        const task = createTask(title, { distilledRuleId: rule.id, rule: rule.rule }, 0, "iterate");
+        queue.enqueue(task);
+        createdTasks.push(task.title);
+        unverifiedRules.push(rule.rule);
+      }
+      await markRuleTaskCreated(rule.id, ctx.distilledRulesPath);
+    }
   }
 
   // Autonomous task derivation from principles when queue is empty
@@ -448,7 +560,8 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     && obs.answeredHumanTasks.length === 0;
   const nothingGeneratedYet = createdTasks.length === 0
     && retriedTasks.length === 0
-    && resumedTasks.length === 0;
+    && resumedTasks.length === 0
+    && stuckRecovery.recoveredTasks.length === 0;
 
   if (isQueueEmpty && nothingGeneratedYet && obs.principles) {
     const derived = deriveAutonomousTasks(obs, queue, archivedTasks);
@@ -459,7 +572,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     }
   }
 
-  return { createdTasks, retriedTasks, resumedTasks, distilledRules, autonomousTasks };
+  return { createdTasks, retriedTasks, resumedTasks, recoveredTasks: stuckRecovery.recoveredTasks, distilledRules, autonomousTasks, unverifiedRules };
 }
 
 export interface CleanupResult {
@@ -529,7 +642,7 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
 
   // Autonomous task generation and feedback distillation
   const generated = await generateTasksFromObservation(queue, obs, ctx);
-  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.resumedTasks.length > 0 || generated.distilledRules.length > 0 || generated.autonomousTasks.length > 0;
+  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.resumedTasks.length > 0 || generated.recoveredTasks.length > 0 || generated.distilledRules.length > 0 || generated.autonomousTasks.length > 0 || generated.unverifiedRules.length > 0;
 
   if (hasGenerated) {
     const genParts: string[] = [];
@@ -539,6 +652,9 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
     if (generated.autonomousTasks.length > 0) {
       genParts.push(`autonomous ${generated.autonomousTasks.length} task(s): ${generated.autonomousTasks.join(", ")}`);
     }
+    if (generated.recoveredTasks.length > 0) {
+      genParts.push(`recovered ${generated.recoveredTasks.length} stuck task(s)`);
+    }
     if (generated.retriedTasks.length > 0) {
       genParts.push(`retried ${generated.retriedTasks.length} failed task(s)`);
     }
@@ -547,6 +663,9 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
     }
     if (generated.distilledRules.length > 0) {
       genParts.push(`distilled ${generated.distilledRules.length} feedback rule(s) into template`);
+    }
+    if (generated.unverifiedRules.length > 0) {
+      genParts.push(`${generated.unverifiedRules.length} unverified rule(s) → implementation task(s)`);
     }
     const genSummary = genParts.join("; ");
     const decideTag = generated.autonomousTasks.length > 0 ? "autonomous_tasks" : "tasks_created";
@@ -662,6 +781,7 @@ export function formatObserveLog(obs: Observation): string {
   const principleCount = obs.principles ? obs.principles.split("\n").filter(l => l.startsWith("- ")).length : 0;
   parts.push(`principles: ${principleCount}`);
   parts.push(`suspicious: ${obs.suspiciousTasks.length}`);
+  parts.push(`stuck: ${obs.stuckTasks.length}`);
   parts.push(`failed: ${obs.failedTasks.length}`);
   if (obs.uncommittedChanges) {
     parts.push("uncommitted: yes");
