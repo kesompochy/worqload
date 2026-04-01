@@ -4,7 +4,7 @@ import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX } from "../task";
 import type { FeedbackSummary } from "../feedback";
 import { loadFeedback, summarizeFeedback, distillFeedback, extractObservationalContent, verifyDistilledRules, markRuleTaskCreated, type CodeChangeChecker } from "../feedback";
 import type { Mission } from "../mission";
-import { loadMissions, reactivateMission } from "../mission";
+import { loadMissions, reactivateMission, archiveMissions } from "../mission";
 import type { SourceResult } from "../sources";
 import { runAllSources } from "../sources";
 import { loadPrinciples } from "../principles";
@@ -25,6 +25,7 @@ export interface IterateContext {
   serverLogPath?: string;
   templatePath?: string;
   distilledRulesPath?: string;
+  missionArchivePath?: string;
   codeChangeChecker?: CodeChangeChecker;
 }
 
@@ -577,6 +578,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
 
 export interface CleanupResult {
   archivedCount: number;
+  archivedMissionCount: number;
   unreadReports: string[];
 }
 
@@ -586,6 +588,18 @@ export async function performActCleanup(queue: TaskQueue, ctx: IterateContext): 
     .map(t => t.id);
   const archived = await queue.archive(archivableIds);
 
+  let archivedMissionCount = 0;
+  if (ctx.missionsPath) {
+    const missions = await loadMissions(ctx.missionsPath);
+    const nonActiveIds = missions
+      .filter(m => m.status !== "active")
+      .map(m => m.id);
+    if (nonActiveIds.length > 0) {
+      const archivedMissions = await archiveMissions(nonActiveIds, ctx.missionsPath, ctx.missionArchivePath);
+      archivedMissionCount = archivedMissions.length;
+    }
+  }
+
   let unreadReports: string[] = [];
   if (ctx.reportsPath) {
     const reports = await loadReports(ctx.reportsPath).catch(() => [] as Report[]);
@@ -594,13 +608,16 @@ export async function performActCleanup(queue: TaskQueue, ctx: IterateContext): 
       .map(r => r.title);
   }
 
-  return { archivedCount: archived.length, unreadReports };
+  return { archivedCount: archived.length, archivedMissionCount, unreadReports };
 }
 
 export function formatCleanupLog(cleanup: CleanupResult): string {
   const parts: string[] = [];
   if (cleanup.archivedCount > 0) {
     parts.push(`archived ${cleanup.archivedCount} task(s)`);
+  }
+  if (cleanup.archivedMissionCount > 0) {
+    parts.push(`archived ${cleanup.archivedMissionCount} mission(s)`);
   }
   if (cleanup.unreadReports.length > 0) {
     parts.push(`${cleanup.unreadReports.length} unread report(s): ${cleanup.unreadReports.join(", ")}`);

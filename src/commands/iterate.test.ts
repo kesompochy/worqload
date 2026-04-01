@@ -5,6 +5,7 @@ import { TaskQueue } from "../queue";
 import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX } from "../task";
 import { addFeedback, resolveFeedback, loadFeedback, loadDistilledRules } from "../feedback";
 import { addReport } from "../reports";
+import { createMission, completeMission, failMission, loadMissions, loadMissionArchive } from "../mission";
 import {
   collectObservation,
   analyzeObservation,
@@ -1974,26 +1975,89 @@ describe("performActCleanup", () => {
     expect(result.archivedCount).toBe(0);
     expect(queue.list()).toHaveLength(2);
   });
+
+  test("archives completed missions when missionsPath is set", async () => {
+    const missionsPath = tmpPath("missions");
+    const missionArchivePath = tmpPath("mission-archive");
+    const m1 = await createMission("done-mission", {}, missionsPath);
+    await completeMission(m1.id, missionsPath);
+    await createMission("active-mission", {}, missionsPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = await performActCleanup(queue, { missionsPath, missionArchivePath });
+
+    expect(result.archivedMissionCount).toBe(1);
+    const remaining = await loadMissions(missionsPath);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].name).toBe("active-mission");
+    const archived = await loadMissionArchive(missionArchivePath);
+    expect(archived).toHaveLength(1);
+    expect(archived[0].name).toBe("done-mission");
+  });
+
+  test("archives failed missions", async () => {
+    const missionsPath = tmpPath("missions");
+    const missionArchivePath = tmpPath("mission-archive");
+    const m = await createMission("failed-mission", {}, missionsPath);
+    await failMission(m.id, missionsPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = await performActCleanup(queue, { missionsPath, missionArchivePath });
+
+    expect(result.archivedMissionCount).toBe(1);
+    const archived = await loadMissionArchive(missionArchivePath);
+    expect(archived[0].status).toBe("failed");
+  });
+
+  test("does not archive active missions", async () => {
+    const missionsPath = tmpPath("missions");
+    const missionArchivePath = tmpPath("mission-archive");
+    await createMission("active-mission", {}, missionsPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = await performActCleanup(queue, { missionsPath, missionArchivePath });
+
+    expect(result.archivedMissionCount).toBe(0);
+    const remaining = await loadMissions(missionsPath);
+    expect(remaining).toHaveLength(1);
+  });
+
+  test("returns zero archivedMissionCount when missionsPath is not set", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = await performActCleanup(queue, {});
+
+    expect(result.archivedMissionCount).toBe(0);
+  });
 });
 
 describe("formatCleanupLog", () => {
   test("returns empty string when nothing to report", () => {
-    expect(formatCleanupLog({ archivedCount: 0, unreadReports: [] })).toBe("");
+    expect(formatCleanupLog({ archivedCount: 0, archivedMissionCount: 0, unreadReports: [] })).toBe("");
   });
 
   test("includes archived count when tasks were archived", () => {
-    const result = formatCleanupLog({ archivedCount: 3, unreadReports: [] });
+    const result = formatCleanupLog({ archivedCount: 3, archivedMissionCount: 0, unreadReports: [] });
     expect(result).toBe("archived 3 task(s)");
   });
 
   test("includes unread report titles", () => {
-    const result = formatCleanupLog({ archivedCount: 0, unreadReports: ["Report A", "Report B"] });
+    const result = formatCleanupLog({ archivedCount: 0, archivedMissionCount: 0, unreadReports: ["Report A", "Report B"] });
     expect(result).toBe("2 unread report(s): Report A, Report B");
   });
 
   test("combines archived count and unread reports", () => {
-    const result = formatCleanupLog({ archivedCount: 2, unreadReports: ["Report X"] });
+    const result = formatCleanupLog({ archivedCount: 2, archivedMissionCount: 0, unreadReports: ["Report X"] });
     expect(result).toBe("archived 2 task(s); 1 unread report(s): Report X");
+  });
+
+  test("includes archived mission count", () => {
+    const result = formatCleanupLog({ archivedCount: 0, archivedMissionCount: 2, unreadReports: [] });
+    expect(result).toBe("archived 2 mission(s)");
+  });
+
+  test("combines all cleanup results", () => {
+    const result = formatCleanupLog({ archivedCount: 1, archivedMissionCount: 3, unreadReports: ["Report A"] });
+    expect(result).toBe("archived 1 task(s); archived 3 mission(s); 1 unread report(s): Report A");
   });
 });
 
