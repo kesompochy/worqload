@@ -90,14 +90,14 @@ describe("collectObservation", () => {
     expect(obs.waitingHumanTasks[0].title).toBe("Needs human");
   });
 
-  test("detects answered waiting_human tasks via non-HUMAN_REQUIRED decide log", async () => {
+  test("detects answered waiting_human tasks via non-HUMAN_REQUIRED orient log", async () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const t1 = createTask("Awaiting answer");
     queue.enqueue(t1);
     queue.transition(t1.id, "orienting");
     queue.transition(t1.id, "waiting_human");
-    queue.addLog(t1.id, "decide", `${HUMAN_REQUIRED_PREFIX}What should we do?`);
-    queue.addLog(t1.id, "decide", "Approved by PM");
+    queue.addLog(t1.id, "orient", `${HUMAN_REQUIRED_PREFIX}What should we do?`);
+    queue.addLog(t1.id, "orient", "Approved by PM");
     const ctx = makeContext();
 
     const obs = await collectObservation(queue, ctx);
@@ -826,18 +826,18 @@ describe("auditRecentCompletions", () => {
 });
 
 describe("hasHumanAnswer", () => {
-  test("returns true when decide log exists after HUMAN_REQUIRED orient log", () => {
+  test("returns true when orient answer log exists after HUMAN_REQUIRED log", () => {
     const task = createTask("Waiting task");
     task.status = "waiting_human";
     task.logs = [
       { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Should we proceed?`, timestamp: new Date().toISOString() },
-      { phase: "decide", content: "Yes, go ahead", timestamp: new Date().toISOString() },
+      { phase: "orient", content: "Yes, go ahead", timestamp: new Date().toISOString() },
     ];
 
     expect(hasHumanAnswer(task)).toBe(true);
   });
 
-  test("returns false when no decide log after HUMAN_REQUIRED orient log", () => {
+  test("returns false when no answer log after HUMAN_REQUIRED log", () => {
     const task = createTask("Waiting task");
     task.status = "waiting_human";
     task.logs = [
@@ -847,23 +847,34 @@ describe("hasHumanAnswer", () => {
     expect(hasHumanAnswer(task)).toBe(false);
   });
 
-  test("returns false when decide log also has HUMAN_REQUIRED prefix", () => {
+  test("returns false when orient log also has HUMAN_REQUIRED prefix", () => {
     const task = createTask("Waiting task");
     task.status = "waiting_human";
     task.logs = [
       { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}First question`, timestamp: new Date().toISOString() },
-      { phase: "decide", content: `${HUMAN_REQUIRED_PREFIX}Another question`, timestamp: new Date().toISOString() },
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Another question`, timestamp: new Date().toISOString() },
     ];
 
     expect(hasHumanAnswer(task)).toBe(false);
   });
 
-  test("returns false when no HUMAN_REQUIRED orient log exists", () => {
+  test("returns false when no HUMAN_REQUIRED log exists", () => {
     const task = createTask("Waiting task");
     task.status = "waiting_human";
     task.logs = [
       { phase: "orient", content: "some analysis", timestamp: new Date().toISOString() },
-      { phase: "decide", content: "some decision", timestamp: new Date().toISOString() },
+      { phase: "orient", content: "some decision", timestamp: new Date().toISOString() },
+    ];
+
+    expect(hasHumanAnswer(task)).toBe(false);
+  });
+
+  test("ignores decide phase logs — only orient phase counts as answer", () => {
+    const task = createTask("Waiting task");
+    task.status = "waiting_human";
+    task.logs = [
+      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Should we proceed?`, timestamp: new Date().toISOString() },
+      { phase: "decide", content: "Yes, go ahead", timestamp: new Date().toISOString() },
     ];
 
     expect(hasHumanAnswer(task)).toBe(false);
@@ -874,7 +885,7 @@ describe("hasHumanAnswer", () => {
     task.status = "waiting_human";
     task.logs = [
       { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}First question`, timestamp: new Date().toISOString() },
-      { phase: "decide", content: "Answer to first", timestamp: new Date().toISOString() },
+      { phase: "orient", content: "Answer to first", timestamp: new Date().toISOString() },
       { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Second question`, timestamp: new Date().toISOString() },
     ];
 
@@ -886,20 +897,9 @@ describe("hasHumanAnswer", () => {
     task.status = "waiting_human";
     task.logs = [
       { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}First question`, timestamp: new Date().toISOString() },
-      { phase: "decide", content: "Answer to first", timestamp: new Date().toISOString() },
+      { phase: "orient", content: "Answer to first", timestamp: new Date().toISOString() },
       { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Second question`, timestamp: new Date().toISOString() },
-      { phase: "decide", content: "Answer to second", timestamp: new Date().toISOString() },
-    ];
-
-    expect(hasHumanAnswer(task)).toBe(true);
-  });
-
-  test("returns true when orient log (non-HUMAN_REQUIRED) exists after HUMAN_REQUIRED log", () => {
-    const task = createTask("Waiting task");
-    task.status = "waiting_human";
-    task.logs = [
-      { phase: "orient", content: `${HUMAN_REQUIRED_PREFIX}Should we proceed?`, timestamp: new Date().toISOString() },
-      { phase: "orient", content: "Yes, approved by PM", timestamp: new Date().toISOString() },
+      { phase: "orient", content: "Answer to second", timestamp: new Date().toISOString() },
     ];
 
     expect(hasHumanAnswer(task)).toBe(true);
@@ -914,7 +914,7 @@ describe("collectObservation - answered waiting_human", () => {
     queue.transition(answered.id, "orienting");
     queue.transition(answered.id, "waiting_human");
     queue.addLog(answered.id, "orient", `${HUMAN_REQUIRED_PREFIX}What to do?`);
-    queue.addLog(answered.id, "decide", "Do this");
+    queue.addLog(answered.id, "orient", "Do this");
 
     const unanswered = createTask("Unanswered question");
     queue.enqueue(unanswered);
@@ -938,7 +938,7 @@ describe("collectObservation - answered waiting_human", () => {
     queue.transition(task.id, "orienting");
     queue.transition(task.id, "waiting_human");
     queue.addLog(task.id, "orient", `${HUMAN_REQUIRED_PREFIX}Question?`);
-    queue.addLog(task.id, "decide", "Answer");
+    queue.addLog(task.id, "orient", "Answer from human");
 
     const ctx = makeContext();
     const obs = await collectObservation(queue, ctx);

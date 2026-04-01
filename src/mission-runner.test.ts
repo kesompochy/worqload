@@ -66,16 +66,30 @@ describe("findNextMissionTask", () => {
     expect(result).toBeUndefined();
   });
 
-  test("skips non-observing tasks", () => {
+  test("skips tasks past orienting phase", () => {
     const queue = new TaskQueue();
     const missionId = crypto.randomUUID();
-    const task = createTask("orienting task");
+    const task = createTask("deciding task");
+    queue.enqueue(task);
+    queue.update(task.id, { missionId });
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "deciding");
+
+    const result = findNextMissionTask(queue, missionId);
+    expect(result).toBeUndefined();
+  });
+
+  test("picks orienting tasks (human-answered)", () => {
+    const queue = new TaskQueue();
+    const missionId = crypto.randomUUID();
+    const task = createTask("answered task");
     queue.enqueue(task);
     queue.update(task.id, { missionId });
     queue.transition(task.id, "orienting");
 
     const result = findNextMissionTask(queue, missionId);
-    expect(result).toBeUndefined();
+    expect(result).toBeDefined();
+    expect(result!.id).toBe(task.id);
   });
 
   test("picks highest priority task", () => {

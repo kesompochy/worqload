@@ -99,7 +99,7 @@ export function findNextMissionTask(queue: TaskQueue, missionId: string): Task |
   const tasks = queue.getByMission(missionId);
   let best: Task | undefined;
   for (const task of tasks) {
-    if (task.status !== "observing" || task.owner) continue;
+    if ((task.status !== "observing" && task.status !== "orienting") || task.owner) continue;
     if (task.context.retryAfter && new Date(task.context.retryAfter as string) > new Date()) continue;
     if (!best || task.priority > best.priority ||
         (task.priority === best.priority && task.createdAt < best.createdAt)) {
@@ -454,22 +454,26 @@ export async function processTask(task: Task, mission: Mission, options: Process
   // Claim — throws if already claimed or wrong status
   const claimed = await updateTask(task.id, (current) => {
     if (current.owner) throw new Error(`Already claimed by ${current.owner}`);
-    if (current.status !== "observing") throw new Error(`Cannot process: status is ${current.status}`);
+    if (current.status !== "observing" && current.status !== "orienting") throw new Error(`Cannot process: status is ${current.status}`);
     return { owner };
   }, storePath);
   if (!claimed) throw new Error(`Task not found: ${task.id}`);
 
-  try {
-    // Observe
-    await updateTask(task.id, (current) => ({
-      logs: [...current.logs, phaseLog("observe", `Task: ${current.title}. Principles: ${principles}`)],
-    }), storePath);
+  const alreadyOriented = claimed.status === "orienting";
 
-    // Orient — validate task against mission principles
-    const orientResult = await orientTask(task.id, mission, storePath);
-    if (orientResult === "escalated") {
-      await updateTask(task.id, (current) => ({ owner: undefined }), storePath);
-      return;
+  try {
+    if (!alreadyOriented) {
+      // Observe
+      await updateTask(task.id, (current) => ({
+        logs: [...current.logs, phaseLog("observe", `Task: ${current.title}. Principles: ${principles}`)],
+      }), storePath);
+
+      // Orient — validate task against mission principles
+      const orientResult = await orientTask(task.id, mission, storePath);
+      if (orientResult === "escalated") {
+        await updateTask(task.id, (current) => ({ owner: undefined }), storePath);
+        return;
+      }
     }
 
     // Decide
