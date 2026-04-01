@@ -100,6 +100,14 @@ async function spawnWithTimeout(
   return Promise.race([completionPromise, timeoutPromise]);
 }
 
+export function findAllEligibleTasks(queue: TaskQueue, missionId: string): Task[] {
+  const tasks = queue.getByMission(missionId);
+  return tasks
+    .filter(t => (t.status === "observing" || t.status === "orienting") && !t.owner)
+    .filter(t => !t.context.retryAfter || new Date(t.context.retryAfter as string) <= new Date())
+    .sort((a, b) => b.priority - a.priority || a.createdAt.localeCompare(b.createdAt));
+}
+
 export function findNextMissionTask(queue: TaskQueue, missionId: string): Task | undefined {
   const tasks = queue.getByMission(missionId);
   let best: Task | undefined;
@@ -489,7 +497,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
 
     // Act — spawn agent process, optionally in a git worktree for isolation
     let worktreeInfo: { worktreePath: string; branchName: string } | undefined;
-    if (useWorktree) {
+    if (useWorktree && !claimed.context.worktreeDisabled) {
       try {
         worktreeInfo = await createWorktree(task.id);
       } catch (error) {
@@ -594,15 +602,19 @@ export async function processTask(task: Task, mission: Mission, options: Process
       if (retryCount < MAX_TASK_RETRIES) {
         const newRetryCount = retryCount + 1;
         const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+        const disableWorktree = !!worktreeInfo;
         await updateTask(task.id, (current) => ({
           status: "observing" as const,
           owner: undefined,
-          context: { ...current.context, retryCount: newRetryCount, retryAfter },
+          context: { ...current.context, retryCount: newRetryCount, retryAfter, ...(disableWorktree ? { worktreeDisabled: true } : {}) },
           logs: [...current.logs,
             phaseLog("act", truncated),
-            phaseLog("act", `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - exit code ${exitCode}`),
+            phaseLog("act", `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - exit code ${exitCode}${disableWorktree ? " (worktree disabled for retry)" : ""}`),
           ],
         }), storePath);
+        if (disableWorktree) {
+          console.log(`Worktree disabled for retry: ${task.title}`);
+        }
         console.log(`Retry ${newRetryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
       } else {
         await updateTask(task.id, (current) => ({
@@ -758,7 +770,25 @@ export async function runMission(missionId: string, options: MissionRunnerOption
           tasksProcessed,
         }, runnerStatePath);
 
-        result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs, reportsPath, useWorktree });
+        if (useWorktree) {
+          // Parallel: process all eligible tasks concurrently in worktrees
+          const queue2 = new TaskQueue(storePath);
+          await queue2.load();
+          const eligible = findAllEligibleTasks(queue2, mission.id);
+          if (eligible.length > 1) {
+            const missionObj = await resolveMission(mission.id, missionsPath);
+            const promises = eligible.map(t =>
+              processTask(t, missionObj, { storePath, actCommand, missionsPath, spawnTimeoutMs, reportsPath, useWorktree: true })
+                .catch(err => console.error(`Parallel task failed: ${t.title.slice(0, 40)} - ${err}`))
+            );
+            await Promise.all(promises);
+            result = "processed";
+          } else {
+            result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs, reportsPath, useWorktree });
+          }
+        } else {
+          result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs, reportsPath, useWorktree });
+        }
         consecutiveErrors = 0;
       } catch (error) {
         consecutiveErrors++;
