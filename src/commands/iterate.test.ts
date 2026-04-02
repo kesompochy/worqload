@@ -1063,6 +1063,7 @@ describe("analyzeObservation - deciding tasks", () => {
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
+      deadRunners: [],
     };
   }
 
@@ -1120,6 +1121,7 @@ describe("analyzeObservation - executing tasks", () => {
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
+      deadRunners: [],
     };
   }
 
@@ -1247,6 +1249,7 @@ describe("generateTasksFromObservation", () => {
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
+      deadRunners: [],
     };
   }
 
@@ -1411,6 +1414,22 @@ describe("generateTasksFromObservation", () => {
 
     expect(result.retriedTasks).toHaveLength(0);
     expect(queue.get(failedTask.id)!.status).toBe("failed");
+  });
+
+  test("does not retry failed Report to human tasks", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const reportTask = createTask("Report to human: Fix login bug", { sourceTaskId: "t-1", feedbackIds: ["f-1"] });
+    queue.enqueue(reportTask);
+    const task = queue.get(reportTask.id)!;
+    task.status = "failed";
+    task.logs = [];
+    const obs = emptyObservation();
+    obs.failedTasks = [task];
+
+    const result = await generateTasksFromObservation(queue, obs);
+
+    expect(result.retriedTasks).toHaveLength(0);
+    expect(queue.get(reportTask.id)!.status).toBe("failed");
   });
 
   test("returns empty results when nothing to do", async () => {
@@ -2022,6 +2041,7 @@ describe("deriveAutonomousTasks", () => {
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
+      deadRunners: [],
     };
   }
 
@@ -2409,6 +2429,7 @@ describe("iterate - waiting_human suppresses chat output", () => {
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
+      deadRunners: [],
     };
   }
 
@@ -2716,6 +2737,59 @@ describe("generateTasksFromObservation - human report tasks", () => {
     const result = await generateTasksFromObservation(queue, obs);
 
     expect(result.humanReportTasks).toHaveLength(2);
+  });
+
+  test("includes feedbackMessages in report task context when feedback path provided", async () => {
+    const feedbackPath = tmpPath("fb-msgs");
+    const fb = await addFeedback("ログインが遅い。改善してほしい", "alice", feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.completedFeedbackTasks = [
+      { taskId: "task-1", title: "Fix login performance", feedbackIds: [fb.id] },
+    ];
+
+    const result = await generateTasksFromObservation(queue, obs, { feedbackPath });
+
+    const reportTask = queue.list().find(t => t.title.includes("Report to human"));
+    expect(reportTask).toBeDefined();
+    expect(reportTask!.context.feedbackMessages).toEqual([
+      { from: "alice", message: "ログインが遅い。改善してほしい" },
+    ]);
+  });
+
+  test("includes multiple feedbackMessages when task has multiple feedbackIds", async () => {
+    const feedbackPath = tmpPath("fb-multi");
+    const fb1 = await addFeedback("バグがある", "bob", feedbackPath);
+    const fb2 = await addFeedback("UIが分かりにくい", "carol", feedbackPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.completedFeedbackTasks = [
+      { taskId: "task-1", title: "Fix issues", feedbackIds: [fb1.id, fb2.id] },
+    ];
+
+    const result = await generateTasksFromObservation(queue, obs, { feedbackPath });
+
+    const reportTask = queue.list().find(t => t.title.includes("Report to human"));
+    expect(reportTask!.context.feedbackMessages).toEqual([
+      { from: "bob", message: "バグがある" },
+      { from: "carol", message: "UIが分かりにくい" },
+    ]);
+  });
+
+  test("omits feedbackMessages when no feedback path provided", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const obs = emptyObservation();
+    obs.completedFeedbackTasks = [
+      { taskId: "task-1", title: "Fix bug", feedbackIds: ["fb-1"] },
+    ];
+
+    await generateTasksFromObservation(queue, obs);
+
+    const reportTask = queue.list().find(t => t.title.includes("Report to human"));
+    expect(reportTask).toBeDefined();
+    expect(reportTask!.context.feedbackMessages).toBeUndefined();
   });
 });
 
@@ -3034,6 +3108,7 @@ describe("generateTasksFromObservation - task priority", () => {
       failedTasks: [],
       uncommittedChanges: "",
       serverLogSummary: null,
+      deadRunners: [],
     };
   }
 

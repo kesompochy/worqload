@@ -86,13 +86,14 @@ export async function mission(queue: TaskQueue, args: string[]) {
     const missionId = rest[0];
     if (!missionId) exitWithError("Usage: worqload mission run <mission-id> [--foreground] [--worktree]");
 
+    const config = await loadConfig();
+    const useWorktree = flags["--worktree"] === "true" || config.spawn?.worktree === true;
+
     if (flags["--foreground"]) {
-      const config = await loadConfig();
-      const useWorktree = flags["--worktree"] === "true" || config.spawn?.worktree === true;
       const { runMission } = await import("../mission-runner");
       await runMission(missionId, { useWorktree });
     } else {
-      const result = await launchMissionDaemon(missionId);
+      const result = await launchMissionDaemon(missionId, { useWorktree });
       console.log(`Mission runner started (PID: ${result.pid})`);
       console.log(`Log: ${result.logPath}`);
     }

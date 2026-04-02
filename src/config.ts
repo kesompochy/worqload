@@ -5,6 +5,7 @@ const DEFAULT_CONFIG_PATH = ".worqload/config.json";
 export interface SpawnHooks {
   pre?: string[];
   post?: string[];
+  worktree?: boolean;
 }
 
 export interface InitConfig {

@@ -6,19 +6,27 @@ export interface DaemonResult {
   logPath: string;
 }
 
-export function buildDaemonCommand(missionId: string): string[] {
-  return ["nohup", process.execPath, process.argv[1], "mission", "run", missionId, "--foreground"];
+export interface BuildDaemonCommandOptions {
+  useWorktree?: boolean;
+}
+
+export function buildDaemonCommand(missionId: string, options: BuildDaemonCommandOptions = {}): string[] {
+  const cmd = ["nohup", process.execPath, process.argv[1], "mission", "run", missionId, "--foreground"];
+  if (options.useWorktree) {
+    cmd.push("--worktree");
+  }
+  return cmd;
 }
 
 export async function launchMissionDaemon(
   missionId: string,
-  options: { logDir?: string; command?: string[] } = {},
+  options: { logDir?: string; command?: string[]; useWorktree?: boolean } = {},
 ): Promise<DaemonResult> {
   const logDir = options.logDir ?? join(".worqload", "logs");
   const logPath = join(logDir, `mission-${missionId}.log`);
   await mkdir(logDir, { recursive: true });
 
-  const cmd = options.command ?? buildDaemonCommand(missionId);
+  const cmd = options.command ?? buildDaemonCommand(missionId, { useWorktree: options.useWorktree });
 
   const proc = Bun.spawn(cmd, {
     stdout: Bun.file(logPath),

@@ -7,6 +7,9 @@ import {
   registerRunner,
   heartbeatRunner,
   deregisterRunner,
+  isProcessAlive,
+  detectDeadRunners,
+  type RunnerState,
 } from "./mission-runner-state";
 
 function tmpPath(): string {
@@ -95,6 +98,70 @@ test("loadRunnerStatesUnlocked reads without lock", async () => {
 test("loadRunnerStatesUnlocked returns empty when no file", async () => {
   const path = tmpPath();
   expect(await loadRunnerStatesUnlocked(path)).toEqual([]);
+});
+
+test("isProcessAlive returns true for current process", () => {
+  expect(isProcessAlive(process.pid)).toBe(true);
+});
+
+test("isProcessAlive returns false for non-existent process", () => {
+  expect(isProcessAlive(999999)).toBe(false);
+});
+
+test("detectDeadRunners finds runners with dead PIDs", () => {
+  const runners: RunnerState[] = [
+    {
+      id: "r-1",
+      missionId: "m-1",
+      missionName: "Alpha",
+      pid: 999999,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      lastHeartbeat: new Date().toISOString(),
+      tasksProcessed: 0,
+      consecutiveIdles: 0,
+    },
+  ];
+  const dead = detectDeadRunners(runners);
+  expect(dead).toHaveLength(1);
+  expect(dead[0].missionId).toBe("m-1");
+  expect(dead[0].pid).toBe(999999);
+});
+
+test("detectDeadRunners skips stopped runners", () => {
+  const runners: RunnerState[] = [
+    {
+      id: "r-1",
+      missionId: "m-1",
+      missionName: "Alpha",
+      pid: 999999,
+      status: "stopped",
+      startedAt: new Date().toISOString(),
+      lastHeartbeat: new Date().toISOString(),
+      tasksProcessed: 0,
+      consecutiveIdles: 0,
+    },
+  ];
+  const dead = detectDeadRunners(runners);
+  expect(dead).toHaveLength(0);
+});
+
+test("detectDeadRunners skips alive runners", () => {
+  const runners: RunnerState[] = [
+    {
+      id: "r-1",
+      missionId: "m-1",
+      missionName: "Alpha",
+      pid: process.pid,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      lastHeartbeat: new Date().toISOString(),
+      tasksProcessed: 0,
+      consecutiveIdles: 0,
+    },
+  ];
+  const dead = detectDeadRunners(runners);
+  expect(dead).toHaveLength(0);
 });
 
 test("multiple runners tracked independently", async () => {

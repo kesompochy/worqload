@@ -2,6 +2,38 @@ import { EntityStore } from "./utils/entity-store";
 
 const DEFAULT_PATH = ".worqload/mission-runners.json";
 
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface DeadRunner {
+  runnerId: string;
+  missionId: string;
+  missionName: string;
+  pid: number;
+}
+
+export function detectDeadRunners(runners: RunnerState[]): DeadRunner[] {
+  const dead: DeadRunner[] = [];
+  for (const runner of runners) {
+    if (runner.status === "stopped") continue;
+    if (!isProcessAlive(runner.pid)) {
+      dead.push({
+        runnerId: runner.id,
+        missionId: runner.missionId,
+        missionName: runner.missionName,
+        pid: runner.pid,
+      });
+    }
+  }
+  return dead;
+}
+
 export interface RunnerState {
   id: string;
   missionId: string;

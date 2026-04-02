@@ -4,7 +4,7 @@ import { join } from "path";
 import { createTask } from "./task";
 import { TaskQueue } from "./queue";
 import { createMission, completeMission, addMissionPrinciple, loadMissions, type Mission } from "./mission";
-import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission, orientTask, ensureReportForDoneTask, shouldForceEscalation, ORIENT_ESCALATION_WINDOW } from "./mission-runner";
+import { findNextMissionTask, processTask, processPlanTask, iterateMission, spawnTask, runMission, orientTask, ensureReportForDoneTask, shouldForceEscalation, ORIENT_ESCALATION_WINDOW, buildActPrompt, REPORT_HUMAN_PREFIX, shouldUseWorktreeForTask } from "./mission-runner";
 import { HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "./task";
 import { load } from "./store";
 import { loadSpawns } from "./spawns";
@@ -770,7 +770,7 @@ describe("runMission persistence", () => {
   test("exits after idle timeout when no tasks appear", async () => {
     const missionPath = tmpPath("run-idle-m");
     const storePath = tmpPath("run-idle");
-    const mission = await createMission("idle-timeout", {}, missionPath);
+    const mission = await createMissionWithPrinciple("idle-timeout", missionPath);
     const queue = new TaskQueue(storePath);
     await queue.save();
 
@@ -860,7 +860,7 @@ describe("runMission persistence", () => {
   test("default idle timeout is 30 minutes", async () => {
     const missionPath = tmpPath("run-default-timeout-m");
     const storePath = tmpPath("run-default-timeout");
-    const mission = await createMission("default-timeout", {}, missionPath);
+    const mission = await createMissionWithPrinciple("default-timeout", missionPath);
     const queue = new TaskQueue(storePath);
     await queue.save();
 
@@ -882,7 +882,7 @@ describe("runMission error handling", () => {
   test("throws after maxRetries consecutive errors instead of retrying forever", async () => {
     const missionPath = tmpPath("run-retry-m");
     const storePath = tmpPath("run-retry");
-    const mission = await createMission("retry-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("retry-mission", missionPath);
 
     // Write invalid JSON so iterate always throws on queue.load()
     await Bun.write(storePath, "invalid json");
@@ -899,7 +899,7 @@ describe("runMission error handling", () => {
   test("applies exponential backoff between retries", async () => {
     const missionPath = tmpPath("run-backoff-m");
     const storePath = tmpPath("run-backoff");
-    const mission = await createMission("backoff-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("backoff-mission", missionPath);
     await Bun.write(storePath, "invalid json");
 
     const start = Date.now();
@@ -924,7 +924,7 @@ describe("runMission error handling", () => {
   test("resets retry counter on successful iteration", async () => {
     const missionPath = tmpPath("run-reset-m");
     const storePath = tmpPath("run-reset");
-    const mission = await createMission("reset-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("reset-mission", missionPath);
 
     // Set up valid store with a processable task and an in-progress task
     // (in-progress task prevents auto-complete after the first task finishes)
@@ -961,7 +961,7 @@ describe("runMission error handling", () => {
   test("includes last error message in the thrown error", async () => {
     const missionPath = tmpPath("run-errmsg-m");
     const storePath = tmpPath("run-errmsg");
-    const mission = await createMission("errmsg-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("errmsg-mission", missionPath);
     await Bun.write(storePath, "invalid json");
 
     await expect(runMission(mission.id, {
@@ -976,7 +976,7 @@ describe("runMission error handling", () => {
   test("uses default maxRetries of 5 when not specified", async () => {
     const missionPath = tmpPath("run-default-m");
     const storePath = tmpPath("run-default");
-    const mission = await createMission("default-mission", {}, missionPath);
+    const mission = await createMissionWithPrinciple("default-mission", missionPath);
     await Bun.write(storePath, "invalid json");
 
     await expect(runMission(mission.id, {
@@ -1345,6 +1345,38 @@ describe("processTask retry with backoff", () => {
     const result = findNextMissionTask(queue, missionId);
     expect(result?.id).toBe(task.id);
   });
+
+  test("processTask does not retry Report to human tasks on failure", async () => {
+    const storePath = tmpPath("retry-report-human");
+    const missionPath = tmpPath("retry-report-human-m");
+    const mission = await createMissionWithPrinciple("retry-report-human", missionPath);
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix login bug`, { sourceTaskId: "t-1", feedbackIds: ["f-1"] });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    await processTask(task, mission, { storePath, actCommand: ["sh", "-c", "exit 1"] });
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("failed");
+    expect(updated?.context.retryCount).toBeUndefined();
+  });
+
+  test("spawnTask does not retry Report to human tasks on failure", async () => {
+    const storePath = tmpPath("spawn-retry-report");
+    const missionPath = tmpPath("spawn-retry-report-m");
+    const spawnsPath = tmpPath("spawn-retry-report-s");
+    const mission = await createMissionWithPrinciple("spawn-retry-report", missionPath);
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix login bug`, { sourceTaskId: "t-1", feedbackIds: ["f-1"] });
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const result = await spawnTask(task, mission, ["sh", "-c", "exit 1"], { storePath, spawnsPath });
+    await result.completion;
+
+    const tasks = await load(storePath);
+    const updated = tasks.find(t => t.id === task.id);
+    expect(updated?.status).toBe("failed");
+    expect(updated?.context.retryCount).toBeUndefined();
+  });
 });
 
 describe("orientTask", () => {
@@ -1371,7 +1403,7 @@ describe("orientTask", () => {
     expect(orientLog?.content).toContain("Keep changes small");
   });
 
-  test("transitions to waiting_human when no principles are defined", async () => {
+  test("returns needs_principles and keeps task in observing when no principles are defined", async () => {
     const storePath = tmpPath("orient-no-principles");
     const missionPath = tmpPath("orient-no-principles-m");
     const mission = await createMission("orient-empty", {}, missionPath);
@@ -1380,13 +1412,14 @@ describe("orientTask", () => {
     await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
 
     const result = await orientTask(task.id, mission, storePath);
-    expect(result).toBe("escalated");
+    expect(result).toBe("needs_principles");
 
     const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
-    expect(updated?.status).toBe("waiting_human");
+    expect(updated?.status).toBe("observing");
     const orientLog = updated?.logs.find(l => l.phase === "orient");
-    expect(orientLog?.content).toContain(HUMAN_REQUIRED_PREFIX);
+    expect(orientLog?.content).toContain("Main session must set mission principles");
+    expect(orientLog?.content).not.toContain(HUMAN_REQUIRED_PREFIX);
   });
 
   test("orient log includes mission name", async () => {
@@ -1577,7 +1610,7 @@ describe("orientTask forced escalation", () => {
 });
 
 describe("processTask orient integration", () => {
-  test("escalates to waiting_human when mission has no principles", async () => {
+  test("keeps task in observing when mission has no principles", async () => {
     const storePath = tmpPath("process-no-principles");
     const missionPath = tmpPath("process-no-principles-m");
     const mission = await createMission("no-principles", {}, missionPath);
@@ -1588,9 +1621,9 @@ describe("processTask orient integration", () => {
 
     const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
-    expect(updated?.status).toBe("waiting_human");
+    expect(updated?.status).toBe("observing");
     const orientLog = updated?.logs.find(l => l.phase === "orient");
-    expect(orientLog?.content).toContain(HUMAN_REQUIRED_PREFIX);
+    expect(orientLog?.content).toContain("Main session must set mission principles");
   });
 
   test("proceeds to done when mission has principles", async () => {
@@ -1953,7 +1986,114 @@ describe("processTask report generation", () => {
   });
 });
 
-describe.skip("worktree fallback on spawn failure", () => {
+describe("buildActPrompt", () => {
+  const mission: Mission = {
+    id: "m-1",
+    name: "test-mission",
+    filter: {},
+    principles: ["Be helpful"],
+    priority: 0,
+    status: "active",
+    createdAt: new Date().toISOString(),
+  };
+
+  test("returns report-specific prompt for Report to human tasks", () => {
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix login bug`, {
+      sourceTaskId: "t-1",
+      feedbackIds: ["f-1"],
+    });
+    const prompt = buildActPrompt(task, mission);
+    expect(prompt).toContain("Report to human task");
+    expect(prompt).toContain("report add");
+    expect(prompt).not.toContain("Write tests first");
+    expect(prompt).not.toContain("Commit your changes");
+    expect(prompt).not.toContain("TDD");
+  });
+
+  test("returns default prompt for regular tasks", () => {
+    const task = createTask("Fix login bug");
+    const prompt = buildActPrompt(task, mission);
+    expect(prompt).toContain("Write tests first");
+    expect(prompt).toContain("Commit your changes");
+    expect(prompt).toContain("Principles:");
+  });
+
+  test("report prompt includes task context", () => {
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix bug`, {
+      sourceTaskId: "t-1",
+      feedbackIds: ["f-1"],
+    });
+    const prompt = buildActPrompt(task, mission);
+    expect(prompt).toContain("sourceTaskId");
+    expect(prompt).toContain("t-1");
+  });
+
+  test("report prompt embeds feedback messages when present in context", () => {
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix login`, {
+      sourceTaskId: "t-1",
+      feedbackIds: ["f-1"],
+      feedbackMessages: [
+        { from: "alice", message: "ログインが遅い" },
+      ],
+    });
+    const prompt = buildActPrompt(task, mission);
+    expect(prompt).toContain("alice");
+    expect(prompt).toContain("ログインが遅い");
+  });
+
+  test("report prompt embeds multiple feedback messages", () => {
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix issues`, {
+      sourceTaskId: "t-1",
+      feedbackIds: ["f-1", "f-2"],
+      feedbackMessages: [
+        { from: "bob", message: "バグがある" },
+        { from: "carol", message: "UIが分かりにくい" },
+      ],
+    });
+    const prompt = buildActPrompt(task, mission);
+    expect(prompt).toContain("bob");
+    expect(prompt).toContain("バグがある");
+    expect(prompt).toContain("carol");
+    expect(prompt).toContain("UIが分かりにくい");
+  });
+
+  test("report prompt works without feedbackMessages in context", () => {
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix bug`, {
+      sourceTaskId: "t-1",
+      feedbackIds: ["f-1"],
+    });
+    const prompt = buildActPrompt(task, mission);
+    expect(prompt).toContain("Report to human task");
+    expect(prompt).toContain("report add");
+  });
+});
+
+describe("shouldUseWorktreeForTask", () => {
+  test("returns true when context.useWorktree is true regardless of global option", () => {
+    expect(shouldUseWorktreeForTask({ useWorktree: true }, false)).toBe(true);
+    expect(shouldUseWorktreeForTask({ useWorktree: true }, true)).toBe(true);
+  });
+
+  test("returns false when context.useWorktree is false regardless of global option", () => {
+    expect(shouldUseWorktreeForTask({ useWorktree: false }, true)).toBe(false);
+    expect(shouldUseWorktreeForTask({ useWorktree: false }, false)).toBe(false);
+  });
+
+  test("falls back to global option when context.useWorktree is undefined", () => {
+    expect(shouldUseWorktreeForTask({}, true)).toBe(true);
+    expect(shouldUseWorktreeForTask({}, false)).toBe(false);
+  });
+
+  test("returns false when worktreeDisabled is true even if useWorktree is true", () => {
+    expect(shouldUseWorktreeForTask({ useWorktree: true, worktreeDisabled: true }, true)).toBe(false);
+  });
+
+  test("returns false when worktreeDisabled is true with global option", () => {
+    expect(shouldUseWorktreeForTask({ worktreeDisabled: true }, true)).toBe(false);
+  });
+});
+
+describe("worktree fallback on spawn failure", () => {
   test("sets worktreeDisabled in context when worktree spawn fails", async () => {
     const storePath = tmpPath("wt-fallback");
     const missionPath = tmpPath("wt-fallback-m");

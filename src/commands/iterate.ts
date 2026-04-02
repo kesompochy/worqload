@@ -14,6 +14,7 @@ import { runOnDoneHooks } from "../hooks";
 import type { ServerLogSummary } from "../server-log";
 import { loadRecentServerLogs, summarizeServerLogs } from "../server-log";
 import { loadConfig } from "../config";
+import { loadRunnerStatesUnlocked, detectDeadRunners, deregisterRunner, type DeadRunner } from "../mission-runner-state";
 import { dirname } from "path";
 
 export interface IterateContext {
@@ -26,6 +27,7 @@ export interface IterateContext {
   templatePath?: string;
   distilledRulesPath?: string;
   missionArchivePath?: string;
+  runnerStatePath?: string;
   codeChangeChecker?: CodeChangeChecker;
 }
 
@@ -64,6 +66,7 @@ export interface Observation {
   unreadReports: Report[];
   uncommittedChanges: string;
   serverLogSummary: ServerLogSummary | null;
+  deadRunners: DeadRunner[];
 }
 
 export interface RecoverResult {
@@ -329,7 +332,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
 
   const SERVER_LOG_OBSERVE_WINDOW_MS = 10 * 60 * 1000;
 
-  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, completedFeedbackTasks, rawUncommittedChanges, serverLogs, allReports] = await Promise.all([
+  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, completedFeedbackTasks, rawUncommittedChanges, serverLogs, allReports, runnerStates] = await Promise.all([
     loadFeedback(ctx.feedbackPath),
     loadMissions(ctx.missionsPath),
     runAllSources(ctx.sourcesPath).catch(() => [] as SourceResult[]),
@@ -339,12 +342,23 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     getUncommittedChanges(),
     loadRecentServerLogs(SERVER_LOG_OBSERVE_WINDOW_MS, ctx.serverLogPath).catch(() => [] as import("../server-log").ServerLogEntry[]),
     loadReports(ctx.reportsPath).catch(() => [] as Report[]),
+    loadRunnerStatesUnlocked(ctx.runnerStatePath).catch(() => [] as import("../mission-runner-state").RunnerState[]),
   ]);
   const uncommittedChanges = filterManagedPaths(rawUncommittedChanges, queue.getStorePath());
 
   const serverLogSummary = serverLogs.length > 0 ? summarizeServerLogs(serverLogs) : null;
   const stuckTasks = detectStuckTasks(activeTasks);
   const unreadReports = allReports.filter(r => r.status === "unread" && r.category === "human");
+  const deadRunners = detectDeadRunners(runnerStates);
+
+  // Mark dead runners as stopped to prevent repeated detection
+  for (const dead of deadRunners) {
+    try {
+      await deregisterRunner(dead.runnerId, ctx.runnerStatePath);
+    } catch {
+      // Best-effort cleanup
+    }
+  }
 
   return {
     feedbackSummary: summarizeFeedback(feedbackItems),
@@ -362,6 +376,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     unreadReports,
     uncommittedChanges,
     serverLogSummary,
+    deadRunners,
   };
 }
 
@@ -487,6 +502,13 @@ export function analyzeObservation(obs: Observation): string {
     tags.push("unread_reports");
     for (const r of obs.unreadReports) {
       lines.push(`unread_report: [${r.id.slice(0, SHORT_ID_LENGTH)}] ${r.title}`);
+    }
+  }
+
+  if (obs.deadRunners?.length > 0) {
+    tags.push("dead_runners");
+    for (const dr of obs.deadRunners) {
+      lines.push(`dead_runner: ${dr.missionName} (pid ${dr.pid})`);
     }
   }
 
@@ -643,8 +665,11 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   }
 
   // Failed tasks → retry by transitioning back to observing
+  // Report to human tasks are excluded: they don't perform code changes,
+  // so retrying yields the same failure. They should be recreated by iterate instead.
   const reactivatedMissions = new Set<string>();
   for (const failedTask of obs.failedTasks) {
+    if (failedTask.title.startsWith(REPORT_HUMAN_PREFIX)) continue;
     const actLogCount = failedTask.logs.filter(l => l.phase === "act").length;
     if (actLogCount < MAX_RETRY_ATTEMPTS) {
       queue.transition(failedTask.id, "observing");
@@ -699,15 +724,29 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   }
 
   // Completed feedback tasks → human report tasks
+  // Include original feedback messages so the spawned agent can write a human-facing response
+  const allFeedbackItems = ctx.feedbackPath
+    ? await loadFeedback(ctx.feedbackPath).catch(() => [] as import("../feedback").Feedback[])
+    : [];
   const humanReportTasks: string[] = [];
   for (const completed of obs.completedFeedbackTasks ?? []) {
     const title = `${REPORT_HUMAN_PREFIX} ${completed.title}`;
     if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
-      const task = createTask(title, {
+      const context: Record<string, unknown> = {
         sourceTaskId: completed.taskId,
         sourceTaskTitle: completed.title,
         feedbackIds: completed.feedbackIds,
-      }, TASK_PRIORITY.HUMAN_REPORT, "iterate");
+      };
+      if (allFeedbackItems.length > 0) {
+        const messages = completed.feedbackIds
+          .map(fid => allFeedbackItems.find(f => f.id === fid))
+          .filter((f): f is import("../feedback").Feedback => f !== undefined)
+          .map(f => ({ from: f.from, message: f.message }));
+        if (messages.length > 0) {
+          context.feedbackMessages = messages;
+        }
+      }
+      const task = createTask(title, context, TASK_PRIORITY.HUMAN_REPORT, "iterate");
       queue.enqueue(task);
       humanReportTasks.push(task.title);
     }

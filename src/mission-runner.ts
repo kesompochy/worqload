@@ -52,6 +52,15 @@ const MAX_TASK_RETRIES = 2;
 const RETRY_BASE_MS = 1000;
 const DEFAULT_SPAWN_TIMEOUT_MS = 30 * 60 * 1000;
 
+export function shouldUseWorktreeForTask(
+  context: Record<string, unknown>,
+  globalUseWorktree: boolean,
+): boolean {
+  if (context.worktreeDisabled) return false;
+  if (typeof context.useWorktree === "boolean") return context.useWorktree;
+  return globalUseWorktree;
+}
+
 class SpawnTimeoutError extends Error {
   constructor(timeoutMs: number) {
     super(`Spawn timed out after ${timeoutMs}ms`);
@@ -181,7 +190,7 @@ export async function ensureReportForDoneTask(
   });
 }
 
-export type OrientResult = "oriented" | "escalated";
+export type OrientResult = "oriented" | "escalated" | "needs_principles";
 
 export const ORIENT_ESCALATION_WINDOW = 5;
 
@@ -206,11 +215,11 @@ export async function orientTask(
 ): Promise<OrientResult> {
   if (mission.principles.length === 0) {
     await updateTask(taskId, (current) => ({
-      status: "waiting_human" as const,
+      status: "observing" as const,
       logs: [...current.logs, phaseLog("orient",
-        `${HUMAN_REQUIRED_PREFIX}Mission "${mission.name}" has no principles defined. Human guidance needed to orient task.`)],
+        `Main session must set mission principles for "${mission.name}" using: worqload mission principle ${mission.id} add <text>`)],
     }), storePath);
-    return "escalated";
+    return "needs_principles";
   }
 
   // Orient requires human expertise — force periodic escalation
@@ -261,7 +270,30 @@ function isPlanTask(task: Task): boolean {
   return task.context.plan === true;
 }
 
-function buildActPrompt(task: Task, mission: Mission): string {
+export const REPORT_HUMAN_PREFIX = "Report to human:";
+
+function isReportToHumanTask(task: Task): boolean {
+  return task.title.startsWith(REPORT_HUMAN_PREFIX);
+}
+
+export function buildActPrompt(task: Task, mission: Mission): string {
+  if (isReportToHumanTask(task)) {
+    return buildReportToHumanPrompt(task, mission);
+  }
+  return buildDefaultActPrompt(task, mission);
+}
+
+function buildReportToHumanPrompt(task: Task, mission: Mission): string {
+  const parts = [`Task: ${task.title}`];
+  if (Object.keys(task.context).length > 0) {
+    parts.push(`Context: ${JSON.stringify(task.context)}`);
+  }
+  parts.push(`Mission: ${mission.name}`);
+  parts.push(`\nInstructions:\n- This is a Report to human task. Your goal is to write a report for the human who gave feedback.\n- Read the source task's logs and the original feedback to understand what was done.\n- Write a clear, concise report in Japanese summarizing: what the feedback requested, what was done, and the outcome.\n- Use $WORQLOAD_CLI report add $WORQLOAD_TASK_ID "<title>" "<content>" to create the report.\n- Do NOT write code, tests, or commits. This task is purely about communication.\n- The report should answer the human's original question/feedback, not describe internal implementation details.`);
+  return parts.join("\n");
+}
+
+function buildDefaultActPrompt(task: Task, mission: Mission): string {
   const parts = [`Task: ${task.title}`];
   if (Object.keys(task.context).length > 0) {
     parts.push(`Context: ${JSON.stringify(task.context)}`);
@@ -393,7 +425,7 @@ export async function spawnTask(
       if (timedOut) {
         await updateTask(task.id, (current) => {
           const retryCount = (current.context.retryCount as number) || 0;
-          if (retryCount < MAX_TASK_RETRIES) {
+          if (retryCount < MAX_TASK_RETRIES && !isReportToHumanTask(task)) {
             const newRetryCount = retryCount + 1;
             const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
             return {
@@ -444,7 +476,7 @@ export async function spawnTask(
           return { status: "waiting_human" as const, logs: escalationLogs, owner: undefined };
         } else {
           const retryCount = (current.context.retryCount as number) || 0;
-          if (retryCount < MAX_TASK_RETRIES) {
+          if (retryCount < MAX_TASK_RETRIES && !isReportToHumanTask(task)) {
             const newRetryCount = retryCount + 1;
             const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
             const retryLogs = [...logs, {
@@ -520,7 +552,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
 
       // Orient — validate task against mission principles
       const orientResult = await orientTask(task.id, mission, storePath);
-      if (orientResult === "escalated") {
+      if (orientResult === "escalated" || orientResult === "needs_principles") {
         await updateTask(task.id, (current) => ({ owner: undefined }), storePath);
         return;
       }
@@ -534,7 +566,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
 
     // Act — spawn agent process, optionally in a git worktree for isolation
     let worktreeInfo: { worktreePath: string; branchName: string } | undefined;
-    if (useWorktree && !claimed.context.worktreeDisabled) {
+    if (shouldUseWorktreeForTask(claimed.context, useWorktree ?? false)) {
       try {
         worktreeInfo = await createWorktree(task.id);
       } catch (error) {
@@ -568,7 +600,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
     } catch (error) {
       if (error instanceof SpawnTimeoutError) {
         const retryCount = (claimed.context.retryCount as number) || 0;
-        if (retryCount < MAX_TASK_RETRIES) {
+        if (retryCount < MAX_TASK_RETRIES && !isReportToHumanTask(task)) {
           const newRetryCount = retryCount + 1;
           const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
           await updateTask(task.id, (current) => ({
@@ -653,7 +685,8 @@ export async function processTask(task: Task, mission: Mission, options: Process
       console.log(`Escalated: ${task.title}`);
     } else {
       const retryCount = (claimed.context.retryCount as number) || 0;
-      if (retryCount < MAX_TASK_RETRIES) {
+      const skipRetry = isReportToHumanTask(claimed);
+      if (!skipRetry && retryCount < MAX_TASK_RETRIES) {
         const newRetryCount = retryCount + 1;
         const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
         const disableWorktree = !!worktreeInfo;
@@ -794,10 +827,12 @@ export async function runMission(missionId: string, options: MissionRunnerOption
   process.on("SIGHUP", sighupHandler);
 
   const mission = await resolveMission(missionId, missionsPath);
-  console.log(`Mission agent started: ${mission.name}`);
-  if (mission.principles.length > 0) {
-    console.log(`Principles: ${mission.principles.join("; ")}`);
+  if (mission.principles.length === 0) {
+    console.error(`Mission "${mission.name}" has no principles. Main session must set principles using: worqload mission principle ${mission.id} add <text>`);
+    return;
   }
+  console.log(`Mission agent started: ${mission.name}`);
+  console.log(`Principles: ${mission.principles.join("; ")}`);
 
   const runnerState = await registerRunner(mission.id, mission.name, process.pid, runnerStatePath);
 
@@ -824,15 +859,18 @@ export async function runMission(missionId: string, options: MissionRunnerOption
           tasksProcessed,
         }, runnerStatePath);
 
-        if (useWorktree) {
-          // Parallel: process all eligible tasks concurrently in worktrees
-          const queue2 = new TaskQueue(storePath);
-          await queue2.load();
-          const eligible = findAllEligibleTasks(queue2, mission.id);
-          if (eligible.length > 1) {
+        {
+          // Parallel: when multiple eligible tasks have worktree enabled
+          // (per-task context or global option), process them concurrently
+          const iterQueue = new TaskQueue(storePath);
+          await iterQueue.load();
+          const eligible = findAllEligibleTasks(iterQueue, mission.id);
+          const worktreeEligible = eligible.filter(t =>
+            shouldUseWorktreeForTask(t.context, useWorktree ?? false));
+          if (worktreeEligible.length > 1) {
             const missionObj = await resolveMission(mission.id, missionsPath);
-            const promises = eligible.map(t =>
-              processTask(t, missionObj, { storePath, actCommand, missionsPath, spawnTimeoutMs, reportsPath, useWorktree: true })
+            const promises = worktreeEligible.map(t =>
+              processTask(t, missionObj, { storePath, actCommand, missionsPath, spawnTimeoutMs, reportsPath, useWorktree })
                 .catch(err => console.error(`Parallel task failed: ${t.title.slice(0, 40)} - ${err}`))
             );
             await Promise.all(promises);
@@ -840,8 +878,6 @@ export async function runMission(missionId: string, options: MissionRunnerOption
           } else {
             result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs, reportsPath, useWorktree });
           }
-        } else {
-          result = await iterateMission(mission.id, { storePath, missionsPath, spawnCommand, spawnsPath, actCommand, spawnTimeoutMs, reportsPath, useWorktree });
         }
         consecutiveErrors = 0;
       } catch (error) {

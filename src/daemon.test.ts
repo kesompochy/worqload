@@ -51,6 +51,16 @@ describe("buildDaemonCommand", () => {
     const cmd = buildDaemonCommand("abc123");
     expect(cmd[0]).toBe("nohup");
   });
+
+  test("includes --worktree flag when useWorktree is true", () => {
+    const cmd = buildDaemonCommand("abc123", { useWorktree: true });
+    expect(cmd).toContain("--worktree");
+  });
+
+  test("does not include --worktree flag by default", () => {
+    const cmd = buildDaemonCommand("abc123");
+    expect(cmd).not.toContain("--worktree");
+  });
 });
 
 afterEach(() => {
