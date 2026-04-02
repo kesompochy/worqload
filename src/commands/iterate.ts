@@ -1,6 +1,6 @@
 import type { TaskQueue } from "../queue";
 import type { Task } from "../task";
-import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX, getHumanQuestion } from "../task";
+import { createTask, SHORT_ID_LENGTH, HUMAN_REQUIRED_PREFIX, getHumanQuestion, isTerminal } from "../task";
 import type { FeedbackSummary } from "../feedback";
 import { loadFeedback, summarizeFeedback, distillFeedback, extractObservationalContent, verifyDistilledRules, markRuleTaskCreated, acknowledgeFeedback, type CodeChangeChecker } from "../feedback";
 import type { Mission } from "../mission";
@@ -159,8 +159,7 @@ export function recoverStuckTasks(queue: TaskQueue, stuckTasks: StuckTask[]): Re
 }
 
 const MAX_SUSPICIOUS_RETRIES = 2;
-const ITERATE_CREATOR = "iterate";
-const WORQLOAD_CREATOR = "worqload";
+const SYSTEM_CREATOR = "worqload";
 
 // Requeue suspicious done tasks directly in iterate (main session),
 // avoiding the "who monitors the monitors?" problem by keeping audit
@@ -174,7 +173,7 @@ export function requeueSuspiciousTasks(queue: TaskQueue, suspiciousTasks: Suspic
     if (!task) continue;
 
     // Skip system-generated iterate/worqload tasks — they are internal bookkeeping
-    if (task.createdBy === ITERATE_CREATOR || task.createdBy === WORQLOAD_CREATOR) continue;
+    if (task.createdBy === SYSTEM_CREATOR) continue;
 
     const actLogCount = task.logs.filter(l => l.phase === "act").length;
     queue.addLog(task.id, "act", `[SUSPICIOUS] requeued: ${suspicious.reasons.join(", ")}`);
@@ -648,7 +647,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   // Uncommitted changes → commit task
   if (obs.uncommittedChanges.length > 0) {
     if (!hasDuplicateTask(queue, obs.tasks, COMMIT_TASK_TITLE, archivedTasks)) {
-      const task = createTask(COMMIT_TASK_TITLE, { gitStatus: obs.uncommittedChanges }, TASK_PRIORITY.COMMIT, "iterate");
+      const task = createTask(COMMIT_TASK_TITLE, { gitStatus: obs.uncommittedChanges }, TASK_PRIORITY.COMMIT, "worqload");
       queue.enqueue(task);
       createdTasks.push(task.title);
     }
@@ -661,7 +660,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   for (const theme of obs.feedbackSummary.themes) {
     const title = `Review feedback: ${theme.description}`;
     if (!hasDuplicateTask(queue, obs.tasks, REVIEW_FEEDBACK_PREFIX, archivedTasks, { prefixMatch: true, includeDone: true })) {
-      const task = createTask(title, { feedbackIds: theme.feedbackIds }, TASK_PRIORITY.FEEDBACK_REVIEW, "iterate");
+      const task = createTask(title, { feedbackIds: theme.feedbackIds }, TASK_PRIORITY.FEEDBACK_REVIEW, "worqload");
       queue.enqueue(task);
       createdTasks.push(task.title);
       for (const fid of theme.feedbackIds) feedbackIdsToAck.add(fid);
@@ -674,7 +673,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     if (observations.length > 0) {
       const title = `${INVESTIGATE_FEEDBACK_PREFIX} ${observations[0]}`;
       if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
-        const task = createTask(title, { feedbackIds: [feedback.id], observations }, TASK_PRIORITY.FEEDBACK_INVESTIGATE, "iterate");
+        const task = createTask(title, { feedbackIds: [feedback.id], observations }, TASK_PRIORITY.FEEDBACK_INVESTIGATE, "worqload");
         queue.enqueue(task);
         createdTasks.push(task.title);
         feedbackIdsToAck.add(feedback.id);
@@ -732,7 +731,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
       if (justDistilledRuleIds.has(rule.id)) continue;
       const title = `${IMPLEMENT_RULE_PREFIX} ${rule.rule}`;
       if (!hasDuplicateTask(queue, obs.tasks, title, archivedTasks)) {
-        const task = createTask(title, { distilledRuleId: rule.id, rule: rule.rule }, TASK_PRIORITY.IMPLEMENT_RULE, "iterate");
+        const task = createTask(title, { distilledRuleId: rule.id, rule: rule.rule }, TASK_PRIORITY.IMPLEMENT_RULE, "worqload");
         queue.enqueue(task);
         createdTasks.push(task.title);
         unverifiedRules.push(rule.rule);
@@ -764,7 +763,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
           context.feedbackMessages = messages;
         }
       }
-      const task = createTask(title, context, TASK_PRIORITY.HUMAN_REPORT, "iterate");
+      const task = createTask(title, context, TASK_PRIORITY.HUMAN_REPORT, "worqload");
       queue.enqueue(task);
       humanReportTasks.push(task.title);
     }
@@ -784,7 +783,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   if (isQueueEmpty && nothingGeneratedYet && obs.principles) {
     const derived = deriveAutonomousTasks(obs, queue, archivedTasks);
     for (const { title, context } of derived) {
-      const task = createTask(title, context, TASK_PRIORITY.AUTONOMOUS, "iterate");
+      const task = createTask(title, context, TASK_PRIORITY.AUTONOMOUS, "worqload");
       queue.enqueue(task);
       autonomousTasks.push(task.title);
       const fids = extractFeedbackIds(context);
@@ -813,7 +812,7 @@ export interface CleanupResult {
 
 export async function performActCleanup(queue: TaskQueue, ctx: IterateContext): Promise<CleanupResult> {
   const archivableIds = queue.list()
-    .filter(t => t.status === "done" || t.status === "failed")
+    .filter(isTerminal)
     .map(t => t.id);
   const archived = await queue.archive(archivableIds);
 

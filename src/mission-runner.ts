@@ -73,16 +73,7 @@ export function findAllEligibleTasks(queue: TaskQueue, missionId: string): Task[
 }
 
 export function findNextMissionTask(queue: TaskQueue, missionId: string): Task | undefined {
-  const tasks = queue.getByMission(missionId);
-  let best: Task | undefined;
-  for (const task of tasks) {
-    if (!isEligible(task)) continue;
-    if (!best || task.priority > best.priority ||
-        (task.priority === best.priority && task.createdAt < best.createdAt)) {
-      best = task;
-    }
-  }
-  return best;
+  return findAllEligibleTasks(queue, missionId)[0];
 }
 
 async function resolveMission(missionId: string, path?: string): Promise<Mission> {

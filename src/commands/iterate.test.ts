@@ -3175,9 +3175,9 @@ describe("requeueSuspiciousTasks", () => {
     expect(suspiciousLog!.content).toContain("no report found");
   });
 
-  test("skips iterate tasks (createdBy iterate)", () => {
+  test("skips system tasks (createdBy worqload)", () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
-    const task = createTask("Iterate: OODA cycle", {}, 0, "iterate");
+    const task = createTask("Iterate: OODA cycle", {}, 0, "worqload");
     queue.enqueue(task);
     queue.transition(task.id, "done");
 
