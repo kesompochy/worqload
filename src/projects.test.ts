@@ -11,15 +11,19 @@ test("loadProjects returns empty array when file does not exist", async () => {
   expect(await loadProjects(tmpPath())).toEqual([]);
 });
 
-test("registerProject creates and persists a project", async () => {
+test("registerProject creates and persists a project with auto-generated id", async () => {
   const path = tmpPath();
   const project = await registerProject("/tmp/my-project", "my-project", path);
 
+  expect(project.id).toBeDefined();
+  expect(typeof project.id).toBe("string");
+  expect(project.id.length).toBeGreaterThan(0);
   expect(project.name).toBe("my-project");
   expect(project.path).toBe("/tmp/my-project");
 
   const loaded = await loadProjects(path);
   expect(loaded).toHaveLength(1);
+  expect(loaded[0].id).toBe(project.id);
   expect(loaded[0].name).toBe("my-project");
 });
 
