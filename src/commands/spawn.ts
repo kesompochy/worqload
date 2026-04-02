@@ -3,13 +3,13 @@ import type { TaskQueue } from "../queue";
 import { loadSpawns, recordSpawnStart, recordSpawnFinish } from "../spawns";
 import { loadConfig } from "../config";
 import { updateTask } from "../store";
-import type { Task, OodaPhase } from "../task";
-import { validateTransition, ESCALATION_EXIT_CODE, HUMAN_REQUIRED_PREFIX } from "../task";
 import { resolveTask } from "./resolve";
 import { loadMissions } from "../mission";
 import { runOnDoneHooks } from "../hooks";
 import { createWorktree, removeWorktree, mergeWorktreeBranch } from "../worktree";
 import { loadRunnerStates, isProcessAlive } from "../mission-runner-state";
+import { spawnWithTimeout, SpawnTimeoutError, buildTaskEnv, truncateOutput, killProcessTree, DEFAULT_SPAWN_TIMEOUT_MS, buildSpawnOutcomeUpdate, buildSpawnTimeoutUpdate } from "../spawn-executor";
+import { isTerminal } from "../task";
 
 async function runHook(command: string, env: Record<string, string>): Promise<{ output: string; exitCode: number }> {
   const proc = Bun.spawn(["sh", "-c", command], {
@@ -32,8 +32,6 @@ function parseEnvOutput(output: string): Record<string, string> {
   return vars;
 }
 
-const DEFAULT_SPAWN_TIMEOUT_MS = 30 * 60 * 1000;
-
 export async function spawn(queue: TaskQueue, args: string[], options?: { spawnTimeoutMs?: number }) {
   const task = resolveTask(queue, args[0]);
   const commandArgs = args.slice(1);
@@ -42,7 +40,7 @@ export async function spawn(queue: TaskQueue, args: string[], options?: { spawnT
     exitWithError("Example: worqload spawn abc123 claude -p 'Process this task'");
   }
 
-  if (task.status === "done" || task.status === "failed") {
+  if (isTerminal(task)) {
     console.log(`Spawn skip: task already ${task.status} (${task.title})`);
     return;
   }
@@ -60,20 +58,20 @@ export async function spawn(queue: TaskQueue, args: string[], options?: { spawnT
   await queue.save();
 
   const config = await loadConfig();
-  const taskEnv: Record<string, string> = {
-    WORQLOAD_CLI: Bun.which("worqload") ?? process.argv[0],
-    WORQLOAD_TASK_ID: task.id,
-    WORQLOAD_TASK_TITLE: task.title,
-    WORQLOAD_TASK_CONTEXT: JSON.stringify(task.context),
-  };
-
+  let missionPrinciples: string[] | undefined;
   if (task.missionId) {
     const missions = await loadMissions();
     const m = missions.find(mi => mi.id === task.missionId);
     if (m && m.principles && m.principles.length > 0) {
-      taskEnv.WORQLOAD_MISSION_PRINCIPLES = m.principles.join("\n");
+      missionPrinciples = m.principles;
     }
   }
+  const taskEnv = buildTaskEnv({
+    taskId: task.id,
+    taskTitle: task.title,
+    taskContext: task.context,
+    missionPrinciples,
+  });
 
   let spawnCwd: string | undefined;
   if (config.spawn?.pre) {
@@ -109,41 +107,36 @@ export async function spawn(queue: TaskQueue, args: string[], options?: { spawnT
 
   console.log(`Spawning: ${task.title} (${owner}${spawnCwd ? `, cwd: ${spawnCwd}` : ''})`);
 
-  const proc = Bun.spawn(commandArgs, {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, ...taskEnv },
-    ...(spawnCwd ? { cwd: spawnCwd } : {}),
-  });
-  const spawnRecord = await recordSpawnStart(
-    task.id, task.title, owner, proc.pid, undefined,
-    worktreeInfo ? { worktreePath: worktreeInfo.worktreePath, branchName: worktreeInfo.branchName } : undefined,
-  );
-
   const timeoutMs = options?.spawnTimeoutMs ?? DEFAULT_SPAWN_TIMEOUT_MS;
   let timedOut = false;
-  const timeoutId = setTimeout(() => {
-    timedOut = true;
-    killProcessTree(proc.pid);
-  }, timeoutMs);
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
-  clearTimeout(timeoutId);
+  let exitCode = -1;
+  let spawnRecordId: string | undefined;
 
   try {
-    if (timedOut) {
-      await recordSpawnFinish(spawnRecord.id, -1);
-      queue.addLog(task.id, "act", `[TIMEOUT] Spawn timed out after ${timeoutMs}ms`);
-      queue.transition(task.id, "failed");
-      queue.update(task.id, { owner: undefined });
-      await queue.save();
-      console.error(`Timeout: ${task.title}`);
-      return;
+    let spawnResult;
+    try {
+      spawnResult = await spawnWithTimeout(commandArgs, { ...process.env, ...taskEnv }, timeoutMs, spawnCwd, {
+        onStart: async (pid) => {
+          const record = await recordSpawnStart(
+            task.id, task.title, owner, pid, undefined,
+            worktreeInfo ? { worktreePath: worktreeInfo.worktreePath, branchName: worktreeInfo.branchName } : undefined,
+          );
+          spawnRecordId = record.id;
+        },
+      });
+    } catch (error) {
+      if (error instanceof SpawnTimeoutError) {
+        timedOut = true;
+        if (spawnRecordId) await recordSpawnFinish(spawnRecordId, -1);
+        await updateTask(task.id, (current) => buildSpawnTimeoutUpdate(timeoutMs, current), queue.getStorePath());
+        console.error(`Timeout: ${task.title}`);
+        return;
+      }
+      throw error;
     }
 
-    await recordSpawnFinish(spawnRecord.id, exitCode);
+    exitCode = spawnResult.exitCode;
+    if (spawnRecordId) await recordSpawnFinish(spawnRecordId, exitCode);
 
     const postEnv: Record<string, string> = {
       ...taskEnv,
@@ -164,29 +157,16 @@ export async function spawn(queue: TaskQueue, args: string[], options?: { spawnT
       }
     }
 
-    const output = (stdout + stderr).trim();
-    const truncated = output.length > 2000 ? output.slice(-2000) : output;
+    const output = (spawnResult.stdout + spawnResult.stderr).trim();
+    const truncated = truncateOutput(output);
 
-    // Atomically update only this task in tasks.json to avoid overwriting other changes
     const updated = await updateTask(task.id, (current) => {
-      const logs = [...current.logs, { phase: "act" as OodaPhase, content: truncated, timestamp: new Date().toISOString() }];
-      const alreadyTerminal = current.status === "done" || current.status === "failed";
-      if (alreadyTerminal) {
-        console.log(`Already ${current.status}: ${task.title}`);
-        return { logs, owner: undefined };
-      } else if (exitCode === 0) {
-        console.log(`Done: ${task.title}`);
-        return { status: "done" as const, logs, owner: undefined };
-      } else if (exitCode === ESCALATION_EXIT_CODE) {
-        const question = truncated || "Spawned agent requested human escalation";
-        const escalationLogs = [...logs, { phase: "orient" as OodaPhase, content: `${HUMAN_REQUIRED_PREFIX}${question}`, timestamp: new Date().toISOString() }];
-        console.log(`Escalated: ${task.title}`);
-        return { status: "waiting_human" as const, logs: escalationLogs, owner: undefined };
-      } else {
-        console.log(`Failed: ${task.title} (exit: ${exitCode})`);
-        const failLogs = [...logs, { phase: "act" as OodaPhase, content: `[FAILED] exit code ${exitCode}`, timestamp: new Date().toISOString() }];
-        return { status: "failed" as const, logs: failLogs, owner: undefined };
-      }
+      const update = buildSpawnOutcomeUpdate(exitCode, truncated, current);
+      if (!update.status) console.log(`Already ${current.status}: ${task.title}`);
+      else if (update.status === "done") console.log(`Done: ${task.title}`);
+      else if (update.status === "waiting_human") console.log(`Escalated: ${task.title}`);
+      else if (update.status === "failed") console.log(`Failed: ${task.title} (exit: ${exitCode})`);
+      return update;
     }, queue.getStorePath());
 
     if (updated?.status === "done") {
@@ -220,14 +200,6 @@ function isProcessRunning(pid: number): boolean {
 
 const IN_PROGRESS_STATUSES = new Set(["observing", "orienting", "deciding", "acting"]);
 const SPAWN_CLEANUP_TIMEOUT_MS = 30 * 60 * 1000;
-
-function killProcessTree(pid: number): void {
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    try { process.kill(pid, "SIGKILL"); } catch { /* already dead */ }
-  }
-}
 
 export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?: string, repoDir?: string, runnerStatePath?: string): Promise<void> {
   const spawns = await loadSpawns(spawnsPath);

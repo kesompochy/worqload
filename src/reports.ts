@@ -40,6 +40,7 @@ export async function addReport(title: string, content: string, createdBy: strin
     title,
     content,
     status: "unread" as const,
+    mainSessionStatus: "unread" as const,
     createdBy,
     createdAt: new Date().toISOString(),
     category,
@@ -49,6 +50,14 @@ export async function addReport(title: string, content: string, createdBy: strin
 
 export async function updateReportStatus(id: string, status: ReportStatus, path?: string): Promise<void> {
   await store.update(id, { status }, path);
+}
+
+export async function updateMainSessionReportStatus(id: string, status: ReportStatus, path?: string): Promise<void> {
+  await store.update(id, { mainSessionStatus: status }, path);
+}
+
+export async function findReportById(id: string, path?: string): Promise<Report | undefined> {
+  return store.findById(id, path);
 }
 
 export async function removeReport(id: string, path?: string): Promise<void> {
