@@ -1,14 +1,33 @@
 import { loadMissions, completeMission, failMission } from "./mission";
 import type { Mission } from "./mission";
 import { TaskQueue } from "./queue";
-import type { Task, OodaPhase } from "./task";
-import { createTask, HUMAN_REQUIRED_PREFIX, ESCALATION_EXIT_CODE } from "./task";
+import type { Task } from "./task";
+import { createTask, ESCALATION_EXIT_CODE, HUMAN_REQUIRED_PREFIX } from "./task";
 import { updateTask, load, save } from "./store";
 import { runOnDoneHooks } from "./hooks";
-import { recordSpawnStart, recordSpawnFinish } from "./spawns";
 import { registerRunner, heartbeatRunner, deregisterRunner } from "./mission-runner-state";
-import { loadReports, addReport, isVacuousContent, humanFriendlyReportTitle } from "./reports";
 import { createWorktree, mergeWorktreeBranch, removeWorktree } from "./worktree";
+import { orientTask, shouldForceEscalation, ORIENT_ESCALATION_WINDOW } from "./mission-runner-orient";
+import type { OrientResult } from "./mission-runner-orient";
+import { buildActPrompt, ensureReportForDoneTask, isPlanTask, isReportToHumanTask, REPORT_HUMAN_PREFIX } from "./mission-runner-act";
+import type { EnsureReportOptions } from "./mission-runner-act";
+import { spawnWithTimeout, SpawnTimeoutError, DEFAULT_SPAWN_TIMEOUT_MS, killProcessTree, buildTaskEnv, truncateOutput } from "./spawn-executor";
+import type { SpawnWithTimeoutResult } from "./spawn-executor";
+import { MAX_TASK_RETRIES, RETRY_BASE_MS, canRetry, computeRetryUpdate, phaseLog } from "./mission-runner-retry";
+import type { RetryUpdate } from "./mission-runner-retry";
+import { spawnTask } from "./mission-runner-spawn";
+
+// Re-export sub-module APIs for backward compatibility
+export { orientTask, shouldForceEscalation, ORIENT_ESCALATION_WINDOW } from "./mission-runner-orient";
+export type { OrientResult } from "./mission-runner-orient";
+export { buildActPrompt, ensureReportForDoneTask, isPlanTask, isReportToHumanTask, REPORT_HUMAN_PREFIX } from "./mission-runner-act";
+export type { EnsureReportOptions } from "./mission-runner-act";
+export { spawnWithTimeout, SpawnTimeoutError, DEFAULT_SPAWN_TIMEOUT_MS, killProcessTree, buildTaskEnv, truncateOutput } from "./spawn-executor";
+export type { SpawnWithTimeoutResult } from "./spawn-executor";
+export { MAX_TASK_RETRIES, RETRY_BASE_MS, canRetry, computeRetryUpdate, phaseLog } from "./mission-runner-retry";
+export type { RetryUpdate } from "./mission-runner-retry";
+export { spawnTask } from "./mission-runner-spawn";
+export type { SpawnCompletion, SpawnResult } from "./mission-runner-spawn";
 
 export interface MissionRunnerOptions {
   pollIntervalMs?: number;
@@ -28,17 +47,6 @@ export interface MissionRunnerOptions {
 
 export type IterationResult = "processed" | "idle" | "mission_completed" | "mission_failed" | "spawned";
 
-export interface SpawnCompletion {
-  exitCode: number;
-  output: string;
-}
-
-export interface SpawnResult {
-  spawnId: string;
-  pid: number;
-  completion: Promise<SpawnCompletion>;
-}
-
 export interface ProcessTaskOptions {
   storePath?: string;
   actCommand?: string[];
@@ -48,10 +56,6 @@ export interface ProcessTaskOptions {
   useWorktree?: boolean;
 }
 
-const MAX_TASK_RETRIES = 2;
-const RETRY_BASE_MS = 1000;
-const DEFAULT_SPAWN_TIMEOUT_MS = 30 * 60 * 1000;
-
 export function shouldUseWorktreeForTask(
   context: Record<string, unknown>,
   globalUseWorktree: boolean,
@@ -59,61 +63,6 @@ export function shouldUseWorktreeForTask(
   if (context.worktreeDisabled) return false;
   if (typeof context.useWorktree === "boolean") return context.useWorktree;
   return globalUseWorktree;
-}
-
-class SpawnTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`Spawn timed out after ${timeoutMs}ms`);
-    this.name = "SpawnTimeoutError";
-  }
-}
-
-interface SpawnWithTimeoutResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-function killProcessTree(pid: number): void {
-  try { process.kill(-pid, "SIGKILL"); } catch {}
-  try { process.kill(pid, "SIGKILL"); } catch {}
-}
-
-async function spawnWithTimeout(
-  command: string[],
-  env: Record<string, string | undefined>,
-  timeoutMs: number,
-  cwd?: string,
-): Promise<SpawnWithTimeoutResult> {
-  const proc = Bun.spawn(command, {
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-    ...(cwd ? { cwd } : {}),
-  });
-
-  console.log(`[spawn] PID ${proc.pid} started: ${command[0]} (timeout: ${Math.round(timeoutMs / 1000)}s${cwd ? `, cwd: ${cwd}` : ""})`);
-
-  let timeoutId: ReturnType<typeof setTimeout>;
-
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      console.log(`[spawn] PID ${proc.pid} timed out after ${Math.round(timeoutMs / 1000)}s`);
-      killProcessTree(proc.pid);
-      reject(new SpawnTimeoutError(timeoutMs));
-    }, timeoutMs);
-  });
-
-  const completionPromise = (async () => {
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
-    clearTimeout(timeoutId);
-    console.log(`[spawn] PID ${proc.pid} exited: code=${exitCode}, stdout=${stdout.length}B, stderr=${stderr.length}B`);
-    return { stdout, stderr, exitCode };
-  })();
-
-  return Promise.race([completionPromise, timeoutPromise]);
 }
 
 export function findAllEligibleTasks(queue: TaskQueue, missionId: string): Task[] {
@@ -138,191 +87,11 @@ export function findNextMissionTask(queue: TaskQueue, missionId: string): Task |
   return best;
 }
 
-function phaseLog(phase: OodaPhase, content: string) {
-  return { phase, content, timestamp: new Date().toISOString() };
-}
-
-function formatContextForOrient(context: Record<string, unknown>): string {
-  const keys = Object.keys(context);
-  if (keys.length === 0) return "";
-  const parts: string[] = [];
-  if (Array.isArray(context.observations)) {
-    parts.push(context.observations.join("; "));
-  }
-  if (typeof context.feedbackId === "string") {
-    parts.push(`feedback: ${context.feedbackId}`);
-  }
-  if (Array.isArray(context.feedbackIds)) {
-    parts.push(`feedback: ${context.feedbackIds.join(", ")}`);
-  }
-  if (Array.isArray(context.principles)) {
-    parts.push(`principles: ${context.principles.join(", ")}`);
-  }
-  if (parts.length === 0) {
-    return JSON.stringify(context);
-  }
-  return parts.join("; ");
-}
-
-export interface EnsureReportOptions {
-  reportsPath?: string;
-}
-
-export async function ensureReportForDoneTask(
-  task: Task,
-  missionName: string,
-  options: EnsureReportOptions = {},
-): Promise<void> {
-  if (isReportToHumanTask(task)) return;
-
-  const { reportsPath } = options;
-
-  const reports = await loadReports(reportsPath);
-  const existingReport = reports.find(r => r.taskId === task.id);
-  if (existingReport) return;
-
-  const actLogs = task.logs
-    .filter(l => l.phase === "act")
-    .map(l => l.content)
-    .filter(c => !c.startsWith("[RETRY]") && !c.startsWith("[FAILED]") && !c.startsWith("[TIMEOUT]"));
-
-  const substantiveLogs = actLogs.filter(c => !isVacuousContent(c));
-  if (substantiveLogs.length === 0) return;
-
-  await addReport(humanFriendlyReportTitle(task.title), substantiveLogs.join("\n\n"), `mission:${missionName}`, {
-    taskId: task.id,
-    path: reportsPath,
-  });
-}
-
-export type OrientResult = "oriented" | "escalated" | "needs_principles";
-
-export const ORIENT_ESCALATION_WINDOW = 5;
-
-export function shouldForceEscalation(missionTasks: Task[], window: number = ORIENT_ESCALATION_WINDOW): boolean {
-  const terminalTasks = missionTasks
-    .filter(t => t.status === "done" || t.status === "failed")
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-  if (terminalTasks.length < window) return false;
-
-  const recentTasks = terminalTasks.slice(0, window);
-  const hasEscalation = recentTasks.some(t =>
-    t.logs.some(l => l.phase === "orient" && l.content.includes(HUMAN_REQUIRED_PREFIX)));
-
-  return !hasEscalation;
-}
-
-export async function orientTask(
-  taskId: string,
-  mission: Mission,
-  storePath?: string,
-): Promise<OrientResult> {
-  if (mission.principles.length === 0) {
-    await updateTask(taskId, (current) => ({
-      status: "observing" as const,
-      logs: [...current.logs, phaseLog("orient",
-        `Main session must set mission principles for "${mission.name}" using: worqload mission principle ${mission.id} add <text>`)],
-    }), storePath);
-    return "needs_principles";
-  }
-
-  // Orient requires human expertise — force periodic escalation
-  // Skip if this task already has a human answer (avoid re-escalation loop)
-  const allTasks = await load(storePath);
-  const currentTask = allTasks.find(t => t.id === taskId);
-  const alreadyHasHumanAnswer = currentTask?.logs.some(
-    l => l.phase === "orient" && !l.content.startsWith(HUMAN_REQUIRED_PREFIX),
-  );
-  const missionTasks = allTasks.filter(t => t.missionId === mission.id && t.id !== taskId);
-  if (!alreadyHasHumanAnswer && shouldForceEscalation(missionTasks)) {
-    await updateTask(taskId, (current) => ({
-      status: "waiting_human" as const,
-      logs: [...current.logs, phaseLog("orient",
-        `${HUMAN_REQUIRED_PREFIX}Mission "${mission.name}": orient requires human expertise. No human-reviewed orient in recent ${ORIENT_ESCALATION_WINDOW} completed tasks.`)],
-    }), storePath);
-    return "escalated";
-  }
-
-  const principlesList = mission.principles.map(p => `- ${p}`).join("\n");
-  await updateTask(taskId, (current) => {
-    const taskTitle = current.title;
-    const contextSummary = formatContextForOrient(current.context);
-    const orientLines = [
-      `Mission "${mission.name}" orient:`,
-      `Task: ${taskTitle}`,
-    ];
-    if (contextSummary) {
-      orientLines.push(`Context: ${contextSummary}`);
-    }
-    orientLines.push(`Principles:\n${principlesList}`);
-    return {
-      status: "orienting" as const,
-      logs: [...current.logs, phaseLog("orient", orientLines.join("\n"))],
-    };
-  }, storePath);
-  return "oriented";
-}
-
 async function resolveMission(missionId: string, path?: string): Promise<Mission> {
   const missions = await loadMissions(path);
   const mission = missions.find(m => m.id === missionId || m.id.startsWith(missionId));
   if (!mission) throw new Error(`Mission not found: ${missionId}`);
   return mission;
-}
-
-function isPlanTask(task: Task): boolean {
-  return task.context.plan === true;
-}
-
-export const REPORT_HUMAN_PREFIX = "Report to human:";
-
-function isReportToHumanTask(task: Task): boolean {
-  return task.title.startsWith(REPORT_HUMAN_PREFIX);
-}
-
-export function buildActPrompt(task: Task, mission: Mission): string {
-  if (isReportToHumanTask(task)) {
-    return buildReportToHumanPrompt(task, mission);
-  }
-  return buildDefaultActPrompt(task, mission);
-}
-
-function buildReportToHumanPrompt(task: Task, mission: Mission): string {
-  const parts = [`Task: ${task.title}`];
-  parts.push(`Mission: ${mission.name}`);
-
-  const feedbackMessages = task.context.feedbackMessages as Array<{ from: string; message: string }> | undefined;
-  if (feedbackMessages && feedbackMessages.length > 0) {
-    parts.push(`\nFeedback:\n${feedbackMessages.map(f => `${f.from}: ${f.message}`).join("\n")}`);
-  }
-
-  if (task.context.sourceTaskId) {
-    parts.push(`\nSource task: ${task.context.sourceTaskId}`);
-  }
-
-  parts.push(`\nInstructions:
-- This is a Report to human task. Your goal is to respond to the human's feedback above.
-- Read the source task's logs ($WORQLOAD_CLI show ${task.context.sourceTaskId || "<sourceTaskId>"}) to understand what was done.
-- Write the report as a direct answer to the human's original feedback. Address what they asked or reported, and explain the outcome.
-- Do NOT list internal implementation steps, file diffs, debugging processes, or code changes. The human wants to know the result, not the process.
-- Write in Japanese.
-- Use $WORQLOAD_CLI report add $WORQLOAD_TASK_ID "<title>" "<content>" --category human to create the report.
-- Do NOT write code, tests, or commits. This task is purely about communication.`);
-  return parts.join("\n");
-}
-
-function buildDefaultActPrompt(task: Task, mission: Mission): string {
-  const parts = [`Task: ${task.title}`];
-  if (Object.keys(task.context).length > 0) {
-    parts.push(`Context: ${JSON.stringify(task.context)}`);
-  }
-  parts.push(`Mission: ${mission.name}`);
-  if (mission.principles.length > 0) {
-    parts.push(`Principles:\n${mission.principles.map(p => `- ${p}`).join("\n")}`);
-  }
-  parts.push(`\nInstructions:\n- Use $WORQLOAD_CLI to interact with worqload (e.g. $WORQLOAD_CLI report add $WORQLOAD_TASK_ID "title" "content")\n- Write tests first (TDD), then implement\n- Commit your changes when done\n- Keep scope small — one commit-sized unit of work\n- Reports must be in Japanese`);
-  return parts.join("\n");
 }
 
 export async function processPlanTask(task: Task, mission: Mission, storePath?: string): Promise<void> {
@@ -385,157 +154,6 @@ export async function processPlanTask(task: Task, mission: Mission, storePath?: 
     }), storePath);
     console.error(`Failed: ${task.title} - ${message}`);
   }
-}
-
-export async function spawnTask(
-  task: Task,
-  mission: Mission,
-  command: string[],
-  options: { storePath?: string; spawnsPath?: string; spawnTimeoutMs?: number; reportsPath?: string } = {},
-): Promise<SpawnResult> {
-  const { storePath, spawnsPath, spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS, reportsPath } = options;
-  const owner = `mission:${mission.name}`;
-
-  const claimed = await updateTask(task.id, (current) => {
-    if (current.owner) throw new Error(`Already claimed by ${current.owner}`);
-    if (current.status !== "observing") throw new Error(`Cannot spawn: status is ${current.status}`);
-    return { owner };
-  }, storePath);
-  if (!claimed) throw new Error(`Task not found: ${task.id}`);
-
-  const taskEnv: Record<string, string> = {
-    WORQLOAD_CLI: "worqload",
-    WORQLOAD_TASK_ID: task.id,
-    WORQLOAD_TASK_TITLE: task.title,
-    WORQLOAD_TASK_CONTEXT: JSON.stringify(task.context),
-  };
-
-  if (mission.principles.length > 0) {
-    taskEnv.WORQLOAD_MISSION_PRINCIPLES = mission.principles.join("\n");
-  }
-
-  const proc = Bun.spawn(command, {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, ...taskEnv },
-  });
-
-  const spawnRecord = await recordSpawnStart(task.id, task.title, owner, proc.pid, spawnsPath);
-
-  const completion = (async (): Promise<SpawnCompletion> => {
-    let timedOut = false;
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      killProcessTree(proc.pid);
-    }, spawnTimeoutMs);
-
-    try {
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
-      const exitCode = await proc.exited;
-
-      clearTimeout(timeoutId);
-
-      await recordSpawnFinish(spawnRecord.id, exitCode, spawnsPath);
-
-      const output = (stdout + stderr).trim();
-      const truncated = output.length > 2000 ? output.slice(-2000) : output;
-
-      if (timedOut) {
-        await updateTask(task.id, (current) => {
-          const retryCount = (current.context.retryCount as number) || 0;
-          if (retryCount < MAX_TASK_RETRIES && !isReportToHumanTask(task)) {
-            const newRetryCount = retryCount + 1;
-            const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
-            return {
-              status: "observing" as const,
-              owner: undefined,
-              context: { ...current.context, retryCount: newRetryCount, retryAfter },
-              logs: [...current.logs, {
-                phase: "act" as OodaPhase,
-                content: `[TIMEOUT] Spawn timed out after ${spawnTimeoutMs}ms`,
-                timestamp: new Date().toISOString(),
-              }],
-            };
-          } else {
-            return {
-              status: "failed" as const,
-              owner: undefined,
-              logs: [...current.logs, {
-                phase: "act" as OodaPhase,
-                content: `[TIMEOUT] Spawn timed out after ${spawnTimeoutMs}ms`,
-                timestamp: new Date().toISOString(),
-              }, {
-                phase: "act" as OodaPhase,
-                content: `[FAILED] timeout after ${MAX_TASK_RETRIES} retries`,
-                timestamp: new Date().toISOString(),
-              }],
-            };
-          }
-        }, storePath);
-        return { exitCode, output };
-      }
-
-      await updateTask(task.id, (current) => {
-        const logs = [...current.logs, {
-          phase: "act" as OodaPhase,
-          content: truncated,
-          timestamp: new Date().toISOString(),
-        }];
-
-        if (exitCode === 0) {
-          return { status: "done" as const, logs, owner: undefined };
-        } else if (exitCode === ESCALATION_EXIT_CODE) {
-          const question = truncated || "Spawned agent requested human escalation";
-          const escalationLogs = [...logs, {
-            phase: "orient" as OodaPhase,
-            content: `${HUMAN_REQUIRED_PREFIX}${question}`,
-            timestamp: new Date().toISOString(),
-          }];
-          return { status: "waiting_human" as const, logs: escalationLogs, owner: undefined };
-        } else {
-          const retryCount = (current.context.retryCount as number) || 0;
-          if (retryCount < MAX_TASK_RETRIES && !isReportToHumanTask(task)) {
-            const newRetryCount = retryCount + 1;
-            const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
-            const retryLogs = [...logs, {
-              phase: "act" as OodaPhase,
-              content: `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - exit code ${exitCode}`,
-              timestamp: new Date().toISOString(),
-            }];
-            return {
-              status: "observing" as const,
-              logs: retryLogs,
-              owner: undefined,
-              context: { ...current.context, retryCount: newRetryCount, retryAfter },
-            };
-          } else {
-            const failLogs = [...logs, {
-              phase: "act" as OodaPhase,
-              content: `[FAILED] exit code ${exitCode}`,
-              timestamp: new Date().toISOString(),
-            }];
-            return { status: "failed" as const, logs: failLogs, owner: undefined };
-          }
-        }
-      }, storePath);
-
-      if (exitCode === 0) {
-        await runOnDoneHooks(task.id, task.title);
-        const doneTask = (await load(storePath)).find(t => t.id === task.id);
-        if (doneTask) {
-          await ensureReportForDoneTask(doneTask, mission.name, { reportsPath });
-        }
-      }
-
-      return { exitCode, output };
-    } catch (error) {
-      clearTimeout(timeoutId);
-      throw error;
-    }
-  })();
-
-  return { spawnId: spawnRecord.id, pid: proc.pid, completion };
 }
 
 export async function processTask(task: Task, mission: Mission, options: ProcessTaskOptions = {}): Promise<void> {
@@ -603,32 +221,27 @@ export async function processTask(task: Task, mission: Mission, options: Process
       logs: [...current.logs, phaseLog("act", `Spawning: ${command[0]}${spawnCwd ? ` (worktree: ${worktreeInfo!.branchName})` : ""}`)],
     }), storePath);
 
-    const taskEnv: Record<string, string> = {
-      WORQLOAD_CLI: "worqload",
-      WORQLOAD_TASK_ID: task.id,
-      WORQLOAD_TASK_TITLE: task.title,
-      WORQLOAD_TASK_CONTEXT: JSON.stringify(claimed.context),
-    };
-    if (mission.principles.length > 0) {
-      taskEnv.WORQLOAD_MISSION_PRINCIPLES = mission.principles.join("\n");
-    }
+    const taskEnv = buildTaskEnv({
+      taskId: task.id,
+      taskTitle: task.title,
+      taskContext: claimed.context,
+      missionPrinciples: mission.principles,
+    });
 
     let spawnResult: SpawnWithTimeoutResult;
     try {
       spawnResult = await spawnWithTimeout(command, { ...process.env, ...taskEnv }, spawnTimeoutMs, spawnCwd);
     } catch (error) {
       if (error instanceof SpawnTimeoutError) {
-        const retryCount = (claimed.context.retryCount as number) || 0;
-        if (retryCount < MAX_TASK_RETRIES && !isReportToHumanTask(task)) {
-          const newRetryCount = retryCount + 1;
-          const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+        if (canRetry(claimed.context) && !isReportToHumanTask(task)) {
+          const { retryCount, retryAfter } = computeRetryUpdate(claimed.context);
           await updateTask(task.id, (current) => ({
             status: "observing" as const,
             owner: undefined,
-            context: { ...current.context, retryCount: newRetryCount, retryAfter },
+            context: { ...current.context, retryCount, retryAfter },
             logs: [...current.logs, phaseLog("act", `[TIMEOUT] Spawn timed out after ${spawnTimeoutMs}ms`)],
           }), storePath);
-          console.log(`Timeout retry ${newRetryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
+          console.log(`Timeout retry ${retryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
         } else {
           await updateTask(task.id, (current) => ({
             status: "failed" as const,
@@ -647,7 +260,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
 
     const { stdout, stderr, exitCode } = spawnResult;
     const output = (stdout + stderr).trim();
-    const truncated = output.length > 2000 ? output.slice(-2000) : output;
+    const truncated = truncateOutput(output);
 
     // Merge worktree changes back to main before updating task status
     let mergeConflicted = false;
@@ -703,25 +316,22 @@ export async function processTask(task: Task, mission: Mission, options: Process
       }), storePath);
       console.log(`Escalated: ${task.title}`);
     } else {
-      const retryCount = (claimed.context.retryCount as number) || 0;
-      const skipRetry = isReportToHumanTask(claimed);
-      if (!skipRetry && retryCount < MAX_TASK_RETRIES) {
-        const newRetryCount = retryCount + 1;
-        const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+      if (!isReportToHumanTask(claimed) && canRetry(claimed.context)) {
+        const { retryCount, retryAfter } = computeRetryUpdate(claimed.context);
         const disableWorktree = !!worktreeInfo;
         await updateTask(task.id, (current) => ({
           status: "observing" as const,
           owner: undefined,
-          context: { ...current.context, retryCount: newRetryCount, retryAfter, ...(disableWorktree ? { worktreeDisabled: true } : {}) },
+          context: { ...current.context, retryCount, retryAfter, ...(disableWorktree ? { worktreeDisabled: true } : {}) },
           logs: [...current.logs,
             phaseLog("act", truncated),
-            phaseLog("act", `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - exit code ${exitCode}${disableWorktree ? " (worktree disabled for retry)" : ""}`),
+            phaseLog("act", `[RETRY] ${retryCount}/${MAX_TASK_RETRIES} - exit code ${exitCode}${disableWorktree ? " (worktree disabled for retry)" : ""}`),
           ],
         }), storePath);
         if (disableWorktree) {
           console.log(`Worktree disabled for retry: ${task.title}`);
         }
-        console.log(`Retry ${newRetryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
+        console.log(`Retry ${retryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
       } else {
         await updateTask(task.id, (current) => ({
           status: "failed" as const,
@@ -736,17 +346,15 @@ export async function processTask(task: Task, mission: Mission, options: Process
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const retryCount = (claimed.context.retryCount as number) || 0;
-    if (retryCount < MAX_TASK_RETRIES) {
-      const newRetryCount = retryCount + 1;
-      const retryAfter = new Date(Date.now() + RETRY_BASE_MS * Math.pow(2, retryCount)).toISOString();
+    if (canRetry(claimed.context)) {
+      const { retryCount, retryAfter } = computeRetryUpdate(claimed.context);
       await updateTask(task.id, (current) => ({
         status: "observing" as const,
         owner: undefined,
-        context: { ...current.context, retryCount: newRetryCount, retryAfter },
-        logs: [...current.logs, phaseLog("act", `[RETRY] ${newRetryCount}/${MAX_TASK_RETRIES} - ${message}`)],
+        context: { ...current.context, retryCount, retryAfter },
+        logs: [...current.logs, phaseLog("act", `[RETRY] ${retryCount}/${MAX_TASK_RETRIES} - ${message}`)],
       }), storePath);
-      console.log(`Retry ${newRetryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
+      console.log(`Retry ${retryCount}/${MAX_TASK_RETRIES}: ${task.title}`);
     } else {
       await updateTask(task.id, (current) => ({
         status: "failed" as const,
