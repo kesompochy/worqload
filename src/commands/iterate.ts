@@ -8,7 +8,7 @@ import { loadMissions, reactivateMission, archiveMissions } from "../mission";
 import type { SourceResult } from "../sources";
 import { runAllSources } from "../sources";
 import { loadPrinciples } from "../principles";
-import type { Report } from "../reports";
+import type { Report, ReportCategory } from "../reports";
 import { loadReports, isVacuousContent } from "../reports";
 import { runOnDoneHooks } from "../hooks";
 import type { ServerLogSummary } from "../server-log";
@@ -61,6 +61,7 @@ export interface Observation {
   stuckTasks: StuckTask[];
   failedTasks: Task[];
   completedFeedbackTasks: CompletedFeedbackTask[];
+  unreadReports: Report[];
   uncommittedChanges: string;
   serverLogSummary: ServerLogSummary | null;
 }
@@ -328,7 +329,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
 
   const SERVER_LOG_OBSERVE_WINDOW_MS = 10 * 60 * 1000;
 
-  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, completedFeedbackTasks, rawUncommittedChanges, serverLogs] = await Promise.all([
+  const [feedbackItems, missions, sourceResults, principles, suspiciousTasks, completedFeedbackTasks, rawUncommittedChanges, serverLogs, allReports] = await Promise.all([
     loadFeedback(ctx.feedbackPath),
     loadMissions(ctx.missionsPath),
     runAllSources(ctx.sourcesPath).catch(() => [] as SourceResult[]),
@@ -337,11 +338,13 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     detectCompletedFeedbackTasks(queue, ctx, excludeTaskId),
     getUncommittedChanges(),
     loadRecentServerLogs(SERVER_LOG_OBSERVE_WINDOW_MS, ctx.serverLogPath).catch(() => [] as import("../server-log").ServerLogEntry[]),
+    loadReports(ctx.reportsPath).catch(() => [] as Report[]),
   ]);
   const uncommittedChanges = filterManagedPaths(rawUncommittedChanges, queue.getStorePath());
 
   const serverLogSummary = serverLogs.length > 0 ? summarizeServerLogs(serverLogs) : null;
   const stuckTasks = detectStuckTasks(activeTasks);
+  const unreadReports = allReports.filter(r => r.status === "unread" && r.category === "human");
 
   return {
     feedbackSummary: summarizeFeedback(feedbackItems),
@@ -356,6 +359,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
     stuckTasks,
     failedTasks,
     completedFeedbackTasks,
+    unreadReports,
     uncommittedChanges,
     serverLogSummary,
   };
@@ -476,6 +480,13 @@ export function analyzeObservation(obs: Observation): string {
     tags.push("report_human");
     for (const ct of obs.completedFeedbackTasks) {
       lines.push(`report_human: [${ct.taskId.slice(0, SHORT_ID_LENGTH)}] ${ct.title}`);
+    }
+  }
+
+  if (obs.unreadReports?.length > 0) {
+    tags.push("unread_reports");
+    for (const r of obs.unreadReports) {
+      lines.push(`unread_report: [${r.id.slice(0, SHORT_ID_LENGTH)}] ${r.title}`);
     }
   }
 
@@ -972,6 +983,7 @@ export function formatObserveLog(obs: Observation): string {
   parts.push(`suspicious: ${obs.suspiciousTasks.length}`);
   parts.push(`stuck: ${obs.stuckTasks.length}`);
   parts.push(`failed: ${obs.failedTasks.length}`);
+  parts.push(`unread reports: ${obs.unreadReports?.length ?? 0}`);
   if (obs.uncommittedChanges) {
     parts.push("uncommitted: yes");
   }

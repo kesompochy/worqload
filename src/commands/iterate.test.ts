@@ -418,6 +418,75 @@ describe("analyzeObservation", () => {
 
     expect(log).toContain("suspicious: 0");
   });
+
+  test("includes unread human reports in observation", async () => {
+    const reportsPath = tmpPath("reports");
+    await addReport("Human report A", "content A", "agent", { path: reportsPath, category: "human" });
+    await addReport("Internal report", "content B", "agent", { path: reportsPath, category: "internal" });
+    await addReport("Human report B", "content C", "agent", { path: reportsPath, category: "human" });
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext({ reportsPath });
+
+    const obs = await collectObservation(queue, ctx);
+
+    expect(obs.unreadReports).toHaveLength(2);
+    expect(obs.unreadReports.map(r => r.title)).toContain("Human report A");
+    expect(obs.unreadReports.map(r => r.title)).toContain("Human report B");
+  });
+
+  test("excludes read reports from unreadReports", async () => {
+    const reportsPath = tmpPath("reports");
+    const report = await addReport("Read report", "content", "agent", { path: reportsPath, category: "human" });
+    const { updateReportStatus } = await import("../reports");
+    await updateReportStatus(report.id, "read", reportsPath);
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext({ reportsPath });
+
+    const obs = await collectObservation(queue, ctx);
+
+    expect(obs.unreadReports).toHaveLength(0);
+  });
+
+  test("includes unread_reports tag in analysis when unread reports exist", async () => {
+    const reportsPath = tmpPath("reports");
+    await addReport("Important report", "some content", "agent", { path: reportsPath, category: "human" });
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext({ reportsPath });
+    const obs = await collectObservation(queue, ctx);
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("unread_reports");
+    expect(analysis).toContain("Important report");
+  });
+
+  test("includes unread reports count in observe log", async () => {
+    const reportsPath = tmpPath("reports");
+    await addReport("Report 1", "content 1", "agent", { path: reportsPath, category: "human" });
+    await addReport("Report 2", "content 2", "agent", { path: reportsPath, category: "human" });
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext({ reportsPath });
+    const obs = await collectObservation(queue, ctx);
+
+    const log = formatObserveLog(obs);
+
+    expect(log).toContain("unread reports: 2");
+  });
+
+  test("shows unread reports: 0 in observe log when none exist", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext();
+    const obs = await collectObservation(queue, ctx);
+
+    const log = formatObserveLog(obs);
+
+    expect(log).toContain("unread reports: 0");
+  });
 });
 
 describe("detectStuckTasks", () => {
