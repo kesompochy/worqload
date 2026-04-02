@@ -677,6 +677,61 @@ describe("recoverStuckTasks", () => {
 
     expect(result.recoveredTasks).toHaveLength(0);
     expect(result.permanentlyFailed).toHaveLength(0);
+    expect(result.advancedToAct).toHaveLength(0);
+  });
+
+  test("advances stuck deciding task to acting when decide log has substance", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Stuck deciding with plan");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.addLog(task.id, "orient", "analyzed the problem");
+    queue.transition(task.id, "deciding");
+    queue.addLog(task.id, "decide", "implement the fix by updating the validation logic in parser.ts");
+    backdateTask(queue, task.id, 40);
+
+    const stuckTasks = detectStuckTasks(queue.list(), 30);
+    const result = recoverStuckTasks(queue, stuckTasks);
+
+    expect(result.advancedToAct).toContain(task.id);
+    expect(result.recoveredTasks).not.toContain(task.id);
+    const updated = queue.get(task.id)!;
+    expect(updated.status).toBe("acting");
+    expect(updated.owner).toBeUndefined();
+    expect(updated.logs.some(l => l.content.includes("[STUCK-ADVANCE]"))).toBe(true);
+  });
+
+  test("recovers stuck deciding task normally when no decide log exists", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Stuck deciding no log");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "deciding");
+    backdateTask(queue, task.id, 40);
+
+    const stuckTasks = detectStuckTasks(queue.list(), 30);
+    const result = recoverStuckTasks(queue, stuckTasks);
+
+    expect(result.recoveredTasks).toContain(task.id);
+    expect(result.advancedToAct).not.toContain(task.id);
+    expect(queue.get(task.id)!.status).toBe("observing");
+  });
+
+  test("recovers stuck deciding task normally when decide log is too short", () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Stuck deciding short log");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "deciding");
+    queue.addLog(task.id, "decide", "ok");
+    backdateTask(queue, task.id, 40);
+
+    const stuckTasks = detectStuckTasks(queue.list(), 30);
+    const result = recoverStuckTasks(queue, stuckTasks);
+
+    expect(result.recoveredTasks).toContain(task.id);
+    expect(result.advancedToAct).not.toContain(task.id);
+    expect(queue.get(task.id)!.status).toBe("observing");
   });
 });
 

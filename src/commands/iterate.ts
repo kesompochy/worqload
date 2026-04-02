@@ -72,6 +72,7 @@ export interface Observation {
 export interface RecoverResult {
   recoveredTasks: string[];
   permanentlyFailed: string[];
+  advancedToAct: string[];
 }
 
 export interface RequeueResult {
@@ -84,6 +85,7 @@ export interface GenerateResult {
   retriedTasks: string[];
   resumedTasks: string[];
   recoveredTasks: string[];
+  advancedToAct: string[];
   requeuedSuspiciousTasks: string[];
   distilledRules: string[];
   autonomousTasks: string[];
@@ -116,13 +118,29 @@ export function detectStuckTasks(tasks: Task[], thresholdMinutes: number = DEFAU
 
 const MAX_STUCK_RETRIES = 2;
 
+const MIN_DECIDE_LOG_LENGTH = 10;
+
 export function recoverStuckTasks(queue: TaskQueue, stuckTasks: StuckTask[]): RecoverResult {
   const recoveredTasks: string[] = [];
   const permanentlyFailed: string[] = [];
+  const advancedToAct: string[] = [];
 
   for (const stuck of stuckTasks) {
     const task = queue.get(stuck.taskId);
     if (!task) continue;
+
+    // Deciding tasks with a substantive decide log: the agent made a decision
+    // but died before transitioning. Advance to acting to preserve the decision.
+    if (stuck.status === "deciding") {
+      const decideLog = task.logs.filter(l => l.phase === "decide").pop();
+      if (decideLog && decideLog.content.length >= MIN_DECIDE_LOG_LENGTH) {
+        queue.addLog(task.id, "act", `[STUCK-ADVANCE] auto-advanced to acting after ${stuck.stuckMinutes}m in deciding`);
+        queue.transition(task.id, "acting");
+        queue.update(task.id, { owner: undefined });
+        advancedToAct.push(task.id);
+        continue;
+      }
+    }
 
     const actLogCount = task.logs.filter(l => l.phase === "act").length;
     queue.addLog(task.id, "act", `[STUCK] recovered after ${stuck.stuckMinutes}m in ${stuck.status}`);
@@ -137,7 +155,7 @@ export function recoverStuckTasks(queue: TaskQueue, stuckTasks: StuckTask[]): Re
     }
   }
 
-  return { recoveredTasks, permanentlyFailed };
+  return { recoveredTasks, permanentlyFailed, advancedToAct };
 }
 
 const MAX_SUSPICIOUS_RETRIES = 2;
@@ -760,7 +778,8 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   const nothingGeneratedYet = createdTasks.length === 0
     && retriedTasks.length === 0
     && resumedTasks.length === 0
-    && stuckRecovery.recoveredTasks.length === 0;
+    && stuckRecovery.recoveredTasks.length === 0
+    && stuckRecovery.advancedToAct.length === 0;
 
   if (isQueueEmpty && nothingGeneratedYet && obs.principles) {
     const derived = deriveAutonomousTasks(obs, queue, archivedTasks);
@@ -773,7 +792,7 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
     }
   }
 
-  return { createdTasks, retriedTasks, resumedTasks, recoveredTasks: stuckRecovery.recoveredTasks, requeuedSuspiciousTasks: suspiciousRequeue.requeuedTasks, distilledRules, autonomousTasks, unverifiedRules, humanReportTasks, feedbackIdsToAck: Array.from(feedbackIdsToAck) };
+  return { createdTasks, retriedTasks, resumedTasks, recoveredTasks: stuckRecovery.recoveredTasks, advancedToAct: stuckRecovery.advancedToAct, requeuedSuspiciousTasks: suspiciousRequeue.requeuedTasks, distilledRules, autonomousTasks, unverifiedRules, humanReportTasks, feedbackIdsToAck: Array.from(feedbackIdsToAck) };
 }
 
 export async function ackFeedbackIds(ids: string[], feedbackPath: string): Promise<void> {
@@ -895,7 +914,7 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
 
   // Autonomous task generation and feedback distillation
   const generated = await generateTasksFromObservation(queue, obs, ctx);
-  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.resumedTasks.length > 0 || generated.recoveredTasks.length > 0 || generated.requeuedSuspiciousTasks.length > 0 || generated.distilledRules.length > 0 || generated.autonomousTasks.length > 0 || generated.unverifiedRules.length > 0;
+  const hasGenerated = generated.createdTasks.length > 0 || generated.retriedTasks.length > 0 || generated.resumedTasks.length > 0 || generated.recoveredTasks.length > 0 || generated.advancedToAct.length > 0 || generated.requeuedSuspiciousTasks.length > 0 || generated.distilledRules.length > 0 || generated.autonomousTasks.length > 0 || generated.unverifiedRules.length > 0;
 
   if (hasGenerated) {
     const genParts: string[] = [];
@@ -907,6 +926,9 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
     }
     if (generated.recoveredTasks.length > 0) {
       genParts.push(`recovered ${generated.recoveredTasks.length} stuck task(s)`);
+    }
+    if (generated.advancedToAct.length > 0) {
+      genParts.push(`advanced ${generated.advancedToAct.length} deciding task(s) to acting`);
     }
     if (generated.requeuedSuspiciousTasks.length > 0) {
       genParts.push(`requeued ${generated.requeuedSuspiciousTasks.length} suspicious task(s)`);
