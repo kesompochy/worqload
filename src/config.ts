@@ -6,6 +6,7 @@ export interface SpawnHooks {
   pre?: string[];
   post?: string[];
   worktree?: boolean;
+  maxTurns?: number;
 }
 
 export interface InitConfig {

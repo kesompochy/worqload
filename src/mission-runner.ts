@@ -1,8 +1,8 @@
-import { loadMissions, completeMission, failMission } from "./mission";
+import { findMissionById, completeMission, failMission } from "./mission";
 import type { Mission } from "./mission";
 import { TaskQueue } from "./queue";
 import type { Task } from "./task";
-import { createTask, ESCALATION_EXIT_CODE, HUMAN_REQUIRED_PREFIX } from "./task";
+import { createTask, ESCALATION_EXIT_CODE, HUMAN_REQUIRED_PREFIX, isEligible, isTerminal } from "./task";
 import { updateTask, load, save } from "./store";
 import { runOnDoneHooks } from "./hooks";
 import { registerRunner, heartbeatRunner, deregisterRunner } from "./mission-runner-state";
@@ -12,6 +12,7 @@ import type { OrientResult } from "./mission-runner-orient";
 import { buildActPrompt, ensureReportForDoneTask, isPlanTask, isReportToHumanTask, REPORT_HUMAN_PREFIX } from "./mission-runner-act";
 import type { EnsureReportOptions } from "./mission-runner-act";
 import { spawnWithTimeout, SpawnTimeoutError, DEFAULT_SPAWN_TIMEOUT_MS, killProcessTree, buildTaskEnv, truncateOutput } from "./spawn-executor";
+import { loadConfig } from "./config";
 import type { SpawnWithTimeoutResult } from "./spawn-executor";
 import { MAX_TASK_RETRIES, RETRY_BASE_MS, canRetry, computeRetryUpdate, phaseLog } from "./mission-runner-retry";
 import type { RetryUpdate } from "./mission-runner-retry";
@@ -66,10 +67,8 @@ export function shouldUseWorktreeForTask(
 }
 
 export function findAllEligibleTasks(queue: TaskQueue, missionId: string): Task[] {
-  const tasks = queue.getByMission(missionId);
-  return tasks
-    .filter(t => (t.status === "observing" || t.status === "orienting") && !t.owner)
-    .filter(t => !t.context.retryAfter || new Date(t.context.retryAfter as string) <= new Date())
+  return queue.getByMission(missionId)
+    .filter(isEligible)
     .sort((a, b) => b.priority - a.priority || a.createdAt.localeCompare(b.createdAt));
 }
 
@@ -77,8 +76,7 @@ export function findNextMissionTask(queue: TaskQueue, missionId: string): Task |
   const tasks = queue.getByMission(missionId);
   let best: Task | undefined;
   for (const task of tasks) {
-    if ((task.status !== "observing" && task.status !== "orienting") || task.owner) continue;
-    if (task.context.retryAfter && new Date(task.context.retryAfter as string) > new Date()) continue;
+    if (!isEligible(task)) continue;
     if (!best || task.priority > best.priority ||
         (task.priority === best.priority && task.createdAt < best.createdAt)) {
       best = task;
@@ -88,8 +86,7 @@ export function findNextMissionTask(queue: TaskQueue, missionId: string): Task |
 }
 
 async function resolveMission(missionId: string, path?: string): Promise<Mission> {
-  const missions = await loadMissions(path);
-  const mission = missions.find(m => m.id === missionId || m.id.startsWith(missionId));
+  const mission = await findMissionById(missionId, path);
   if (!mission) throw new Error(`Mission not found: ${missionId}`);
   return mission;
 }
@@ -213,7 +210,9 @@ export async function processTask(task: Task, mission: Mission, options: Process
     }
 
     const prompt = buildActPrompt(claimed, mission);
-    const command = [...(actCommand ?? ["claude", "-p", "--max-turns", "30"]), prompt];
+    const config = await loadConfig();
+    const maxTurns = String(config.spawn?.maxTurns ?? 30);
+    const command = [...(actCommand ?? ["claude", "-p", "--max-turns", maxTurns]), prompt];
 
     const spawnCwd = worktreeInfo?.worktreePath;
     await updateTask(task.id, (current) => ({
@@ -371,7 +370,7 @@ export async function processTask(task: Task, mission: Mission, options: Process
     await queue.load();
     const missionTasks = queue.getByMission(mission.id);
     const allTerminal = missionTasks.length > 0 &&
-      missionTasks.every(t => t.status === "done" || t.status === "failed");
+      missionTasks.every(isTerminal);
     if (allTerminal) {
       const hasFailed = missionTasks.some(t => t.status === "failed");
       if (hasFailed) {
@@ -404,7 +403,7 @@ export async function iterateMission(
   if (!task) {
     const missionTasks = queue.getByMission(mission.id);
     const allTerminal = missionTasks.length > 0 &&
-      missionTasks.every(t => t.status === "done" || t.status === "failed");
+      missionTasks.every(isTerminal);
     if (allTerminal) {
       const hasFailed = missionTasks.some(t => t.status === "failed");
       if (hasFailed) {
