@@ -170,6 +170,8 @@ export async function ensureReportForDoneTask(
   missionName: string,
   options: EnsureReportOptions = {},
 ): Promise<void> {
+  if (isReportToHumanTask(task)) return;
+
   const { reportsPath } = options;
 
   const reports = await loadReports(reportsPath);
@@ -285,11 +287,25 @@ export function buildActPrompt(task: Task, mission: Mission): string {
 
 function buildReportToHumanPrompt(task: Task, mission: Mission): string {
   const parts = [`Task: ${task.title}`];
-  if (Object.keys(task.context).length > 0) {
-    parts.push(`Context: ${JSON.stringify(task.context)}`);
-  }
   parts.push(`Mission: ${mission.name}`);
-  parts.push(`\nInstructions:\n- This is a Report to human task. Your goal is to write a report for the human who gave feedback.\n- Read the source task's logs and the original feedback to understand what was done.\n- Write a clear, concise report in Japanese summarizing: what the feedback requested, what was done, and the outcome.\n- Use $WORQLOAD_CLI report add $WORQLOAD_TASK_ID "<title>" "<content>" to create the report.\n- Do NOT write code, tests, or commits. This task is purely about communication.\n- The report should answer the human's original question/feedback, not describe internal implementation details.`);
+
+  const feedbackMessages = task.context.feedbackMessages as Array<{ from: string; message: string }> | undefined;
+  if (feedbackMessages && feedbackMessages.length > 0) {
+    parts.push(`\nFeedback:\n${feedbackMessages.map(f => `${f.from}: ${f.message}`).join("\n")}`);
+  }
+
+  if (task.context.sourceTaskId) {
+    parts.push(`\nSource task: ${task.context.sourceTaskId}`);
+  }
+
+  parts.push(`\nInstructions:
+- This is a Report to human task. Your goal is to respond to the human's feedback above.
+- Read the source task's logs ($WORQLOAD_CLI show ${task.context.sourceTaskId || "<sourceTaskId>"}) to understand what was done.
+- Write the report as a direct answer to the human's original feedback. Address what they asked or reported, and explain the outcome.
+- Do NOT list internal implementation steps, file diffs, debugging processes, or code changes. The human wants to know the result, not the process.
+- Write in Japanese.
+- Use $WORQLOAD_CLI report add $WORQLOAD_TASK_ID "<title>" "<content>" --category human to create the report.
+- Do NOT write code, tests, or commits. This task is purely about communication.`);
   return parts.join("\n");
 }
 

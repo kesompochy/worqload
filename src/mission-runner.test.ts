@@ -1952,6 +1952,23 @@ describe("ensureReportForDoneTask", () => {
     const reports = await loadReports(reportsPath);
     expect(reports).toHaveLength(0);
   });
+
+  test("skips report generation for report-to-human tasks", async () => {
+    const reportsPath = tmpPath("ensure-report-skip-human");
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix login bug`, {
+      sourceTaskId: "t-1",
+      feedbackIds: ["f-1"],
+    });
+    task.status = "done";
+    task.logs = [
+      { phase: "act", content: "Investigated and wrote report", timestamp: new Date().toISOString() },
+    ];
+
+    await ensureReportForDoneTask(task, "test-mission", { reportsPath });
+
+    const reports = await loadReports(reportsPath);
+    expect(reports).toHaveLength(0);
+  });
 });
 
 describe("processTask report generation", () => {
@@ -2018,14 +2035,13 @@ describe("buildActPrompt", () => {
     expect(prompt).toContain("Principles:");
   });
 
-  test("report prompt includes task context", () => {
+  test("report prompt includes source task reference", () => {
     const task = createTask(`${REPORT_HUMAN_PREFIX} Fix bug`, {
       sourceTaskId: "t-1",
       feedbackIds: ["f-1"],
     });
     const prompt = buildActPrompt(task, mission);
-    expect(prompt).toContain("sourceTaskId");
-    expect(prompt).toContain("t-1");
+    expect(prompt).toContain("Source task: t-1");
   });
 
   test("report prompt embeds feedback messages when present in context", () => {
@@ -2065,6 +2081,32 @@ describe("buildActPrompt", () => {
     const prompt = buildActPrompt(task, mission);
     expect(prompt).toContain("Report to human task");
     expect(prompt).toContain("report add");
+  });
+
+  test("report prompt presents feedback messages as a dedicated section", () => {
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix login`, {
+      sourceTaskId: "t-1",
+      feedbackIds: ["f-1"],
+      feedbackMessages: [
+        { from: "alice", message: "ログインが遅い" },
+      ],
+    });
+    const prompt = buildActPrompt(task, mission);
+    expect(prompt).toContain("Feedback:");
+    expect(prompt).toContain("alice: ログインが遅い");
+  });
+
+  test("report prompt instructs agent to respond to feedback, not dump internals", () => {
+    const task = createTask(`${REPORT_HUMAN_PREFIX} Fix bug`, {
+      sourceTaskId: "t-1",
+      feedbackIds: ["f-1"],
+      feedbackMessages: [
+        { from: "bob", message: "バグがある" },
+      ],
+    });
+    const prompt = buildActPrompt(task, mission);
+    expect(prompt).toContain("category human");
+    expect(prompt).toMatch(/answer|respond|回答/i);
   });
 });
 
