@@ -9,6 +9,7 @@ import { resolveTask } from "./resolve";
 import { loadMissions } from "../mission";
 import { runOnDoneHooks } from "../hooks";
 import { createWorktree, removeWorktree, mergeWorktreeBranch } from "../worktree";
+import { loadRunnerStates, isProcessAlive } from "../mission-runner-state";
 
 async function runHook(command: string, env: Record<string, string>): Promise<{ output: string; exitCode: number }> {
   const proc = Bun.spawn(["sh", "-c", command], {
@@ -228,8 +229,9 @@ function killProcessTree(pid: number): void {
   }
 }
 
-export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?: string, repoDir?: string): Promise<void> {
+export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?: string, repoDir?: string, runnerStatePath?: string): Promise<void> {
   const spawns = await loadSpawns(spawnsPath);
+  const runners = await loadRunnerStates(runnerStatePath);
   const stuckTasks = queue.list().filter(
     t => IN_PROGRESS_STATUSES.has(t.status) && t.owner,
   );
@@ -244,6 +246,15 @@ export async function spawnCleanup(queue: TaskQueue, args: string[], spawnsPath?
         continue;
       }
       killProcessTree(spawnRecord.pid);
+    }
+
+    // Mission-owned tasks without spawn records: check if the runner daemon is alive
+    if (!spawnRecord && task.owner?.startsWith("mission:")) {
+      const missionName = task.owner.slice("mission:".length);
+      const aliveRunner = runners.find(r =>
+        r.missionName === missionName && r.status !== "stopped" && isProcessAlive(r.pid),
+      );
+      if (aliveRunner) continue;
     }
 
     queue.addLog(task.id, "act", "[FAILED] Spawn process killed (timeout)");

@@ -128,6 +128,54 @@ test("spawnCleanup marks spawn record as failed", async () => {
   expect(updatedRecord?.finishedAt).toBeTruthy();
 });
 
+test("spawnCleanup skips mission-owned task when runner daemon is alive", async () => {
+  const storePath = tmpPath("tasks");
+  const spawnsPath = tmpPath("spawns");
+  const runnerStatePath = tmpPath("runners");
+  const queue = new TaskQueue(storePath);
+
+  const task = createTask("mission task");
+  queue.enqueue(task);
+  queue.update(task.id, { status: "acting", owner: "mission:TestMission" });
+  await queue.save();
+
+  await saveSpawns([], spawnsPath);
+
+  // Register a runner with the current PID (alive)
+  const { registerRunner } = await import("./mission-runner-state");
+  await registerRunner("mission-1", "TestMission", process.pid, runnerStatePath);
+
+  await spawnCleanup(queue, [], spawnsPath, undefined, runnerStatePath);
+
+  const updated = queue.get(task.id);
+  expect(updated?.status).toBe("acting");
+  expect(updated?.owner).toBe("mission:TestMission");
+});
+
+test("spawnCleanup fails mission-owned task when runner daemon is dead", async () => {
+  const storePath = tmpPath("tasks");
+  const spawnsPath = tmpPath("spawns");
+  const runnerStatePath = tmpPath("runners");
+  const queue = new TaskQueue(storePath);
+
+  const task = createTask("dead mission task");
+  queue.enqueue(task);
+  queue.update(task.id, { status: "acting", owner: "mission:DeadMission" });
+  await queue.save();
+
+  await saveSpawns([], spawnsPath);
+
+  // Register a runner with a dead PID
+  const { registerRunner } = await import("./mission-runner-state");
+  await registerRunner("mission-2", "DeadMission", 999999, runnerStatePath);
+
+  await spawnCleanup(queue, [], spawnsPath, undefined, runnerStatePath);
+
+  const updated = queue.get(task.id);
+  expect(updated?.status).toBe("failed");
+  expect(updated?.owner).toBeUndefined();
+});
+
 test("spawnCleanup handles no stuck tasks", async () => {
   const storePath = tmpPath("tasks");
   const spawnsPath = tmpPath("spawns");
