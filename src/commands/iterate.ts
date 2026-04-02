@@ -501,7 +501,7 @@ export function analyzeObservation(obs: Observation): string {
   if (obs.unreadReports?.length > 0) {
     tags.push("unread_reports");
     for (const r of obs.unreadReports) {
-      lines.push(`unread_report: [${r.id.slice(0, SHORT_ID_LENGTH)}] ${r.title}`);
+      lines.push(`unread_report: [${r.id.slice(0, SHORT_ID_LENGTH)}] ${r.title}\n${r.content}`);
     }
   }
 
@@ -835,6 +835,32 @@ export function formatCleanupLog(cleanup: CleanupResult): string {
   return parts.join("; ");
 }
 
+export interface FinalizeIterationParams {
+  queue: TaskQueue;
+  ctx: IterateContext;
+  taskId: string;
+  taskTitle: string;
+  message: string;
+}
+
+export interface FinalizeIterationResult {
+  cleanupLog: string;
+  actSummary: string;
+}
+
+export async function finalizeIteration(params: FinalizeIterationParams): Promise<FinalizeIterationResult> {
+  const { queue, ctx, taskId, taskTitle, message } = params;
+  queue.transition(taskId, "acting");
+  const cleanup = await performActCleanup(queue, ctx);
+  const cleanupLog = formatCleanupLog(cleanup);
+  const actSummary = [message, cleanupLog].filter(Boolean).join("; ");
+  queue.addLog(taskId, "act", actSummary);
+  queue.transition(taskId, "done");
+  await queue.save();
+  await runOnDoneHooks(taskId, taskTitle);
+  return { cleanupLog, actSummary };
+}
+
 // Queue-wide OODA: surveys all tasks, feedback, missions, and sources to decide
 // the orchestration agent's next action (waiting_human / queue_empty / has_pending).
 // Contrast with mission-runner.ts iterateMission(), which processes a single task
@@ -900,15 +926,8 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
     const genSummary = genParts.join("; ");
     const decideTag = generated.autonomousTasks.length > 0 ? "autonomous_tasks" : "tasks_created";
     queue.addLog(id, "decide", `${decideTag}: ${genSummary}`);
-    queue.transition(id, "acting");
-    const cleanup1 = await performActCleanup(queue, ctx);
-    const cleanupLog1 = formatCleanupLog(cleanup1);
-    const actSummary1 = [genSummary, cleanupLog1].filter(Boolean).join("; ");
-    queue.addLog(id, "act", actSummary1);
-    queue.transition(id, "done");
-    await queue.save();
-    await runOnDoneHooks(id, iterationTask.title);
-    console.log(`[${shortId}] Iteration complete: ${decideTag} — ${actSummary1}`);
+    const { actSummary } = await finalizeIteration({ queue, ctx, taskId: id, taskTitle: iterationTask.title, message: genSummary });
+    console.log(`[${shortId}] Iteration complete: ${decideTag} — ${actSummary}`);
     if (obs.feedbackSummary.counts.new > 0) {
       console.log(`  new feedback: ${obs.feedbackSummary.counts.new}`);
     }
@@ -921,14 +940,7 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
       return `[${t.id.slice(0, SHORT_ID_LENGTH)}] ${question}`;
     });
     queue.addLog(id, "decide", `present waiting_human: ${questions.join("; ")}`);
-    queue.transition(id, "acting");
-    const cleanup2 = await performActCleanup(queue, ctx);
-    const cleanupLog2 = formatCleanupLog(cleanup2);
-    const actSummary2 = [`${obs.waitingHumanTasks.length} waiting_human task(s) on dashboard`, cleanupLog2].filter(Boolean).join("; ");
-    queue.addLog(id, "act", actSummary2);
-    queue.transition(id, "done");
-    await queue.save();
-    await runOnDoneHooks(id, iterationTask.title);
+    await finalizeIteration({ queue, ctx, taskId: id, taskTitle: iterationTask.title, message: `${obs.waitingHumanTasks.length} waiting_human task(s) on dashboard` });
     console.log(`[${shortId}] Iteration complete: ${obs.waitingHumanTasks.length} waiting_human task(s) on dashboard`);
     if (obs.feedbackSummary.counts.new > 0) {
       console.log(`  new feedback: ${obs.feedbackSummary.counts.new}`);
@@ -938,16 +950,9 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
 
   if (obs.tasks.length === 0) {
     queue.addLog(id, "decide", "queue_empty: no principles defined, add principles to continue");
-    queue.transition(id, "acting");
-    const cleanup3 = await performActCleanup(queue, ctx);
-    const cleanupLog3 = formatCleanupLog(cleanup3);
-    const actSummary3 = ["signaled empty queue — no principles defined", cleanupLog3].filter(Boolean).join("; ");
-    queue.addLog(id, "act", actSummary3);
-    queue.transition(id, "done");
-    await queue.save();
-    await runOnDoneHooks(id, iterationTask.title);
-    const queueEmptyMsg = cleanupLog3
-      ? `queue empty — no principles defined, add principles to continue; ${cleanupLog3}`
+    const { cleanupLog: queueEmptyCleanup } = await finalizeIteration({ queue, ctx, taskId: id, taskTitle: iterationTask.title, message: "signaled empty queue — no principles defined" });
+    const queueEmptyMsg = queueEmptyCleanup
+      ? `queue empty — no principles defined, add principles to continue; ${queueEmptyCleanup}`
       : "queue empty — no principles defined, add principles to continue";
     console.log(`[${shortId}] Iteration complete: ${queueEmptyMsg}`);
     if (obs.feedbackSummary.counts.new > 0) {

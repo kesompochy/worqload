@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, spyOn } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createTask } from "./task";
@@ -1841,6 +1841,26 @@ describe("spawn timeout", () => {
     const tasks = await load(storePath);
     const updated = tasks.find(t => t.id === task.id);
     expect(updated?.status).toBe("done");
+  });
+
+  test("spawnWithTimeout clears timer on normal completion", async () => {
+    const storePath = tmpPath("timeout-clear");
+    const missionPath = tmpPath("timeout-clear-m");
+    const mission = await createMissionWithPrinciple("timeout-clear", missionPath);
+    const task = createTask("timer cleanup task");
+    await setupQueue(storePath, [{ ...task, missionId: mission.id }]);
+
+    const clearSpy = spyOn(globalThis, "clearTimeout");
+    const callsBefore = clearSpy.mock.calls.length;
+
+    await processTask(task, mission, {
+      storePath,
+      actCommand: ["echo", "done"],
+      spawnTimeoutMs: 60_000,
+    });
+
+    expect(clearSpy.mock.calls.length).toBeGreaterThan(callsBefore);
+    clearSpy.mockRestore();
   });
 
   test("default spawnTimeoutMs is 5 minutes", async () => {

@@ -20,6 +20,7 @@ import {
   hasHumanAnswer,
   performActCleanup,
   formatCleanupLog,
+  finalizeIteration,
   detectCompletedFeedbackTasks,
   needsHumanReport,
   ackFeedbackIds,
@@ -461,6 +462,19 @@ describe("analyzeObservation", () => {
 
     expect(analysis).toContain("unread_reports");
     expect(analysis).toContain("Important report");
+  });
+
+  test("includes unread report content in analysis so main session can audit", async () => {
+    const reportsPath = tmpPath("reports");
+    await addReport("調査レポート", "テスト駆動開発の導入により品質が向上した", "agent", { path: reportsPath, category: "human" });
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext({ reportsPath });
+    const obs = await collectObservation(queue, ctx);
+
+    const analysis = analyzeObservation(obs);
+
+    expect(analysis).toContain("テスト駆動開発の導入により品質が向上した");
   });
 
   test("includes unread reports count in observe log", async () => {
@@ -3215,5 +3229,67 @@ describe("generateTasksFromObservation - task priority", () => {
     expect(TASK_PRIORITY.FEEDBACK_REVIEW).toBeGreaterThan(TASK_PRIORITY.HUMAN_REPORT);
     expect(TASK_PRIORITY.HUMAN_REPORT).toBeGreaterThan(TASK_PRIORITY.COMMIT);
     expect(TASK_PRIORITY.COMMIT).toBeGreaterThan(TASK_PRIORITY.AUTONOMOUS);
+  });
+});
+
+describe("finalizeIteration", () => {
+  test("transitions task to acting then done and saves", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Test iteration");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "deciding");
+
+    await finalizeIteration({ queue, ctx: {}, taskId: task.id, taskTitle: task.title, message: "test action" });
+
+    const finalized = queue.get(task.id);
+    expect(finalized).toBeDefined();
+    expect(finalized!.status).toBe("done");
+    const actLog = finalized!.logs.find(l => l.phase === "act");
+    expect(actLog).toBeDefined();
+    expect(actLog!.content).toBe("test action");
+  });
+
+  test("appends cleanup log to act summary", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const doneTask = createTask("Completed work");
+    queue.enqueue(doneTask);
+    queue.transition(doneTask.id, "done");
+
+    const iterTask = createTask("Iteration");
+    queue.enqueue(iterTask);
+    queue.transition(iterTask.id, "orienting");
+    queue.transition(iterTask.id, "deciding");
+
+    const result = await finalizeIteration({ queue, ctx: {}, taskId: iterTask.id, taskTitle: iterTask.title, message: "decided" });
+
+    expect(result.cleanupLog).toContain("archived");
+    expect(result.actSummary).toContain("decided");
+    expect(result.actSummary).toContain("archived");
+  });
+
+  test("returns empty cleanupLog when nothing to clean up", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Iteration");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "deciding");
+
+    const result = await finalizeIteration({ queue, ctx: {}, taskId: task.id, taskTitle: task.title, message: "no-op" });
+
+    expect(result.cleanupLog).toBe("");
+    expect(result.actSummary).toBe("no-op");
+  });
+
+  test("message-only actSummary when cleanupLog is empty", async () => {
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const task = createTask("Iteration");
+    queue.enqueue(task);
+    queue.transition(task.id, "orienting");
+    queue.transition(task.id, "deciding");
+
+    const result = await finalizeIteration({ queue, ctx: {}, taskId: task.id, taskTitle: task.title, message: "single message" });
+
+    expect(result.actSummary).toBe("single message");
   });
 });
