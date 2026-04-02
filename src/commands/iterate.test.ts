@@ -439,6 +439,20 @@ describe("analyzeObservation", () => {
   test("excludes read reports from unreadReports", async () => {
     const reportsPath = tmpPath("reports");
     const report = await addReport("Read report", "content", "agent", { path: reportsPath, category: "human" });
+    const { updateMainSessionReportStatus } = await import("../reports");
+    await updateMainSessionReportStatus(report.id, "read", reportsPath);
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+    const ctx = makeContext({ reportsPath });
+
+    const obs = await collectObservation(queue, ctx);
+
+    expect(obs.unreadReports).toHaveLength(0);
+  });
+
+  test("uses mainSessionStatus for filtering, not human status", async () => {
+    const reportsPath = tmpPath("reports");
+    const report = await addReport("Human-read report", "content", "agent", { path: reportsPath, category: "human" });
     const { updateReportStatus } = await import("../reports");
     await updateReportStatus(report.id, "read", reportsPath);
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
@@ -447,7 +461,9 @@ describe("analyzeObservation", () => {
 
     const obs = await collectObservation(queue, ctx);
 
-    expect(obs.unreadReports).toHaveLength(0);
+    // Human marked as read, but mainSessionStatus is still unread
+    expect(obs.unreadReports).toHaveLength(1);
+    expect(obs.unreadReports[0].title).toBe("Human-read report");
   });
 
   test("includes unread_reports tag in analysis when unread reports exist", async () => {
@@ -2347,9 +2363,22 @@ describe("performActCleanup", () => {
     expect(result.unreadReports).toContain("Report B");
   });
 
-  test("excludes read reports from unread list", async () => {
+  test("excludes reports with mainSessionStatus read from unread list", async () => {
     const reportsPath = tmpPath("reports");
     await addReport("Unread report", "content", "agent", reportsPath);
+    const { updateMainSessionReportStatus, loadReports: lr } = await import("../reports");
+    const reports = await lr(reportsPath);
+    await updateMainSessionReportStatus(reports[0].id, "read", reportsPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    const result = await performActCleanup(queue, { reportsPath });
+
+    expect(result.unreadReports).toHaveLength(0);
+  });
+
+  test("includes reports with human status read but mainSessionStatus unread", async () => {
+    const reportsPath = tmpPath("reports");
+    await addReport("Human-read report", "content", "agent", reportsPath);
     const { updateReportStatus, loadReports: lr } = await import("../reports");
     const reports = await lr(reportsPath);
     await updateReportStatus(reports[0].id, "read", reportsPath);
@@ -2357,7 +2386,8 @@ describe("performActCleanup", () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const result = await performActCleanup(queue, { reportsPath });
 
-    expect(result.unreadReports).toHaveLength(0);
+    expect(result.unreadReports).toHaveLength(1);
+    expect(result.unreadReports[0]).toBe("Human-read report");
   });
 
   test("returns empty unread reports when reportsPath is not set", async () => {

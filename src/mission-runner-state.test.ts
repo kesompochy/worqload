@@ -164,6 +164,34 @@ test("detectDeadRunners skips alive runners", () => {
   expect(dead).toHaveLength(0);
 });
 
+test("hasAliveRunnerForMission returns true when running process exists", async () => {
+  const path = tmpPath();
+  await registerRunner("mission-1", "Alpha", process.pid, path);
+  const { hasAliveRunnerForMission } = await import("./mission-runner-state");
+  expect(await hasAliveRunnerForMission("mission-1", path)).toBe(true);
+});
+
+test("hasAliveRunnerForMission returns false when process is dead", async () => {
+  const path = tmpPath();
+  await registerRunner("mission-1", "Alpha", 999999, path);
+  const { hasAliveRunnerForMission } = await import("./mission-runner-state");
+  expect(await hasAliveRunnerForMission("mission-1", path)).toBe(false);
+});
+
+test("hasAliveRunnerForMission returns false when runner is stopped", async () => {
+  const path = tmpPath();
+  const r = await registerRunner("mission-1", "Alpha", process.pid, path);
+  await deregisterRunner(r.id, path);
+  const { hasAliveRunnerForMission } = await import("./mission-runner-state");
+  expect(await hasAliveRunnerForMission("mission-1", path)).toBe(false);
+});
+
+test("hasAliveRunnerForMission returns false when no runners exist", async () => {
+  const path = tmpPath();
+  const { hasAliveRunnerForMission } = await import("./mission-runner-state");
+  expect(await hasAliveRunnerForMission("mission-1", path)).toBe(false);
+});
+
 test("multiple runners tracked independently", async () => {
   const path = tmpPath();
   const r1 = await registerRunner("mission-1", "Alpha", 100, path);

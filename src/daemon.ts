@@ -1,5 +1,6 @@
 import { join } from "path";
 import { mkdir } from "fs/promises";
+import { hasAliveRunnerForMission } from "./mission-runner-state";
 
 export interface DaemonResult {
   pid: number;
@@ -21,7 +22,11 @@ export function buildDaemonCommand(missionId: string, options: BuildDaemonComman
 export async function launchMissionDaemon(
   missionId: string,
   options: { logDir?: string; command?: string[]; useWorktree?: boolean } = {},
-): Promise<DaemonResult> {
+): Promise<DaemonResult | null> {
+  if (await hasAliveRunnerForMission(missionId)) {
+    return null;
+  }
+
   const logDir = options.logDir ?? join(".worqload", "logs");
   const logPath = join(logDir, `mission-${missionId}.log`);
   await mkdir(logDir, { recursive: true });

@@ -366,7 +366,7 @@ export async function collectObservation(queue: TaskQueue, ctx: IterateContext, 
 
   const serverLogSummary = serverLogs.length > 0 ? summarizeServerLogs(serverLogs) : null;
   const stuckTasks = detectStuckTasks(activeTasks);
-  const unreadReports = allReports.filter(r => r.status === "unread" && r.category === "human");
+  const unreadReports = allReports.filter(r => (r.mainSessionStatus ?? r.status) === "unread" && r.category === "human");
   const deadRunners = detectDeadRunners(runnerStates);
 
   // Mark dead runners as stopped to prevent repeated detection
@@ -833,7 +833,7 @@ export async function performActCleanup(queue: TaskQueue, ctx: IterateContext): 
   if (ctx.reportsPath) {
     const reports = await loadReports(ctx.reportsPath).catch(() => [] as Report[]);
     unreadReports = reports
-      .filter(r => r.status === "unread")
+      .filter(r => (r.mainSessionStatus ?? r.status) === "unread")
       .map(r => r.title);
   }
 

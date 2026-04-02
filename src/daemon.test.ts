@@ -78,14 +78,15 @@ describe("launchMissionDaemon", () => {
       logDir,
       command: ["sh", "-c", "echo daemon-started"],
     });
-    spawnedPids.push(result.pid);
+    expect(result).not.toBeNull();
+    spawnedPids.push(result!.pid);
 
-    expect(result.pid).toBeGreaterThan(0);
-    expect(result.logPath).toContain("mission-test-mission.log");
+    expect(result!.pid).toBeGreaterThan(0);
+    expect(result!.logPath).toContain("mission-test-mission.log");
 
     // Wait for process to finish writing
     await Bun.sleep(200);
-    const logContent = await Bun.file(result.logPath).text();
+    const logContent = await Bun.file(result!.logPath).text();
     expect(logContent).toContain("daemon-started");
   });
 
@@ -95,10 +96,11 @@ describe("launchMissionDaemon", () => {
       logDir,
       command: ["echo", "ok"],
     });
-    spawnedPids.push(result.pid);
+    expect(result).not.toBeNull();
+    spawnedPids.push(result!.pid);
 
     await Bun.sleep(200);
-    const exists = await Bun.file(result.logPath).exists();
+    const exists = await Bun.file(result!.logPath).exists();
     expect(exists).toBeTrue();
   });
 
@@ -109,10 +111,11 @@ describe("launchMissionDaemon", () => {
       logDir,
       command: ["nohup", "sh", "-c", "sleep 2 && echo done"],
     });
-    spawnedPids.push(result.pid);
+    expect(result).not.toBeNull();
+    spawnedPids.push(result!.pid);
     const elapsed = Date.now() - start;
 
-    expect(result.pid).toBeGreaterThan(0);
+    expect(result!.pid).toBeGreaterThan(0);
     // Should return well before the 2s sleep completes
     expect(elapsed).toBeLessThan(500);
   });
@@ -123,15 +126,16 @@ describe("launchMissionDaemon", () => {
       logDir,
       command: ["nohup", "sh", "-c", "sleep 1 && echo survived"],
     });
-    spawnedPids.push(result.pid);
+    expect(result).not.toBeNull();
+    spawnedPids.push(result!.pid);
 
     // Allow nohup to set up signal handling before sending SIGHUP
     await Bun.sleep(200);
-    try { process.kill(result.pid, "SIGHUP"); } catch {}
+    try { process.kill(result!.pid, "SIGHUP"); } catch {}
 
     // Wait for process to finish
     await Bun.sleep(1500);
-    const logContent = await Bun.file(result.logPath).text();
+    const logContent = await Bun.file(result!.logPath).text();
     expect(logContent).toContain("survived");
   });
 });
@@ -181,9 +185,10 @@ describe("daemon integration: launchMissionDaemon runs mission to completion", (
       logDir,
       command: ["nohup", process.execPath, "run", scriptPath],
     });
-    spawnedPids.push(result.pid);
+    expect(result).not.toBeNull();
+    spawnedPids.push(result!.pid);
 
-    expect(result.pid).toBeGreaterThan(0);
+    expect(result!.pid).toBeGreaterThan(0);
 
     const done = await pollForTaskDone(storePath, task.id);
     expect(done).toBeTrue();
@@ -230,11 +235,12 @@ await runMission("${mission.id}", {
       logDir,
       command: ["nohup", process.execPath, "run", scriptPath],
     });
-    spawnedPids.push(result.pid);
+    expect(result).not.toBeNull();
+    spawnedPids.push(result!.pid);
 
     // Send SIGHUP shortly after launch, before task processing begins
     await Bun.sleep(200);
-    try { process.kill(result.pid, "SIGHUP"); } catch {}
+    try { process.kill(result!.pid, "SIGHUP"); } catch {}
 
     const done = await pollForTaskDone(storePath, task.id);
     expect(done).toBeTrue();

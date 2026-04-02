@@ -94,8 +94,12 @@ export async function mission(queue: TaskQueue, args: string[]) {
       await runMission(missionId, { useWorktree });
     } else {
       const result = await launchMissionDaemon(missionId, { useWorktree });
-      console.log(`Mission runner started (PID: ${result.pid})`);
-      console.log(`Log: ${result.logPath}`);
+      if (!result) {
+        console.log(`Mission runner already running for ${missionId}`);
+      } else {
+        console.log(`Mission runner started (PID: ${result.pid})`);
+        console.log(`Log: ${result.logPath}`);
+      }
     }
     return;
   }

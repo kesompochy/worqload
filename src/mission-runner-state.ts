@@ -89,3 +89,8 @@ export async function heartbeatRunner(
 export async function deregisterRunner(id: string, path: string = DEFAULT_PATH): Promise<void> {
   await store.update(id, { status: "stopped" as const, lastHeartbeat: new Date().toISOString() }, path);
 }
+
+export async function hasAliveRunnerForMission(missionId: string, path: string = DEFAULT_PATH): Promise<boolean> {
+  const runners = await store.load(path);
+  return runners.some(r => r.missionId === missionId && r.status !== "stopped" && isProcessAlive(r.pid));
+}

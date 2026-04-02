@@ -88,13 +88,13 @@ describe("collectResumeState", () => {
     expect(state.activeMissions[0].name).toBe("Active mission");
   });
 
-  test("collects unread human reports only", async () => {
+  test("collects unread human reports only (by mainSessionStatus)", async () => {
     const reportsPath = tmpPath("reports");
     await addReport("Unread human report", "content", "agent", { path: reportsPath, category: "human" });
     const r2 = await addReport("Read human report", "content", "agent", { path: reportsPath, category: "human" });
     await addReport("Unread internal report", "content", "agent", { path: reportsPath, category: "internal" });
-    const { updateReportStatus } = await import("./reports");
-    await updateReportStatus(r2.id, "read", reportsPath);
+    const { updateMainSessionReportStatus } = await import("./reports");
+    await updateMainSessionReportStatus(r2.id, "read", reportsPath);
 
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     await queue.load();
@@ -107,6 +107,25 @@ describe("collectResumeState", () => {
 
     expect(state.unreadReports).toHaveLength(1);
     expect(state.unreadReports[0].title).toBe("Unread human report");
+  });
+
+  test("includes report with human status read but mainSessionStatus unread", async () => {
+    const reportsPath = tmpPath("reports");
+    const r = await addReport("Human-read report", "content", "agent", { path: reportsPath, category: "human" });
+    const { updateReportStatus } = await import("./reports");
+    await updateReportStatus(r.id, "read", reportsPath);
+
+    const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
+    await queue.load();
+
+    const state = await collectResumeState(queue, {
+      missionsPath: tmpPath("missions"),
+      reportsPath,
+      feedbackPath: tmpPath("feedback"),
+    });
+
+    expect(state.unreadReports).toHaveLength(1);
+    expect(state.unreadReports[0].title).toBe("Human-read report");
   });
 
   test("collects new feedback only", async () => {
