@@ -25,14 +25,12 @@ export async function saveFeedback(items: Feedback[], path: string = DEFAULT_FEE
 }
 
 export async function addFeedback(message: string, from: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<Feedback> {
-  const item: Feedback = {
-    id: crypto.randomUUID(),
+  return store.create({
     from,
     message,
-    status: "new",
+    status: "new" as const,
     createdAt: new Date().toISOString(),
-  };
-  return store.add(item, path);
+  }, path);
 }
 
 export async function acknowledgeFeedback(id: string, path: string = DEFAULT_FEEDBACK_PATH): Promise<void> {
@@ -277,14 +275,12 @@ export async function distillFeedback(
   const now = new Date().toISOString();
   const pendingVerification: DistilledRule[] = [];
   for (const { rule, feedbackId } of ruleOrigins) {
-    const distilledRule: DistilledRule = {
-      id: crypto.randomUUID(),
+    const distilledRule = await distilledRuleStore.create({
       rule,
       feedbackIds: [feedbackId],
       distilledAt: now,
-      status: "pending_verification",
-    };
-    await distilledRuleStore.add(distilledRule, distilledRulesPath);
+      status: "pending_verification" as const,
+    }, distilledRulesPath);
     pendingVerification.push(distilledRule);
   }
 

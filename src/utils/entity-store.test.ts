@@ -160,6 +160,35 @@ test("loadUnlocked returns empty array when file does not exist", async () => {
   expect(loaded).toEqual([]);
 });
 
+test("create auto-generates id and persists", async () => {
+  const path = tmpPath();
+  const store = createStore(path);
+  const entity = await store.create({ name: "test", value: 42 });
+
+  expect(entity.id).toBeDefined();
+  expect(typeof entity.id).toBe("string");
+  expect(entity.id.length).toBeGreaterThan(0);
+  expect(entity.name).toBe("test");
+  expect(entity.value).toBe(42);
+
+  const loaded = await store.load();
+  expect(loaded).toHaveLength(1);
+  expect(loaded[0]).toEqual(entity);
+});
+
+test("create appends to existing items", async () => {
+  const path = tmpPath();
+  const store = createStore(path);
+  await store.create({ name: "first", value: 1 });
+  await store.create({ name: "second", value: 2 });
+
+  const loaded = await store.load();
+  expect(loaded).toHaveLength(2);
+  expect(loaded[0].name).toBe("first");
+  expect(loaded[1].name).toBe("second");
+  expect(loaded[0].id).not.toBe(loaded[1].id);
+});
+
 test("concurrent updates do not lose data", async () => {
   const path = tmpPath();
   const store = createStore(path);

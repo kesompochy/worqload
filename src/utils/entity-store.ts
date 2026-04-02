@@ -45,6 +45,11 @@ export class EntityStore<T extends { id: string }> {
     return entity;
   }
 
+  async create(fields: Omit<T, "id">, path?: string): Promise<T> {
+    const entity = { id: crypto.randomUUID(), ...fields } as T;
+    return this.add(entity, path);
+  }
+
   findByIdOrPrefix(items: T[], id: string): T | undefined {
     return items.find(item => item.id === id || item.id.startsWith(id));
   }

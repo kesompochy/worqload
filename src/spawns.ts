@@ -27,25 +27,25 @@ export async function saveSpawns(spawns: SpawnRecord[], path: string = DEFAULT_S
 }
 
 export async function recordSpawnStart(taskId: string, taskTitle: string, owner: string, pid: number, path: string = DEFAULT_SPAWNS_PATH, worktreeInfo?: { worktreePath: string; branchName: string }): Promise<SpawnRecord> {
-  const record: SpawnRecord = {
-    id: crypto.randomUUID(),
+  return store.create({
     taskId,
     taskTitle,
     owner,
     pid,
-    status: "running",
+    status: "running" as const,
     startedAt: new Date().toISOString(),
     ...(worktreeInfo ? { worktreePath: worktreeInfo.worktreePath, branchName: worktreeInfo.branchName } : {}),
-  };
-  return store.add(record, path);
+  }, path);
 }
 
 export async function recordSpawnFinish(id: string, exitCode: number, path: string = DEFAULT_SPAWNS_PATH): Promise<void> {
-  const spawns = await store.load(path);
-  const record = spawns.find(s => s.id === id);
-  if (!record) return;
-  record.status = exitCode === 0 ? "done" : "failed";
-  record.finishedAt = new Date().toISOString();
-  record.exitCode = exitCode;
-  await store.save(spawns, path);
+  try {
+    await store.update(id, {
+      status: exitCode === 0 ? "done" : "failed",
+      finishedAt: new Date().toISOString(),
+      exitCode,
+    }, path);
+  } catch {
+    // Silent no-op when spawn record not found
+  }
 }

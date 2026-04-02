@@ -36,17 +36,15 @@ export async function addReport(title: string, content: string, createdBy: strin
   const resolvedPath = typeof pathOrOptions === "string" ? pathOrOptions : pathOrOptions?.path;
   const taskId = typeof pathOrOptions === "string" ? undefined : pathOrOptions?.taskId;
   const category: ReportCategory = typeof pathOrOptions === "string" ? "internal" : (pathOrOptions?.category ?? "internal");
-  const report: Report = {
-    id: crypto.randomUUID(),
+  return store.create({
     title,
     content,
-    status: "unread",
+    status: "unread" as const,
     createdBy,
     createdAt: new Date().toISOString(),
     category,
     ...(taskId ? { taskId } : {}),
-  };
-  return store.add(report, resolvedPath);
+  }, resolvedPath);
 }
 
 export async function updateReportStatus(id: string, status: ReportStatus, path?: string): Promise<void> {
