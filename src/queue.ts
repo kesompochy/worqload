@@ -1,6 +1,7 @@
 import type { Task, TaskStatus, OodaPhase, PhaseLog } from "./task";
 import { validateTransition } from "./task";
 import { load, save, loadArchive, appendArchive } from "./store";
+import { EntityStore } from "./utils/entity-store";
 
 export class TaskQueue {
   private tasks: Map<string, Task> = new Map();
@@ -37,10 +38,7 @@ export class TaskQueue {
   }
 
   findById(shortId: string): Task | undefined {
-    for (const [id, task] of this.tasks) {
-      if (id.startsWith(shortId)) return task;
-    }
-    return undefined;
+    return EntityStore.findByIdOrPrefix(this.list(), shortId);
   }
 
   update(id: string, patch: Partial<Task>): Task | undefined {

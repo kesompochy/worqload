@@ -50,8 +50,13 @@ export class EntityStore<T extends { id: string }> {
     return this.add(entity, path);
   }
 
-  findByIdOrPrefix(items: T[], id: string): T | undefined {
+  static findByIdOrPrefix<U extends { id: string }>(items: U[], id: string): U | undefined {
     return items.find(item => item.id === id || item.id.startsWith(id));
+  }
+
+  async findById(id: string, path?: string): Promise<T | undefined> {
+    const items = await this.load(path);
+    return EntityStore.findByIdOrPrefix(items, id);
   }
 
   async update(id: string, changes: Partial<T>, path?: string): Promise<T> {
@@ -59,7 +64,7 @@ export class EntityStore<T extends { id: string }> {
     if (!resolved) return { id, ...changes } as T;
     return withLock(resolved, async () => {
       const items = await loadJsonFileUnlocked<T[]>(resolved, []);
-      const item = this.findByIdOrPrefix(items, id);
+      const item = EntityStore.findByIdOrPrefix(items, id);
       if (!item) throw new Error(`${this.entityName} not found: ${id}`);
       Object.assign(item, changes);
       await Bun.write(resolved, JSON.stringify(items, null, 2));
@@ -72,8 +77,9 @@ export class EntityStore<T extends { id: string }> {
     if (!resolved) return;
     await withLock(resolved, async () => {
       const items = await loadJsonFileUnlocked<T[]>(resolved, []);
-      const filtered = items.filter(item => item.id !== id && !item.id.startsWith(id));
-      if (filtered.length === items.length) throw new Error(`${this.entityName} not found: ${id}`);
+      const item = EntityStore.findByIdOrPrefix(items, id);
+      if (!item) throw new Error(`${this.entityName} not found: ${id}`);
+      const filtered = items.filter(i => i !== item);
       await Bun.write(resolved, JSON.stringify(filtered, null, 2));
     });
   }

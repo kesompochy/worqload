@@ -1,6 +1,6 @@
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { loadReports, addReport, updateReportStatus, removeReport } from "../reports";
+import { loadReports, addReport, updateReportStatus, removeReport, findReportById } from "../reports";
 import { SHORT_ID_LENGTH } from "../task";
 import { parseFlags } from "../utils/args";
 
@@ -19,8 +19,7 @@ export async function report(_queue: TaskQueue, args: string[]) {
   }
   if (args[0] === "show") {
     if (!args[1]) exitWithError("Usage: worqload report show <id>");
-    const reports = await loadReports();
-    const r = reports.find(rep => rep.id === args[1] || rep.id.startsWith(args[1]));
+    const r = await findReportById(args[1]);
     if (!r) exitWithError(`Report not found: ${args[1]}`);
     console.log(`# ${r!.title}\n\nStatus: ${r!.status} | By: ${r!.createdBy} | ${r!.createdAt}\n\n${r!.content}`);
     return;

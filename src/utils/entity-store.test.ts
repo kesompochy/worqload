@@ -56,29 +56,26 @@ test("add appends to existing items", async () => {
   expect(loaded).toHaveLength(2);
 });
 
-test("findByIdOrPrefix matches exact id", async () => {
-  const store = createStore();
+test("findByIdOrPrefix matches exact id (static)", () => {
   const items: TestEntity[] = [
     { id: "abc-123-456", name: "target", value: 1 },
     { id: "def-789", name: "other", value: 2 },
   ];
-  expect(store.findByIdOrPrefix(items, "abc-123-456")).toEqual(items[0]);
+  expect(EntityStore.findByIdOrPrefix(items, "abc-123-456")).toEqual(items[0]);
 });
 
-test("findByIdOrPrefix matches id prefix", async () => {
-  const store = createStore();
+test("findByIdOrPrefix matches id prefix (static)", () => {
   const items: TestEntity[] = [
     { id: "abc-123-456", name: "target", value: 1 },
   ];
-  expect(store.findByIdOrPrefix(items, "abc-123")).toEqual(items[0]);
+  expect(EntityStore.findByIdOrPrefix(items, "abc-123")).toEqual(items[0]);
 });
 
-test("findByIdOrPrefix returns undefined for no match", async () => {
-  const store = createStore();
+test("findByIdOrPrefix returns undefined for no match (static)", () => {
   const items: TestEntity[] = [
     { id: "abc-123", name: "item", value: 1 },
   ];
-  expect(store.findByIdOrPrefix(items, "zzz")).toBeUndefined();
+  expect(EntityStore.findByIdOrPrefix(items, "zzz")).toBeUndefined();
 });
 
 test("update modifies entity by id and persists", async () => {
@@ -187,6 +184,48 @@ test("create appends to existing items", async () => {
   expect(loaded[0].name).toBe("first");
   expect(loaded[1].name).toBe("second");
   expect(loaded[0].id).not.toBe(loaded[1].id);
+});
+
+test("findById loads and returns matching entity", async () => {
+  const path = tmpPath();
+  const store = createStore(path);
+  await store.add({ id: "abc-123-456", name: "target", value: 1 });
+  await store.add({ id: "def-789", name: "other", value: 2 });
+
+  const found = await store.findById("abc-123");
+  expect(found).toBeDefined();
+  expect(found!.name).toBe("target");
+});
+
+test("findById returns exact match over prefix", async () => {
+  const path = tmpPath();
+  const store = createStore(path);
+  await store.add({ id: "abc", name: "exact", value: 1 });
+  await store.add({ id: "abc-longer", name: "prefix", value: 2 });
+
+  const found = await store.findById("abc");
+  expect(found!.name).toBe("exact");
+});
+
+test("findById returns undefined for no match", async () => {
+  const path = tmpPath();
+  const store = createStore(path);
+  await store.add({ id: "abc-123", name: "item", value: 1 });
+
+  const found = await store.findById("zzz");
+  expect(found).toBeUndefined();
+});
+
+test("remove only deletes the single matched entity when prefix is ambiguous", async () => {
+  const path = tmpPath();
+  const store = createStore(path);
+  await store.add({ id: "abc-111", name: "first", value: 1 });
+  await store.add({ id: "abc-222", name: "second", value: 2 });
+
+  await store.remove("abc");
+  const loaded = await store.load();
+  expect(loaded).toHaveLength(1);
+  expect(loaded[0].id).toBe("abc-222");
 });
 
 test("concurrent updates do not lose data", async () => {

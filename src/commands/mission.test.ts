@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { createTask } from "../task";
 import { TaskQueue } from "../queue";
-import { createMission, loadMissions, addMissionPrinciple } from "../mission";
+import { createMission, loadMissions, addMissionPrinciple, findMissionById } from "../mission";
 import { loadConfig } from "../config";
 
 function tmpPath(): string {
@@ -28,8 +28,7 @@ test("assign sets missionId on task", async () => {
 
 test("assign throws for unknown mission", async () => {
   const missionPath = tmpPath();
-  const missions = await loadMissions(missionPath);
-  const found = missions.find(m => m.id === "nonexistent" || m.id.startsWith("nonexistent"));
+  const found = await findMissionById("nonexistent", missionPath);
   expect(found).toBeUndefined();
 });
 

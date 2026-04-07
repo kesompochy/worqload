@@ -1,5 +1,5 @@
 import { exitWithError } from "../utils/errors";
-import { createTask } from "../task";
+import { createTask, isTerminal } from "../task";
 import type { TaskStatus } from "../task";
 import { SHORT_ID_LENGTH } from "../task";
 import type { TaskQueue } from "../queue";
@@ -87,7 +87,7 @@ export async function next(queue: TaskQueue, _args: string[]) {
 }
 
 export async function clean(queue: TaskQueue, _args: string[]) {
-  const terminated = queue.list().filter(t => t.status === "done" || t.status === "failed");
+  const terminated = queue.list().filter(isTerminal);
   if (terminated.length === 0) {
     console.log("No done/failed tasks to clean.");
     return;

@@ -1,11 +1,11 @@
 import type { Task } from "./task";
 import type { Mission } from "./mission";
-import { ESCALATION_EXIT_CODE, HUMAN_REQUIRED_PREFIX } from "./task";
 import { updateTask, load } from "./store";
 import { runOnDoneHooks } from "./hooks";
 import { recordSpawnStart, recordSpawnFinish } from "./spawns";
-import { spawnWithTimeout, SpawnTimeoutError, DEFAULT_SPAWN_TIMEOUT_MS, buildTaskEnv, truncateOutput } from "./spawn-executor";
-import { canRetry, computeRetryUpdate, MAX_TASK_RETRIES, phaseLog } from "./mission-runner-retry";
+import { spawnWithTimeout, SpawnTimeoutError, DEFAULT_SPAWN_TIMEOUT_MS, buildTaskEnv, truncateOutput, buildSpawnOutcomeUpdate, buildSpawnTimeoutUpdate } from "./spawn-executor";
+import type { RetryPolicy } from "./spawn-executor";
+import { canRetry, computeRetryUpdate, MAX_TASK_RETRIES } from "./mission-runner-retry";
 import { ensureReportForDoneTask, isReportToHumanTask } from "./mission-runner-act";
 
 export interface SpawnCompletion {
@@ -49,6 +49,13 @@ export async function spawnTask(
     rejectStarted = reject;
   });
 
+  const retryPolicy: RetryPolicy = {
+    canRetry,
+    computeRetry: computeRetryUpdate,
+    maxRetries: MAX_TASK_RETRIES,
+  };
+  const skipRetry = isReportToHumanTask(task);
+
   const completion = (async (): Promise<SpawnCompletion> => {
     let spawnRecordId: string | undefined;
     try {
@@ -65,36 +72,9 @@ export async function spawnTask(
       const output = (result.stdout + result.stderr).trim();
       const truncated = truncateOutput(output);
 
-      await updateTask(task.id, (current) => {
-        const logs = [...current.logs, phaseLog("act", truncated)];
-
-        if (result.exitCode === 0) {
-          return { status: "done" as const, logs, owner: undefined };
-        } else if (result.exitCode === ESCALATION_EXIT_CODE) {
-          const question = truncated || "Spawned agent requested human escalation";
-          return {
-            status: "waiting_human" as const,
-            logs: [...logs, phaseLog("orient", `${HUMAN_REQUIRED_PREFIX}${question}`)],
-            owner: undefined,
-          };
-        } else {
-          if (canRetry(current.context) && !isReportToHumanTask(task)) {
-            const { retryCount, retryAfter } = computeRetryUpdate(current.context);
-            return {
-              status: "observing" as const,
-              logs: [...logs, phaseLog("act", `[RETRY] ${retryCount}/${MAX_TASK_RETRIES} - exit code ${result.exitCode}`)],
-              owner: undefined,
-              context: { ...current.context, retryCount, retryAfter },
-            };
-          } else {
-            return {
-              status: "failed" as const,
-              logs: [...logs, phaseLog("act", `[FAILED] exit code ${result.exitCode}`)],
-              owner: undefined,
-            };
-          }
-        }
-      }, storePath);
+      await updateTask(task.id, (current) =>
+        buildSpawnOutcomeUpdate(result.exitCode, truncated, current, { retryPolicy, skipRetry }),
+      storePath);
 
       if (result.exitCode === 0) {
         await runOnDoneHooks(task.id, task.title);
@@ -108,26 +88,9 @@ export async function spawnTask(
     } catch (error) {
       if (error instanceof SpawnTimeoutError) {
         if (spawnRecordId) await recordSpawnFinish(spawnRecordId, -1, spawnsPath);
-        await updateTask(task.id, (current) => {
-          if (canRetry(current.context) && !isReportToHumanTask(task)) {
-            const { retryCount, retryAfter } = computeRetryUpdate(current.context);
-            return {
-              status: "observing" as const,
-              owner: undefined,
-              context: { ...current.context, retryCount, retryAfter },
-              logs: [...current.logs, phaseLog("act", `[TIMEOUT] Spawn timed out after ${spawnTimeoutMs}ms`)],
-            };
-          } else {
-            return {
-              status: "failed" as const,
-              owner: undefined,
-              logs: [...current.logs,
-                phaseLog("act", `[TIMEOUT] Spawn timed out after ${spawnTimeoutMs}ms`),
-                phaseLog("act", `[FAILED] timeout after ${MAX_TASK_RETRIES} retries`),
-              ],
-            };
-          }
-        }, storePath);
+        await updateTask(task.id, (current) =>
+          buildSpawnTimeoutUpdate(spawnTimeoutMs, current, { retryPolicy, skipRetry }),
+        storePath);
         return { exitCode: -1, output: "" };
       }
       rejectStarted(error instanceof Error ? error : new Error(String(error)));

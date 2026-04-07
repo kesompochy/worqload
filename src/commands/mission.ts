@@ -1,6 +1,6 @@
 import { exitWithError } from "../utils/errors";
 import type { TaskQueue } from "../queue";
-import { loadMissions, createMission, completeMission, addMissionPrinciple, removeMissionPrinciple, archiveMissions, loadMissionArchive } from "../mission";
+import { loadMissions, createMission, completeMission, addMissionPrinciple, removeMissionPrinciple, archiveMissions, loadMissionArchive, findMissionById } from "../mission";
 import { SHORT_ID_LENGTH } from "../task";
 import { parseFlags } from "../utils/args";
 import { launchMissionDaemon } from "../daemon";
@@ -39,8 +39,7 @@ export async function mission(queue: TaskQueue, args: string[]) {
   }
   if (args[0] === "assign") {
     if (!args[1] || !args[2]) exitWithError("Usage: worqload mission assign <mission-id> <task-id>");
-    const missions = await loadMissions();
-    const m = missions.find(mi => mi.id === args[1] || mi.id.startsWith(args[1]));
+    const m = await findMissionById(args[1]);
     if (!m) exitWithError(`Mission not found: ${args[1]}`);
     const task = queue.findById(args[2]);
     if (!task) exitWithError(`Task not found: ${args[2]}`);
@@ -68,8 +67,7 @@ export async function mission(queue: TaskQueue, args: string[]) {
       console.log("Principle removed.");
       return;
     }
-    const missions = await loadMissions();
-    const m = missions.find(mi => mi.id === missionId || mi.id.startsWith(missionId));
+    const m = await findMissionById(missionId);
     if (!m) exitWithError(`Mission not found: ${missionId}`);
     const principles = m!.principles || [];
     if (principles.length === 0) {

@@ -1,5 +1,5 @@
 import type { Task, TaskStatus } from "./task";
-import { createTask, getHumanQuestion, HUMAN_REQUIRED_PREFIX } from "./task";
+import { createTask, getHumanQuestion, HUMAN_REQUIRED_PREFIX, isTerminal } from "./task";
 import { TaskQueue } from "./queue";
 
 // A2A Protocol types (spec v0.2.1)
@@ -295,7 +295,7 @@ async function handleTasksCancel(queue: TaskQueue, params: Record<string, unknow
     throw { code: TASK_NOT_FOUND, message: `Task not found: ${taskId}` };
   }
 
-  if (task.status === "done" || task.status === "failed") {
+  if (isTerminal(task)) {
     throw { code: TASK_NOT_CANCELABLE, message: `Task is already ${task.status}` };
   }
 

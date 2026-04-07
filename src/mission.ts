@@ -1,5 +1,6 @@
-import { loadJsonFile, loadJsonFileUnlocked, saveJsonFile } from "./utils/json-store";
+import { loadJsonFileUnlocked } from "./utils/json-store";
 import { withLock } from "./lock";
+import { EntityStore } from "./utils/entity-store";
 
 const DEFAULT_MISSIONS_PATH = ".worqload/missions.json";
 const DEFAULT_MISSION_ARCHIVE_PATH = ".worqload/mission-archive.json";
@@ -20,16 +21,24 @@ export interface Mission {
   createdAt: string;
 }
 
-export async function loadMissions(path: string = DEFAULT_MISSIONS_PATH): Promise<Mission[]> {
-  const missions = await loadJsonFile<Mission[]>(path, []);
+const store = new EntityStore<Mission>(DEFAULT_MISSIONS_PATH, "Mission");
+
+export async function loadMissions(path?: string): Promise<Mission[]> {
+  const missions = await store.load(path);
   return missions.map(m => ({ priority: 0, ...m }));
 }
 
-export async function saveMissions(missions: Mission[], path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
-  await saveJsonFile(path, missions);
+export async function saveMissions(missions: Mission[], path?: string): Promise<void> {
+  await store.save(missions, path);
 }
 
-export async function createMission(name: string, filter: MissionFilter = {}, path: string = DEFAULT_MISSIONS_PATH, priority = 0): Promise<Mission> {
+export async function findMissionById(id: string, path?: string): Promise<Mission | undefined> {
+  const mission = await store.findById(id, path);
+  if (!mission) return undefined;
+  return { priority: 0, ...mission };
+}
+
+export async function createMission(name: string, filter: MissionFilter = {}, path?: string, priority = 0): Promise<Mission> {
   const trimmed = name.trim();
   if (trimmed === "") {
     throw new Error("Mission name must not be empty");
@@ -43,78 +52,66 @@ export async function createMission(name: string, filter: MissionFilter = {}, pa
     status: "active",
     createdAt: new Date().toISOString(),
   };
-  const missions = await loadMissions(path);
-  missions.push(mission);
-  await saveMissions(missions, path);
-  return mission;
+  return store.add(mission, path);
 }
 
-export async function addMissionPrinciple(id: string, text: string, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
+export async function addMissionPrinciple(id: string, text: string, path?: string): Promise<void> {
   const trimmed = text.trim();
   if (trimmed === "") {
     throw new Error("Principle text must not be empty");
   }
-  const missions = await loadMissions(path);
-  const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+  const mission = await findMissionById(id, path);
   if (!mission) throw new Error(`Mission not found: ${id}`);
-  if (!mission.principles) mission.principles = [];
-  mission.principles.push(trimmed);
-  await saveMissions(missions, path);
+  await store.update(id, { principles: [...(mission.principles || []), trimmed] }, path);
 }
 
-export async function removeMissionPrinciple(id: string, index: number, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
-  const missions = await loadMissions(path);
-  const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+export async function removeMissionPrinciple(id: string, index: number, path?: string): Promise<void> {
+  const mission = await findMissionById(id, path);
   if (!mission) throw new Error(`Mission not found: ${id}`);
-  const principles = mission.principles || [];
+  const principles = [...(mission.principles || [])];
   if (index < 0 || index >= principles.length) {
     throw new Error(`Principle index out of range: ${index}`);
   }
   principles.splice(index, 1);
-  await saveMissions(missions, path);
+  await store.update(id, { principles }, path);
 }
 
-export async function completeMission(id: string, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
-  const missions = await loadMissions(path);
-  const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+export async function completeMission(id: string, path?: string): Promise<void> {
+  const mission = await findMissionById(id, path);
   if (!mission) throw new Error(`Mission not found: ${id}`);
   if (mission.status === "completed") throw new Error(`Mission is already completed: ${id}`);
-  mission.status = "completed";
-  await saveMissions(missions, path);
+  await store.update(id, { status: "completed" }, path);
 }
 
-export async function failMission(id: string, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
-  const missions = await loadMissions(path);
-  const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+export async function failMission(id: string, path?: string): Promise<void> {
+  const mission = await findMissionById(id, path);
   if (!mission) throw new Error(`Mission not found: ${id}`);
   if (mission.status !== "active") throw new Error(`Cannot fail mission with status "${mission.status}": ${id}`);
-  mission.status = "failed";
-  await saveMissions(missions, path);
+  await store.update(id, { status: "failed" }, path);
 }
 
-export async function reactivateMission(id: string, path: string = DEFAULT_MISSIONS_PATH): Promise<void> {
-  const missions = await loadMissions(path);
-  const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+export async function reactivateMission(id: string, path?: string): Promise<void> {
+  const mission = await findMissionById(id, path);
   if (!mission) throw new Error(`Mission not found: ${id}`);
   if (mission.status === "active") throw new Error(`Mission is already active: ${id}`);
-  mission.status = "active";
-  await saveMissions(missions, path);
+  await store.update(id, { status: "active" }, path);
 }
 
 export async function loadMissionArchive(archivePath: string = DEFAULT_MISSION_ARCHIVE_PATH): Promise<Mission[]> {
-  return await loadJsonFile<Mission[]>(archivePath, []);
+  const archiveStore = new EntityStore<Mission>(archivePath, "Mission");
+  return archiveStore.load();
 }
 
 export async function archiveMissions(
   ids: string[],
-  path: string = DEFAULT_MISSIONS_PATH,
+  path?: string,
   archivePath: string = DEFAULT_MISSION_ARCHIVE_PATH,
 ): Promise<Mission[]> {
   const missions = await loadMissions(path);
   const toArchive: Mission[] = [];
 
   for (const id of ids) {
-    const mission = missions.find(m => m.id === id || m.id.startsWith(id));
+    const mission = EntityStore.findByIdOrPrefix(missions, id);
     if (!mission) throw new Error(`Mission not found: ${id}`);
     if (mission.status === "active") throw new Error(`Cannot archive active mission: ${mission.name}`);
     toArchive.push(mission);

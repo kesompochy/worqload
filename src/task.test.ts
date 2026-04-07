@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { createTask, validateTransition, getHumanQuestion } from "./task";
+import { createTask, validateTransition, getHumanQuestion, isEligible, isTerminal } from "./task";
 import type { TaskStatus } from "./task";
 
 test("createTask returns a valid task with defaults", () => {
@@ -128,5 +128,102 @@ describe("getHumanQuestion", () => {
     task.status = "waiting_human";
 
     expect(getHumanQuestion(task)).toBeNull();
+  });
+});
+
+describe("isEligible", () => {
+  test("observing task without owner is eligible", () => {
+    const task = createTask("test");
+    expect(isEligible(task)).toBe(true);
+  });
+
+  test("orienting task without owner is eligible", () => {
+    const task = createTask("test");
+    task.status = "orienting";
+    expect(isEligible(task)).toBe(true);
+  });
+
+  test("task with owner is not eligible", () => {
+    const task = createTask("test");
+    task.owner = "agent-1";
+    expect(isEligible(task)).toBe(false);
+  });
+
+  test("deciding task is not eligible", () => {
+    const task = createTask("test");
+    task.status = "deciding";
+    expect(isEligible(task)).toBe(false);
+  });
+
+  test("acting task is not eligible", () => {
+    const task = createTask("test");
+    task.status = "acting";
+    expect(isEligible(task)).toBe(false);
+  });
+
+  test("done task is not eligible", () => {
+    const task = createTask("test");
+    task.status = "done";
+    expect(isEligible(task)).toBe(false);
+  });
+
+  test("failed task is not eligible", () => {
+    const task = createTask("test");
+    task.status = "failed";
+    expect(isEligible(task)).toBe(false);
+  });
+
+  test("waiting_human task is not eligible", () => {
+    const task = createTask("test");
+    task.status = "waiting_human";
+    expect(isEligible(task)).toBe(false);
+  });
+
+  test("task with future retryAfter is not eligible", () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const task = createTask("test", { retryAfter: future });
+    expect(isEligible(task)).toBe(false);
+  });
+
+  test("task with past retryAfter is eligible", () => {
+    const past = new Date(Date.now() - 1000).toISOString();
+    const task = createTask("test", { retryAfter: past });
+    expect(isEligible(task)).toBe(true);
+  });
+
+  test("task without retryAfter is eligible", () => {
+    const task = createTask("test");
+    expect(isEligible(task)).toBe(true);
+  });
+});
+
+describe("isTerminal", () => {
+  test("done task is terminal", () => {
+    const task = createTask("test");
+    task.status = "done";
+    expect(isTerminal(task)).toBe(true);
+  });
+
+  test("failed task is terminal", () => {
+    const task = createTask("test");
+    task.status = "failed";
+    expect(isTerminal(task)).toBe(true);
+  });
+
+  test("observing task is not terminal", () => {
+    const task = createTask("test");
+    expect(isTerminal(task)).toBe(false);
+  });
+
+  test("acting task is not terminal", () => {
+    const task = createTask("test");
+    task.status = "acting";
+    expect(isTerminal(task)).toBe(false);
+  });
+
+  test("waiting_human task is not terminal", () => {
+    const task = createTask("test");
+    task.status = "waiting_human";
+    expect(isTerminal(task)).toBe(false);
   });
 });

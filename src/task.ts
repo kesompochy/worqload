@@ -53,6 +53,17 @@ export function getHumanQuestion(task: Task): string | null {
   return null;
 }
 
+export function isEligible(task: Task): boolean {
+  if (task.status !== "observing" && task.status !== "orienting") return false;
+  if (task.owner) return false;
+  if (task.context.retryAfter && new Date(task.context.retryAfter as string) > new Date()) return false;
+  return true;
+}
+
+export function isTerminal(task: Task): boolean {
+  return task.status === "done" || task.status === "failed";
+}
+
 export function createTask(title: string, context: Record<string, unknown> = {}, priority = 0, createdBy?: string): Task {
   const trimmed = title.trim();
   if (trimmed === "") {
