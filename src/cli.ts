@@ -100,7 +100,7 @@ Feedback:
 
 Missions:
   mission                        List missions
-  mission create <name> [--filter tags:a,b]  Create a mission
+  mission create <name> --principle <text> [--principle ...]  Create a mission
   mission list                   List missions with task counts
   mission assign <mid> <tid>     Assign a task to a mission
   mission run <mid>              Run mission agent as daemon (--foreground to block)

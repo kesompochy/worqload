@@ -118,6 +118,12 @@ worqload feedback resolve <id>             # mark as resolved after acting on it
 
 ## Mission Principles
 
+Every mission must have at least one principle before it can run. A mission runner will refuse to start without principles.
+After creating a mission, set principles immediately:
+\\\`\\\`\\\`sh
+worqload mission principle <mid> add "<principle text>"
+\\\`\\\`\\\`
+
 Tasks assigned to a mission inherit the mission's principles via the \\\`WORQLOAD_MISSION_PRINCIPLES\\\` environment variable (newline-separated).
 Check this variable at the start of execution and follow the mission-specific guidance it provides.
 
