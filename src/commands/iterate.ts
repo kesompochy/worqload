@@ -969,11 +969,14 @@ export async function iterate(queue: TaskQueue, args: string[], options?: Iterat
   }
 
   if (obs.tasks.length === 0) {
-    queue.addLog(id, "decide", "queue_empty: no principles defined, add principles to continue");
-    const { cleanupLog: queueEmptyCleanup } = await finalizeIteration({ queue, ctx, taskId: id, taskTitle: iterationTask.title, message: "signaled empty queue — no principles defined" });
-    const queueEmptyMsg = queueEmptyCleanup
-      ? `queue empty — no principles defined, add principles to continue; ${queueEmptyCleanup}`
-      : "queue empty — no principles defined, add principles to continue";
+    const hasPrinciples = obs.principles && parsePrincipleItems(obs.principles).length > 0;
+    const decideMsg = hasPrinciples
+      ? "queue_empty: idle — no new tasks derived"
+      : "queue_empty: no principles defined, add principles to continue";
+    queue.addLog(id, "decide", decideMsg);
+    const actMsg = hasPrinciples ? "idle" : "signaled empty queue — no principles defined";
+    const { cleanupLog: queueEmptyCleanup } = await finalizeIteration({ queue, ctx, taskId: id, taskTitle: iterationTask.title, message: actMsg });
+    const queueEmptyMsg = queueEmptyCleanup ? `${decideMsg}; ${queueEmptyCleanup}` : decideMsg;
     console.log(`[${shortId}] Iteration complete: ${queueEmptyMsg}`);
     if (obs.feedbackSummary.counts.new > 0) {
       console.log(`  new feedback: ${obs.feedbackSummary.counts.new}`);
