@@ -127,7 +127,7 @@ Iteration:
 
 OODA phases:
   observe <id> [observations]    Start/record observations
-  orient  <id> <analysis>        Record situation analysis
+  orient  <id> <analysis>        Record situation analysis (--human to escalate)
   decide  <id> <decision>        Record decision
   act     <id> [notes]           Mark as acting
   done    <id> [notes]           Mark as done
