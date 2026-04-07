@@ -1487,9 +1487,9 @@ describe("generateTasksFromObservation", () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const failedTask = createTask("Failed task");
     queue.enqueue(failedTask);
-    // Simulate 2 prior retries via act logs
-    queue.addLog(failedTask.id, "act", "retry attempt 1 - something happened");
-    queue.addLog(failedTask.id, "act", "retry attempt 2 - something happened");
+    // Simulate 2 prior failures
+    queue.addLog(failedTask.id, "act", "[FAILED] attempt 1");
+    queue.addLog(failedTask.id, "act", "[FAILED] attempt 2");
     const task = queue.get(failedTask.id)!;
     task.status = "failed";
     const obs = emptyObservation();

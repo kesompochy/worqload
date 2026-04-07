@@ -686,8 +686,8 @@ export async function generateTasksFromObservation(queue: TaskQueue, obs: Observ
   const reactivatedMissions = new Set<string>();
   for (const failedTask of obs.failedTasks) {
     if (failedTask.title.startsWith(REPORT_HUMAN_PREFIX)) continue;
-    const actLogCount = failedTask.logs.filter(l => l.phase === "act").length;
-    if (actLogCount < MAX_RETRY_ATTEMPTS) {
+    const failCount = failedTask.logs.filter(l => l.content.startsWith("[FAILED]")).length;
+    if (failCount < MAX_RETRY_ATTEMPTS) {
       queue.transition(failedTask.id, "observing");
       retriedTasks.push(failedTask.id);
       if (failedTask.missionId) {
