@@ -142,15 +142,20 @@ echo "What should the API response format be?"
 exit 3
 \\\`\\\`\\\`
 
-Spawn prompts must instruct agents to always create a report summarizing what they did upon completion using \\\`worqload report add <task-id> "<title>" "<content>"\\\`.
+Spawn prompts must instruct agents to always create a report summarizing what they did upon completion using \\\`worqload report add "<title>" "<content>" --by agent --category human\\\`.
 Spawn prompts must instruct agents to write report titles and content in Japanese when using \\\`worqload report add\\\`.
 
 ## Reports
 
+Reports have two categories:
+- \\\`human\\\` — visible on the dashboard (web UI). Use this for reports intended for humans.
+- \\\`internal\\\` (default) — only visible via CLI. Use this for agent-to-agent communication.
+
 \\\`\\\`\\\`sh
-worqload report add "<title>" "<content>" --by agent   # create report
-worqload report show <id>                               # view report
-worqload report status <id> <status>                    # update: unread → reading → read → archived
+worqload report add "<title>" "<content>" --by agent --category human   # human-visible report
+worqload report add "<title>" "<content>" --by agent                    # internal report (default)
+worqload report show <id>                                               # view report
+worqload report status <id> <status>                                    # update: unread → reading → read → archived
 \\\`\\\`\\\`
 
 ## Rules

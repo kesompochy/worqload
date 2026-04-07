@@ -1,6 +1,6 @@
 import { TaskQueue } from "./queue";
 import type { Task } from "./task";
-import { createTask } from "./task";
+import { createTask, isTerminal } from "./task";
 import { loadPrinciples, parsePrincipleLines, addPrinciple, editPrinciple, removePrinciple } from "./principles";
 import { loadSpawns } from "./spawns";
 import type { SpawnRecord } from "./spawns";
@@ -286,7 +286,7 @@ function buildRoutes(): Route[] {
       handler: async (_req, queue) => {
         await queue.load();
         const terminatedIds = queue.list()
-          .filter(t => t.status === "done" || t.status === "failed")
+          .filter(isTerminal)
           .map(t => t.id);
         if (terminatedIds.length === 0) return json({ archived: [] });
         const archived = await queue.archive(terminatedIds);
@@ -1034,8 +1034,10 @@ function EditableFeedbackMessage({ fb, onSend }) {
   return html\`<\${EditableText} value=\${fb.message} onSave=\${saveFeedback} className="task-title" />\`;
 }
 
-function FeedbackSection({ projectFeedback, onSend }) {
-  const allFeedback = (projectFeedback || []).filter(fb => fb.status === 'new');
+function FeedbackSection({ projectFeedback, feedback, onSend }) {
+  const localFeedback = (feedback || []).filter(fb => fb.status === 'new').map(fb => ({ ...fb, projectName: 'local' }));
+  const remoteFeedback = (projectFeedback || []).filter(fb => fb.status === 'new');
+  const allFeedback = [...localFeedback, ...remoteFeedback];
 
   return html\`<div style="margin-bottom:1rem">
     <h2 style="margin-top:0">Feedback</h2>
@@ -1082,16 +1084,16 @@ function ReportsSection({ reports, onUpdate }) {
 }
 
 function App() {
-  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], projectFeedback: [], reports: [], sleep: null, missions: [], runners: [] });
+  const [data, setData] = useState({ tasks: [], history: [], principles: [], heartbeat: null, spawns: [], projects: [], projectFeedback: [], feedback: [], reports: [], sleep: null, missions: [], runners: [] });
   const [tab, setTab] = useState('active');
 
   const refresh = useCallback(async () => {
-    const [tasks, history, principles, heartbeat, spawns, projects, projectFeedback, reports, sleep, missions, runners] = await Promise.all([
+    const [tasks, history, principles, heartbeat, spawns, projects, projectFeedback, feedback, reports, sleep, missions, runners] = await Promise.all([
       api.get('/api/tasks'), api.get('/api/history'), api.get('/api/principles'),
-      api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/projects/feedback'), api.get('/api/reports?category=human'),
+      api.get('/api/heartbeat'), api.get('/api/spawns'), api.get('/api/projects'), api.get('/api/projects/feedback'), api.get('/api/feedback'), api.get('/api/reports?category=human'),
       api.get('/api/sleep'), api.get('/api/missions'), api.get('/api/mission-runners'),
     ]);
-    setData({ tasks, history, principles, heartbeat, spawns, projects, projectFeedback, reports, sleep, missions, runners });
+    setData({ tasks, history, principles, heartbeat, spawns, projects, projectFeedback, feedback, reports, sleep, missions, runners });
   }, []);
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 3000); return () => clearInterval(id); }, [refresh]);
@@ -1105,7 +1107,7 @@ function App() {
     </div>
     <\${Principles} items=\${data.principles} onUpdate=\${refresh} />
     \${data.reports.length > 0 && html\`<\${ReportsSection} reports=\${data.reports} onUpdate=\${refresh} />\`}
-    \${data.projectFeedback.length > 0 && html\`<\${FeedbackSection} projectFeedback=\${data.projectFeedback} onSend=\${refresh} />\`}
+    \${(data.projectFeedback.length > 0 || data.feedback.length > 0) && html\`<\${FeedbackSection} projectFeedback=\${data.projectFeedback} feedback=\${data.feedback} onSend=\${refresh} />\`}
     <\${FeedbackForm} onSend=\${refresh} />
     \${data.missions.length > 0 && html\`<\${MissionSection} missions=\${data.missions} onUpdate=\${refresh} />\`}
     <div class="tabs">

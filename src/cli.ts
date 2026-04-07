@@ -110,7 +110,7 @@ Missions:
 
 Reports:
   report                         List reports
-  report add <title> <content> [--by <creator>]  Create a report
+  report add <title> <content> [--by <creator>] [--category internal|human]  Create a report
   report show <id>               Show report content
   report status <id> <status>    Set status (unread/reading/read)
   report remove <id>             Delete a report
