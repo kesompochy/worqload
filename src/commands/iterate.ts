@@ -620,11 +620,10 @@ export function deriveAutonomousTasks(obs: Observation, queue: TaskQueue, archiv
   }
 
   // If no actionable tasks derived yet and principles exist, derive a general investigation task.
-  // Archive duplicates are intentionally ignored — investigation is a recurring activity
-  // that should restart each time the queue empties.
+  // Check archived tasks to avoid regenerating the same investigation every iteration.
   const principleItems = parsePrincipleItems(obs.principles);
   if (derived.length === 0 && principleItems.length > 0) {
-    if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_INVESTIGATION_TITLE, [])) {
+    if (!hasDuplicateTask(queue, obs.tasks, AUTONOMOUS_INVESTIGATION_TITLE, archivedTasks)) {
       derived.push({ title: AUTONOMOUS_INVESTIGATION_TITLE, context: { principles: principleItems } });
     }
   }

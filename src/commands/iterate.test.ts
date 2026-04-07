@@ -2209,7 +2209,7 @@ describe("deriveAutonomousTasks", () => {
     expect(derived.filter(t => t.title.includes("Investigate improvements"))).toHaveLength(0);
   });
 
-  test("derives investigation task even when same title exists in archive", () => {
+  test("skips investigation task when same title exists in archive", () => {
     const queue = new TaskQueue(tmpPath("tasks"), tmpPath("archive"));
     const archived = createTask("Investigate improvements based on Principles");
     archived.status = "done" as any;
@@ -2218,8 +2218,7 @@ describe("deriveAutonomousTasks", () => {
 
     const derived = deriveAutonomousTasks(obs, queue, [archived]);
 
-    expect(derived.length).toBe(1);
-    expect(derived[0].title).toContain("Principles");
+    expect(derived.length).toBe(0);
   });
 
   test("still checks active queue for investigation task duplicates", () => {
