@@ -245,6 +245,24 @@ test("GET /sessions/:id/reports returns all reports with content", async () => {
   expect(res.reports[1].filename).toBe("002-build.md");
 });
 
+test("GET /sessions/:id/diff returns git diff against session-start commit", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const wt = created.meta.worktreePath;
+  // Modify the README in the worktree to produce a diff.
+  writeFileSync(join(wt, "README.md"), "# changed in session\n");
+
+  const diffRes = await fetch(`${baseUrl}/sessions/${sid}/diff`);
+  expect(diffRes.headers.get("content-type")).toContain("text/plain");
+  const diff = await diffRes.text();
+  expect(diff).toContain("README.md");
+  expect(diff).toContain("changed in session");
+});
+
 test("GET /sessions/:id/asking returns pending escalations", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");

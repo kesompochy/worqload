@@ -97,3 +97,17 @@ export async function currentBranch(repoDir: string): Promise<string> {
   }
   return out.trim();
 }
+
+export async function gitDiff(worktreePath: string, target: string): Promise<string> {
+  const proc = Bun.spawn(
+    ["git", "diff", "--no-color", target],
+    { stdout: "pipe", stderr: "pipe", cwd: worktreePath, env: cleanGitEnv() },
+  );
+  const out = await new Response(proc.stdout).text();
+  const exit = await proc.exited;
+  if (exit !== 0) {
+    const err = await new Response(proc.stderr).text();
+    throw new Error(`git diff ${target} failed: ${err.trim()}`);
+  }
+  return out;
+}

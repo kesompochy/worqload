@@ -13,7 +13,7 @@ import {
 } from "./session";
 import { startSessionRunner, type SessionRunner } from "./session-runner";
 import { appendEvent, readEvents } from "./event-log";
-import { createSessionWorktree, removeWorktree, resolveBaseCommit, currentBranch } from "./worktree";
+import { createSessionWorktree, removeWorktree, resolveBaseCommit, currentBranch, gitDiff } from "./worktree";
 import { writeNumberedFile, listAllFiles, moveFile } from "./file-store";
 
 // worqload protocol commands are part of the system contract; they must run
@@ -318,6 +318,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/escalations/:filename/resolve", postEscalationResolve),
   defineRoute("GET",  "/sessions/:id/reports", getReports),
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
+  defineRoute("GET",  "/sessions/:id/diff", getDiff),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
   defineRoute("POST", "/internal/sessions/:id/escalations", postInternalEscalations),
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
@@ -496,6 +497,21 @@ async function getAsking(_req: Request, ctx: ServerContext, params: Record<strin
     return json({
       asking: asking.map(a => ({ filename: a.filename, content: a.content })),
     });
+  });
+}
+
+async function getDiff(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const url = new URL(req.url);
+    const base = url.searchParams.get("base") || "session-start";
+    const target = base === "base-branch" ? meta.baseBranch : meta.baseCommit;
+    try {
+      const diff = await gitDiff(meta.worktreePath, target);
+      return new Response(diff, { headers: { "content-type": "text/plain; charset=utf-8" } });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return json({ error: message }, 500);
+    }
   });
 }
 

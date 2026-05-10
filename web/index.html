@@ -55,6 +55,34 @@
   .report { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: .7rem .9rem; margin-bottom: .7rem; }
   .report .filename { color: var(--accent); font-size: 12px; font-family: ui-monospace, monospace; margin-bottom: .3rem; }
   .report-empty { color: var(--text-dim); font-style: italic; }
+  .tabs { display: flex; gap: .25rem; padding: 0 1.1rem; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .tab-btn { background: transparent; border: 1px solid transparent; border-bottom: none; padding: .45rem .9rem; border-radius: 4px 4px 0 0; color: var(--text-dim); cursor: pointer; }
+  .tab-btn.active { background: var(--bg); border-color: var(--border); color: var(--text); margin-bottom: -1px; }
+  .tab-btn:hover { color: var(--text); }
+  .diff-base-toggle { margin-left: auto; padding: .35rem .5rem; font-size: 12px; color: var(--text-dim); }
+  .diff-empty { color: var(--text-dim); font-style: italic; padding: 1rem 0; }
+  .diff-file { margin-bottom: 1.2rem; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .diff-file-header { background: var(--panel-2); padding: .4rem .7rem; font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); }
+  .diff-hunk { background: rgba(88,166,255,.05); padding: .15rem .7rem; font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-dim); }
+  .diff-line { display: grid; grid-template-columns: 4ch 4ch 1fr; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; }
+  .diff-line[data-anchor-line] { cursor: pointer; }
+  .diff-line[data-anchor-line]:hover { background: rgba(88,166,255,.08); }
+  .diff-line.selected { background: rgba(88,166,255,.18) !important; }
+  .diff-line .ln { text-align: right; padding-right: .5rem; color: var(--text-dim); user-select: none; }
+  .diff-line.add { background: rgba(63,185,80,.08); }
+  .diff-line.remove { background: rgba(248,81,73,.08); }
+  .diff-line .body { white-space: pre; padding-right: .7rem; overflow-x: auto; }
+  .diff-line.add .body::before { content: "+"; color: var(--running); }
+  .diff-line.remove .body::before { content: "-"; color: var(--crashed); }
+  .diff-line.context .body::before { content: " "; }
+  .report .lines { display: block; }
+  .report .ln-row { display: grid; grid-template-columns: 4ch 1fr; cursor: pointer; }
+  .report .ln-row:hover { background: rgba(88,166,255,.08); }
+  .report .ln-row.selected { background: rgba(88,166,255,.18); }
+  .report .ln-row .ln { text-align: right; padding-right: .5rem; color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 12px; user-select: none; }
+  .report .ln-row .body { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 13px; }
+  .anchor-chip { display: inline-flex; align-items: center; gap: .35rem; background: rgba(88,166,255,.15); border: 1px solid rgba(88,166,255,.4); color: var(--accent); padding: .2rem .55rem; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; margin-bottom: .5rem; }
+  .anchor-chip button { background: transparent; border: none; color: var(--accent); padding: 0 .2rem; cursor: pointer; font-size: 14px; line-height: 1; }
   .feedback-form { border-top: 1px solid var(--border); padding: .9rem 1.1rem; background: var(--panel); }
   .feedback-form textarea { margin-bottom: .5rem; }
   .row { display: flex; gap: .5rem; align-items: center; }
@@ -113,6 +141,10 @@ const state = {
   feedbackHistory: [],
   ws: null,
   lastSeq: 0,
+  activeTab: "reports",  // "reports" | "diff"
+  diff: "",              // text/plain diff
+  diffBase: "session-start",
+  anchor: null,          // { path, lineStart, lineEnd } | null
 };
 
 function toast(text, ms = 2400) {
@@ -165,7 +197,18 @@ async function refreshDetail() {
   state.asking = askingRes.asking;
   state.feedbackHistory = feedbackRes.messages;
   state.lastSeq = events.length > 0 ? events[events.length - 1].seq : 0;
+  if (state.activeTab === "diff") await refreshDiff();
   renderDetail();
+}
+
+async function refreshDiff() {
+  if (!state.selected) return;
+  try {
+    const res = await fetch(`/sessions/${state.selected}/diff?base=${state.diffBase}`);
+    state.diff = res.ok ? await res.text() : "";
+  } catch {
+    state.diff = "";
+  }
 }
 
 function openWs(id) {
@@ -238,12 +281,21 @@ function renderDetail() {
        </section>`
     : "";
   const reportsHtml = state.reports.length > 0
-    ? state.reports.map(r => `
-        <article class="report">
-          <div class="filename">${escapeHtml(r.filename)}</div>
-          <pre>${escapeHtml(r.content)}</pre>
-        </article>
-      `).join("")
+    ? state.reports.map(r => {
+        const path = `./.worqload-reports/${r.filename}`;
+        const lines = r.content.split("\n");
+        const rows = lines.map((line, i) => {
+          const lineNo = i + 1;
+          const sel = isAnchored(path, lineNo) ? "selected" : "";
+          return `<div class="ln-row ${sel}" data-anchor-line="${lineNo}" data-anchor-path="${escapeHtml(path)}"><span class="ln">${lineNo}</span><span class="body">${escapeHtml(line) || "&nbsp;"}</span></div>`;
+        }).join("");
+        return `
+          <article class="report">
+            <div class="filename">${escapeHtml(r.filename)}</div>
+            <div class="lines">${rows}</div>
+          </article>
+        `;
+      }).join("")
     : `<div class="report-empty">No reports yet. The agent submits reports at progress checkpoints.</div>`;
 
   const feedbackHtml = state.feedbackHistory.length > 0
@@ -259,6 +311,29 @@ function renderDetail() {
     : "";
 
   const isTerminal = m.status === "stopped" || m.status === "crashed";
+
+  const tabsHtml = `
+    <div class="tabs">
+      <button class="tab-btn ${state.activeTab === "reports" ? "active" : ""}" data-tab="reports">Reports</button>
+      <button class="tab-btn ${state.activeTab === "diff" ? "active" : ""}" data-tab="diff">Diff</button>
+      ${state.activeTab === "diff" ? `
+        <span class="diff-base-toggle">
+          base:
+          <select id="diffBaseSel" style="background:transparent;border:1px solid var(--border);color:var(--text);padding:.1rem .3rem;border-radius:3px">
+            <option value="session-start" ${state.diffBase === "session-start" ? "selected" : ""}>session-start</option>
+            <option value="base-branch" ${state.diffBase === "base-branch" ? "selected" : ""}>${escapeHtml(m.baseBranch)}</option>
+          </select>
+        </span>
+      ` : ""}
+    </div>
+  `;
+
+  const tabContent = state.activeTab === "diff" ? renderDiffHtml() : reportsHtml;
+
+  const anchorChip = state.anchor
+    ? `<div class="anchor-chip">Re: ${escapeHtml(state.anchor.path)}:${state.anchor.lineStart}${state.anchor.lineEnd !== state.anchor.lineStart ? `-${state.anchor.lineEnd}` : ""} <button id="anchorClear" title="clear anchor">×</button></div>`
+    : "";
+
   root.innerHTML = `
     <div class="detail-header">
       <div class="title"><span class="badge badge-${m.status}">${m.status.replace("_", " ")}</span>${escapeHtml(m.title || m.prompt.slice(0, 100))}</div>
@@ -271,16 +346,15 @@ function renderDetail() {
       ${m.endedAt ? ` · ended ${formatRelative(m.endedAt)}` : ""}
       · worktree: <code>${escapeHtml(m.worktreePath)}</code>
     </div>
-    <div class="detail-body">
+    ${tabsHtml}
+    <div class="detail-body" id="detailBody">
       ${askingHtml}
-      <section>
-        <h2>Reports</h2>
-        ${reportsHtml}
-      </section>
+      ${tabContent}
       ${feedbackHtml ? `<section><h2>Feedback sent</h2>${feedbackHtml}</section>` : ""}
     </div>
     <form class="feedback-form" id="feedbackForm">
-      <textarea id="feedbackInput" placeholder="Plain feedback to the agent (picked up at the agent's next turn)" rows="3"></textarea>
+      ${anchorChip}
+      <textarea id="feedbackInput" placeholder="${state.anchor ? "Comment on the selected lines..." : "Plain feedback (picked up at the agent's next turn). Click a diff or report line to anchor."}" rows="3"></textarea>
       <div class="row">
         <span class="spacer"></span>
         <button type="submit" ${isTerminal ? "disabled" : ""}>Send feedback</button>
@@ -294,11 +368,106 @@ function renderDetail() {
     e.preventDefault();
     onFeedback();
   });
+  document.querySelectorAll(".tab-btn").forEach(b => {
+    b.addEventListener("click", () => switchTab(b.getAttribute("data-tab")));
+  });
+  const baseSel = document.getElementById("diffBaseSel");
+  if (baseSel) baseSel.addEventListener("change", e => onDiffBaseChange(e.target.value));
   document.querySelectorAll("[data-asking]").forEach(el => {
     const filename = el.getAttribute("data-asking");
     el.querySelector(".ask-resolve").addEventListener("click", () => onResolve(filename, el));
   });
+  $("#detailBody").addEventListener("click", onLineClick);
+  if (state.anchor) $("#anchorClear").addEventListener("click", clearAnchor);
   if (preservedFeedback) $("#feedbackInput").value = preservedFeedback;
+}
+
+function isAnchored(path, lineNo) {
+  if (!state.anchor || state.anchor.path !== path) return false;
+  return lineNo >= state.anchor.lineStart && lineNo <= state.anchor.lineEnd;
+}
+
+function onLineClick(e) {
+  const target = e.target.closest("[data-anchor-line]");
+  if (!target) return;
+  const path = target.getAttribute("data-anchor-path");
+  const line = Number(target.getAttribute("data-anchor-line"));
+  if (!path || !Number.isFinite(line)) return;
+  if (e.shiftKey && state.anchor && state.anchor.path === path) {
+    state.anchor = {
+      path,
+      lineStart: Math.min(state.anchor.lineStart, line),
+      lineEnd: Math.max(state.anchor.lineStart, line),
+    };
+  } else {
+    state.anchor = { path, lineStart: line, lineEnd: line };
+  }
+  renderDetail();
+}
+
+function clearAnchor() {
+  state.anchor = null;
+  renderDetail();
+}
+
+async function switchTab(tab) {
+  if (tab === state.activeTab) return;
+  state.activeTab = tab;
+  if (tab === "diff") await refreshDiff();
+  renderDetail();
+}
+
+async function onDiffBaseChange(value) {
+  state.diffBase = value;
+  await refreshDiff();
+  renderDetail();
+}
+
+function renderDiffHtml() {
+  if (!state.diff || state.diff.trim() === "") {
+    return `<div class="diff-empty">No changes against ${escapeHtml(state.diffBase)} yet.</div>`;
+  }
+  const out = [];
+  let currentFile = null, hunkOldLine = 0, hunkNewLine = 0;
+  let openFile = false;
+  for (const raw of state.diff.split("\n")) {
+    if (raw.startsWith("diff --git ")) {
+      if (openFile) out.push("</div>");
+      const m = raw.match(/^diff --git a\/.+? b\/(.+)$/);
+      currentFile = m ? m[1] : "?";
+      out.push(`<div class="diff-file"><div class="diff-file-header">${escapeHtml(currentFile)}</div>`);
+      openFile = true;
+      continue;
+    }
+    if (raw.startsWith("index ") || raw.startsWith("--- ") || raw.startsWith("+++ ") ||
+        raw.startsWith("new file mode ") || raw.startsWith("deleted file mode ") ||
+        raw.startsWith("rename ") || raw.startsWith("similarity ") || raw.startsWith("dissimilarity ") ||
+        raw.startsWith("Binary files ")) {
+      continue;
+    }
+    if (raw.startsWith("@@")) {
+      const m = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) { hunkOldLine = Number(m[1]); hunkNewLine = Number(m[2]); }
+      out.push(`<div class="diff-hunk">${escapeHtml(raw)}</div>`);
+      continue;
+    }
+    if (raw === "" && !openFile) continue;
+    let cls = "context", lineNo = hunkNewLine, anchorable = true, body = raw.slice(1);
+    if (raw.startsWith("+")) { cls = "add"; lineNo = hunkNewLine; anchorable = true; }
+    else if (raw.startsWith("-")) { cls = "remove"; lineNo = hunkOldLine; anchorable = false; }
+    else if (raw.startsWith(" ")) { cls = "context"; lineNo = hunkNewLine; anchorable = true; }
+    else { cls = "context"; lineNo = 0; anchorable = false; body = raw; }
+    const sel = anchorable && currentFile && isAnchored(currentFile, lineNo) ? "selected" : "";
+    const dataAttrs = anchorable && currentFile
+      ? `data-anchor-line="${lineNo}" data-anchor-path="${escapeHtml(currentFile)}"`
+      : "";
+    out.push(`<div class="diff-line ${cls} ${sel}" ${dataAttrs}><span class="ln">${cls === "add" ? "" : (cls === "remove" ? hunkOldLine : "")}</span><span class="ln">${cls === "remove" ? "" : hunkNewLine}</span><span class="body">${escapeHtml(body)}</span></div>`);
+    if (raw.startsWith("+")) hunkNewLine++;
+    else if (raw.startsWith("-")) hunkOldLine++;
+    else if (raw.startsWith(" ")) { hunkOldLine++; hunkNewLine++; }
+  }
+  if (openFile) out.push("</div>");
+  return out.join("");
 }
 
 async function onArchive() {
@@ -333,9 +502,18 @@ async function onFeedback() {
   if (!state.selected) return;
   const text = $("#feedbackInput").value.trim();
   if (text === "") return;
+  const body = { content: text, slug: state.anchor ? "anchored" : "feedback" };
+  if (state.anchor) {
+    body.anchor = {
+      path: state.anchor.path,
+      lineStart: state.anchor.lineStart,
+      lineEnd: state.anchor.lineEnd,
+    };
+  }
   try {
-    await api("POST", `/sessions/${state.selected}/feedback`, { content: text, slug: "feedback" });
+    await api("POST", `/sessions/${state.selected}/feedback`, body);
     $("#feedbackInput").value = "";
+    state.anchor = null;
     toast("feedback queued");
     await refreshDetail();
   } catch (e) {
