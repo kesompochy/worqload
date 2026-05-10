@@ -240,8 +240,6 @@ type EventKind =
 | `worqload escalate submit --slug <slug>` | agent 用。本文は stdin。 |
 | `worqload feedback fetch` | agent 用。unread を stdout に。 |
 
-これ以外の現行 CLI (mission, principle, ooda, iterate, audit, source, spawn, project, sleep, wake, heartbeat, resume, claim, history, clean, priority, etc.) は廃止。
-
 ---
 
 ## 8. エージェント protocol (SKILL.md 要点)
@@ -310,37 +308,7 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
 
 ---
 
-## 10. 既存資産の去就
-
-### 残す
-
-- `src/worktree.ts` (`createWorktree` / `removeWorktree` のみ。`mergeWorktreeBranch` 系は削除。)
-- `src/spawn-executor.ts` (子プロセス管理、`killProcessTree`、SIGHUP 防護)
-- `src/lock.ts`
-- `src/utils/*` (json-store, entity-store, errors, args, guard-default-path)
-- `src/server.ts` (大幅に書き直すが、Route 機構と `withTask` パターンは流用)
-- `src/task.ts` の状態遷移ロジック (大幅簡素化して `src/session.ts` に改名)
-- `src/feedback.ts` (永続化レイヤとしてのみ。`distillFeedback` / `verifyDistilledRules` / theme 検出は削除。)
-- `src/reports.ts` (永続化レイヤとしてのみ。category / mainSessionStatus / `isVacuousContent` は削除。)
-
-### 捨てる
-
-- `src/mission.ts`, `src/mission-runner.ts`, `src/mission-runner-spawn.ts`, `src/mission-runner-orient.ts`, `src/mission-runner-act.ts`, `src/mission-runner-state.ts`, `src/mission-runner-retry.ts`
-- `src/principles.ts`
-- `src/sources.ts`, `src/sleep.ts`, `src/daemon.ts`, `src/loop.ts`, `src/a2a.ts`, `src/hooks.ts`, `src/server-log.ts`, `src/projects.ts`, `src/spawns.ts`, `src/resume.ts`
-- `src/commands/*` のうち下記は削除: `iterate.ts`, `audit.ts`, `ooda.ts`, `principle.ts`, `mission.ts`, `spawn.ts`, `source.ts`, `task.ts`, `project.ts`, `resolve.ts`, `resume.ts`
-- `src/commands/init.ts`, `src/commands/serve.ts`, `src/commands/feedback.ts`, `src/commands/report.ts` は新仕様で書き直し。
-
-### 新規
-
-- `src/commands/feedback-fetch.ts` (agent 用)
-- `src/commands/escalate.ts` (agent 用)
-- `src/internal-api.ts` (内部 REST handler)
-- フロントエンド一式 (新規ディレクトリ、構成は実装フェーズで決定)
-
----
-
-## 11. デフォルトと未決定事項
+## 10. デフォルトと未決定事項
 
 以下は適当なデフォルトを置いた上で進める。後から容易に変更可能。
 
@@ -363,7 +331,7 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
 
 ---
 
-## 12. v2 候補
+## 11. v2 候補
 
 - **comment thread**: feedback の三形態目。anchor + 多発話 + resolve。アンカー安定化 (file 内容ハッシュ + 行) の reconciliation を含む。
 - **MCP tool 化**: `submit_report` / `submit_escalation` / `fetch_feedback` をファイル + CLI 規約から MCP ツールに昇格。
@@ -375,7 +343,7 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
 
 ---
 
-## 13. デプロイ前提 (v1)
+## 12. デプロイ前提 (v1)
 
 - localhost のみ。bind は `127.0.0.1`。
 - 認証なし。
