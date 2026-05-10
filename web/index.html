@@ -62,7 +62,16 @@
   .diff-base-toggle { margin-left: auto; padding: .35rem .5rem; font-size: 12px; color: var(--text-dim); }
   .diff-empty { color: var(--text-dim); font-style: italic; padding: 1rem 0; }
   .diff-file { margin-bottom: 1.2rem; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
-  .diff-file-header { background: var(--panel-2); padding: .4rem .7rem; font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); }
+  .diff-file-header { background: var(--panel-2); padding: .4rem .7rem; font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); display: flex; align-items: center; gap: .5rem; cursor: pointer; user-select: none; }
+  .diff-file-header:hover { background: #232b3a; }
+  .diff-chevron { color: var(--text-dim); width: 1ch; display: inline-block; transition: transform .12s ease; }
+  .diff-file.collapsed .diff-chevron { transform: rotate(-90deg); }
+  .diff-file.collapsed .diff-file-body { display: none; }
+  .diff-summary { margin-left: auto; font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace; }
+  .diff-summary .add-count { color: var(--running); margin-right: .35rem; }
+  .diff-summary .remove-count { color: var(--crashed); }
+  .diff-tool-btn { background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: .15rem .55rem; font-size: 11px; border-radius: 3px; margin-right: .25rem; cursor: pointer; }
+  .diff-tool-btn:hover { color: var(--text); background: var(--panel-2); }
   .diff-hunk { background: rgba(88,166,255,.05); padding: .15rem .7rem; font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-dim); }
   .diff-line { display: grid; grid-template-columns: 4ch 4ch 1fr; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; }
   .diff-line[data-anchor-line] { cursor: pointer; }
@@ -152,6 +161,7 @@ const state = {
   diff: "",              // text/plain diff
   diffBase: "session-start",
   anchor: null,          // { path, lineStart, lineEnd } | null
+  collapsedFiles: new Set(),  // paths of diff files the user collapsed
 };
 
 function toast(text, ms = 2400) {
@@ -183,6 +193,7 @@ async function selectSession(id) {
   state.reports = [];
   state.asking = [];
   state.detail = null;
+  state.collapsedFiles = new Set();
   renderSessionList();
   renderDetail();
   if (!id) return;
@@ -331,6 +342,8 @@ function renderDetail() {
       <button class="tab-btn ${state.activeTab === "events" ? "active" : ""}" data-tab="events">Events <span style="color:var(--text-dim);font-weight:normal">(${eventCount})</span></button>
       ${state.activeTab === "diff" ? `
         <span class="diff-base-toggle">
+          <button id="btnExpandAll" type="button" class="diff-tool-btn">Expand all</button>
+          <button id="btnCollapseAll" type="button" class="diff-tool-btn">Collapse all</button>
           base:
           <select id="diffBaseSel" style="background:transparent;border:1px solid var(--border);color:var(--text);padding:.1rem .3rem;border-radius:3px">
             <option value="session-start" ${state.diffBase === "session-start" ? "selected" : ""}>session-start</option>
@@ -388,11 +401,15 @@ function renderDetail() {
   });
   const baseSel = document.getElementById("diffBaseSel");
   if (baseSel) baseSel.addEventListener("change", e => onDiffBaseChange(e.target.value));
+  const btnExpandAll = document.getElementById("btnExpandAll");
+  if (btnExpandAll) btnExpandAll.addEventListener("click", onExpandAllDiffFiles);
+  const btnCollapseAll = document.getElementById("btnCollapseAll");
+  if (btnCollapseAll) btnCollapseAll.addEventListener("click", onCollapseAllDiffFiles);
   document.querySelectorAll("[data-asking]").forEach(el => {
     const filename = el.getAttribute("data-asking");
     el.querySelector(".ask-resolve").addEventListener("click", () => onResolve(filename, el));
   });
-  $("#detailBody").addEventListener("click", onLineClick);
+  $("#detailBody").addEventListener("click", onDetailBodyClick);
   if (state.anchor) $("#anchorClear").addEventListener("click", clearAnchor);
   if (preservedFeedback) $("#feedbackInput").value = preservedFeedback;
 }
@@ -400,6 +417,31 @@ function renderDetail() {
 function isAnchored(path, lineNo) {
   if (!state.anchor || state.anchor.path !== path) return false;
   return lineNo >= state.anchor.lineStart && lineNo <= state.anchor.lineEnd;
+}
+
+function onDetailBodyClick(e) {
+  const toggle = e.target.closest("[data-diff-toggle]");
+  if (toggle) {
+    const path = toggle.getAttribute("data-diff-toggle");
+    if (state.collapsedFiles.has(path)) state.collapsedFiles.delete(path);
+    else state.collapsedFiles.add(path);
+    renderDetail();
+    return;
+  }
+  onLineClick(e);
+}
+
+function onExpandAllDiffFiles() {
+  state.collapsedFiles.clear();
+  renderDetail();
+}
+
+function onCollapseAllDiffFiles() {
+  for (const el of document.querySelectorAll("[data-diff-path]")) {
+    const path = el.getAttribute("data-diff-path");
+    if (path) state.collapsedFiles.add(path);
+  }
+  renderDetail();
 }
 
 function onLineClick(e) {
@@ -457,20 +499,16 @@ function renderEventsHtml() {
   }).join("");
 }
 
-function renderDiffHtml() {
-  if (!state.diff || state.diff.trim() === "") {
-    return `<div class="diff-empty">No changes against ${escapeHtml(state.diffBase)} yet.</div>`;
-  }
-  const out = [];
-  let currentFile = null, hunkOldLine = 0, hunkNewLine = 0;
-  let openFile = false;
-  for (const raw of state.diff.split("\n")) {
+function parseDiffFiles(text) {
+  const files = [];
+  let currentFile = null;
+  let currentHunk = null;
+  for (const raw of text.split("\n")) {
     if (raw.startsWith("diff --git ")) {
-      if (openFile) out.push("</div>");
       const m = raw.match(/^diff --git a\/.+? b\/(.+)$/);
-      currentFile = m ? m[1] : "?";
-      out.push(`<div class="diff-file"><div class="diff-file-header">${escapeHtml(currentFile)}</div>`);
-      openFile = true;
+      currentFile = { path: m ? m[1] : "?", hunks: [], adds: 0, removes: 0 };
+      files.push(currentFile);
+      currentHunk = null;
       continue;
     }
     if (raw.startsWith("index ") || raw.startsWith("--- ") || raw.startsWith("+++ ") ||
@@ -479,28 +517,59 @@ function renderDiffHtml() {
         raw.startsWith("Binary files ")) {
       continue;
     }
+    if (!currentFile) continue;
     if (raw.startsWith("@@")) {
       const m = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      if (m) { hunkOldLine = Number(m[1]); hunkNewLine = Number(m[2]); }
-      out.push(`<div class="diff-hunk">${escapeHtml(raw)}</div>`);
+      currentHunk = {
+        header: raw,
+        oldLine: m ? Number(m[1]) : 0,
+        newLine: m ? Number(m[2]) : 0,
+        lines: [],
+      };
+      currentFile.hunks.push(currentHunk);
       continue;
     }
-    if (raw === "" && !openFile) continue;
-    let cls = "context", lineNo = hunkNewLine, anchorable = true, body = raw.slice(1);
-    if (raw.startsWith("+")) { cls = "add"; lineNo = hunkNewLine; anchorable = true; }
-    else if (raw.startsWith("-")) { cls = "remove"; lineNo = hunkOldLine; anchorable = false; }
-    else if (raw.startsWith(" ")) { cls = "context"; lineNo = hunkNewLine; anchorable = true; }
-    else { cls = "context"; lineNo = 0; anchorable = false; body = raw; }
-    const sel = anchorable && currentFile && isAnchored(currentFile, lineNo) ? "selected" : "";
-    const dataAttrs = anchorable && currentFile
-      ? `data-anchor-line="${lineNo}" data-anchor-path="${escapeHtml(currentFile)}"`
-      : "";
-    out.push(`<div class="diff-line ${cls} ${sel}" ${dataAttrs}><span class="ln">${cls === "add" ? "" : (cls === "remove" ? hunkOldLine : "")}</span><span class="ln">${cls === "remove" ? "" : hunkNewLine}</span><span class="body">${escapeHtml(body)}</span></div>`);
-    if (raw.startsWith("+")) hunkNewLine++;
-    else if (raw.startsWith("-")) hunkOldLine++;
-    else if (raw.startsWith(" ")) { hunkOldLine++; hunkNewLine++; }
+    if (!currentHunk) continue;
+    currentHunk.lines.push(raw);
+    if (raw.startsWith("+")) currentFile.adds++;
+    else if (raw.startsWith("-")) currentFile.removes++;
   }
-  if (openFile) out.push("</div>");
+  return files;
+}
+
+function renderDiffHtml() {
+  if (!state.diff || state.diff.trim() === "") {
+    return `<div class="diff-empty">No changes against ${escapeHtml(state.diffBase)} yet.</div>`;
+  }
+  const files = parseDiffFiles(state.diff);
+  const out = [];
+  for (const file of files) {
+    const collapsed = state.collapsedFiles.has(file.path);
+    const escapedPath = escapeHtml(file.path);
+    out.push(`<div class="diff-file${collapsed ? " collapsed" : ""}" data-diff-path="${escapedPath}">`);
+    out.push(`<div class="diff-file-header" data-diff-toggle="${escapedPath}"><span class="diff-chevron">▾</span><span>${escapedPath}</span><span class="diff-summary"><span class="add-count">+${file.adds}</span><span class="remove-count">−${file.removes}</span></span></div>`);
+    out.push(`<div class="diff-file-body">`);
+    for (const hunk of file.hunks) {
+      out.push(`<div class="diff-hunk">${escapeHtml(hunk.header)}</div>`);
+      let hunkOldLine = hunk.oldLine, hunkNewLine = hunk.newLine;
+      for (const raw of hunk.lines) {
+        let cls = "context", lineNo = hunkNewLine, anchorable = true, body = raw.slice(1);
+        if (raw.startsWith("+")) { cls = "add"; lineNo = hunkNewLine; anchorable = true; }
+        else if (raw.startsWith("-")) { cls = "remove"; lineNo = hunkOldLine; anchorable = false; }
+        else if (raw.startsWith(" ")) { cls = "context"; lineNo = hunkNewLine; anchorable = true; }
+        else { cls = "context"; lineNo = 0; anchorable = false; body = raw; }
+        const sel = anchorable && isAnchored(file.path, lineNo) ? "selected" : "";
+        const dataAttrs = anchorable
+          ? `data-anchor-line="${lineNo}" data-anchor-path="${escapedPath}"`
+          : "";
+        out.push(`<div class="diff-line ${cls} ${sel}" ${dataAttrs}><span class="ln">${cls === "add" ? "" : (cls === "remove" ? hunkOldLine : "")}</span><span class="ln">${cls === "remove" ? "" : hunkNewLine}</span><span class="body">${escapeHtml(body)}</span></div>`);
+        if (raw.startsWith("+")) hunkNewLine++;
+        else if (raw.startsWith("-")) hunkOldLine++;
+        else if (raw.startsWith(" ")) { hunkOldLine++; hunkNewLine++; }
+      }
+    }
+    out.push(`</div></div>`);
+  }
   return out.join("");
 }
 
