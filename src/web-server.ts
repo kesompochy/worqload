@@ -15,6 +15,7 @@ import { startSessionRunner, type SessionRunner } from "./session-runner";
 import { appendEvent, readEvents } from "./event-log";
 import { createSessionWorktree, removeWorktree, resolveBaseCommit, currentBranch, gitDiff } from "./worktree";
 import { writeNumberedFile, listAllFiles, moveFile } from "./file-store";
+import { listActions, findAction } from "./actions";
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -319,6 +320,8 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/reports", getReports),
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
+  defineRoute("GET",  "/actions", getActions),
+  defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
   defineRoute("POST", "/internal/sessions/:id/escalations", postInternalEscalations),
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
@@ -639,6 +642,35 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
     }
 
     return json({ ok: true, answerFilename: file.filename, meta: updatedMeta });
+  });
+}
+
+async function getActions(): Promise<Response> {
+  return json({ actions: listActions() });
+}
+
+interface ActionInvokeBody {
+  params?: Record<string, string>;
+}
+
+async function postSessionAction(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const action = findAction(params.actionId);
+    if (!action) return json({ error: `unknown action: ${params.actionId}` }, 404);
+    const body = (await req.json().catch(() => ({}))) as ActionInvokeBody;
+    const actionParams = body.params ?? {};
+    const result = await action.run({ meta, repoDir: ctx.repoDir }, actionParams);
+    return json(
+      {
+        actionId: action.id,
+        ok: result.ok,
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        message: result.message,
+      },
+      result.ok ? 200 : 422,
+    );
   });
 }
 
