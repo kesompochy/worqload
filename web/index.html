@@ -337,7 +337,7 @@ function renderDetail() {
        </section>`
     : "";
   const reportsHtml = state.reports.length > 0
-    ? state.reports.map(r => {
+    ? state.reports.slice().reverse().map(r => {
         const path = `./.worqload-reports/${r.filename}`;
         const lines = r.content.split("\n");
         const rows = lines.map((line, i) => {
@@ -527,7 +527,7 @@ function renderEventsHtml() {
   if (events.length === 0) {
     return `<div class="diff-empty">No events yet.</div>`;
   }
-  return events.map(e => {
+  return events.slice().reverse().map(e => {
     const payload = JSON.stringify(e.payload);
     const truncated = payload.length > 400 ? payload.slice(0, 400) + " …" : payload;
     return `
