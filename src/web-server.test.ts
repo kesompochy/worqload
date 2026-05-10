@@ -23,6 +23,7 @@ function makeRepo(): string {
   git(["config", "user.email", "t@t.com"], dir);
   git(["config", "user.name", "t"], dir);
   writeFileSync(join(dir, "README.md"), "# t\n");
+  writeFileSync(join(dir, ".gitignore"), ".worqload/\n.worqload-reports\n.worktrees/\n");
   git(["add", "."], dir);
   git(["commit", "-m", "init"], dir);
   return dir;
@@ -410,4 +411,64 @@ test("POST /sessions/:id/cancel removes worktree and marks stopped", async () =>
   expect(existsSync(wt)).toBe(false);
   const meta = await loadSessionMeta(sid, ctx.sessionsDir);
   expect(meta?.status).toBe("stopped");
+});
+
+test("GET /actions exposes the built-in action registry", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/actions`).then(r => r.json());
+  const ids = res.actions.map((a: { id: string }) => a.id);
+  expect(ids).toContain("merge-to-base");
+  expect(ids).toContain("create-pr");
+});
+
+test("POST /sessions/:id/actions/:actionId returns 404 for unknown action", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/actions/nope`, {});
+  expect(res.status).toBe(404);
+});
+
+test("POST /sessions/:id/actions/merge-to-base merges when preconditions hold", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+  const created = await postJson(baseUrl, "/sessions", { prompt: "merge me", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+
+  // commit a change in the worktree so there is something to merge
+  writeFileSync(join(wt, "feature.txt"), "hello\n");
+  Bun.spawnSync(["git", "add", "feature.txt"], { cwd: wt, env: cleanGitEnv });
+  Bun.spawnSync(["git", "commit", "-m", "feature"], { cwd: wt, env: cleanGitEnv });
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/actions/merge-to-base`, {});
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.ok).toBe(true);
+  expect(body.actionId).toBe("merge-to-base");
+
+  // base branch should now have the merged file
+  const show = Bun.spawnSync(["git", "show", `${TEST_BASE}:feature.txt`], { cwd: repoDir, env: cleanGitEnv });
+  expect(show.exitCode).toBe(0);
+});
+
+test("POST /sessions/:id/actions/merge-to-base returns 422 when preconditions fail", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  // dirty the main repo
+  writeFileSync(join(repoDir, "scratch.txt"), "dirt\n");
+  Bun.spawnSync(["git", "add", "scratch.txt"], { cwd: repoDir, env: cleanGitEnv });
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/actions/merge-to-base`, {});
+  expect(res.status).toBe(422);
+  const body = await res.json();
+  expect(body.ok).toBe(false);
+  expect(body.message).toBeDefined();
 });
