@@ -2,7 +2,12 @@ import { test, expect, describe, afterEach } from "bun:test";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { mkdirSync, existsSync, readlinkSync, lstatSync, writeFileSync } from "fs";
-import { createWorktree, removeWorktree, mergeWorktreeBranch, untrackWorktrees } from "./worktree";
+import {
+  createSessionWorktree,
+  removeWorktree,
+  resolveBaseCommit,
+  currentBranch,
+} from "./worktree";
 
 const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
 
@@ -10,17 +15,20 @@ function git(args: string[], cwd: string) {
   return Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: cleanGitEnv });
 }
 
+// The base branch is "trunk" rather than "main"/"master" so commits made by
+// the test setup don't trip the user's global pre-commit branch-protection hook.
+const TEST_BASE_BRANCH = "trunk";
+
 function createTempGitRepo(): string {
   const dir = join(tmpdir(), `worqload-wt-test-${crypto.randomUUID()}`);
   mkdirSync(dir, { recursive: true });
   git(["init"], dir);
+  git(["checkout", "-b", TEST_BASE_BRANCH], dir);
   git(["config", "user.email", "test@test.com"], dir);
   git(["config", "user.name", "Test"], dir);
   writeFileSync(join(dir, "README.md"), "# test repo\n");
   git(["add", "."], dir);
   git(["commit", "-m", "initial"], dir);
-  mkdirSync(join(dir, ".worqload"), { recursive: true });
-  writeFileSync(join(dir, ".worqload", "tasks.json"), "[]");
   return dir;
 }
 
@@ -44,253 +52,107 @@ afterEach(async () => {
   cleanupDirs.length = 0;
 });
 
-describe("untrackWorktrees", () => {
-  test("removes .worktrees/ from git index when tracked", async () => {
+describe("createSessionWorktree", () => {
+  test("creates a git worktree directory at <repo>/.worktrees/<shortId>", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
+    const sessionId = crypto.randomUUID();
+    const reportsDir = join(repoDir, ".worqload", "sessions", sessionId, "reports");
 
-    mkdirSync(join(repoDir, ".worktrees"), { recursive: true });
-    writeFileSync(join(repoDir, ".worktrees", "abc123"), "ref");
-    git(["add", "--force", ".worktrees/abc123"], repoDir);
-    git(["commit", "-m", "accidentally tracked"], repoDir);
-
-    // Verify it's tracked
-    const before = git(["ls-files", ".worktrees/"], repoDir);
-    expect(new TextDecoder().decode(before.stdout).trim()).toContain("abc123");
-
-    await untrackWorktrees(repoDir);
-
-    const after = git(["ls-files", ".worktrees/"], repoDir);
-    expect(new TextDecoder().decode(after.stdout).trim()).toBe("");
-  });
-
-  test("does nothing when .worktrees/ is not tracked", async () => {
-    const repoDir = createTempGitRepo();
-    cleanupDirs.push(repoDir);
-
-    // No .worktrees/ tracked — should not throw
-    await untrackWorktrees(repoDir);
-
-    const lsFiles = git(["ls-files", ".worktrees/"], repoDir);
-    expect(new TextDecoder().decode(lsFiles.stdout).trim()).toBe("");
-  });
-});
-
-describe("createWorktree", () => {
-  test("creates a git worktree directory", async () => {
-    const repoDir = createTempGitRepo();
-    cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
-
-    const { worktreePath } = await createWorktree(taskId, repoDir);
+    const { worktreePath } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      reportsDirAbsolute: reportsDir,
+    });
 
     expect(existsSync(worktreePath)).toBe(true);
-    expect(existsSync(join(worktreePath, ".git"))).toBe(true);
     expect(existsSync(join(worktreePath, "README.md"))).toBe(true);
+    expect(worktreePath).toBe(join(resolve(repoDir), ".worktrees", sessionId.slice(0, 8)));
   });
 
-  test("creates .worqload symlink pointing to main repo", async () => {
+  test("creates .worqload-reports symlink pointing to reports dir", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
+    const reportsDir = resolve(join(repoDir, ".worqload", "sessions", sessionId, "reports"));
 
-    const { worktreePath } = await createWorktree(taskId, repoDir);
+    const { worktreePath } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      reportsDirAbsolute: reportsDir,
+    });
 
-    const symlinkPath = join(worktreePath, ".worqload");
-    expect(existsSync(symlinkPath)).toBe(true);
-    expect(lstatSync(symlinkPath).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(symlinkPath)).toBe(resolve(repoDir, ".worqload"));
+    const linkPath = join(worktreePath, ".worqload-reports");
+    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(linkPath)).toBe(reportsDir);
   });
 
-  test("returns branch name based on task ID", async () => {
+  test("creates the reports directory if missing", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
+    const reportsDir = join(repoDir, ".worqload", "sessions", sessionId, "reports");
 
-    const { branchName } = await createWorktree(taskId, repoDir);
-
-    expect(branchName).toBe(`worqload/${taskId.slice(0, 8)}`);
-    const result = git(["branch", "--list", branchName], repoDir);
-    expect(new TextDecoder().decode(result.stdout).trim()).toContain(taskId.slice(0, 8));
+    expect(existsSync(reportsDir)).toBe(false);
+    await createSessionWorktree({ sessionId, repoDir, baseBranch: TEST_BASE_BRANCH, reportsDirAbsolute: reportsDir });
+    expect(existsSync(reportsDir)).toBe(true);
   });
 
-  test("worktree path is under .worktrees/ in repo root", async () => {
+  test("returns branch name worqload/<shortId>", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
+    const reportsDir = join(repoDir, ".worqload", "sessions", sessionId, "reports");
 
-    const { worktreePath } = await createWorktree(taskId, repoDir);
-
-    expect(worktreePath).toBe(join(resolve(repoDir), ".worktrees", taskId.slice(0, 8)));
-  });
-
-  test("throws when not in a git repo", async () => {
-    const dir = join(tmpdir(), `worqload-wt-nogit-${crypto.randomUUID()}`);
-    mkdirSync(dir, { recursive: true });
-    cleanupDirs.push(dir);
-
-    await expect(createWorktree(crypto.randomUUID(), dir)).rejects.toThrow();
+    const { branchName } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      reportsDirAbsolute: reportsDir,
+    });
+    expect(branchName).toBe(`worqload/${sessionId.slice(0, 8)}`);
   });
 });
 
 describe("removeWorktree", () => {
-  test("removes the worktree directory", async () => {
+  test("removes the worktree directory and the branch", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
+    const reportsDir = join(repoDir, ".worqload", "sessions", sessionId, "reports");
 
-    const { worktreePath, branchName } = await createWorktree(taskId, repoDir);
+    const { worktreePath, branchName } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      reportsDirAbsolute: reportsDir,
+    });
     expect(existsSync(worktreePath)).toBe(true);
 
     await removeWorktree(worktreePath, branchName, repoDir);
 
     expect(existsSync(worktreePath)).toBe(false);
-  });
-
-  test("deletes the worktree branch", async () => {
-    const repoDir = createTempGitRepo();
-    cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
-
-    const { worktreePath, branchName } = await createWorktree(taskId, repoDir);
-    await removeWorktree(worktreePath, branchName, repoDir);
-
     const result = git(["branch", "--list", branchName], repoDir);
     expect(new TextDecoder().decode(result.stdout).trim()).toBe("");
   });
 });
 
-describe("mergeWorktreeBranch", () => {
-  test("merges commits from worktree branch into current branch", async () => {
+describe("resolveBaseCommit / currentBranch", () => {
+  test("resolveBaseCommit returns commit sha", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
 
-    const { worktreePath, branchName } = await createWorktree(taskId, repoDir);
-
-    writeFileSync(join(worktreePath, "new-file.txt"), "agent output\n");
-    git(["add", "new-file.txt"], worktreePath);
-    git(["commit", "-m", "agent commit"], worktreePath);
-
-    const merged = await mergeWorktreeBranch(branchName, repoDir);
-
-    expect(merged).toBe(true);
-    expect(existsSync(join(repoDir, "new-file.txt"))).toBe(true);
+    const sha = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
   });
 
-  test("returns true when no new commits on branch", async () => {
-    const repoDir = createTempGitRepo();
-    cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
-
-    const { branchName } = await createWorktree(taskId, repoDir);
-
-    const merged = await mergeWorktreeBranch(branchName, repoDir);
-    expect(merged).toBe(true);
-  });
-
-  test("returns false on merge conflict and aborts", async () => {
-    const repoDir = createTempGitRepo();
-    cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
-
-    const { worktreePath, branchName } = await createWorktree(taskId, repoDir);
-
-    writeFileSync(join(repoDir, "README.md"), "main branch change\n");
-    git(["add", "README.md"], repoDir);
-    git(["commit", "-m", "main change"], repoDir);
-
-    writeFileSync(join(worktreePath, "README.md"), "worktree branch change\n");
-    git(["add", "README.md"], worktreePath);
-    git(["commit", "-m", "worktree change"], worktreePath);
-
-    const merged = await mergeWorktreeBranch(branchName, repoDir);
-
-    expect(merged).toBe(false);
-    const status = git(["status", "--porcelain"], repoDir);
-    const statusOutput = new TextDecoder().decode(status.stdout).trim();
-    const conflictLines = statusOutput.split("\n").filter(l => /^(UU|AA|DD|AU|UA) /.test(l));
-    expect(conflictLines).toEqual([]);
-  });
-
-  test("concurrent merges of non-conflicting branches both succeed", async () => {
+  test("currentBranch returns main on freshly initialised repo", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
 
-    const taskA = crypto.randomUUID();
-    const taskB = crypto.randomUUID();
-    const wtA = await createWorktree(taskA, repoDir);
-    const wtB = await createWorktree(taskB, repoDir);
-
-    writeFileSync(join(wtA.worktreePath, "fileA.txt"), "content A\n");
-    git(["add", "fileA.txt"], wtA.worktreePath);
-    git(["commit", "-m", "add fileA"], wtA.worktreePath);
-
-    writeFileSync(join(wtB.worktreePath, "fileB.txt"), "content B\n");
-    git(["add", "fileB.txt"], wtB.worktreePath);
-    git(["commit", "-m", "add fileB"], wtB.worktreePath);
-
-    const [mergedA, mergedB] = await Promise.all([
-      mergeWorktreeBranch(wtA.branchName, repoDir),
-      mergeWorktreeBranch(wtB.branchName, repoDir),
-    ]);
-
-    expect(mergedA).toBe(true);
-    expect(mergedB).toBe(true);
-    expect(existsSync(join(repoDir, "fileA.txt"))).toBe(true);
-    expect(existsSync(join(repoDir, "fileB.txt"))).toBe(true);
-  });
-
-  test("does not merge .worktrees/ files into main branch", async () => {
-    const repoDir = createTempGitRepo();
-    cleanupDirs.push(repoDir);
-    const taskId = crypto.randomUUID();
-
-    const { worktreePath, branchName } = await createWorktree(taskId, repoDir);
-
-    // Agent accidentally commits .worktrees/ files
-    mkdirSync(join(worktreePath, ".worktrees"), { recursive: true });
-    writeFileSync(join(worktreePath, ".worktrees", "stale-ref"), "ref");
-    writeFileSync(join(worktreePath, "real-work.txt"), "real content\n");
-    git(["add", "--force", ".worktrees/stale-ref", "real-work.txt"], worktreePath);
-    git(["commit", "-m", "agent commit with .worktrees"], worktreePath);
-
-    const merged = await mergeWorktreeBranch(branchName, repoDir);
-
-    expect(merged).toBe(true);
-    expect(existsSync(join(repoDir, "real-work.txt"))).toBe(true);
-    // .worktrees/ should NOT appear in the main branch index
-    const lsFiles = git(["ls-files", ".worktrees/"], repoDir);
-    const tracked = new TextDecoder().decode(lsFiles.stdout).trim();
-    expect(tracked).toBe("");
-  });
-
-  test("sequential merges succeed when HEAD advances between merges", async () => {
-    const repoDir = createTempGitRepo();
-    cleanupDirs.push(repoDir);
-
-    const taskA = crypto.randomUUID();
-    const taskB = crypto.randomUUID();
-    const wtA = await createWorktree(taskA, repoDir);
-    const wtB = await createWorktree(taskB, repoDir);
-
-    writeFileSync(join(wtA.worktreePath, "fileA.txt"), "content A\n");
-    git(["add", "fileA.txt"], wtA.worktreePath);
-    git(["commit", "-m", "add fileA"], wtA.worktreePath);
-
-    writeFileSync(join(wtB.worktreePath, "fileB.txt"), "content B\n");
-    git(["add", "fileB.txt"], wtB.worktreePath);
-    git(["commit", "-m", "add fileB"], wtB.worktreePath);
-
-    // Merge A first — HEAD advances
-    const mergedA = await mergeWorktreeBranch(wtA.branchName, repoDir);
-    expect(mergedA).toBe(true);
-
-    // Merge B after HEAD advanced — should still succeed (non-overlapping files)
-    const mergedB = await mergeWorktreeBranch(wtB.branchName, repoDir);
-    expect(mergedB).toBe(true);
-
-    expect(existsSync(join(repoDir, "fileA.txt"))).toBe(true);
-    expect(existsSync(join(repoDir, "fileB.txt"))).toBe(true);
+    const branch = await currentBranch(repoDir);
+    expect(branch).toBe(TEST_BASE_BRANCH);
   });
 });

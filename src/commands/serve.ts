@@ -1,39 +1,23 @@
-import type { TaskQueue } from "../queue";
-import { sleepFor, clearSleep, isSleeping, loadSleep } from "../sleep";
+import { startServer } from "../web-server";
 
-export async function heartbeat(_queue: TaskQueue, args: string[]) {
-  const intervalSeconds = Number(args[0]) || 300;
-  const data = { lastRun: new Date().toISOString(), intervalSeconds };
-  await Bun.write(".worqload/heartbeat.json", JSON.stringify(data));
-  console.log(`Heartbeat: interval=${intervalSeconds}s`);
-}
-
-export async function sleep(_queue: TaskQueue, args: string[]) {
-  const minutes = Number(args[0]);
-  if (!minutes || minutes <= 0) {
-    const sleeping = await isSleeping();
-    if (sleeping) {
-      const state = await loadSleep();
-      const remaining = Math.ceil(
-        (new Date(state!.until).getTime() - Date.now()) / 60000,
-      );
-      console.log(`Sleeping for ${remaining} more minute(s) (until ${state!.until})`);
-    } else {
-      console.log("Not sleeping.");
-    }
-    return;
+export async function serve(args: string[]): Promise<void> {
+  const port = args[0] ? Number(args[0]) : 3456;
+  if (Number.isNaN(port)) {
+    console.error(`invalid port: ${args[0]}`);
+    process.exit(2);
   }
-  const state = await sleepFor(minutes);
-  console.log(`Sleeping until ${state.until} (${minutes} minutes)`);
-}
+  // WORQLOAD_SPAWN_COMMAND lets the developer override the claude binary
+  // (e.g. point at a mock during smoke tests). Words are split on whitespace.
+  const spawnEnv = process.env.WORQLOAD_SPAWN_COMMAND;
+  const spawnCommand = spawnEnv && spawnEnv.trim() !== ""
+    ? spawnEnv.trim().split(/\s+/)
+    : undefined;
 
-export async function wake(_queue: TaskQueue, _args: string[]) {
-  await clearSleep();
-  console.log("Awake.");
-}
-
-export async function serve(_queue: TaskQueue, args: string[]) {
-  const port = Number(args[0]) || 3456;
-  const { startServer } = await import("../server");
-  startServer(port);
+  const { ctx } = await startServer({ port, spawnCommand });
+  console.log(`worqload server listening on ${ctx.baseUrlForAgent}`);
+  console.log(`repo: ${ctx.repoDir}`);
+  console.log(`sessions: ${ctx.sessionsDir}`);
+  console.log(`spawn: ${ctx.spawnCommand.join(" ")}`);
+  // keep the process alive
+  await new Promise(() => {});
 }

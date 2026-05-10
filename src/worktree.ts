@@ -1,125 +1,46 @@
 import { join, resolve } from "path";
 import { existsSync, symlinkSync, unlinkSync } from "fs";
-import { mkdir, rmdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 
 function cleanGitEnv(): Record<string, string | undefined> {
   return { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
 }
 
-const MERGE_LOCK_TIMEOUT_MS = 120_000;
-const MERGE_LOCK_RETRY_MS = 100;
-
-async function withMergeLock<T>(repoDir: string, fn: () => Promise<T>): Promise<T> {
-  const lockPath = join(resolve(repoDir), ".git", "worqload-merge.lock");
-  const deadline = Date.now() + MERGE_LOCK_TIMEOUT_MS;
-  while (true) {
-    try {
-      await mkdir(lockPath);
-      break;
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (Date.now() >= deadline) {
-        throw new Error(`Merge lock timeout: ${lockPath} (${MERGE_LOCK_TIMEOUT_MS}ms)`);
-      }
-      await new Promise(r => setTimeout(r, MERGE_LOCK_RETRY_MS));
-    }
-  }
-  try {
-    return await fn();
-  } finally {
-    try { await rmdir(lockPath); } catch { /* already gone */ }
-  }
+export interface WorktreeInfo {
+  worktreePath: string;
+  branchName: string;
 }
 
-export async function untrackWorktrees(repoDir: string): Promise<void> {
-  const env = cleanGitEnv();
-  const lsProc = Bun.spawn(
-    ["git", "ls-files", ".worktrees/"],
-    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env },
-  );
-  const tracked = await new Response(lsProc.stdout).text();
-  await lsProc.exited;
-
-  if (!tracked.trim()) return;
-
-  const rmProc = Bun.spawn(
-    ["git", "rm", "-r", "--cached", ".worktrees/"],
-    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env },
-  );
-  await rmProc.exited;
-}
-
-export async function createWorktree(
-  taskId: string,
-  repoDir: string = process.cwd(),
-): Promise<{ worktreePath: string; branchName: string }> {
-  const shortId = taskId.slice(0, 8);
+export async function createSessionWorktree(params: {
+  sessionId: string;
+  repoDir: string;
+  baseBranch: string;
+  reportsDirAbsolute: string;
+}): Promise<WorktreeInfo> {
+  const { sessionId, repoDir, baseBranch, reportsDirAbsolute } = params;
+  const shortId = sessionId.slice(0, 8);
   const branchName = `worqload/${shortId}`;
   const worktreePath = join(resolve(repoDir), ".worktrees", shortId);
 
+  await mkdir(reportsDirAbsolute, { recursive: true });
+
   const proc = Bun.spawn(
-    ["git", "worktree", "add", "-b", branchName, worktreePath, "HEAD"],
+    ["git", "worktree", "add", "-b", branchName, worktreePath, baseBranch],
     { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
   );
-
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
     const stderr = await new Response(proc.stderr).text();
     throw new Error(`Failed to create worktree: ${stderr.trim()}`);
   }
 
-  const sourceWorqload = resolve(repoDir, ".worqload");
-  const targetWorqload = join(worktreePath, ".worqload");
-  if (existsSync(sourceWorqload) && !existsSync(targetWorqload)) {
-    symlinkSync(sourceWorqload, targetWorqload);
+  // symlink so the agent can read its own reports via .worqload-reports/<file>
+  const symlinkPath = join(worktreePath, ".worqload-reports");
+  if (!existsSync(symlinkPath)) {
+    symlinkSync(reportsDirAbsolute, symlinkPath);
   }
 
   return { worktreePath, branchName };
-}
-
-export async function mergeWorktreeBranch(
-  branchName: string,
-  repoDir: string = process.cwd(),
-): Promise<boolean> {
-  return withMergeLock(repoDir, async () => {
-    const env = cleanGitEnv();
-
-    const logProc = Bun.spawn(
-      ["git", "log", `HEAD..${branchName}`, "--oneline"],
-      { stdout: "pipe", stderr: "pipe", cwd: repoDir, env },
-    );
-    const logOutput = await new Response(logProc.stdout).text();
-    await logProc.exited;
-
-    if (!logOutput.trim()) {
-      return true;
-    }
-
-    const mergeProc = Bun.spawn(
-      ["git", "merge", branchName, "--no-edit"],
-      { stdout: "pipe", stderr: "pipe", cwd: repoDir, env },
-    );
-    const mergeExit = await mergeProc.exited;
-
-    if (mergeExit !== 0) {
-      Bun.spawnSync(["git", "merge", "--abort"], { cwd: repoDir, stdout: "pipe", stderr: "pipe", env });
-      return false;
-    }
-
-    // Strip .worktrees/ files that the branch may have committed
-    const lsProc = Bun.spawn(
-      ["git", "ls-files", ".worktrees/"],
-      { stdout: "pipe", stderr: "pipe", cwd: repoDir, env },
-    );
-    const trackedWorktrees = await new Response(lsProc.stdout).text();
-    await lsProc.exited;
-    if (trackedWorktrees.trim()) {
-      Bun.spawnSync(["git", "rm", "-r", "--cached", ".worktrees/"], { cwd: repoDir, stdout: "pipe", stderr: "pipe", env });
-      Bun.spawnSync(["git", "commit", "--amend", "--no-edit"], { cwd: repoDir, stdout: "pipe", stderr: "pipe", env });
-    }
-
-    return true;
-  });
 }
 
 export async function removeWorktree(
@@ -129,7 +50,7 @@ export async function removeWorktree(
 ): Promise<void> {
   const env = cleanGitEnv();
 
-  const symlinkPath = join(worktreePath, ".worqload");
+  const symlinkPath = join(worktreePath, ".worqload-reports");
   try { unlinkSync(symlinkPath); } catch { /* already gone */ }
 
   const removeProc = Bun.spawn(
@@ -145,4 +66,34 @@ export async function removeWorktree(
     );
     await branchProc.exited;
   }
+}
+
+export async function resolveBaseCommit(
+  baseBranch: string,
+  repoDir: string,
+): Promise<string> {
+  const proc = Bun.spawn(
+    ["git", "rev-parse", baseBranch],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
+  );
+  const out = await new Response(proc.stdout).text();
+  const code = await proc.exited;
+  if (code !== 0) {
+    const err = await new Response(proc.stderr).text();
+    throw new Error(`Failed to resolve ${baseBranch}: ${err.trim()}`);
+  }
+  return out.trim();
+}
+
+export async function currentBranch(repoDir: string): Promise<string> {
+  const proc = Bun.spawn(
+    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
+  );
+  const out = await new Response(proc.stdout).text();
+  const code = await proc.exited;
+  if (code !== 0) {
+    throw new Error("Failed to detect current branch");
+  }
+  return out.trim();
 }

@@ -1,21 +1,20 @@
-export { createTask, validateTransition } from "./src/task";
-export { TaskQueue } from "./src/queue";
-export { runLoop } from "./src/loop";
-export { loadPrinciples, savePrinciples } from "./src/principles";
-export type { Task, TaskStatus, OodaPhase, PhaseLog } from "./src/task";
-export type { OodaHandlers } from "./src/loop";
-export { startServer } from "./src/server";
-export { loadSources, addSource, removeSource, runAllSources } from "./src/sources";
-export type { Source, SourceResult } from "./src/sources";
-export { loadSpawns, recordSpawnStart, recordSpawnFinish } from "./src/spawns";
-export type { SpawnRecord } from "./src/spawns";
-export { loadFeedback, addFeedback, acknowledgeFeedback, resolveFeedback } from "./src/feedback";
-export type { Feedback, FeedbackStatus } from "./src/feedback";
-export { loadProjects, registerProject, removeProject } from "./src/projects";
-export type { Project } from "./src/projects";
-export { loadReports, addReport, updateReportStatus, removeReport } from "./src/reports";
-export type { Report, ReportStatus } from "./src/reports";
-export { loadConfig } from "./src/config";
-export type { WorkqloadConfig, SpawnHooks, InitConfig } from "./src/config";
-export { generateAgentCard, handleA2ARequest, toA2AState, toA2ATask } from "./src/a2a";
-export type { A2ATask, A2ATaskState, A2AMessage, AgentCard, Part, TextPart, JsonRpcRequest, JsonRpcResponse } from "./src/a2a";
+export { startServer } from "./src/web-server";
+export type { ServerContext, StartServerOptions, StartedServer } from "./src/web-server";
+export {
+  createSession,
+  validateTransition,
+  isTerminal,
+  saveSessionMeta,
+  loadSessionMeta,
+  listSessionMetas,
+} from "./src/session";
+export type { SessionMeta, SessionStatus } from "./src/session";
+export { appendEvent, readEvents } from "./src/event-log";
+export type { Event, EventKind } from "./src/event-log";
+export {
+  createSessionWorktree,
+  removeWorktree,
+  resolveBaseCommit,
+  currentBranch,
+} from "./src/worktree";
+export type { WorktreeInfo } from "./src/worktree";
