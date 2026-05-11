@@ -47,7 +47,10 @@ export function parseDiffFiles(text) {
 
 export function renderDiffHtml() {
   if (!state.diff || state.diff.trim() === "") {
-    return `<div class="diff-empty">No changes against ${escapeHtml(state.diffBase)} yet.</div>`;
+    const against = state.diffBase === "base-branch"
+      ? (state.detail?.meta?.baseBranch ?? "the base branch")
+      : "session start";
+    return `<div class="diff-empty">No changes against ${escapeHtml(against)} yet.</div>`;
   }
   const files = parseDiffFiles(state.diff);
   const out = [];
