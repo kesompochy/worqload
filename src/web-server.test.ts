@@ -718,3 +718,23 @@ test("POST /sessions/:id/actions/merge-to-base returns 422 when preconditions fa
   expect(body.ok).toBe(false);
   expect(body.message).toBeDefined();
 });
+
+test("invoking an action records an action_invoked event so the run log persists", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  // dirty the main repo so merge-to-base fails predictably; we only care that
+  // the attempt (failure included) is recorded.
+  writeFileSync(join(repoDir, "scratch.txt"), "dirt\n");
+  Bun.spawnSync(["git", "add", "scratch.txt"], { cwd: repoDir, env: cleanGitEnv });
+  await postJson(baseUrl, `/sessions/${sid}/actions/merge-to-base`, {});
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const invoked = events.filter(e => e.kind === "action_invoked");
+  expect(invoked.length).toBe(1);
+  const payload = invoked[0].payload as { actionId: string; ok: boolean };
+  expect(payload.actionId).toBe("merge-to-base");
+  expect(payload.ok).toBe(false);
+});

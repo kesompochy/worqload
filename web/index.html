@@ -166,11 +166,20 @@
   .action-output pre { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .55rem .7rem; max-height: 18em; overflow: auto; font-size: 12.5px; }
   .action-output .status-ok { color: var(--running); font-weight: 600; }
   .action-output .status-fail { color: var(--crashed); font-weight: 600; }
-  .action-modal { width: min(720px, 92vw); }
+  .action-output .empty { color: var(--text-dim); font-style: italic; font-size: 12.5px; }
+  .action-output .ran-at { color: var(--text-dim); font-size: 11px; margin-left: .4rem; }
   .action-form label { display: block; font-size: 12px; color: var(--text-dim); margin: .5rem 0 .2rem 0; text-transform: uppercase; letter-spacing: .05em; }
   .action-bar { display: flex; align-items: center; gap: .5rem; padding: .5rem 1.1rem; border-bottom: 1px solid var(--border); background: var(--panel); }
   .action-bar .label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin-right: .25rem; }
   .action-bar .buttons { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .action-bar .btn-action.open { background: var(--panel-2); border-color: var(--accent); color: var(--text); }
+  .action-panel { border-bottom: 1px solid var(--border); background: var(--panel); padding: .7rem 1.1rem .9rem 1.1rem; }
+  .action-panel-head { display: flex; align-items: baseline; gap: .5rem; }
+  .action-panel-head strong { font-size: 13px; }
+  .action-panel-head .desc { color: var(--text-dim); font-size: 12px; }
+  .action-panel-head .close { background: transparent; border: none; color: var(--text-dim); font-size: 16px; line-height: 1; padding: 0 .3rem; cursor: pointer; }
+  .action-panel-head .close:hover { color: var(--text); }
+  .action-confirm { margin: .55rem 0 0 0; padding: .5rem .7rem; border: 1px solid rgba(210,153,34,.4); background: rgba(210,153,34,.08); color: var(--waiting); border-radius: 4px; white-space: pre-wrap; font-size: 12.5px; }
 </style>
 </head>
 <body>
@@ -211,21 +220,6 @@
   </div>
 </div>
 
-<div id="actionModal" class="modal-bg hidden">
-  <div class="modal action-modal">
-    <h2 id="actionModalTitle">Action</h2>
-    <p id="actionModalDescription" style="margin:.2em 0 .6em; color:var(--text-dim); font-size:12px"></p>
-    <div id="actionModalConfirm" style="display:none; margin:.5rem 0; color:var(--waiting); white-space:pre-wrap"></div>
-    <div id="actionModalForm" class="action-form"></div>
-    <div id="actionModalOutput" class="action-output hidden"></div>
-    <div class="row" style="margin-top:.8rem">
-      <span class="spacer"></span>
-      <button id="actionModalClose">Close</button>
-      <button id="actionModalRun">Run</button>
-    </div>
-  </div>
-</div>
-
 <div id="toast" class="toast hidden"></div>
 
 <script type="module">
@@ -248,7 +242,8 @@ const state = {
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   actions: [],           // [{ id, label, description?, confirmMessage?, params? }]
-  pendingAction: null,   // descriptor currently displayed in action modal
+  openActionId: null,    // id of the action whose inline panel is open (null = closed)
+  actionResults: new Map(),  // actionId -> last run result observed in this browser view
 };
 
 function toast(text, ms = 2400) {
@@ -313,6 +308,8 @@ async function selectSession(id) {
   state.collapsedFiles = new Set();
   state.reportToggle = new Map();
   state.feedbackToggle = new Map();
+  state.openActionId = null;
+  state.actionResults = new Map();
   renderSessionList();
   renderDetail();
   if (!id) return;
@@ -364,6 +361,9 @@ function openWs(id) {
       state.detail.events = [...(state.detail.events ?? []), ev];
     }
     if (state.activeTab === "events") renderDetail();
+    // Keep the open action panel's "last run" view current (a run may have been
+    // triggered from another browser view).
+    else if (ev.kind === "action_invoked" && state.openActionId) renderDetail();
     // For "interesting" events refresh the relevant slice.
     if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread"
         || ev.kind === "feedback_received" || ev.kind === "feedback_fetched"
@@ -427,6 +427,11 @@ function renderDetail() {
   const root = $("#detail");
   // preserve any in-progress feedback text across re-renders
   const preservedFeedback = ($("#feedbackInput")?.value) ?? "";
+  // preserve any in-progress action-parameter input across re-renders
+  const preservedActionParams = {};
+  for (const el of document.querySelectorAll("[data-action-param]")) {
+    preservedActionParams[el.getAttribute("data-action-param")] = el.value;
+  }
   if (!state.selected || !state.detail) {
     root.innerHTML = `<div class="detail-empty">Select a session, or create a new one.</div>`;
     return;
@@ -523,7 +528,7 @@ function renderDetail() {
     : "";
 
   const actionButtonsHtml = state.actions.map(a => `
-    <button class="btn-action" data-action-id="${escapeHtml(a.id)}" title="${escapeHtml(a.description || "")}">${escapeHtml(a.label)}</button>
+    <button class="btn-action ${state.openActionId === a.id ? "open" : ""}" data-action-id="${escapeHtml(a.id)}" title="${escapeHtml(a.description || "")}">${escapeHtml(a.label)}</button>
   `).join("");
 
   const actionBarHtml = state.actions.length > 0
@@ -532,6 +537,8 @@ function renderDetail() {
          <div class="buttons">${actionButtonsHtml}</div>
        </div>`
     : "";
+
+  const actionPanelHtml = renderActionPanelHtml();
 
   root.innerHTML = `
     <div class="detail-header">
@@ -545,6 +552,7 @@ function renderDetail() {
       · worktree: <code>${escapeHtml(m.worktreePath)}</code>
     </div>
     ${actionBarHtml}
+    ${actionPanelHtml}
     ${tabsHtml}
     <div class="detail-body" id="detailBody">
       ${askingHtml}
@@ -561,8 +569,12 @@ function renderDetail() {
     </form>
   `;
   document.querySelectorAll(".btn-action").forEach(b => {
-    b.addEventListener("click", () => openActionModal(b.getAttribute("data-action-id")));
+    b.addEventListener("click", () => toggleActionPanel(b.getAttribute("data-action-id")));
   });
+  const actionCloseBtn = document.querySelector("[data-action-panel-close]");
+  if (actionCloseBtn) actionCloseBtn.addEventListener("click", () => toggleActionPanel(state.openActionId));
+  const actionRunBtn = document.querySelector("[data-action-panel-run]");
+  if (actionRunBtn) actionRunBtn.addEventListener("click", runOpenAction);
   $("#feedbackForm").addEventListener("submit", e => {
     e.preventDefault();
     onFeedback();
@@ -584,6 +596,10 @@ function renderDetail() {
   $("#detailBody").addEventListener("click", onDetailBodyClick);
   if (state.anchor) $("#anchorClear").addEventListener("click", clearAnchor);
   if (preservedFeedback) $("#feedbackInput").value = preservedFeedback;
+  for (const [name, value] of Object.entries(preservedActionParams)) {
+    const el = document.getElementById(`actionParam-${name}`);
+    if (el) el.value = value;
+  }
 }
 
 function isAnchored(path, lineNo) {
@@ -904,56 +920,98 @@ function openModal() {
 }
 function closeModal() { $("#modal").classList.add("hidden"); }
 
-function openActionModal(actionId) {
-  const action = state.actions.find(a => a.id === actionId);
-  if (!action || !state.selected) return;
-  state.pendingAction = action;
-  $("#actionModalTitle").textContent = action.label;
-  $("#actionModalDescription").textContent = action.description || "";
-  const confirmEl = $("#actionModalConfirm");
-  if (action.confirmMessage) {
-    confirmEl.textContent = action.confirmMessage;
-    confirmEl.style.display = "block";
-  } else {
-    confirmEl.style.display = "none";
-  }
-  const formEl = $("#actionModalForm");
-  formEl.innerHTML = (action.params || []).map(p => {
+// The gh actions deliberately use an inline panel rather than a modal: the run
+// log stays on screen alongside the rest of the session, and (because the
+// server records each run as an action_invoked event) it survives a reload.
+// The confirmation step is the explicit "Confirm & Run" button next to the
+// highlighted confirmMessage — the panel is the gate, not a separate dialog.
+function renderActionPanelHtml() {
+  const action = state.actions.find(a => a.id === state.openActionId);
+  if (!action) return "";
+  const paramsHtml = (action.params || []).map(p => {
     const fieldId = `actionParam-${p.name}`;
+    const dataAttr = `data-action-param="${escapeHtml(p.name)}"`;
     if (p.type === "text") {
       return `
         <label for="${fieldId}">${escapeHtml(p.label)}</label>
-        <textarea id="${fieldId}" rows="4" placeholder="${escapeHtml(p.placeholder || "")}">${escapeHtml(p.default || "")}</textarea>
+        <textarea id="${fieldId}" ${dataAttr} rows="4" placeholder="${escapeHtml(p.placeholder || "")}">${escapeHtml(p.default || "")}</textarea>
       `;
     }
     return `
       <label for="${fieldId}">${escapeHtml(p.label)}</label>
-      <input id="${fieldId}" type="text" placeholder="${escapeHtml(p.placeholder || "")}" value="${escapeHtml(p.default || "")}">
+      <input id="${fieldId}" ${dataAttr} type="text" placeholder="${escapeHtml(p.placeholder || "")}" value="${escapeHtml(p.default || "")}">
     `;
   }).join("");
-  $("#actionModalOutput").innerHTML = "";
-  $("#actionModalOutput").classList.add("hidden");
-  $("#actionModalRun").disabled = false;
-  $("#actionModalRun").textContent = "Run";
-  $("#actionModal").classList.remove("hidden");
+  const confirmHtml = action.confirmMessage
+    ? `<div class="action-confirm">⚠ ${escapeHtml(action.confirmMessage)}</div>`
+    : "";
+  return `
+    <div class="action-panel">
+      <div class="action-panel-head">
+        <strong>${escapeHtml(action.label)}</strong>
+        ${action.description ? `<span class="desc">${escapeHtml(action.description)}</span>` : ""}
+        <span class="spacer"></span>
+        <button class="close" data-action-panel-close title="Close">×</button>
+      </div>
+      ${confirmHtml}
+      ${paramsHtml ? `<div class="action-form">${paramsHtml}</div>` : ""}
+      <div class="row" style="margin-top:.7rem">
+        <span class="spacer"></span>
+        <button data-action-panel-run>${action.confirmMessage ? "Confirm &amp; Run" : "Run"}</button>
+      </div>
+      <div class="action-output">${renderActionOutputHtml(action.id)}</div>
+    </div>
+  `;
 }
 
-function closeActionModal() {
-  $("#actionModal").classList.add("hidden");
-  state.pendingAction = null;
+// Newest run for an action: the in-view cache (freshest, populated by runOpenAction)
+// falls back to the latest action_invoked event so a run made before this page
+// load is still shown when the panel is opened.
+function lastRunFor(actionId) {
+  const cached = state.actionResults.get(actionId);
+  if (cached) return cached;
+  const events = state.detail?.events ?? [];
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.kind === "action_invoked" && ev.payload && ev.payload.actionId === actionId) {
+      return { ...ev.payload, ranAt: ev.timestamp };
+    }
+  }
+  return null;
 }
 
-async function runPendingAction() {
-  const action = state.pendingAction;
+function renderActionOutputHtml(actionId) {
+  const r = lastRunFor(actionId);
+  if (!r) {
+    return `<div class="empty">No run yet — press Run above. Past runs stay here and in the Events tab.</div>`;
+  }
+  const ranAt = r.ranAt ? `<span class="ran-at">${formatRelative(r.ranAt)}</span>` : "";
+  const statusLine = r.ok
+    ? `<div class="status-ok">✓ Success (exit ${r.exitCode ?? 0})${ranAt}</div>`
+    : `<div class="status-fail">✗ Failed${r.exitCode !== undefined && r.exitCode !== null ? ` (exit ${r.exitCode})` : ""}${ranAt}</div>`;
+  const messageLine = r.message ? `<div style="margin-top:.3rem">${escapeHtml(r.message)}</div>` : "";
+  const stdout = r.stdout && r.stdout.trim() !== "" ? `<h3>stdout</h3><pre>${escapeHtml(r.stdout)}</pre>` : "";
+  const stderr = r.stderr && r.stderr.trim() !== "" ? `<h3>stderr</h3><pre>${escapeHtml(r.stderr)}</pre>` : "";
+  return `${statusLine}${messageLine}${stdout}${stderr}`;
+}
+
+function toggleActionPanel(actionId) {
+  if (!actionId) return;
+  state.openActionId = state.openActionId === actionId ? null : actionId;
+  renderDetail();
+  if (state.openActionId) document.querySelector(".action-panel [data-action-param]")?.focus();
+}
+
+async function runOpenAction() {
+  const action = state.actions.find(a => a.id === state.openActionId);
   if (!action || !state.selected) return;
   const params = {};
   for (const p of action.params || []) {
     const el = document.getElementById(`actionParam-${p.name}`);
     if (el) params[p.name] = el.value;
   }
-  const runBtn = $("#actionModalRun");
-  runBtn.disabled = true;
-  runBtn.textContent = "Running…";
+  const runBtn = document.querySelector("[data-action-panel-run]");
+  if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = `<span class="spinner"></span> Running…`; }
   try {
     const res = await fetch(`/sessions/${state.selected}/actions/${encodeURIComponent(action.id)}`, {
       method: "POST",
@@ -961,32 +1019,21 @@ async function runPendingAction() {
       body: JSON.stringify({ params }),
     });
     const data = await res.json().catch(() => ({}));
-    renderActionResult(data, res.status);
+    state.actionResults.set(action.id, {
+      ok: !!data.ok,
+      exitCode: data.exitCode ?? null,
+      stdout: data.stdout ?? "",
+      stderr: data.stderr ?? "",
+      message: data.message,
+      ranAt: new Date().toISOString(),
+    });
+    toast(data.ok ? `${action.label}: success` : `${action.label}: failed`);
   } catch (e) {
-    renderActionResult({ ok: false, message: e.message, stdout: "", stderr: "" }, 0);
+    state.actionResults.set(action.id, { ok: false, exitCode: null, stdout: "", stderr: "", message: e.message, ranAt: new Date().toISOString() });
+    toast(`failed: ${e.message}`);
   } finally {
-    runBtn.textContent = "Run again";
-    runBtn.disabled = false;
+    renderDetail();
   }
-}
-
-function renderActionResult(result, httpStatus) {
-  const out = $("#actionModalOutput");
-  const ok = !!result.ok;
-  const statusLine = ok
-    ? `<div class="status-ok">✓ Success (exit ${result.exitCode ?? 0})</div>`
-    : `<div class="status-fail">✗ Failed${result.exitCode !== undefined ? ` (exit ${result.exitCode})` : ""}${httpStatus ? `, http ${httpStatus}` : ""}</div>`;
-  const messageLine = result.message
-    ? `<div style="margin-top:.3rem">${escapeHtml(result.message)}</div>`
-    : "";
-  const stdout = result.stdout && result.stdout.trim() !== ""
-    ? `<h3>stdout</h3><pre>${escapeHtml(result.stdout)}</pre>` : "";
-  const stderr = result.stderr && result.stderr.trim() !== ""
-    ? `<h3>stderr</h3><pre>${escapeHtml(result.stderr)}</pre>` : "";
-  const error = result.error
-    ? `<h3>error</h3><pre>${escapeHtml(result.error)}</pre>` : "";
-  out.innerHTML = `${statusLine}${messageLine}${stdout}${stderr}${error}`;
-  out.classList.remove("hidden");
 }
 
 async function createSession() {
@@ -1038,8 +1085,6 @@ $("#modalCreate").addEventListener("click", createSession);
 $("#modalPrompt").addEventListener("keydown", e => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); createSession(); }
 });
-$("#actionModalClose").addEventListener("click", closeActionModal);
-$("#actionModalRun").addEventListener("click", runPendingAction);
 
 await fetchMeta();
 await fetchActions();

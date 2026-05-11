@@ -820,6 +820,20 @@ async function postSessionAction(req: Request, ctx: ServerContext, params: Recor
     const body = (await req.json().catch(() => ({}))) as ActionInvokeBody;
     const actionParams = body.params ?? {};
     const result = await action.run({ meta, repoDir: ctx.repoDir }, actionParams);
+    // Persist the run (success or failure) so its output is reviewable later in
+    // the events stream rather than living only in the response of one request.
+    await appendAndBroadcast(ctx, meta.id, {
+      kind: "action_invoked",
+      payload: {
+        actionId: action.id,
+        label: action.label,
+        ok: result.ok,
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        message: result.message,
+      },
+    });
     return json(
       {
         actionId: action.id,

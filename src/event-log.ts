@@ -14,6 +14,7 @@ export type EventKind =
   | "escalation_resolved"
   | "feedback_received"
   | "feedback_fetched"
+  | "action_invoked"
   | "session_stopped"
   | "session_crashed";
 
