@@ -2,7 +2,7 @@ import type { Server, ServerWebSocket, Subprocess } from "bun";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import {
   agentEndpointPath,
   createSession,
@@ -414,21 +414,44 @@ async function getIndex(): Promise<Response> {
   });
 }
 
-// Whitelist + extension map for files served from /assets/:filename. We avoid
-// shipping the whole web/ directory because directory traversal protection is
-// easier to reason about with an explicit table.
-const ASSETS: Record<string, { path: string; contentType: string }> = {
-  "markdown.js": { path: join(WEB_DIR, "markdown.js"), contentType: "text/javascript; charset=utf-8" },
-  "syntax-highlight.js": { path: join(WEB_DIR, "syntax-highlight.js"), contentType: "text/javascript; charset=utf-8" },
-  "notifications.js": { path: join(WEB_DIR, "notifications.js"), contentType: "text/javascript; charset=utf-8" },
+// Explicit whitelist of files served from /assets/:filename. We avoid shipping
+// the whole web/ directory because directory traversal protection is easier to
+// reason about with a closed list of basenames.
+const ASSET_FILENAMES = [
+  "style.css",
+  "app.js",
+  "dom.js",
+  "state.js",
+  "api.js",
+  "render.js",
+  "handlers.js",
+  "notify.js",
+  "diff-view.js",
+  "files-view.js",
+  "actions-view.js",
+  "markdown.js",
+  "syntax-highlight.js",
+  "notifications.js",
+] as const;
+
+const ASSET_CONTENT_TYPES: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
 };
+
+const ASSETS = new Map<string, { path: string; contentType: string }>(
+  ASSET_FILENAMES.map((name) => [
+    name,
+    { path: join(WEB_DIR, name), contentType: ASSET_CONTENT_TYPES[extname(name)] ?? "application/octet-stream" },
+  ]),
+);
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
   return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir) });
 }
 
 async function getAsset(_req: Request, _ctx: ServerContext, params: Record<string, string>): Promise<Response> {
-  const entry = ASSETS[params.filename];
+  const entry = ASSETS.get(params.filename);
   if (!entry) return new Response("not found", { status: 404 });
   return new Response(Bun.file(entry.path), {
     headers: { "content-type": entry.contentType },

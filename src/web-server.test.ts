@@ -823,6 +823,26 @@ test("GET /assets/syntax-highlight.js serves the highlighter module", async () =
   expect(body).toContain("export function highlightCode");
 });
 
+test("GET /assets/style.css serves the stylesheet", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/assets/style.css`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("text/css");
+  const body = await res.text();
+  expect(body).toContain(".layout");
+});
+
+test("GET /assets/app.js serves the frontend entry module", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/assets/app.js`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("javascript");
+});
+
 test("GET /assets/notifications.js serves the notifications helper module", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
@@ -832,6 +852,34 @@ test("GET /assets/notifications.js serves the notifications helper module", asyn
   expect(res.headers.get("content-type")).toContain("javascript");
   const body = await res.text();
   expect(body).toContain("export function notificationForEvent");
+});
+
+test("GET / serves the HTML shell linking the stylesheet and entry module", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("text/html");
+  const body = await res.text();
+  expect(body).toContain(`href="/assets/style.css"`);
+  expect(body).toContain(`src="/assets/app.js"`);
+});
+
+test("every web/ frontend asset is reachable under /assets", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  // The /assets whitelist is hand-maintained; this guards against adding a
+  // module file under web/ but forgetting to list it (the browser would 404).
+  const webDir = join(import.meta.dir, "..", "web");
+  const assetFiles = readdirSync(webDir).filter((f) => f.endsWith(".js") || f.endsWith(".css"));
+  expect(assetFiles.length).toBeGreaterThan(0);
+  const statuses: Record<string, number> = {};
+  for (const f of assetFiles) {
+    statuses[f] = (await fetch(`${baseUrl}/assets/${f}`)).status;
+  }
+  expect(statuses).toEqual(Object.fromEntries(assetFiles.map((f) => [f, 200])));
 });
 
 test("GET /assets/<unknown> returns 404", async () => {
