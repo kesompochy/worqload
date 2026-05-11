@@ -117,12 +117,12 @@
   .diff-line.add .body::before { content: "+"; color: var(--running); }
   .diff-line.remove .body::before { content: "-"; color: var(--crashed); }
   .diff-line.context .body::before { content: " "; }
-  .diff-line.diff-expand-row { background: rgba(88,166,255,.05); user-select: none; }
+  .diff-line.diff-expand-row { background: rgba(88,166,255,.05); user-select: none; cursor: pointer; }
+  .diff-line.diff-expand-row:hover { background: rgba(88,166,255,.12); }
   .diff-line.diff-expand-row .ln { color: var(--text-dim); }
+  .diff-expand-label { color: var(--text-dim); }
   .diff-expand-btn { background: transparent; border: 0; color: var(--accent); font: inherit; cursor: pointer; padding: 0 .6rem; }
   .diff-expand-btn:hover { text-decoration: underline; }
-  .diff-expand-btn.diff-expand-all { color: var(--text-dim); }
-  .diff-expand-btn.diff-expand-all:hover { color: var(--text); }
   .md { word-break: break-word; }
   .md > * { margin: 0; }
   .md > * + * { margin-top: .55rem; }
@@ -938,10 +938,11 @@ function renderDiffExpandRow(hiddenRows, escapedPath) {
   const count = to - from + 1;
   const data = `data-expand-path="${escapedPath}" data-expand-from="${from}" data-expand-to="${to}"`;
   const chunked = count > DIFF_EXPAND_CHUNK;
-  const down = chunked ? `<button type="button" class="diff-expand-btn" ${data} data-expand-dir="down" title="Expand ${DIFF_EXPAND_CHUNK} lines">↓</button>` : "";
-  const up = chunked ? `<button type="button" class="diff-expand-btn" ${data} data-expand-dir="up" title="Expand ${DIFF_EXPAND_CHUNK} lines">↑</button>` : "";
-  const all = `<button type="button" class="diff-expand-btn diff-expand-all" ${data} data-expand-dir="all" title="Expand all unchanged lines">${count} unchanged line${count === 1 ? "" : "s"}</button>`;
-  return `<div class="diff-line diff-expand-row"><span class="ln">⋯</span><span class="ln"></span><span class="body">${down}${all}${up}</span></div>`;
+  const down = chunked ? `<button type="button" class="diff-expand-btn" ${data} data-expand-dir="down" title="Expand ${DIFF_EXPAND_CHUNK} lines from above">↓</button>` : "";
+  const up = chunked ? `<button type="button" class="diff-expand-btn" ${data} data-expand-dir="up" title="Expand ${DIFF_EXPAND_CHUNK} lines from below">↑</button>` : "";
+  const label = `<span class="diff-expand-label">${count} unchanged line${count === 1 ? "" : "s"}${chunked ? " — click to expand all" : " — click to expand"}</span>`;
+  // The whole row falls back to data-expand-dir="all"; the ↑/↓ buttons override it.
+  return `<div class="diff-line diff-expand-row" ${data} data-expand-dir="all" role="button"><span class="ln">⋯</span><span class="ln"></span><span class="body">${down}${label}${up}</span></div>`;
 }
 
 async function onArchive() {
