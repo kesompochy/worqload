@@ -1,46 +1,15 @@
-import { renderMarkdown } from "/assets/markdown.js";
-import { highlightCode, languageForPath } from "/assets/syntax-highlight.js";
-const $ = sel => document.querySelector(sel);
-const state = {
-  sessions: [],
-  selected: null,        // session id
-  detail: null,          // { meta, events }
-  reports: [],
-  asking: [],
-  feedbackHistory: [],
-  ws: null,
-  lastSeq: 0,
-  activeTab: "reports",  // "reports" | "diff" | "files" | "events"
-  diff: "",              // text/plain diff (full file context, -U<huge>)
-  diffBase: "session-start",
-  anchor: null,          // { path, lineStart, lineEnd } | null
-  collapsedFiles: new Set(),  // paths of diff files the user collapsed
-  diffExpansions: new Map(),  // path -> [[from,to], ...] new-line ranges the user expanded into
-  files: [],             // worktree-relative paths for the Files tab
-  filesLoaded: false,
-  fileTreeCollapsed: new Set(),  // directory paths collapsed in the Files tab
-  selectedFilePath: null,        // path of the file open in the content pane
-  fileContent: null,     // { path, content } | { path, binary } | { path, tooLarge, size } | { path, error } | { path, loading: true }
-  reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
-  feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
-  actions: [],           // [{ id, label, description?, confirmMessage?, params? }]
-  openActionId: null,    // id of the action whose inline panel is open (null = closed)
-  actionResults: new Map(),  // actionId -> last run result observed in this browser view
-};
-
-// Diff view: the server hands us full file context; we collapse unchanged
-// stretches by default and let the human expand them GitHub-style.
-const DIFF_CONTEXT_LINES = 3;   // unchanged lines kept around each change
-const DIFF_EXPAND_CHUNK = 20;   // unchanged lines revealed per ↑/↓ click
-const DIFF_MIN_COLLAPSE = 4;    // shorter unchanged runs aren't worth a placeholder
-
-function toast(text, ms = 2400) {
-  const el = $("#toast");
-  el.textContent = text;
-  el.classList.remove("hidden");
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.add("hidden"), ms);
-}
+import { renderMarkdown } from "./markdown.js";
+import { highlightCode, languageForPath } from "./syntax-highlight.js";
+import { $, toast, bindEnterToSubmit, escapeHtml, formatRelative, formatBytes } from "./dom.js";
+import {
+  state,
+  DIFF_CONTEXT_LINES,
+  DIFF_EXPAND_CHUNK,
+  DIFF_MIN_COLLAPSE,
+  isAnchored,
+  isReportExpanded,
+  isFeedbackExpanded,
+} from "./state.js";
 
 async function api(method, path, body) {
   const init = { method, headers: { "content-type": "application/json" } };
@@ -452,11 +421,6 @@ function renderDetail() {
   }
 }
 
-function isAnchored(path, lineNo) {
-  if (!state.anchor || state.anchor.path !== path) return false;
-  return lineNo >= state.anchor.lineStart && lineNo <= state.anchor.lineEnd;
-}
-
 function onDetailBodyClick(e) {
   const markBtn = e.target.closest("[data-report-mark]");
   if (markBtn) {
@@ -516,22 +480,6 @@ function onDetailBodyClick(e) {
     return;
   }
   onLineClick(e);
-}
-
-function isReportExpanded(report) {
-  if (state.reportToggle.has(report.filename)) {
-    return state.reportToggle.get(report.filename);
-  }
-  return !report.read;
-}
-
-function isFeedbackExpanded(feedback) {
-  if (state.feedbackToggle.has(feedback.filename)) {
-    return state.feedbackToggle.get(feedback.filename);
-  }
-  // "unread" feedback (the agent has not fetched it yet) is the recently sent
-  // one the human most likely still wants to see; collapse it once consumed.
-  return feedback.status === "unread";
 }
 
 async function onReportMark(filename, read) {
@@ -884,13 +832,6 @@ function renderFileContentHtml() {
   return `${header(`${lines.length} line${lines.length === 1 ? "" : "s"}`)}<div class="file-content-body">${rows}</div>`;
 }
 
-function formatBytes(n) {
-  if (n == null || !Number.isFinite(n)) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 async function onArchive() {
   if (!state.selected) return;
   try {
@@ -917,23 +858,6 @@ async function onResolve(filename, articleEl) {
   } catch (e) {
     toast(`failed: ${e.message}`);
   }
-}
-
-function bindEnterToSubmit(textarea, onSubmit) {
-  if (!textarea) return;
-  // Track IME composition explicitly. `event.isComposing` and `keyCode === 229`
-  // cover most browsers, but on some macOS browsers the commit-Enter keydown
-  // fires AFTER compositionend with both flags clear. The explicit flag is the
-  // backstop so a confirming Enter does not also submit.
-  let composing = false;
-  textarea.addEventListener("compositionstart", () => { composing = true; });
-  textarea.addEventListener("compositionend", () => { composing = false; });
-  textarea.addEventListener("keydown", e => {
-    if (e.key !== "Enter" || e.shiftKey) return;
-    if (composing || e.isComposing || e.keyCode === 229) return;
-    e.preventDefault();
-    onSubmit();
-  });
 }
 
 async function onFeedback() {
@@ -1149,21 +1073,6 @@ async function createSession() {
     cancelBtn.disabled = false;
     createBtn.textContent = "Create";
   }
-}
-
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-
-function formatRelative(iso) {
-  if (!iso) return "";
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 60) return `${Math.floor(diff)}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 $("#btnNew").addEventListener("click", openModal);
