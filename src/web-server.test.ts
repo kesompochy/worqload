@@ -678,6 +678,17 @@ test("GET /assets/markdown.js serves the renderer module", async () => {
   expect(body).toContain("export function renderMarkdown");
 });
 
+test("GET /assets/syntax-highlight.js serves the highlighter module", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/assets/syntax-highlight.js`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("javascript");
+  const body = await res.text();
+  expect(body).toContain("export function highlightCode");
+});
+
 test("GET /assets/<unknown> returns 404", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");

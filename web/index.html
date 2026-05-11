@@ -119,6 +119,10 @@
   .diff-line.add .body::before { content: "+"; color: var(--running); }
   .diff-line.remove .body::before { content: "-"; color: var(--crashed); }
   .diff-line.context .body::before { content: " "; }
+  .diff-line .hl-keyword { color: #ff7b72; }
+  .diff-line .hl-string  { color: #a5d6ff; }
+  .diff-line .hl-number  { color: #79c0ff; }
+  .diff-line .hl-comment { color: var(--text-dim); font-style: italic; }
   .diff-line.diff-expand-row { background: rgba(88,166,255,.05); user-select: none; cursor: pointer; }
   .diff-line.diff-expand-row:hover { background: rgba(88,166,255,.12); }
   .diff-line.diff-expand-row .ln { color: var(--text-dim); }
@@ -232,6 +236,7 @@
 
 <script type="module">
 import { renderMarkdown } from "/assets/markdown.js";
+import { highlightCode, languageForPath } from "/assets/syntax-highlight.js";
 const $ = sel => document.querySelector(sel);
 const state = {
   sessions: [],
@@ -880,6 +885,7 @@ function renderDiffHtml() {
   for (const file of files) {
     const collapsed = state.collapsedFiles.has(file.path);
     const escapedPath = escapeHtml(file.path);
+    const lang = languageForPath(file.path);
     out.push(`<div class="diff-file${collapsed ? " collapsed" : ""}" data-diff-path="${escapedPath}">`);
     out.push(`<div class="diff-file-header" data-diff-toggle="${escapedPath}"><span class="diff-chevron">▾</span><span>${escapedPath}</span><span class="diff-summary"><span class="add-count">+${file.adds}</span><span class="remove-count">−${file.removes}</span></span></div>`);
     out.push(`<div class="diff-file-body">`);
@@ -889,10 +895,10 @@ function renderDiffHtml() {
       const rows = hunkRows(hunk);
       const visible = visibleRows(rows, revealed);
       for (let i = 0; i < rows.length; ) {
-        if (visible[i]) { out.push(renderDiffLineRow(rows[i], file.path, escapedPath)); i++; continue; }
+        if (visible[i]) { out.push(renderDiffLineRow(rows[i], file.path, escapedPath, lang)); i++; continue; }
         let j = i;
         while (j < rows.length && !visible[j]) j++;
-        out.push(renderDiffExpandRow(rows.slice(i, j), escapedPath));
+        out.push(renderDiffExpandRow(rows.slice(i, j), escapedPath, lang));
         i = j;
       }
     }
@@ -939,7 +945,7 @@ function visibleRows(rows, revealed) {
   return visible;
 }
 
-function renderDiffLineRow(row, path, escapedPath) {
+function renderDiffLineRow(row, path, escapedPath, lang) {
   if (row.kind === "meta") {
     return `<div class="diff-line meta"><span class="ln"></span><span class="ln"></span><span class="body">${escapeHtml(row.body)}</span></div>`;
   }
@@ -948,17 +954,17 @@ function renderDiffLineRow(row, path, escapedPath) {
   const anchorable = row.kind === "add" || row.kind === "context";
   const sel = anchorable && isAnchored(path, row.newNo) ? "selected" : "";
   const dataAttrs = anchorable ? `data-anchor-line="${row.newNo}" data-anchor-path="${escapedPath}"` : "";
-  return `<div class="diff-line ${row.kind} ${sel}" ${dataAttrs}><span class="ln">${oldCol}</span><span class="ln">${newCol}</span><span class="body">${escapeHtml(row.body)}</span></div>`;
+  return `<div class="diff-line ${row.kind} ${sel}" ${dataAttrs}><span class="ln">${oldCol}</span><span class="ln">${newCol}</span><span class="body">${highlightCode(row.body, lang)}</span></div>`;
 }
 
-function renderDiffExpandRow(hiddenRows, escapedPath) {
+function renderDiffExpandRow(hiddenRows, escapedPath, lang) {
   let from = null, to = null;
   for (const row of hiddenRows) {
     if (row.newNo == null) continue;
     if (from == null) from = row.newNo;
     to = row.newNo;
   }
-  if (from == null) return hiddenRows.map(r => renderDiffLineRow(r, "", escapedPath)).join("");
+  if (from == null) return hiddenRows.map(r => renderDiffLineRow(r, "", escapedPath, lang)).join("");
   const count = to - from + 1;
   const data = `data-expand-path="${escapedPath}" data-expand-from="${from}" data-expand-to="${to}"`;
   const chunked = count > DIFF_EXPAND_CHUNK;
