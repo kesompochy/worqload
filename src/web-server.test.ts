@@ -843,6 +843,17 @@ test("GET /assets/app.js serves the frontend entry module", async () => {
   expect(res.headers.get("content-type")).toContain("javascript");
 });
 
+test("GET /assets/notifications.js serves the notifications helper module", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/assets/notifications.js`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("javascript");
+  const body = await res.text();
+  expect(body).toContain("export function notificationForEvent");
+});
+
 test("GET / serves the HTML shell linking the stylesheet and entry module", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");

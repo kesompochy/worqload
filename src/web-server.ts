@@ -424,6 +424,7 @@ const ASSET_FILENAMES = [
   "state.js",
   "markdown.js",
   "syntax-highlight.js",
+  "notifications.js",
 ] as const;
 
 const ASSET_CONTENT_TYPES: Record<string, string> = {

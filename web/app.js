@@ -1,5 +1,6 @@
 import { renderMarkdown } from "./markdown.js";
 import { highlightCode, languageForPath } from "./syntax-highlight.js";
+import { notificationForEvent, notificationsFromSessionPoll } from "./notifications.js";
 import { $, toast, bindEnterToSubmit, escapeHtml, formatRelative, formatBytes } from "./dom.js";
 import {
   state,
@@ -11,6 +12,70 @@ import {
   isFeedbackExpanded,
 } from "./state.js";
 
+// Desktop notifications for new reports and escalations. The preference is a
+// localStorage flag; notifications fire only when it's on AND the browser has
+// granted permission. Default-on once permission is granted, so the bell is a
+// single toggle rather than a two-step opt-in.
+const NOTIFY_PREF_KEY = "worqload:notifications";
+const notify = {
+  supported: typeof window !== "undefined" && "Notification" in window,
+  get permission() { return this.supported ? Notification.permission : "unsupported"; },
+  prefOn() { return localStorage.getItem(NOTIFY_PREF_KEY) !== "off"; },
+  setPref(on) { localStorage.setItem(NOTIFY_PREF_KEY, on ? "on" : "off"); },
+  active() { return this.supported && this.permission === "granted" && this.prefOn(); },
+};
+
+function fireNotification({ title, body, tag, sessionId }) {
+  if (!notify.active()) return;
+  let n;
+  try { n = new Notification(title, { body, tag }); } catch { return; }
+  n.onclick = () => {
+    window.focus();
+    if (sessionId && sessionId !== state.selected) selectSession(sessionId);
+    n.close();
+  };
+}
+
+function syncNotifyButton() {
+  const btn = $("#btnNotify");
+  if (!btn) return;
+  if (!notify.supported) { btn.style.display = "none"; return; }
+  const p = notify.permission;
+  if (p === "granted" && notify.prefOn()) {
+    btn.textContent = "🔔";
+    btn.className = "btn-notify on";
+    btn.title = "Desktop notifications: on (reports & escalations) — click to mute";
+  } else if (p === "denied") {
+    btn.textContent = "🔕";
+    btn.className = "btn-notify off";
+    btn.title = "Desktop notifications blocked in browser settings";
+  } else {
+    btn.textContent = "🔕";
+    btn.className = "btn-notify off";
+    btn.title = p === "granted"
+      ? "Desktop notifications: off — click to enable"
+      : "Click to enable desktop notifications";
+  }
+}
+
+async function onNotifyClick() {
+  if (!notify.supported) return;
+  const p = notify.permission;
+  if (p === "denied") { toast("Notifications are blocked — enable them in your browser settings"); return; }
+  if (p === "default") {
+    let result;
+    try { result = await Notification.requestPermission(); } catch { result = notify.permission; }
+    if (result === "granted") { notify.setPref(true); toast("Desktop notifications on"); }
+    else if (result === "denied") { toast("Notifications denied"); }
+    syncNotifyButton();
+    return;
+  }
+  const next = !notify.prefOn();
+  notify.setPref(next);
+  toast(next ? "Desktop notifications on" : "Desktop notifications muted");
+  syncNotifyButton();
+}
+
 async function api(method, path, body) {
   const init = { method, headers: { "content-type": "application/json" } };
   if (body !== undefined) init.body = JSON.stringify(body);
@@ -21,7 +86,15 @@ async function api(method, path, body) {
 
 async function fetchSessions() {
   const { sessions } = await api("GET", "/sessions");
+  const previous = state.sessions;
   state.sessions = sessions;
+  // Reports / escalations of the selected session arrive over its websocket;
+  // here we cover every other session, comparing this poll to the last one.
+  if (notify.active()) {
+    for (const n of notificationsFromSessionPoll(previous, sessions, { selectedId: state.selected })) {
+      fireNotification(n);
+    }
+  }
   renderSessionList();
 }
 
@@ -177,6 +250,10 @@ function openWs(id) {
         || ev.kind === "escalation_requested" || ev.kind === "escalation_resolved"
         || ev.kind === "session_stopped" || ev.kind === "session_crashed" || ev.kind === "session_resumed") {
       await refreshDetail();
+      if (notify.active()) {
+        const n = notificationForEvent(ev, { session: state.detail?.meta, reports: state.reports, asking: state.asking });
+        if (n) fireNotification(n);
+      }
       await fetchSessions();
     }
   });
@@ -1076,11 +1153,13 @@ async function createSession() {
 }
 
 $("#btnNew").addEventListener("click", openModal);
+$("#btnNotify").addEventListener("click", onNotifyClick);
 $("#modalCancel").addEventListener("click", closeModal);
 $("#modalCreate").addEventListener("click", createSession);
 $("#modalPrompt").addEventListener("keydown", e => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); createSession(); }
 });
+syncNotifyButton();
 
 await fetchMeta();
 await fetchActions();

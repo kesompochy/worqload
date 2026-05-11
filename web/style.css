@@ -24,6 +24,10 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .layout { display: grid; grid-template-columns: 320px 1fr; height: 100%; }
 .sidebar { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
 .sidebar-header { padding: .75rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.sidebar-actions { display: flex; align-items: center; gap: .4rem; flex: 0 0 auto; }
+.btn-notify { padding: .35rem .45rem; line-height: 1; font-size: 14px; }
+.btn-notify.off { opacity: .5; }
+.btn-notify.on { border-color: var(--accent); }
 .sidebar-title { min-width: 0; }
 .sidebar-title .app-name { font-size: 11px; letter-spacing: .08em; color: var(--text-dim); text-transform: uppercase; }
 .sidebar-title h1 { margin: 0; font-size: 1rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
