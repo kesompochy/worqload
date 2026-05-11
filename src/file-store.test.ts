@@ -33,6 +33,27 @@ test("writeNumberedFile creates the directory if missing", async () => {
   expect(existsSync(sub)).toBe(true);
 });
 
+test("writeNumberedFile continues past files archived out of the directory", async () => {
+  const root = makeTmpDir("file-store");
+  const inbox = join(root, "inbox");
+  const archive = join(root, "read");
+  const a = await writeNumberedFile(inbox, "a", "alpha");
+  await moveFile(join(inbox, a.filename), join(archive, a.filename));
+
+  // inbox is now empty, but numbering must not reset to 001.
+  const b = await writeNumberedFile(inbox, "b", "beta", { archiveDirs: [archive] });
+  expect(b.filename).toBe("002-b.md");
+  expect(b.seq).toBe(2);
+});
+
+test("writeNumberedFile tolerates a missing archive dir", async () => {
+  const root = makeTmpDir("file-store");
+  const r = await writeNumberedFile(join(root, "inbox"), "a", "alpha", {
+    archiveDirs: [join(root, "never-created")],
+  });
+  expect(r.filename).toBe("001-a.md");
+});
+
 test("writeNumberedFile concurrent calls produce unique sequential seq", async () => {
   const dir = makeTmpDir("file-store");
   const N = 10;
