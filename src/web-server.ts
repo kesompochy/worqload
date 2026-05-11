@@ -24,6 +24,26 @@ const WORQLOAD_PROTOCOL_ALLOW =
   "Bash(worqload report submit:*) Bash(worqload escalate submit:*) " +
   "Bash(worqload feedback fetch) Bash(worqload feedback fetch:*)";
 
+// Tries to bind on the requested port and shifts upward on EADDRINUSE so a
+// busy port (often the previous --watch instance lingering, or another dev
+// tool) doesn't fail the boot. port=0 leaves selection to the OS, so no
+// fallback is needed.
+const PORT_FALLBACK_ATTEMPTS = 50;
+function listenWithFallback(requestedPort: number, listen: (port: number) => Server): Server {
+  if (requestedPort === 0) return listen(0);
+  let port = requestedPort;
+  for (let attempt = 0; attempt < PORT_FALLBACK_ATTEMPTS; attempt++) {
+    try {
+      return listen(port);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EADDRINUSE") throw err;
+      port++;
+    }
+  }
+  throw new Error(`no free port found in range ${requestedPort}-${requestedPort + PORT_FALLBACK_ATTEMPTS - 1}`);
+}
+
 function buildDefaultSpawnCommand(): string[] {
   // bypassPermissions is the default for v1 ergonomics: a -p session has no
   // human to approve prompts, so any unallowed Bash would auto-fail. Set
@@ -220,9 +240,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   // point the assignment below has run.
   let ctx!: ServerContext;
 
-  const server = Bun.serve<WsClientData, undefined>({
+  const server = listenWithFallback(opts.port ?? 3456, port => Bun.serve<WsClientData, undefined>({
     hostname: "127.0.0.1",
-    port: opts.port ?? 3456,
+    port,
     fetch(req, srv) {
       const url = new URL(req.url);
       const wsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/stream$/);
@@ -258,7 +278,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
         ctx.wsClients.delete(ws);
       },
     },
-  });
+  }));
 
   ctx = {
     repoDir,

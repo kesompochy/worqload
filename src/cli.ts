@@ -30,7 +30,7 @@ function printUsage() {
   console.log(`worqload — asynchronous claude session viewer
 
 Usage:
-  worqload serve [port]                  Start HTTP/WS server (default: 3456)
+  worqload serve [port] [--no-open]      Start HTTP/WS server (default port 3456; auto-shifts if busy; opens browser unless --no-open)
   worqload init [path]                   Initialize .worqload/
 
 Agent-side (called by claude inside a session):

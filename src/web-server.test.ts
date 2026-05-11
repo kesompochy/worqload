@@ -47,6 +47,31 @@ async function postJson(baseUrl: string, path: string, body: unknown): Promise<R
   });
 }
 
+test("startServer auto-shifts to a free port when the requested port is in use", async () => {
+  const repoDir1 = makeRepo();
+  const repoDir2 = makeRepo();
+
+  const first = await startServer({
+    port: 0,
+    repoDir: repoDir1,
+    spawnCommand: ["bun", MOCK, "hang"],
+  });
+  trackCleanup(() => first.shutdown());
+
+  const requestedPort = first.ctx.port;
+
+  const second = await startServer({
+    port: requestedPort,
+    repoDir: repoDir2,
+    spawnCommand: ["bun", MOCK, "hang"],
+  });
+  trackCleanup(() => second.shutdown());
+
+  expect(second.ctx.port).not.toBe(requestedPort);
+  expect(second.ctx.port).toBeGreaterThan(requestedPort);
+  expect(second.ctx.baseUrlForAgent).toBe(`http://127.0.0.1:${second.ctx.port}`);
+});
+
 test("POST /sessions creates a session, worktree, meta.json", async () => {
   const repoDir = makeRepo();
   const { baseUrl, ctx } = await bootServer(repoDir, "hang");
