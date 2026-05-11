@@ -76,6 +76,35 @@ async function gitCurrentBranch(cwd: string): Promise<string> {
   return out.trim();
 }
 
+type MergeProbe =
+  | { status: "clean" }
+  | { status: "conflict"; files: string[]; output: string }
+  | { status: "error"; output: string };
+
+// Probes the merge with `git merge-tree --write-tree`, which runs the 3-way
+// merge entirely in memory: the repo's working tree and index are never
+// touched, so a conflict found here can't leave the base branch mid-merge.
+// Exit 0 = clean, 1 = conflicts, anything else = merge-tree itself failed.
+async function probeMerge(repoDir: string, baseBranch: string, branchName: string): Promise<MergeProbe> {
+  const proc = Bun.spawn(["git", "merge-tree", "--write-tree", "--name-only", baseBranch, branchName], {
+    cwd: repoDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: cleanGitEnv(),
+  });
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  const exitCode = await proc.exited;
+  if (exitCode === 0) return { status: "clean" };
+  const output = [stdout, stderr].filter((s) => s.trim() !== "").join("\n");
+  if (exitCode !== 1) return { status: "error", output };
+  // On conflict the first stdout line is the resulting tree's OID; the
+  // conflicted paths follow until the blank line that precedes the messages.
+  const afterOid = stdout.split("\n").slice(1);
+  const blankAt = afterOid.indexOf("");
+  const files = (blankAt === -1 ? afterOid : afterOid.slice(0, blankAt)).filter((line) => line !== "");
+  return { status: "conflict", files, output };
+}
+
 function sessionBranchName(meta: SessionMeta): string {
   // Pre-branchName-field sessions fell back to the legacy worqload/<shortId>
   // naming. Keep that path so we can still merge / push their branches.
@@ -93,7 +122,7 @@ export const mergeToBaseAction: Action = {
   label: "Merge into base branch",
   description: "Merge this session's branch into the base branch in the main repo.",
   confirmMessage:
-    "Merge this session's branch into the base branch?\n\nThe main repo must have the base branch checked out with a clean working tree, and the session worktree itself must have no uncommitted changes.",
+    "Merge this session's branch into the base branch?\n\nThe main repo must have the base branch checked out with a clean working tree, and the session worktree itself must have no uncommitted changes. If the merge would conflict, it is aborted before it touches the base branch.",
   async run({ meta, repoDir }) {
     if (await isWorktreeDirty(meta.worktreePath)) {
       return fail("session worktree has uncommitted changes; the agent must commit them before merging");
@@ -108,6 +137,23 @@ export const mergeToBaseAction: Action = {
       return fail("main repo has uncommitted changes; commit or stash them in the main repo before merging");
     }
     const branchName = sessionBranchName(meta);
+    // Refuse a conflicting merge before `git merge` runs: otherwise it would
+    // leave the base branch mid-merge in the main repo, forcing conflict
+    // resolution there instead of on the session branch.
+    const probe = await probeMerge(repoDir, meta.baseBranch, branchName);
+    if (probe.status === "error") {
+      return { ok: false, exitCode: -1, stdout: probe.output, stderr: "", message: "could not pre-check the merge for conflicts; the merge was not attempted" };
+    }
+    if (probe.status === "conflict") {
+      const where = probe.files.length > 0 ? `: ${probe.files.join(", ")}` : "";
+      return {
+        ok: false,
+        exitCode: -1,
+        stdout: probe.output,
+        stderr: "",
+        message: `merging '${branchName}' into '${meta.baseBranch}' would conflict${where}. The merge was not performed; resolve the conflict on the session branch (e.g. merge '${meta.baseBranch}' into it) and retry.`,
+      };
+    }
     const title = defaultPrTitle(meta);
     const message = `Merge session ${meta.id.slice(0, 8)}: ${title}`;
     return runCommand(["git", "merge", "--no-ff", "-m", message, branchName], repoDir);
