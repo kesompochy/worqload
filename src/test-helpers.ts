@@ -7,11 +7,6 @@ interface Stoppable {
   stop(closeActiveConnections?: boolean): void | Promise<void>;
 }
 
-interface RunnerLike {
-  kill(signal?: NodeJS.Signals | number): void;
-  exited: Promise<number>;
-}
-
 const tmpDirs: string[] = [];
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -50,13 +45,6 @@ export function trackSubprocess<T extends Subprocess>(p: T): T {
 export function trackServer<T extends Stoppable>(s: T): T {
   trackCleanup(async () => { try { await s.stop(true); } catch {} });
   return s;
-}
-
-export function trackRunner(r: RunnerLike): void {
-  trackCleanup(async () => {
-    try { r.kill("SIGKILL"); } catch {}
-    await r.exited.catch(() => {});
-  });
 }
 
 export async function cleanupAll(): Promise<void> {
