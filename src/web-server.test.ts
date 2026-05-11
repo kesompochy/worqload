@@ -553,6 +553,31 @@ test("GET /sessions/:id/diff returns full file context (unchanged lines included
   expect(diff).toContain("line 30");
 });
 
+test("GET /sessions/:id/diff?base=base-branch shows only the branch's own changes (PR-style diff)", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+
+  // The session commits its own work on the branch.
+  writeFileSync(join(wt, "session-file.txt"), "session work\n");
+  git(["add", "session-file.txt"], wt);
+  git(["commit", "-m", "session change"], wt);
+
+  // Meanwhile the base branch moves on past the worktree's fork point.
+  writeFileSync(join(repoDir, "upstream-file.txt"), "upstream work\n");
+  git(["add", "upstream-file.txt"], repoDir);
+  git(["commit", "-m", "upstream change"], repoDir);
+
+  const diff = await fetch(`${baseUrl}/sessions/${sid}/diff?base=base-branch`).then(r => r.text());
+  expect(diff).toContain("session-file.txt");
+  // Diffing against the merge-base means the base-branch-only commit doesn't
+  // surface (a plain `git diff <baseBranch>` would render it as a deletion).
+  expect(diff).not.toContain("upstream-file.txt");
+});
+
 test("GET /sessions/:id/files lists worktree files including new untracked ones", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");

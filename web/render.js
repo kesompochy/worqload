@@ -260,8 +260,8 @@ export function renderDetail() {
           <button id="btnCollapseAll" type="button" class="diff-tool-btn">Collapse all</button>
           base:
           <select id="diffBaseSel" style="background:transparent;border:1px solid var(--border);color:var(--text);padding:.1rem .3rem;border-radius:3px">
-            <option value="session-start" ${state.diffBase === "session-start" ? "selected" : ""}>session-start</option>
             <option value="base-branch" ${state.diffBase === "base-branch" ? "selected" : ""}>${escapeHtml(m.baseBranch)}</option>
+            <option value="session-start" ${state.diffBase === "session-start" ? "selected" : ""}>session-start</option>
           </select>
         </span>
       ` : ""}
