@@ -245,7 +245,6 @@ export async function onFeedback() {
 
 export async function onStop() {
   if (!state.selected) return;
-  if (!confirm("Stop this session? The worktree is preserved.")) return;
   try {
     await api("POST", `/sessions/${state.selected}/stop`, {});
     await refreshDetail();
