@@ -147,7 +147,9 @@
   .action-output .status-fail { color: var(--crashed); font-weight: 600; }
   .action-modal { width: min(720px, 92vw); }
   .action-form label { display: block; font-size: 12px; color: var(--text-dim); margin: .5rem 0 .2rem 0; text-transform: uppercase; letter-spacing: .05em; }
-  .action-buttons { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .action-bar { display: flex; align-items: center; gap: .5rem; padding: .5rem 1.1rem; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .action-bar .label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin-right: .25rem; }
+  .action-bar .buttons { display: flex; flex-wrap: wrap; gap: .35rem; }
 </style>
 </head>
 <body>
@@ -464,19 +466,26 @@ function renderDetail() {
     <button class="btn-action" data-action-id="${escapeHtml(a.id)}" title="${escapeHtml(a.description || "")}">${escapeHtml(a.label)}</button>
   `).join("");
 
+  const actionBarHtml = state.actions.length > 0
+    ? `<div class="action-bar">
+         <span class="label">Actions</span>
+         <div class="buttons">${actionButtonsHtml}</div>
+       </div>`
+    : "";
+
   root.innerHTML = `
     <div class="detail-header">
       <div class="title"><span class="badge badge-${m.status}">${m.status.replace("_", " ")}</span>${escapeHtml(m.title || m.prompt.slice(0, 100))}</div>
-      <div class="action-buttons">${actionButtonsHtml}</div>
       <button id="btnStop" ${isTerminal ? "disabled" : ""}>Stop</button>
-      <button id="btnCancel" class="danger" ${isTerminal ? "disabled" : ""}>Cancel</button>
       <button id="btnArchive" ${isTerminal ? "" : "disabled"}>Archive</button>
+      <button id="btnCancel" class="danger" ${isTerminal ? "disabled" : ""}>Cancel</button>
     </div>
     <div class="detail-meta">
       branch: <code>${escapeHtml(m.baseBranch)}</code> · started ${formatRelative(m.createdAt)}
       ${m.endedAt ? ` · ended ${formatRelative(m.endedAt)}` : ""}
       · worktree: <code>${escapeHtml(m.worktreePath)}</code>
     </div>
+    ${actionBarHtml}
     ${tabsHtml}
     <div class="detail-body" id="detailBody">
       ${askingHtml}
