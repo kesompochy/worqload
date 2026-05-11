@@ -1,12 +1,14 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
-import { mkdirSync, existsSync, readlinkSync, lstatSync, writeFileSync } from "fs";
+import { mkdirSync, existsSync, readlinkSync, lstatSync, writeFileSync, symlinkSync } from "fs";
 import {
   createSessionWorktree,
   removeWorktree,
   resolveBaseCommit,
   currentBranch,
+  listWorktreeFiles,
+  readWorktreeFile,
 } from "./worktree";
 
 const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
@@ -147,6 +149,91 @@ describe("removeWorktree", () => {
     expect(existsSync(worktreePath)).toBe(false);
     const result = git(["branch", "--list", branchName], repoDir);
     expect(new TextDecoder().decode(result.stdout).trim()).toBe("");
+  });
+});
+
+describe("listWorktreeFiles", () => {
+  test("lists tracked and untracked files, excluding gitignored ones", async () => {
+    const repoDir = createTempGitRepo(); // README.md committed by setup
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, ".gitignore"), "ignored/\n*.log\n");
+    mkdirSync(join(repoDir, "ignored"), { recursive: true });
+    writeFileSync(join(repoDir, "ignored", "secret.txt"), "x");
+    writeFileSync(join(repoDir, "debug.log"), "x");
+    mkdirSync(join(repoDir, "src"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "a.ts"), "x");
+    git(["add", "src/a.ts"], repoDir); // tracked but uncommitted
+    writeFileSync(join(repoDir, "new file.txt"), "x"); // untracked, not ignored, has a space
+
+    const files = await listWorktreeFiles(repoDir);
+    expect(files).toContain("README.md");
+    expect(files).toContain("src/a.ts");
+    expect(files).toContain(".gitignore");
+    expect(files).toContain("new file.txt");
+    expect(files).not.toContain("ignored/secret.txt");
+    expect(files).not.toContain("debug.log");
+    expect(files).toEqual([...files].sort());
+  });
+
+  test("returns an empty list when the worktree directory is gone", async () => {
+    const files = await listWorktreeFiles(join(tmpdir(), `worqload-missing-${crypto.randomUUID()}`));
+    expect(files).toEqual([]);
+  });
+});
+
+describe("readWorktreeFile", () => {
+  test("returns text content for a regular file", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, "hello.txt"), "line1\nline2\n");
+    expect(await readWorktreeFile(repoDir, "hello.txt")).toEqual({ kind: "text", content: "line1\nline2\n" });
+  });
+
+  test("rejects paths that escape the worktree", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const escaping = await readWorktreeFile(repoDir, `${"../".repeat(20)}etc/hosts`);
+    expect(escaping.kind).toBe("denied");
+    const absolute = await readWorktreeFile(repoDir, "/etc/hosts");
+    expect(absolute.kind).toBe("denied");
+  });
+
+  test("rejects symlinks that point outside the worktree", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const outside = join(tmpdir(), `worqload-outside-${crypto.randomUUID()}.txt`);
+    writeFileSync(outside, "secret\n");
+    symlinkSync(outside, join(repoDir, "leak"));
+    expect((await readWorktreeFile(repoDir, "leak")).kind).toBe("denied");
+  });
+
+  test("returns not-found for a missing file", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    expect((await readWorktreeFile(repoDir, "nope.txt")).kind).toBe("not-found");
+  });
+
+  test("returns not-a-file for a directory", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    mkdirSync(join(repoDir, "adir"));
+    expect((await readWorktreeFile(repoDir, "adir")).kind).toBe("not-a-file");
+  });
+
+  test("flags binary files", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, "bin.dat"), Buffer.from([0x68, 0x69, 0x00, 0x01, 0xff]));
+    expect((await readWorktreeFile(repoDir, "bin.dat")).kind).toBe("binary");
+  });
+
+  test("flags files over the size limit", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, "big.txt"), "a".repeat(3 * 1024 * 1024));
+    const result = await readWorktreeFile(repoDir, "big.txt");
+    expect(result.kind).toBe("too-large");
+    if (result.kind === "too-large") expect(result.size).toBe(3 * 1024 * 1024);
   });
 });
 

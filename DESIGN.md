@@ -206,7 +206,8 @@ type EventKind =
 | `POST` | `/sessions/:id/stop` | Stop |
 | `POST` | `/sessions/:id/cancel` | Cancel |
 | `GET` | `/sessions/:id/diff?base=session-start\|base-branch` | diff 取得 |
-| `GET` | `/sessions/:id/files/*` | worktree 内ファイル取得 |
+| `GET` | `/sessions/:id/files` | worktree のファイル一覧 (tracked + 未追跡、gitignore 除外) |
+| `GET` | `/sessions/:id/file?path=<relpath>` | worktree 内ファイル本文 (worktree 外パスは拒否、binary / サイズ超過はフラグのみ) |
 | `GET` | `/sessions/:id/reports` | report 一覧 |
 | `GET` | `/sessions/:id/reports/:filename` | report 本文 |
 | `GET` | `/sessions/:id/asking` | 未解決 escalation 一覧 |

@@ -473,6 +473,73 @@ test("GET /sessions/:id/diff returns full file context (unchanged lines included
   expect(diff).toContain("line 30");
 });
 
+test("GET /sessions/:id/files lists worktree files including new untracked ones", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+  mkdirSync(join(wt, "src"), { recursive: true });
+  writeFileSync(join(wt, "src", "new.ts"), "export const x = 1;\n");
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/files`).then(r => r.json());
+  expect(res.paths).toContain("README.md");
+  expect(res.paths).toContain("src/new.ts");
+  // the worqload-injected symlink is not project content and points outside the worktree
+  expect(res.paths).not.toContain(".worqload-reports");
+});
+
+test("GET /sessions/:id/file returns text content of a worktree file", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  writeFileSync(join(created.meta.worktreePath, "notes.txt"), "alpha\nbeta\n");
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/file?path=notes.txt`);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.path).toBe("notes.txt");
+  expect(body.content).toBe("alpha\nbeta\n");
+});
+
+test("GET /sessions/:id/file rejects paths that escape the worktree", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/file?path=${encodeURIComponent("../".repeat(20) + "etc/hosts")}`);
+  expect(res.status).toBe(403);
+});
+
+test("GET /sessions/:id/file returns 404 for a missing file and 400 without a path", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  expect((await fetch(`${baseUrl}/sessions/${sid}/file?path=nope.txt`)).status).toBe(404);
+  expect((await fetch(`${baseUrl}/sessions/${sid}/file`)).status).toBe(400);
+});
+
+test("GET /sessions/:id/file flags binary files instead of returning their bytes", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  writeFileSync(join(created.meta.worktreePath, "blob.bin"), Buffer.from([0x68, 0x69, 0x00, 0x03, 0xff]));
+
+  const body = await fetch(`${baseUrl}/sessions/${sid}/file?path=blob.bin`).then(r => r.json());
+  expect(body.binary).toBe(true);
+  expect(body.content).toBeUndefined();
+});
+
 test("GET /sessions/:id/asking returns pending escalations", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
