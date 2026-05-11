@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { buildFileTree } from "../web/files-view.js";
+import { buildFileTree, renderFilesHtml } from "../web/files-view.js";
+import { state } from "../web/state.js";
 
 test("buildFileTree groups flat paths into a directory tree", () => {
   const root = buildFileTree(["src/a.js", "src/b/c.js", "README.md"]);
@@ -22,4 +23,15 @@ test("buildFileTree returns an empty root for no paths", () => {
   const root = buildFileTree([]);
   expect(root.files).toEqual([]);
   expect(root.dirs.size).toBe(0);
+});
+
+test("renderFilesHtml puts a copy-path control in the file content header", () => {
+  state.files = ["src/foo.ts"];
+  state.filesLoaded = true;
+  state.fileTreeCollapsed = new Set();
+  state.selectedFilePath = "src/foo.ts";
+  state.fileContent = { path: "src/foo.ts", content: "a\nb\n" };
+  state.anchor = null;
+  const html = renderFilesHtml();
+  expect(html).toContain(`data-copy-path="src/foo.ts"`);
 });

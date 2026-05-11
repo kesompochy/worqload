@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { parseDiffFiles, mergeLineRanges } from "../web/diff-view.js";
+import { parseDiffFiles, mergeLineRanges, renderDiffHtml } from "../web/diff-view.js";
+import { state } from "../web/state.js";
 
 test("parseDiffFiles splits a unified diff into files, hunks and counts", () => {
   const diff = [
@@ -58,4 +59,20 @@ test("mergeLineRanges does not mutate its input", () => {
   const input = [[1, 3], [2, 5]];
   mergeLineRanges(input);
   expect(input).toEqual([[1, 3], [2, 5]]);
+});
+
+test("renderDiffHtml puts a copy-path control in each file header", () => {
+  state.diff = [
+    "diff --git a/src/foo.ts b/src/foo.ts",
+    "index 0000001..0000002 100644",
+    "--- a/src/foo.ts",
+    "+++ b/src/foo.ts",
+    "@@ -1,1 +1,1 @@",
+    "-a",
+    "+b",
+  ].join("\n");
+  state.collapsedFiles = new Set();
+  state.diffExpansions = new Map();
+  const html = renderDiffHtml();
+  expect(html).toContain(`data-copy-path="src/foo.ts"`);
 });
