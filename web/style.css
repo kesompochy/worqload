@@ -83,6 +83,9 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .report-status.unread:hover { background: rgba(88,166,255,.32); border-color: rgba(88,166,255,.5); }
 .report-status.read { background: rgba(139,149,163,.16); color: var(--text-dim); }
 .report-status.read:hover { background: rgba(139,149,163,.28); border-color: rgba(139,149,163,.5); color: var(--text); }
+.report-status-action { display: none; }
+.report-status:hover .report-status-state { display: none; }
+.report-status:hover .report-status-action { display: inline; }
 .report-body { padding: .55rem .9rem .7rem .9rem; border-top: 1px solid var(--border); }
 .report.collapsed .report-body { display: none; }
 .report-empty { color: var(--text-dim); font-style: italic; }
