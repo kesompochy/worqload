@@ -46,20 +46,8 @@ async function respawnUnderWatch(plan: WatchRespawnPlan): Promise<never> {
 }
 
 export async function serve(args: string[]): Promise<void> {
-  const plan = planWatchRespawn(args, {
-    execPath: process.execPath,
-    // process.argv[1] is the entry script bun was launched with. When invoked
-    // through `bun link` this is the symlinked cli.ts; bun resolves the
-    // symlink itself when watching imports.
-    scriptPath: process.argv[1],
-    env: process.env,
-  });
-  if (plan) {
-    await respawnUnderWatch(plan);
-    return;
-  }
-
-  // Strip --watch in case we are the re-spawned child.
+  // --watch only affects the outer process; everything else is parsed up front
+  // so the watch branch can still honour --no-open and the requested port.
   const effectiveArgs = args.filter((a) => a !== "--watch");
   const flags = new Set(effectiveArgs.filter((a) => a.startsWith("--")));
   const positional = effectiveArgs.filter((a) => !a.startsWith("--"));
@@ -70,6 +58,27 @@ export async function serve(args: string[]): Promise<void> {
     console.error(`invalid port: ${positional[0]}`);
     process.exit(2);
   }
+
+  const plan = planWatchRespawn(args, {
+    execPath: process.execPath,
+    // process.argv[1] is the entry script bun was launched with. When invoked
+    // through `bun link` this is the symlinked cli.ts; bun resolves the
+    // symlink itself when watching imports.
+    scriptPath: process.argv[1],
+    env: process.env,
+  });
+  if (plan) {
+    // The re-spawned child (and every reload cycle) skips the browser via
+    // WATCH_RESPAWN_MARKER, so the outer process opens it once. We aim at the
+    // requested port; if it was busy the child logs the actual one. With a
+    // random port (0) we can't predict it, so leave it to the user.
+    if (!noOpen && requestedPort !== 0) {
+      setTimeout(() => openInBrowser(`http://127.0.0.1:${requestedPort}`), 1200);
+    }
+    await respawnUnderWatch(plan);
+    return;
+  }
+
   // WORQLOAD_SPAWN_COMMAND lets the developer override the claude binary
   // (e.g. point at a mock during smoke tests). Words are split on whitespace.
   const spawnEnv = process.env.WORQLOAD_SPAWN_COMMAND;
