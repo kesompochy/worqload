@@ -893,7 +893,9 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
       content = `Re: ${path}:${range}\n\n${content}`;
     }
     const inbox = feedbackInboxDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(inbox, slug, content);
+    const file = await writeNumberedFile(inbox, slug, content, {
+      archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
+    });
     await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
 
     // Wake the host's claude child if idle (fire-and-forget)
@@ -932,7 +934,9 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
     const slug = `answer-${params.filename.replace(/^\d+-/, "").replace(/\.md$/, "")}`;
     const feedbackContent =
       `Re: escalation ${params.filename}\n\n## Question\n\n${question.trim()}\n\n## Answer\n\n${body.content}`;
-    const file = await writeNumberedFile(inbox, slug, feedbackContent);
+    const file = await writeNumberedFile(inbox, slug, feedbackContent, {
+      archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
+    });
     await appendAndBroadcast(ctx, meta.id, {
       kind: "escalation_resolved",
       payload: { filename: params.filename, answerFilename: file.filename },
