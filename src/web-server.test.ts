@@ -417,6 +417,50 @@ test("POST /sessions/:id/reports/:filename/unread reverts read state", async () 
   expect(events.some(e => e.kind === "report_unread")).toBe(true);
 });
 
+test("POST /sessions/:id/reports/read-all marks every report read and emits one event", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "step", content: "step done" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "more", content: "more" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/002-step.md/read`, {});
+
+  const seqBefore = (await readEvents(sid, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
+  const result = await postJson(baseUrl, `/sessions/${sid}/reports/read-all`, {}).then(r => r.json());
+  expect(result.ok).toBe(true);
+  expect(result.read.sort()).toEqual(["001-plan.md", "003-more.md"]);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then(r => r.json());
+  expect(res.reports.every((r: { read: boolean }) => r.read)).toBe(true);
+
+  const newEvents = (await readEvents(sid, 1, ctx.sessionsDir)).filter(e => e.seq > seqBefore);
+  expect(newEvents).toHaveLength(1);
+  expect(newEvents[0].kind).toBe("report_read");
+  expect((newEvents[0].payload as { filenames: string[] }).filenames.sort()).toEqual(["001-plan.md", "003-more.md"]);
+
+  const sessions = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  expect(sessions.sessions.find((s: { id: string }) => s.id === sid).unreadReportCount).toBe(0);
+});
+
+test("POST /sessions/:id/reports/read-all is a no-op (no event) when nothing is unread", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const seqBefore = (await readEvents(sid, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
+  const result = await postJson(baseUrl, `/sessions/${sid}/reports/read-all`, {}).then(r => r.json());
+  expect(result.ok).toBe(true);
+  expect(result.read).toEqual([]);
+  const newEvents = (await readEvents(sid, 1, ctx.sessionsDir)).filter(e => e.seq > seqBefore);
+  expect(newEvents).toEqual([]);
+});
+
 test("POST /sessions/:id/reports/:filename/read returns 404 for missing report", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");

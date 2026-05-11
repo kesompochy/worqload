@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { existsSync } from "fs";
-import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState, markAllRead } from "./file-store";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -93,6 +93,32 @@ test("listAllFiles ignores the .read-state.json sidecar", async () => {
   const files = await listAllFiles(dir);
   expect(files).toHaveLength(1);
   expect(files[0].filename).toBe("001-a.md");
+});
+
+test("markAllRead marks every file read and returns the newly-read ones", async () => {
+  const dir = makeTmpDir("file-store");
+  await writeNumberedFile(dir, "a", "alpha");
+  await writeNumberedFile(dir, "b", "beta");
+  await writeNumberedFile(dir, "c", "gamma");
+  await setReadState(dir, "002-b.md", true);
+
+  const newlyRead = await markAllRead(dir);
+
+  expect(newlyRead.sort()).toEqual(["001-a.md", "003-c.md"]);
+  const set = await readReadState(dir);
+  expect([...set].sort()).toEqual(["001-a.md", "002-b.md", "003-c.md"]);
+});
+
+test("markAllRead returns empty when every file is already read", async () => {
+  const dir = makeTmpDir("file-store");
+  await writeNumberedFile(dir, "a", "alpha");
+  await setReadState(dir, "001-a.md", true);
+  expect(await markAllRead(dir)).toEqual([]);
+});
+
+test("markAllRead returns empty for a missing directory", async () => {
+  const dir = makeTmpDir("file-store");
+  expect(await markAllRead(join(dir, "missing"))).toEqual([]);
 });
 
 test("moveFile relocates a file", async () => {

@@ -13,6 +13,7 @@ import { renderActionPanelHtml } from "./actions-view.js";
 import {
   selectSession,
   onStop,
+  onStopAndMarkRead,
   onArchive,
   onCancel,
   onResume,
@@ -245,10 +246,17 @@ export function renderDetail() {
     <button class="btn-action ${state.openActionId === a.id ? "open" : ""}" data-action-id="${escapeHtml(a.id)}" title="${escapeHtml(a.description || "")}">${escapeHtml(a.label)}</button>
   `).join("");
 
-  const actionBarHtml = state.actions.length > 0
+  // A client-side composite (not a server "gh action"): mark every report read,
+  // then stop. Pointless once the session is already stopped/crashed, so it's
+  // hidden there.
+  const stopAndReadBtnHtml = isTerminal
+    ? ""
+    : `<button class="btn-action" data-stop-and-read title="Mark every report read, then stop the session">Stop &amp; mark all read</button>`;
+
+  const actionBarHtml = state.actions.length > 0 || stopAndReadBtnHtml
     ? `<div class="action-bar">
          <span class="label">Actions</span>
-         <div class="buttons">${actionButtonsHtml}</div>
+         <div class="buttons">${stopAndReadBtnHtml}${actionButtonsHtml}</div>
        </div>`
     : "";
 
@@ -290,7 +298,8 @@ export function renderDetail() {
     </form>
   `;
   document.querySelector(".btn-rename")?.addEventListener("click", onRename);
-  document.querySelectorAll(".btn-action").forEach(b => {
+  document.querySelector("[data-stop-and-read]")?.addEventListener("click", onStopAndMarkRead);
+  document.querySelectorAll(".btn-action[data-action-id]").forEach(b => {
     b.addEventListener("click", () => toggleActionPanel(b.getAttribute("data-action-id")));
   });
   const actionCloseBtn = document.querySelector("[data-action-panel-close]");
