@@ -1,9 +1,17 @@
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { startServer } from "../web-server";
 
 // Set on the re-spawned child so it knows the outer `worqload serve --watch`
 // already wrapped it in `bun --watch` and it should boot normally instead of
 // forking again.
 export const WATCH_RESPAWN_MARKER = "WORQLOAD_WATCH_RESPAWNED";
+
+// Path passed down to the re-spawned child so it opens the browser exactly
+// once across reload cycles: the first child to boot creates the file; later
+// reloads see it and skip. The outer process removes it on exit.
+const WATCH_OPEN_SENTINEL_ENV = "WORQLOAD_WATCH_OPEN_SENTINEL";
 
 export interface WatchRespawnPlan {
   command: string[];
@@ -33,15 +41,23 @@ export function planWatchRespawn(args: string[], options: WatchRespawnOptions): 
   };
 }
 
-async function respawnUnderWatch(plan: WatchRespawnPlan): Promise<never> {
+async function respawnUnderWatch(plan: WatchRespawnPlan, openSentinel: string | null): Promise<never> {
   console.log(`watch mode: respawning under \`${plan.command.slice(0, 3).join(" ")} ...\``);
+  const env = { ...plan.env };
+  if (openSentinel) {
+    env[WATCH_OPEN_SENTINEL_ENV] = openSentinel;
+    try { unlinkSync(openSentinel); } catch { /* not present */ }
+  }
   const child = Bun.spawn(plan.command, {
-    env: plan.env,
+    env,
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
   });
   const exitCode = await child.exited;
+  if (openSentinel) {
+    try { unlinkSync(openSentinel); } catch { /* already gone */ }
+  }
   process.exit(exitCode ?? 0);
 }
 
@@ -68,14 +84,10 @@ export async function serve(args: string[]): Promise<void> {
     env: process.env,
   });
   if (plan) {
-    // The re-spawned child (and every reload cycle) skips the browser via
-    // WATCH_RESPAWN_MARKER, so the outer process opens it once. We aim at the
-    // requested port; if it was busy the child logs the actual one. With a
-    // random port (0) we can't predict it, so leave it to the user.
-    if (!noOpen && requestedPort !== 0) {
-      setTimeout(() => openInBrowser(`http://127.0.0.1:${requestedPort}`), 1200);
-    }
-    await respawnUnderWatch(plan);
+    // PID-scoped so a sentinel left behind by a crashed outer never blocks a
+    // future watch session.
+    const openSentinel = noOpen ? null : join(tmpdir(), `worqload-watch-${process.pid}.open`);
+    await respawnUnderWatch(plan, openSentinel);
     return;
   }
 
@@ -104,10 +116,18 @@ export async function serve(args: string[]): Promise<void> {
   console.log(`sessions: ${ctx.sessionsDir}`);
   console.log(`spawn: ${ctx.spawnCommand.join(" ")}`);
 
-  // Re-spawned children skip the browser open because the original parent
-  // (or a previous reload cycle) already opened it.
-  if (!noOpen && !process.env[WATCH_RESPAWN_MARKER]) {
-    openInBrowser(ctx.baseUrlForAgent);
+  if (!noOpen) {
+    const sentinel = process.env[WATCH_OPEN_SENTINEL_ENV];
+    if (sentinel) {
+      // watch-mode child: open the actual listening URL exactly once, even
+      // across reload cycles (the sentinel file marks "already opened").
+      if (!existsSync(sentinel)) {
+        openInBrowser(ctx.baseUrlForAgent);
+        try { writeFileSync(sentinel, ctx.baseUrlForAgent); } catch { /* best-effort */ }
+      }
+    } else {
+      openInBrowser(ctx.baseUrlForAgent);
+    }
   }
 
   // keep the process alive

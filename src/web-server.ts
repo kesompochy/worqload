@@ -305,17 +305,20 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
 
   async function shutdown(opts: ShutdownOptions = {}): Promise<void> {
     for (const att of ctx.clients.values()) {
-      try {
-        await att.client.close();
-      } catch {
-        // ignore
+      if (opts.killHosts) {
+        // Tell the host (claude's parent) to SIGKILL claude and exit; that's
+        // the only path that reliably reaps the claude child. SIGKILLing the
+        // host directly would orphan claude.
+        try { await att.client.kill("SIGKILL"); } catch { /* socket may be down */ }
+        await Promise.race([
+          att.client.exited.catch(() => {}),
+          new Promise((r) => setTimeout(r, 1000)),
+        ]);
       }
-      if (opts.killHosts && att.hostPid !== undefined) {
-        try {
-          process.kill(att.hostPid, "SIGKILL");
-        } catch {
-          // already dead
-        }
+      try { await att.client.close(); } catch { /* already closed */ }
+      if (opts.killHosts && att.hostPid !== undefined && isPidAlive(att.hostPid)) {
+        // Host didn't honour the IPC kill — last resort.
+        try { process.kill(att.hostPid, "SIGKILL"); } catch { /* already dead */ }
         if (att.hostProc) await att.hostProc.exited.catch(() => {});
       }
     }
