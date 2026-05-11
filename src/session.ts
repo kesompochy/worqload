@@ -9,7 +9,8 @@ export interface SessionMeta {
   baseBranch: string;
   baseCommit: string;
   worktreePath: string;
-  pid?: number;
+  hostPid?: number;
+  hostSocketPath?: string;
   status: SessionStatus;
   createdAt: string;
   endedAt?: string;

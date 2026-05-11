@@ -35,7 +35,8 @@ test("createSession returns valid meta", () => {
   expect(meta.createdAt).toBeDefined();
   expect(meta.endedAt).toBeUndefined();
   expect(meta.title).toBeUndefined();
-  expect(meta.pid).toBeUndefined();
+  expect(meta.hostPid).toBeUndefined();
+  expect(meta.hostSocketPath).toBeUndefined();
 });
 
 test("createSession trims whitespace from prompt", () => {
@@ -130,10 +131,10 @@ test("saveSessionMeta updates an existing session", async () => {
   const meta = createSession(baseParams);
   await saveSessionMeta(meta, dir);
 
-  const updated = { ...meta, status: "waiting_human" as const, pid: 1234 };
+  const updated = { ...meta, status: "waiting_human" as const, hostPid: 1234 };
   await saveSessionMeta(updated, dir);
 
   const loaded = await loadSessionMeta(meta.id, dir);
   expect(loaded?.status).toBe("waiting_human");
-  expect(loaded?.pid).toBe(1234);
+  expect(loaded?.hostPid).toBe(1234);
 });

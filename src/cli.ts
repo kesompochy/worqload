@@ -4,11 +4,13 @@ import { init } from "./commands/init";
 import { report } from "./commands/report";
 import { escalate } from "./commands/escalate";
 import { feedback } from "./commands/feedback";
+import { sessionHost } from "./commands/session-host";
 
 type Handler = (args: string[]) => Promise<void>;
 
 const commands: Record<string, Handler> = {
   serve, init, report, escalate, feedback,
+  "session-host": sessionHost,
 };
 
 const [command, ...args] = process.argv.slice(2);
