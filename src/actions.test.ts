@@ -123,6 +123,28 @@ test("merge-to-base refuses when main repo has uncommitted changes", async () =>
   expect(res.message).toContain("main repo");
 });
 
+test("merge-to-base refuses without touching the base branch when the merge would conflict", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+
+  // Both branches edit README.md at the same lines in incompatible ways.
+  writeFileSync(join(meta.worktreePath, "README.md"), "# changed by session\n");
+  git(["commit", "-am", "session edits README"], meta.worktreePath);
+  writeFileSync(join(repoDir, "README.md"), "# changed in main\n");
+  git(["commit", "-am", "main edits README"], repoDir);
+
+  const res = await mergeToBaseAction.run({ meta, repoDir }, {});
+  expect(res.ok).toBe(false);
+  expect(res.message?.toLowerCase()).toContain("conflict");
+  expect(res.message).toContain("README.md");
+
+  // The merge must not have started: no MERGE_HEAD, clean tree, README untouched.
+  expect(git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], repoDir).exitCode).not.toBe(0);
+  expect(new TextDecoder().decode(git(["status", "--porcelain"], repoDir).stdout).trim()).toBe("");
+  expect(new TextDecoder().decode(git(["show", `${TEST_BASE}:README.md`], repoDir).stdout)).toBe("# changed in main\n");
+});
+
 test("create-pr returns the failing git push output when there is no origin remote", async () => {
   const repoDir = makeRepo();
   const sessionId = crypto.randomUUID();
