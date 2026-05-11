@@ -116,7 +116,7 @@ export function renderDetail() {
             <div class="report-header" data-report-toggle="${escapedFilename}">
               <span class="report-chevron">▾</span>
               <span class="report-filename">${escapedFilename}</span>
-              <span class="report-status ${statusLabel}" data-report-mark="${escapedFilename}" data-report-mark-to="${markTo}" title="${statusTitle}">${statusLabel}</span>
+              <span class="report-status ${statusLabel}" data-report-mark="${escapedFilename}" data-report-mark-to="${markTo}" title="${statusTitle}"><span class="report-status-state">${statusLabel}</span><span class="report-status-action">${markTo}?</span></span>
             </div>
             <div class="report-body">
               <div class="md">${body}</div>
