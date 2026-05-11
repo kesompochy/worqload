@@ -244,6 +244,7 @@ const state = {
   anchor: null,          // { path, lineStart, lineEnd } | null
   collapsedFiles: new Set(),  // paths of diff files the user collapsed
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
+  feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   actions: [],           // [{ id, label, description?, confirmMessage?, params? }]
   pendingAction: null,   // descriptor currently displayed in action modal
 };
@@ -309,6 +310,7 @@ async function selectSession(id) {
   state.detail = null;
   state.collapsedFiles = new Set();
   state.reportToggle = new Map();
+  state.feedbackToggle = new Map();
   renderSessionList();
   renderDetail();
   if (!id) return;
@@ -469,15 +471,23 @@ function renderDetail() {
     : `<div class="report-empty">No reports yet. The agent submits reports at progress checkpoints.</div>`;
 
   const feedbackHtml = state.feedbackHistory.length > 0
-    ? state.feedbackHistory.map(f => `
-        <article class="report">
-          <div class="filename">
-            ${escapeHtml(f.filename)}
-            <span class="badge badge-${f.status === "unread" ? "waiting_human" : "stopped"}" style="margin-left:.4rem">${f.status}</span>
-          </div>
-          <div class="md">${renderMarkdown(f.content)}</div>
-        </article>
-      `).join("")
+    ? state.feedbackHistory.map(f => {
+        const expanded = isFeedbackExpanded(f);
+        const escapedFilename = escapeHtml(f.filename);
+        const statusBadge = f.status === "unread" ? "waiting_human" : "stopped";
+        return `
+          <article class="report ${expanded ? "" : "collapsed"}" data-feedback-filename="${escapedFilename}">
+            <div class="report-header" data-feedback-toggle="${escapedFilename}">
+              <span class="report-chevron">▾</span>
+              <span class="report-filename">${escapedFilename}</span>
+              <span class="badge badge-${statusBadge}">${f.status}</span>
+            </div>
+            <div class="report-body">
+              <div class="md">${renderMarkdown(f.content)}</div>
+            </div>
+          </article>
+        `;
+      }).join("")
     : "";
 
   const isTerminal = m.status === "stopped" || m.status === "crashed";
@@ -597,6 +607,15 @@ function onDetailBodyClick(e) {
     renderDetail();
     return;
   }
+  const feedbackToggle = e.target.closest("[data-feedback-toggle]");
+  if (feedbackToggle) {
+    const filename = feedbackToggle.getAttribute("data-feedback-toggle");
+    const feedback = state.feedbackHistory.find(f => f.filename === filename);
+    const currentlyExpanded = feedback ? isFeedbackExpanded(feedback) : true;
+    state.feedbackToggle.set(filename, !currentlyExpanded);
+    renderDetail();
+    return;
+  }
   const toggle = e.target.closest("[data-diff-toggle]");
   if (toggle) {
     const path = toggle.getAttribute("data-diff-toggle");
@@ -613,6 +632,15 @@ function isReportExpanded(report) {
     return state.reportToggle.get(report.filename);
   }
   return !report.read;
+}
+
+function isFeedbackExpanded(feedback) {
+  if (state.feedbackToggle.has(feedback.filename)) {
+    return state.feedbackToggle.get(feedback.filename);
+  }
+  // "unread" feedback (the agent has not fetched it yet) is the recently sent
+  // one the human most likely still wants to see; collapse it once consumed.
+  return feedback.status === "unread";
 }
 
 async function onReportMark(filename, read) {
