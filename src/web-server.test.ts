@@ -11,6 +11,11 @@ afterEach(cleanupAll);
 const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
 const TEST_BASE = "trunk";
 const MOCK = join(import.meta.dir, "__fixtures__", "mock-claude.ts");
+const CLI = join(import.meta.dir, "cli.ts");
+// Run the host as a child of the test process so we exercise the real
+// detached-spawn path. `bun <cli> session-host` is the same binding
+// `worqload session-host` would invoke after `bun link`.
+const HOST_COMMAND = ["bun", CLI, "session-host"];
 
 function git(args: string[], cwd: string) {
   return Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: cleanGitEnv });
@@ -34,8 +39,9 @@ async function bootServer(repoDir: string, mockMode: "init" | "echo" | "hang" = 
     port: 0,
     repoDir,
     spawnCommand: ["bun", MOCK, mockMode],
+    hostCommand: HOST_COMMAND,
   });
-  trackCleanup(() => started.shutdown());
+  trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
 }
 
@@ -55,8 +61,9 @@ test("startServer auto-shifts to a free port when the requested port is in use",
     port: 0,
     repoDir: repoDir1,
     spawnCommand: ["bun", MOCK, "hang"],
+    hostCommand: HOST_COMMAND,
   });
-  trackCleanup(() => first.shutdown());
+  trackCleanup(() => first.shutdown({ killHosts: true }));
 
   const requestedPort = first.ctx.port;
 
@@ -64,8 +71,9 @@ test("startServer auto-shifts to a free port when the requested port is in use",
     port: requestedPort,
     repoDir: repoDir2,
     spawnCommand: ["bun", MOCK, "hang"],
+    hostCommand: HOST_COMMAND,
   });
-  trackCleanup(() => second.shutdown());
+  trackCleanup(() => second.shutdown({ killHosts: true }));
 
   expect(second.ctx.port).not.toBe(requestedPort);
   expect(second.ctx.port).toBeGreaterThan(requestedPort);
@@ -169,14 +177,14 @@ test("feedback inbox round trip: POST writes, GET fetches and moves to read", as
   expect(readdirSync(readDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md"]);
 });
 
-test("POST /sessions/:id/stop kills runner and sets status stopped", async () => {
+test("POST /sessions/:id/stop kills the host and sets status stopped", async () => {
   const repoDir = makeRepo();
   const { baseUrl, ctx } = await bootServer(repoDir, "hang");
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
 
-  // give the runner a moment to be alive
+  // give the host a moment to be alive
   await new Promise(r => setTimeout(r, 100));
 
   const stopped = await postJson(baseUrl, `/sessions/${sid}/stop`, {}).then(r => r.json());
@@ -185,7 +193,7 @@ test("POST /sessions/:id/stop kills runner and sets status stopped", async () =>
 
   const meta = await loadSessionMeta(sid, ctx.sessionsDir);
   expect(meta?.status).toBe("stopped");
-  expect(ctx.runners.has(sid)).toBe(false);
+  expect(ctx.clients.has(sid)).toBe(false);
 });
 
 test("escalation resolve moves asking file, writes feedback, returns to running", async () => {
@@ -404,34 +412,59 @@ test("GET /sessions/:id/feedback merges inbox and read with status", async () =>
   expect(byContent["third"]).toBe("unread");
 });
 
-test("startServer reconciles orphan sessions on boot to crashed", async () => {
+test("startServer reconnects to a still-running host across a serve restart", async () => {
   const repoDir = makeRepo();
-  // First server: create a session
-  const first = await startServer({ port: 0, repoDir, spawnCommand: ["bun", MOCK, "hang"] });
-  trackCleanup(() => first.shutdown());
+  const first = await startServer({
+    port: 0,
+    repoDir,
+    spawnCommand: ["bun", MOCK, "hang"],
+    hostCommand: HOST_COMMAND,
+  });
   const baseUrl1 = `http://127.0.0.1:${first.server.port}`;
   const created = await postJson(baseUrl1, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
 
-  // Stop the first server WITHOUT marking sessions stopped — emulate a crash.
-  // (shutdown() kills runners but also stops the server; sessions remain
-  // running on disk because the exit handler is racing the dir cleanup.
-  // We force the meta to running just in case.)
-  first.server.stop(true);
-  for (const r of first.ctx.runners.values()) {
-    try { r.kill("SIGKILL"); } catch {}
-    await r.exited.catch(() => {});
-  }
-  // Manually restore status=running so the next startServer sees it as orphan
-  const { saveSessionMeta, loadSessionMeta } = await import("./session");
-  const meta = await loadSessionMeta(sid, first.ctx.sessionsDir);
-  if (meta) {
-    await saveSessionMeta({ ...meta, status: "running", endedAt: undefined }, first.ctx.sessionsDir);
-  }
+  // Simulate a graceful serve restart: stop the HTTP server but leave hosts
+  // alone. This is the whole point of Plan B.
+  await first.shutdown(); // killHosts defaults to false
 
-  // Second server: should reconcile the orphan
-  const second = await startServer({ port: 0, repoDir, spawnCommand: ["bun", MOCK, "hang"] });
-  trackCleanup(() => second.shutdown());
+  const second = await startServer({
+    port: 0,
+    repoDir,
+    spawnCommand: ["bun", MOCK, "hang"],
+    hostCommand: HOST_COMMAND,
+  });
+  trackCleanup(() => second.shutdown({ killHosts: true }));
+  const baseUrl2 = `http://127.0.0.1:${second.server.port}`;
+
+  const detail = await fetch(`${baseUrl2}/sessions/${sid}`).then(r => r.json());
+  expect(detail.meta.status).toBe("running");
+  expect(detail.meta.endedAt).toBeUndefined();
+});
+
+test("startServer marks a session crashed when its host is dead on boot", async () => {
+  const repoDir = makeRepo();
+  const first = await startServer({
+    port: 0,
+    repoDir,
+    spawnCommand: ["bun", MOCK, "hang"],
+    hostCommand: HOST_COMMAND,
+  });
+  const baseUrl1 = `http://127.0.0.1:${first.server.port}`;
+  const created = await postJson(baseUrl1, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  // Kill the host. Session meta still says "running" — that's the orphan
+  // condition reconcileNonTerminalSessions has to detect.
+  await first.shutdown({ killHosts: true });
+
+  const second = await startServer({
+    port: 0,
+    repoDir,
+    spawnCommand: ["bun", MOCK, "hang"],
+    hostCommand: HOST_COMMAND,
+  });
+  trackCleanup(() => second.shutdown({ killHosts: true }));
   const baseUrl2 = `http://127.0.0.1:${second.server.port}`;
 
   const detail = await fetch(`${baseUrl2}/sessions/${sid}`).then(r => r.json());

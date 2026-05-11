@@ -1,4 +1,4 @@
-import type { Socket, TCPSocketListener } from "bun";
+import type { Socket } from "bun";
 import { mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { classifyClaudeLine, readLines } from "../claude-stream";
@@ -105,7 +105,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
     }
   };
 
-  const listener: TCPSocketListener<ClientState> = Bun.listen<ClientState>({
+  const listener = Bun.listen<ClientState>({
     unix: opts.socketPath,
     socket: {
       open(socket) {
@@ -166,16 +166,16 @@ export async function runHost(opts: HostOptions): Promise<number> {
   const exitCode = await claude.exited;
   await Promise.allSettled([stdoutTask, stderrTask]);
 
-  if (exitCode === 0) {
-    await writeEvent({ kind: "session_stopped", payload: { reason: "claude_exited" } });
-  } else {
+  const final = await loadSessionMeta(opts.sessionId, opts.sessionsDir);
+  const alreadyTerminal = final && (final.status === "stopped" || final.status === "crashed");
+
+  // Only emit a terminal event if serve hasn't already done so (e.g. via the
+  // user clicking Stop). This keeps the event log free of duplicates while
+  // preserving the natural-exit signal on crashes.
+  if (!alreadyTerminal && exitCode !== 0) {
     await writeEvent({ kind: "session_crashed", payload: { exitCode } });
   }
-
-  sendToActive({ type: "exited", code: exitCode });
-
-  const final = await loadSessionMeta(opts.sessionId, opts.sessionsDir);
-  if (final && final.status !== "stopped" && final.status !== "crashed") {
+  if (final && !alreadyTerminal) {
     await saveSessionMeta(
       {
         ...final,
@@ -185,6 +185,8 @@ export async function runHost(opts: HostOptions): Promise<number> {
       opts.sessionsDir,
     );
   }
+
+  sendToActive({ type: "exited", code: exitCode });
 
   // Give the kernel a moment to flush the last writes to the client before we
   // tear down the socket. Without this we sometimes see the `exited` message
