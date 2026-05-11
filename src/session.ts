@@ -10,7 +10,8 @@ export interface SessionMeta {
   baseCommit: string;
   worktreePath: string;
   branchName: string;
-  pid?: number;
+  hostPid?: number;
+  hostSocketPath?: string;
   status: SessionStatus;
   createdAt: string;
   endedAt?: string;
@@ -65,6 +66,11 @@ export const DEFAULT_SESSIONS_DIR = ".worqload/sessions";
 
 function metaPath(sessionsDir: string, id: string): string {
   return `${sessionsDir}/${id}/meta.json`;
+}
+
+// Path of the file holding the current serve base URL for a session.
+export function agentEndpointPath(sessionsDir: string, sessionId: string): string {
+  return `${sessionsDir}/${sessionId}/agent-endpoint`;
 }
 
 export async function saveSessionMeta(

@@ -4,11 +4,13 @@ import { init } from "./commands/init";
 import { report } from "./commands/report";
 import { escalate } from "./commands/escalate";
 import { feedback } from "./commands/feedback";
+import { sessionHost } from "./commands/session-host";
 
 type Handler = (args: string[]) => Promise<void>;
 
 const commands: Record<string, Handler> = {
   serve, init, report, escalate, feedback,
+  "session-host": sessionHost,
 };
 
 const [command, ...args] = process.argv.slice(2);
@@ -30,7 +32,12 @@ function printUsage() {
   console.log(`worqload — asynchronous claude session viewer
 
 Usage:
-  worqload serve [port] [--no-open]      Start HTTP/WS server (default port 3456; auto-shifts if busy; opens browser unless --no-open)
+  worqload serve [port] [--no-open] [--watch]
+                                         Start HTTP/WS server (default port 3456; auto-shifts if busy;
+                                         opens browser unless --no-open).
+                                         --watch reruns the server under \`bun --watch\` so source
+                                         changes hot-reload. Running sessions live in detached host
+                                         processes and survive the restart.
   worqload init [path]                   Initialize .worqload/
 
 Agent-side (called by claude inside a session):

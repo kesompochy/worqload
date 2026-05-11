@@ -10,6 +10,8 @@ afterEach(cleanupAll);
 const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
 const TEST_BASE = "trunk";
 const MOCK = join(import.meta.dir, "__fixtures__", "mock-claude.ts");
+const CLI = join(import.meta.dir, "cli.ts");
+const HOST_COMMAND = ["bun", CLI, "session-host"];
 
 function git(args: string[], cwd: string) {
   return Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: cleanGitEnv });
@@ -34,8 +36,9 @@ async function bootAndCreateSession(): Promise<{ endpoint: string; sessionId: st
     repoDir,
     spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => null,
+    hostCommand: HOST_COMMAND,
   });
-  trackCleanup(() => started.shutdown());
+  trackCleanup(() => started.shutdown({ killHosts: true }));
   const endpoint = `http://127.0.0.1:${started.server.port}`;
   const created = await fetch(`${endpoint}/sessions`, {
     method: "POST",
