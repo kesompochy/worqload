@@ -419,6 +419,7 @@ async function getIndex(): Promise<Response> {
 // easier to reason about with an explicit table.
 const ASSETS: Record<string, { path: string; contentType: string }> = {
   "style.css": { path: join(WEB_DIR, "style.css"), contentType: "text/css; charset=utf-8" },
+  "app.js": { path: join(WEB_DIR, "app.js"), contentType: "text/javascript; charset=utf-8" },
   "markdown.js": { path: join(WEB_DIR, "markdown.js"), contentType: "text/javascript; charset=utf-8" },
   "syntax-highlight.js": { path: join(WEB_DIR, "syntax-highlight.js"), contentType: "text/javascript; charset=utf-8" },
 };

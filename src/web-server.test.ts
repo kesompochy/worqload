@@ -834,7 +834,16 @@ test("GET /assets/style.css serves the stylesheet", async () => {
   expect(body).toContain(".layout");
 });
 
-test("GET / serves the HTML shell linking the stylesheet", async () => {
+test("GET /assets/app.js serves the frontend entry module", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/assets/app.js`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("javascript");
+});
+
+test("GET / serves the HTML shell linking the stylesheet and entry module", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
 
@@ -843,6 +852,7 @@ test("GET / serves the HTML shell linking the stylesheet", async () => {
   expect(res.headers.get("content-type")).toContain("text/html");
   const body = await res.text();
   expect(body).toContain(`href="/assets/style.css"`);
+  expect(body).toContain(`src="/assets/app.js"`);
 });
 
 test("GET /assets/<unknown> returns 404", async () => {
