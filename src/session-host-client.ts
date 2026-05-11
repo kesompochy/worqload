@@ -22,6 +22,10 @@ export interface SpawnHostOptions {
   // installed `worqload` CLI followed by `session-host`. Tests pass
   // ["bun", "<repo>/src/cli.ts", "session-host"] to run the local code.
   hostCommand: string[];
+  // Resume mode: the host emits session_resumed (not session_started) and
+  // sends RESUME_KICKOFF instead of the protocol bootstrap. The caller is
+  // expected to have appended `--continue` to spawnCommand.
+  resume?: boolean;
 }
 
 // Builds the argv for a `session-host` invocation. Everything after `--` is
@@ -37,6 +41,7 @@ export function buildHostArgv(opts: SpawnHostOptions): string[] {
     opts.socketPath,
     "--agent-endpoint",
     opts.agentEndpoint,
+    ...(opts.resume ? ["--resume"] : []),
     "--",
     ...opts.spawnCommand,
   ];

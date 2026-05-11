@@ -30,6 +30,12 @@ Your task follows. Begin by submitting a brief plan report, then start work.
 
 `;
 
+// Sent as the first user message when a host is (re)spawned in resume mode.
+// The prior conversation (including PROTOCOL_PREFIX and the original task) is
+// restored by `claude --continue`, so this only needs to nudge the agent back
+// into the loop and point it at any new instructions the human left.
+export const RESUME_KICKOFF = `[resumed] The human has resumed this session. Run \`worqload feedback fetch\` for any new instructions, then continue. If there is no new feedback and your previous report says the task is complete, submit a short report saying so rather than redoing work.`;
+
 export function buildUserMessage(text: string): unknown {
   return {
     type: "user",

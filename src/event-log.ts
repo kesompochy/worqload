@@ -3,6 +3,7 @@ import { DEFAULT_SESSIONS_DIR } from "./session";
 
 export type EventKind =
   | "session_started"
+  | "session_resumed"
   | "claude_assistant_message"
   | "claude_tool_use"
   | "claude_tool_result"

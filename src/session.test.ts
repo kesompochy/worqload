@@ -64,6 +64,9 @@ test("validateTransition allows valid transitions", () => {
     ["waiting_human", "running"],
     ["waiting_human", "stopped"],
     ["waiting_human", "crashed"],
+    // resume reactivates a terminal session
+    ["stopped", "running"],
+    ["crashed", "running"],
   ];
   for (const [from, to] of valid) {
     expect(() => validateTransition(from, to)).not.toThrow();
@@ -72,9 +75,10 @@ test("validateTransition allows valid transitions", () => {
 
 test("validateTransition rejects invalid transitions", () => {
   const invalid: [SessionStatus, SessionStatus][] = [
-    ["stopped", "running"],
     ["stopped", "waiting_human"],
-    ["crashed", "running"],
+    ["stopped", "crashed"],
+    ["crashed", "waiting_human"],
+    ["crashed", "stopped"],
     ["running", "running"],
   ];
   for (const [from, to] of invalid) {

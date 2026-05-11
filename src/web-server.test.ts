@@ -667,6 +667,73 @@ test("POST /sessions/:id/cancel removes worktree and marks stopped", async () =>
   expect(meta?.status).toBe("stopped");
 });
 
+test("POST /sessions/:id/resume respawns the host and returns the session to running", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  await new Promise(r => setTimeout(r, 100));
+
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+  expect(ctx.clients.has(sid)).toBe(false);
+  let meta = await loadSessionMeta(sid, ctx.sessionsDir);
+  expect(meta?.status).toBe("stopped");
+  expect(meta?.endedAt).toBeDefined();
+
+  const resumed = await postJson(baseUrl, `/sessions/${sid}/resume`, {}).then(r => r.json());
+  expect(resumed.meta.status).toBe("running");
+  expect(resumed.meta.endedAt).toBeUndefined();
+  expect(ctx.clients.has(sid)).toBe(true);
+
+  meta = await loadSessionMeta(sid, ctx.sessionsDir);
+  expect(meta?.status).toBe("running");
+  expect(meta?.endedAt).toBeUndefined();
+});
+
+test("POST /sessions/:id/resume queues the optional prompt as feedback", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  await new Promise(r => setTimeout(r, 100));
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+
+  await postJson(baseUrl, `/sessions/${sid}/resume`, { prompt: "now do the other thing" });
+
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  const files = readdirSync(inboxDir);
+  expect(files).toHaveLength(1);
+  expect(files[0]).toMatch(/-resume\.md$/);
+  expect(readFileSync(join(inboxDir, files[0]), "utf8")).toContain("now do the other thing");
+});
+
+test("POST /sessions/:id/resume rejects a session that is still running", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/resume`, {});
+  expect(res.status).toBe(400);
+});
+
+test("POST /sessions/:id/resume rejects a cancelled session whose worktree is gone", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  await new Promise(r => setTimeout(r, 100));
+  await postJson(baseUrl, `/sessions/${sid}/cancel`, {});
+  expect(existsSync(created.meta.worktreePath)).toBe(false);
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/resume`, {});
+  expect(res.status).toBe(400);
+});
+
 test("GET /assets/markdown.js serves the renderer module", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
