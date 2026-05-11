@@ -16,6 +16,7 @@ import {
   onArchive,
   onCancel,
   onResume,
+  onRename,
   onFeedback,
   onResolve,
   onDetailBodyClick,
@@ -202,6 +203,7 @@ export function renderDetail() {
   root.innerHTML = `
     <div class="detail-header">
       <div class="title"><span class="badge badge-${m.status}">${m.status.replace("_", " ")}</span>${escapeHtml(m.title || m.prompt.slice(0, 100))}</div>
+      <button class="btn-rename" type="button" title="Set the alias shown in the sidebar">✎ Rename</button>
     </div>
     <div class="detail-meta">
       base: <code>${escapeHtml(m.baseBranch)}</code>
@@ -233,6 +235,7 @@ export function renderDetail() {
       </div>
     </form>
   `;
+  document.querySelector(".btn-rename")?.addEventListener("click", onRename);
   document.querySelectorAll(".btn-action").forEach(b => {
     b.addEventListener("click", () => toggleActionPanel(b.getAttribute("data-action-id")));
   });

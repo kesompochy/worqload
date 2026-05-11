@@ -281,6 +281,27 @@ export async function onResume() {
   }
 }
 
+// The sidebar/detail title defaults to the head of the initial prompt, which
+// reads as the user's opening message and is hard to tell sessions apart by.
+// This lets the human give the session a short alias; a blank value clears it
+// and reinstates the prompt-head fallback.
+export async function onRename() {
+  if (!state.selected || !state.detail) return;
+  const current = state.detail.meta.title || "";
+  const next = prompt("Session alias (blank to show the prompt text):", current);
+  if (next === null) return;
+  try {
+    const { meta } = await api("POST", `/sessions/${state.selected}/title`, { title: next.trim() });
+    state.detail.meta = meta;
+    const card = state.sessions.find(s => s.id === state.selected);
+    if (card) card.title = meta.title;
+    renderSessionList();
+    renderDetail();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 export function openModal() {
   $("#modal").classList.remove("hidden");
   $("#modalPrompt").value = "";
