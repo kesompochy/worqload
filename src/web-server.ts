@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket } from "bun";
 import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
   createSession,
   saveSessionMeta,
@@ -331,6 +331,7 @@ function defineRoute(
 const ROUTES: Route[] = [
   defineRoute("GET",  "/", getIndex),
   defineRoute("GET",  "/assets/:filename", getAsset),
+  defineRoute("GET",  "/meta", getMeta),
   defineRoute("POST", "/sessions", postSessions),
   defineRoute("GET",  "/sessions", getSessions),
   defineRoute("GET",  "/sessions/:id", getSessionDetail),
@@ -367,6 +368,10 @@ async function getIndex(): Promise<Response> {
 const ASSETS: Record<string, { path: string; contentType: string }> = {
   "markdown.js": { path: join(WEB_DIR, "markdown.js"), contentType: "text/javascript; charset=utf-8" },
 };
+
+async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
+  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir) });
+}
 
 async function getAsset(_req: Request, _ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   const entry = ASSETS[params.filename];
