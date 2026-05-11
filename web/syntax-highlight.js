@@ -1,8 +1,8 @@
-// Pluggable syntax highlighting for the worqload diff viewer.
+// Pluggable syntax highlighting for the worqload diff and file viewers.
 //
-// The diff viewer renders every line body through `highlightCode(code, lang)`.
-// With no highlighter registered for `lang` it returns the HTML-escaped source
-// unchanged, so the viewer always works; registering a highlighter is purely
+// Both viewers render every line body through `highlightCode(code, lang)`. With
+// no highlighter registered for `lang` it returns the HTML-escaped source
+// unchanged, so the viewers always work; registering a highlighter is purely
 // additive.
 //
 // Adding a highlighter (a "syntax highlighting extension") means calling the
@@ -13,16 +13,16 @@
 //   registerLanguageExtension(["toml"], "toml");
 //
 // `registerHighlighter(languages, highlight)` — `highlight(code)` receives one
-// diff line of raw source text and must return a safe HTML string; callers do
-// not escape its output, so a highlighter is responsible for escaping the text
-// it emits (the bundled `escapeHtml` below does the minimal `& < >` form).
+// line of raw source text and must return a safe HTML string; callers do not
+// escape its output, so a highlighter is responsible for escaping the text it
+// emits (the bundled `escapeHtml` below does the minimal `& < >` form).
 //
-// Because highlighting runs per diff line, constructs that span lines (block
+// Because highlighting runs per line, constructs that span lines (block
 // comments, multi-line strings) are only recognised when they open and close on
 // the same line. That is a deliberate trade-off: a stateful, whole-file
-// highlighter would have to be re-run against the reconstructed file and mapped
-// back onto the visible/expanded line ranges, which is far more machinery than a
-// diff viewer warrants.
+// highlighter would have to be mapped back onto the diff viewer's
+// visible/expanded line ranges, which is far more machinery than these viewers
+// warrant.
 
 const highlighters = new Map(); // language id -> (code) => safe HTML
 
