@@ -68,8 +68,13 @@ export function describeEvent(event) {
 
     case "report_submitted":
       return { summary: `📄 ${payload?.filename ?? "report"}`, sections: [payloadSection(payload)] };
-    case "report_read":
+    case "report_read": {
+      const names = Array.isArray(payload?.filenames) ? payload.filenames : [];
+      if (names.length > 0) {
+        return { summary: `✓ read ${names.length} report${names.length === 1 ? "" : "s"}`, sections: [payloadSection(payload)] };
+      }
       return { summary: `✓ read ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
+    }
     case "report_unread":
       return { summary: `↺ unread ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
     case "escalation_requested":

@@ -117,3 +117,20 @@ export async function setReadState(
     await Bun.write(path, JSON.stringify({ read: [...current].sort() }, null, 2));
   });
 }
+
+// Marks every `.md` file in `dir` as read in one pass and returns the filenames
+// that were not already read. A no-op (returns []) when the directory has no
+// files, so it never creates the directory or a read-state sidecar for nothing.
+export async function markAllRead(dir: string): Promise<string[]> {
+  const files = await listAllFiles(dir);
+  if (files.length === 0) return [];
+  const path = readStatePath(dir);
+  return withLock(path, async () => {
+    const current = await readReadState(dir);
+    const newlyRead = files.map(f => f.filename).filter(name => !current.has(name));
+    if (newlyRead.length === 0) return [];
+    for (const name of newlyRead) current.add(name);
+    await Bun.write(path, JSON.stringify({ read: [...current].sort() }, null, 2));
+    return newlyRead;
+  });
+}

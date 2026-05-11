@@ -25,7 +25,7 @@ import {
   listWorktreeFiles,
   readWorktreeFile,
 } from "./worktree";
-import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState, markAllRead } from "./file-store";
 import { listActions, findAction } from "./actions";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 
@@ -393,6 +393,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("POST", "/sessions/:id/escalations/:filename/resolve", postEscalationResolve),
   defineRoute("GET",  "/sessions/:id/reports", getReports),
+  defineRoute("POST", "/sessions/:id/reports/read-all", postReportsReadAll),
   defineRoute("POST", "/sessions/:id/reports/:filename/read", postReportRead),
   defineRoute("POST", "/sessions/:id/reports/:filename/unread", postReportUnread),
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
@@ -712,6 +713,24 @@ async function setReportReadFlag(
 
 async function postReportRead(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return setReportReadFlag(ctx, params, true);
+}
+
+// Marks every report of the session read in one shot — the "clear all the
+// unread badges" gesture. Emits a single report_read event carrying the
+// filenames it changed (none when nothing was unread), rather than one per
+// file, so connected clients refresh once instead of once per report.
+async function postReportsReadAll(
+  _req: Request,
+  ctx: ServerContext,
+  params: Record<string, string>,
+): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const newlyRead = await markAllRead(reportsDirFor(ctx, meta.id));
+    if (newlyRead.length > 0) {
+      await appendAndBroadcast(ctx, meta.id, { kind: "report_read", payload: { filenames: newlyRead } });
+    }
+    return json({ ok: true, read: newlyRead });
+  });
 }
 
 async function postReportUnread(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {

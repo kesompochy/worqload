@@ -97,6 +97,11 @@ test("describeEvent gives file events a friendly summary", () => {
   expect(describeEvent({ seq: 12, kind: "feedback_fetched", timestamp: "", payload: { count: 1 } }).summary).toBe(
     "1 message fetched",
   );
+  expect(describeEvent({ kind: "report_read", payload: { filename: "001-x.md" } }).summary).toBe("✓ read 001-x.md");
+  expect(describeEvent({ kind: "report_read", payload: { filenames: ["001-x.md", "003-y.md"] } }).summary).toBe(
+    "✓ read 2 reports",
+  );
+  expect(describeEvent({ kind: "report_read", payload: { filenames: ["001-x.md"] } }).summary).toBe("✓ read 1 report");
 });
 
 test("describeEvent summarises an action_invoked run and exposes its output", () => {

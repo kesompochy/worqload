@@ -256,6 +256,22 @@ export async function onStop() {
   }
 }
 
+// The "wrap up this session" gesture: clear every unread-report badge, then
+// stop the session — the two steps the human was otherwise doing by hand
+// (mark each report read, then Stop in the sidebar).
+export async function onStopAndMarkRead() {
+  if (!state.selected) return;
+  try {
+    await api("POST", `/sessions/${state.selected}/reports/read-all`, {});
+    await api("POST", `/sessions/${state.selected}/stop`, {});
+    await refreshDetail();
+    await fetchSessions();
+    toast("session stopped · all reports marked read");
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 export async function onCancel() {
   if (!state.selected) return;
   if (!confirm("Cancel this session? The worktree will be REMOVED.")) return;
