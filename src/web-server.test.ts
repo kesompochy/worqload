@@ -823,6 +823,28 @@ test("GET /assets/syntax-highlight.js serves the highlighter module", async () =
   expect(body).toContain("export function highlightCode");
 });
 
+test("GET /assets/style.css serves the stylesheet", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/assets/style.css`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("text/css");
+  const body = await res.text();
+  expect(body).toContain(".layout");
+});
+
+test("GET / serves the HTML shell linking the stylesheet", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("text/html");
+  const body = await res.text();
+  expect(body).toContain(`href="/assets/style.css"`);
+});
+
 test("GET /assets/<unknown> returns 404", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");

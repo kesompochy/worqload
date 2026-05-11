@@ -418,6 +418,7 @@ async function getIndex(): Promise<Response> {
 // shipping the whole web/ directory because directory traversal protection is
 // easier to reason about with an explicit table.
 const ASSETS: Record<string, { path: string; contentType: string }> = {
+  "style.css": { path: join(WEB_DIR, "style.css"), contentType: "text/css; charset=utf-8" },
   "markdown.js": { path: join(WEB_DIR, "markdown.js"), contentType: "text/javascript; charset=utf-8" },
   "syntax-highlight.js": { path: join(WEB_DIR, "syntax-highlight.js"), contentType: "text/javascript; charset=utf-8" },
 };
