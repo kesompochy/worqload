@@ -56,7 +56,7 @@ export function renderDiffHtml() {
     const escapedPath = escapeHtml(file.path);
     const lang = languageForPath(file.path);
     out.push(`<div class="diff-file${collapsed ? " collapsed" : ""}" data-diff-path="${escapedPath}">`);
-    out.push(`<div class="diff-file-header" data-diff-toggle="${escapedPath}"><span class="diff-chevron">▾</span><span>${escapedPath}</span><span class="diff-summary"><span class="add-count">+${file.adds}</span><span class="remove-count">−${file.removes}</span></span></div>`);
+    out.push(`<div class="diff-file-header" data-diff-toggle="${escapedPath}"><span class="diff-chevron">▾</span><span>${escapedPath}</span><button type="button" class="copy-path-btn" data-copy-path="${escapedPath}" title="ファイル名をコピー">⧉</button><span class="diff-summary"><span class="add-count">+${file.adds}</span><span class="remove-count">−${file.removes}</span></span></div>`);
     out.push(`<div class="diff-file-body">`);
     const revealed = state.diffExpansions.get(file.path) || [];
     for (const hunk of file.hunks) {

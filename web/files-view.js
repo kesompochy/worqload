@@ -59,7 +59,7 @@ function renderFileContentHtml() {
   if (!fc) return `<div class="placeholder">Select a file from the tree to view it.</div>`;
   const path = fc.path || state.selectedFilePath || "";
   const escapedPath = escapeHtml(path);
-  const header = meta => `<div class="file-content-header"><span>${escapedPath}</span>${meta ? `<span class="file-content-meta">${escapeHtml(meta)}</span>` : ""}</div>`;
+  const header = meta => `<div class="file-content-header"><span>${escapedPath}</span><button type="button" class="copy-path-btn" data-copy-path="${escapedPath}" title="ファイル名をコピー">⧉</button>${meta ? `<span class="file-content-meta">${escapeHtml(meta)}</span>` : ""}</div>`;
   if (fc.loading) return `${header("")}<div class="file-msg"><span class="spinner"></span> loading…</div>`;
   if (fc.error) return `${header("")}<div class="file-msg">⚠ ${escapeHtml(fc.error)}</div>`;
   if (fc.binary) return `${header("binary")}<div class="file-msg">Binary file — not shown.</div>`;

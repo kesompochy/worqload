@@ -87,6 +87,16 @@ export function onDetailBodyClick(e) {
     renderDetail();
     return;
   }
+  // The copy button lives inside the click-to-collapse diff-file header, so this
+  // branch has to run before the data-diff-toggle one or the same click folds
+  // the file too.
+  const copyPathBtn = e.target.closest("[data-copy-path]");
+  if (copyPathBtn) {
+    e.stopPropagation();
+    const path = copyPathBtn.getAttribute("data-copy-path");
+    navigator.clipboard.writeText(path).then(() => toast("path copied")).catch(() => toast("copy failed"));
+    return;
+  }
   const toggle = e.target.closest("[data-diff-toggle]");
   if (toggle) {
     const path = toggle.getAttribute("data-diff-toggle");
