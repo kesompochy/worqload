@@ -46,6 +46,11 @@ export async function selectSession(id) {
 }
 
 export function onDetailBodyClick(e) {
+  // A link inside report markdown carries target="_blank"; let the browser
+  // open it natively. Intercepting the click would fall through to onLineClick,
+  // which re-renders the pane and detaches the <a> before navigation, so the
+  // new tab never opens.
+  if (e.target.closest("a")) return;
   const markBtn = e.target.closest("[data-report-mark]");
   if (markBtn) {
     e.stopPropagation();
@@ -156,6 +161,12 @@ export function expandDiffGap(path, from, to, dir) {
 }
 
 export function onLineClick(e) {
+  // A drag to select text ends with a click event too. Treating it as a line
+  // anchor would re-render the pane and discard the selection before the user
+  // can copy it, so bail when text is selected — except on Shift+click, which
+  // is the deliberate gesture for extending the anchor range.
+  const selection = window.getSelection();
+  if (!e.shiftKey && selection && !selection.isCollapsed) return;
   const target = e.target.closest("[data-anchor-line]");
   if (!target) return;
   const path = target.getAttribute("data-anchor-path");
