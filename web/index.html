@@ -92,6 +92,8 @@
   .tab-btn { background: transparent; border: 1px solid transparent; border-bottom: none; padding: .45rem .9rem; border-radius: 4px 4px 0 0; color: var(--text-dim); cursor: pointer; }
   .tab-btn.active { background: var(--bg); border-color: var(--border); color: var(--text); margin-bottom: -1px; }
   .tab-btn:hover { color: var(--text); }
+  .tab-count, .tab-event-age { color: var(--text-dim); font-weight: normal; }
+  .tab-event-age { margin-left: .35rem; }
   .diff-base-toggle { margin-left: auto; padding: .35rem .5rem; font-size: 12px; color: var(--text-dim); }
   .diff-empty { color: var(--text-dim); font-style: italic; padding: 1rem 0; }
   .diff-file { margin-bottom: 1.2rem; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
@@ -500,11 +502,12 @@ function renderDetail() {
   const isTerminal = m.status === "stopped" || m.status === "crashed";
 
   const eventCount = state.detail.events?.length ?? 0;
+  const lastEvent = eventCount > 0 ? state.detail.events[eventCount - 1] : null;
   const tabsHtml = `
     <div class="tabs">
       <button class="tab-btn ${state.activeTab === "reports" ? "active" : ""}" data-tab="reports">Reports</button>
       <button class="tab-btn ${state.activeTab === "diff" ? "active" : ""}" data-tab="diff">Diff</button>
-      <button class="tab-btn ${state.activeTab === "events" ? "active" : ""}" data-tab="events">Events <span style="color:var(--text-dim);font-weight:normal">(${eventCount})</span></button>
+      <button class="tab-btn ${state.activeTab === "events" ? "active" : ""}" data-tab="events">Events <span class="tab-count">(${eventCount})</span><span class="tab-event-age"${lastEvent ? "" : ` style="display:none"`}>${lastEvent ? `· ${formatRelative(lastEvent.timestamp)}` : ""}</span></button>
       ${state.activeTab === "diff" ? `
         <span class="diff-base-toggle">
           <button id="btnExpandAll" type="button" class="diff-tool-btn">Expand all</button>
@@ -724,6 +727,27 @@ async function onDiffBaseChange(value) {
   state.diffBase = value;
   await refreshDiff();
   renderDetail();
+}
+
+// Keep the Events tab's "(count) · Ns ago" label current between full
+// re-renders. state.detail.events is updated on every streamed event even when
+// the events tab isn't the active view, so reading it here is enough; a full
+// renderDetail() would disturb scroll position and the feedback textarea.
+function refreshEventsTabLabel() {
+  const btn = document.querySelector('.tab-btn[data-tab="events"]');
+  if (!btn) return;
+  const events = state.detail?.events ?? [];
+  const countEl = btn.querySelector(".tab-count");
+  const ageEl = btn.querySelector(".tab-event-age");
+  if (countEl) countEl.textContent = `(${events.length})`;
+  if (ageEl) {
+    if (events.length > 0) {
+      ageEl.textContent = `· ${formatRelative(events[events.length - 1].timestamp)}`;
+      ageEl.style.display = "";
+    } else {
+      ageEl.style.display = "none";
+    }
+  }
 }
 
 function renderEventsHtml() {
@@ -1098,6 +1122,9 @@ if (state.sessions.length > 0) await selectSession(state.sessions[0].id);
 // re-rendered in response to events to avoid disturbing the feedback
 // textarea while the user is typing.
 setInterval(() => fetchSessions(), 30_000);
+// Tick the Events tab's last-update age every second so the user can see the
+// session is alive without waiting for the next streamed event.
+setInterval(refreshEventsTabLabel, 1_000);
 </script>
 </body>
 </html>
