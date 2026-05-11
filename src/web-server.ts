@@ -62,9 +62,11 @@ Polling discipline:
 
 Anchors in feedback: a feedback message may begin with \`Re: <path>:<lineStart>-<lineEnd>\\n\\n...\`. The path is relative to your CWD. \`./.worqload-reports/<filename>\` points at your own past reports — Read them when referenced.
 
-Files:
+Files & git:
 - CWD is a git worktree branched from the human's base branch. Edit code here freely.
-- worqload does NOT merge or commit. The human handles git workflow themselves.
+- Commit your work yourself in small, descriptive units. Reports about completed work — logical-unit completions, task completion, "I changed X" status updates — should describe a state that is already committed in this worktree at the time of the report. The human reads the report and the diff together; uncommitted edits invalidate that pairing.
+- Reports that are not about completed work (initial plan, pre-flight thinking, escalations, mid-flight progress notes on a single change) do not require a prior commit.
+- worqload itself does NOT merge, push, or manage branches. The human owns merge / push / branch lifecycle.
 
 Your task follows. Begin by submitting a brief plan report, then start work.
 
