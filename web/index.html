@@ -34,11 +34,27 @@
   .sidebar-title .app-name { font-size: 11px; letter-spacing: .08em; color: var(--text-dim); text-transform: uppercase; }
   .sidebar-title h1 { margin: 0; font-size: 1rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .session-list { overflow-y: auto; flex: 1; }
-  .session-card { padding: .75rem; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .session-card { padding: .75rem; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: .55rem; align-items: flex-start; }
   .session-card:hover { background: var(--panel); }
   .session-card.active { background: var(--panel-2); border-left: 3px solid var(--accent); padding-left: calc(.75rem - 3px); }
+  .session-card-main { min-width: 0; flex: 1; }
   .session-card .title { font-weight: 600; margin: 0 0 .2rem 0; word-break: break-word; }
   .session-card .meta { color: var(--text-dim); font-size: 12px; }
+  .unread-badge {
+    flex: 0 0 auto;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: #ff3b30;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+    box-shadow: 0 0 0 2px var(--bg);
+    margin-top: 1px;
+  }
   .session-card-actions { display: none; gap: .3rem; margin-top: .55rem; }
   .session-card.active .session-card-actions { display: flex; }
   .session-card-actions button { font-size: 11px; padding: .2rem .55rem; }
@@ -370,6 +386,11 @@ function renderSessionList() {
     const isActive = s.id === state.selected;
     card.className = "session-card" + (isActive ? " active" : "");
     const isTerminal = s.status === "stopped" || s.status === "crashed";
+    const unread = Number(s.unreadReportCount) || 0;
+    const badgeText = unread > 99 ? "99+" : String(unread);
+    const badgeHtml = unread > 0
+      ? `<span class="unread-badge" aria-label="${unread} unread report${unread === 1 ? "" : "s"}" title="${unread} unread report${unread === 1 ? "" : "s"}">${badgeText}</span>`
+      : "";
     const actionsHtml = isActive
       ? `<div class="session-card-actions">
            <button class="btn-card-stop" ${isTerminal ? "disabled" : ""}>Stop</button>
@@ -378,9 +399,12 @@ function renderSessionList() {
          </div>`
       : "";
     card.innerHTML = `
-      <p class="title"><span class="badge badge-${s.status}">${s.status.replace("_", " ")}</span>${escapeHtml(s.title || s.prompt.slice(0, 80))}</p>
-      <div class="meta">${escapeHtml(s.baseBranch)} · ${formatRelative(s.createdAt)}</div>
-      ${actionsHtml}
+      <div class="session-card-main">
+        <p class="title"><span class="badge badge-${s.status}">${s.status.replace("_", " ")}</span>${escapeHtml(s.title || s.prompt.slice(0, 80))}</p>
+        <div class="meta">${escapeHtml(s.baseBranch)} · ${formatRelative(s.createdAt)}</div>
+        ${actionsHtml}
+      </div>
+      ${badgeHtml}
     `;
     card.addEventListener("click", () => selectSession(s.id));
     if (isActive) {
@@ -983,10 +1007,12 @@ await fetchSessions();
 // auto-select first session if any
 if (state.sessions.length > 0) await selectSession(state.sessions[0].id);
 
-// Refresh relative timestamps in the sidebar every 30s. The detail view is
-// only re-rendered in response to events to avoid disturbing the feedback
+// Refresh the sidebar every 30s so unread-report badges and relative
+// timestamps reflect activity in non-selected sessions (the WebSocket only
+// streams the currently-selected session). The detail view is only
+// re-rendered in response to events to avoid disturbing the feedback
 // textarea while the user is typing.
-setInterval(() => renderSessionList(), 30_000);
+setInterval(() => fetchSessions(), 30_000);
 </script>
 </body>
 </html>

@@ -178,6 +178,26 @@ test("GET /sessions lists created sessions", async () => {
   expect(body.sessions).toHaveLength(2);
 });
 
+test("GET /sessions exposes unread report counts per session", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const a = await postJson(baseUrl, "/sessions", { prompt: "with reports", baseBranch: TEST_BASE }).then(r => r.json());
+  const b = await postJson(baseUrl, "/sessions", { prompt: "no reports", baseBranch: TEST_BASE }).then(r => r.json());
+  const aid = a.meta.id;
+  const bid = b.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${aid}/reports`, { slug: "plan", content: "the plan" });
+  await postJson(baseUrl, `/internal/sessions/${aid}/reports`, { slug: "step", content: "step done" });
+  await postJson(baseUrl, `/internal/sessions/${aid}/reports`, { slug: "more", content: "more progress" });
+  await postJson(baseUrl, `/sessions/${aid}/reports/001-plan.md/read`, {});
+
+  const body = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const byId = Object.fromEntries(body.sessions.map((s: { id: string; unreadReportCount: number }) => [s.id, s]));
+  expect(byId[aid].unreadReportCount).toBe(2);
+  expect(byId[bid].unreadReportCount).toBe(0);
+});
+
 test("POST /internal/sessions/:id/reports writes numbered report", async () => {
   const repoDir = makeRepo();
   const { baseUrl, ctx } = await bootServer(repoDir, "hang");
