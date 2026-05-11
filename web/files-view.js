@@ -4,6 +4,7 @@
 // the diff view uses, so anchored feedback works on whole files too.
 
 import { escapeHtml, formatBytes } from "./dom.js";
+import { highlightCode, languageForPath } from "./syntax-highlight.js";
 import { state, isAnchored } from "./state.js";
 
 export function renderFilesHtml() {
@@ -64,13 +65,14 @@ function renderFileContentHtml() {
   if (fc.binary) return `${header("binary")}<div class="file-msg">Binary file — not shown.</div>`;
   if (fc.tooLarge) return `${header(formatBytes(fc.size))}<div class="file-msg">File too large to display (${escapeHtml(formatBytes(fc.size))}).</div>`;
   const content = fc.content ?? "";
+  const lang = languageForPath(path);
   const lines = content.split("\n");
   // A trailing newline yields a final empty element; drop it so there's no phantom last line.
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   const rows = lines.map((line, i) => {
     const n = i + 1;
     const sel = isAnchored(path, n) ? " selected" : "";
-    return `<div class="file-line${sel}" data-anchor-line="${n}" data-anchor-path="${escapedPath}"><span class="ln">${n}</span><span class="body">${escapeHtml(line)}</span></div>`;
+    return `<div class="file-line${sel}" data-anchor-line="${n}" data-anchor-path="${escapedPath}"><span class="ln">${n}</span><span class="body">${highlightCode(line, lang)}</span></div>`;
   }).join("");
   return `${header(`${lines.length} line${lines.length === 1 ? "" : "s"}`)}<div class="file-content-body">${rows}</div>`;
 }

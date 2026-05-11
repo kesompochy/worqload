@@ -117,10 +117,10 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .diff-line.add .body::before { content: "+"; color: var(--running); }
 .diff-line.remove .body::before { content: "-"; color: var(--crashed); }
 .diff-line.context .body::before { content: " "; }
-.diff-line .hl-keyword { color: #ff7b72; }
-.diff-line .hl-string  { color: #a5d6ff; }
-.diff-line .hl-number  { color: #79c0ff; }
-.diff-line .hl-comment { color: var(--text-dim); font-style: italic; }
+.diff-line .hl-keyword, .file-line .hl-keyword { color: #ff7b72; }
+.diff-line .hl-string,  .file-line .hl-string  { color: #a5d6ff; }
+.diff-line .hl-number,  .file-line .hl-number  { color: #79c0ff; }
+.diff-line .hl-comment, .file-line .hl-comment { color: var(--text-dim); font-style: italic; }
 .diff-line.diff-expand-row { background: rgba(88,166,255,.05); user-select: none; cursor: pointer; }
 .diff-line.diff-expand-row:hover { background: rgba(88,166,255,.12); }
 .diff-line.diff-expand-row .ln { color: var(--text-dim); }
