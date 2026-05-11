@@ -46,7 +46,9 @@ export function renderSessionList() {
       : "";
     const actionsHtml = isActive
       ? `<div class="session-card-actions">
-           <button class="btn-card-stop" ${isTerminal ? "disabled" : ""}>Stop</button>
+           ${isTerminal
+             ? `<button class="btn-card-resume">Resume</button>`
+             : `<button class="btn-card-stop">Stop</button>`}
            <button class="btn-card-archive" ${isTerminal ? "" : "disabled"}>Archive</button>
            <button class="btn-card-cancel danger" ${isTerminal ? "disabled" : ""}>Cancel</button>
          </div>`
@@ -61,9 +63,11 @@ export function renderSessionList() {
     `;
     card.addEventListener("click", () => selectSession(s.id));
     if (isActive) {
+      const resumeBtn = card.querySelector(".btn-card-resume");
       const stopBtn = card.querySelector(".btn-card-stop");
       const archiveBtn = card.querySelector(".btn-card-archive");
       const cancelBtn = card.querySelector(".btn-card-cancel");
+      resumeBtn?.addEventListener("click", e => { e.stopPropagation(); onResume(); });
       stopBtn?.addEventListener("click", e => { e.stopPropagation(); onStop(); });
       archiveBtn?.addEventListener("click", e => { e.stopPropagation(); onArchive(); });
       cancelBtn?.addEventListener("click", e => { e.stopPropagation(); onCancel(); });
