@@ -77,7 +77,9 @@ async function gitCurrentBranch(cwd: string): Promise<string> {
 }
 
 function sessionBranchName(meta: SessionMeta): string {
-  return `worqload/${meta.id.slice(0, 8)}`;
+  // Pre-branchName-field sessions fell back to the legacy worqload/<shortId>
+  // naming. Keep that path so we can still merge / push their branches.
+  return meta.branchName || `worqload/${meta.id.slice(0, 8)}`;
 }
 
 function defaultPrTitle(meta: SessionMeta): string {
@@ -107,7 +109,7 @@ export const mergeToBaseAction: Action = {
     }
     const branchName = sessionBranchName(meta);
     const title = defaultPrTitle(meta);
-    const message = `Merge worqload session ${meta.id.slice(0, 8)}: ${title}`;
+    const message = `Merge session ${meta.id.slice(0, 8)}: ${title}`;
     return runCommand(["git", "merge", "--no-ff", "-m", message, branchName], repoDir);
   },
 };

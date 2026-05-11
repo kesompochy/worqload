@@ -33,6 +33,7 @@ async function bootAndCreateSession(): Promise<{ endpoint: string; sessionId: st
     port: 0,
     repoDir,
     spawnCommand: ["bun", MOCK, "hang"],
+    branchNameGenerator: async () => null,
   });
   trackCleanup(() => started.shutdown());
   const endpoint = `http://127.0.0.1:${started.server.port}`;
