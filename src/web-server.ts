@@ -1032,7 +1032,9 @@ async function postInternalEscalations(req: Request, ctx: ServerContext, params:
       return json({ error: "slug and content required" }, 400);
     }
     const dir = askingDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(dir, body.slug, body.content);
+    const file = await writeNumberedFile(dir, body.slug, body.content, {
+      archiveDirs: [join(dir, "resolved")],
+    });
     if (!isTerminal(meta.status) && meta.status !== "waiting_human") {
       await transitionStatus(ctx, meta, "waiting_human");
     }
