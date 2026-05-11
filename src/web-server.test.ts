@@ -486,6 +486,8 @@ test("GET /sessions/:id/files lists worktree files including new untracked ones"
   const res = await fetch(`${baseUrl}/sessions/${sid}/files`).then(r => r.json());
   expect(res.paths).toContain("README.md");
   expect(res.paths).toContain("src/new.ts");
+  // the worqload-injected symlink is not project content and points outside the worktree
+  expect(res.paths).not.toContain(".worqload-reports");
 });
 
 test("GET /sessions/:id/file returns text content of a worktree file", async () => {

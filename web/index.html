@@ -125,6 +125,29 @@
   .diff-expand-label { color: var(--text-dim); }
   .diff-expand-btn { background: transparent; border: 0; color: var(--accent); font: inherit; cursor: pointer; padding: 0 .6rem; }
   .diff-expand-btn:hover { text-decoration: underline; }
+  .file-explorer { display: flex; gap: .8rem; align-items: flex-start; }
+  .file-tree-pane { flex: 0 0 17rem; max-height: calc(100vh - 13rem); overflow: auto; border: 1px solid var(--border); border-radius: 4px; padding: .35rem; position: sticky; top: 0; }
+  .file-tree-pane .empty { color: var(--text-dim); font-style: italic; padding: .5rem; }
+  .file-tree-list { font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .file-tree-row { display: flex; align-items: center; gap: .25rem; padding: .12rem .3rem; border-radius: 3px; cursor: pointer; white-space: nowrap; user-select: none; }
+  .file-tree-row:hover { background: var(--panel-2); }
+  .file-tree-row.selected { background: rgba(88,166,255,.18); }
+  .file-tree-row .twisty { width: 1ch; color: var(--text-dim); display: inline-block; flex: 0 0 auto; transition: transform .12s ease; }
+  .file-tree-row.collapsed > .twisty { transform: rotate(-90deg); }
+  .file-tree-row.is-file .twisty { visibility: hidden; }
+  .file-tree-row .name { overflow: hidden; text-overflow: ellipsis; }
+  .file-tree-row.is-dir .name { color: var(--text); }
+  .file-tree-row.is-file .name { color: var(--accent); }
+  .file-content-pane { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .file-content-pane .placeholder { color: var(--text-dim); font-style: italic; padding: 1rem; }
+  .file-content-header { background: var(--panel-2); padding: .4rem .7rem; font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: .5rem; }
+  .file-content-meta { margin-left: auto; color: var(--text-dim); }
+  .file-msg { color: var(--text-dim); padding: 1rem; }
+  .file-line { display: grid; grid-template-columns: 5ch 1fr; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; cursor: pointer; }
+  .file-line:hover { background: rgba(88,166,255,.08); }
+  .file-line.selected { background: rgba(88,166,255,.18) !important; }
+  .file-line .ln { text-align: right; padding-right: .7rem; color: var(--text-dim); user-select: none; }
+  .file-line .body { white-space: pre; padding-right: .7rem; overflow-x: auto; }
   .md { word-break: break-word; }
   .md > * { margin: 0; }
   .md > * + * { margin-top: .55rem; }
@@ -242,12 +265,17 @@ const state = {
   feedbackHistory: [],
   ws: null,
   lastSeq: 0,
-  activeTab: "reports",  // "reports" | "diff"
+  activeTab: "reports",  // "reports" | "diff" | "files" | "events"
   diff: "",              // text/plain diff (full file context, -U<huge>)
   diffBase: "session-start",
   anchor: null,          // { path, lineStart, lineEnd } | null
   collapsedFiles: new Set(),  // paths of diff files the user collapsed
   diffExpansions: new Map(),  // path -> [[from,to], ...] new-line ranges the user expanded into
+  files: [],             // worktree-relative paths for the Files tab
+  filesLoaded: false,
+  fileTreeCollapsed: new Set(),  // directory paths collapsed in the Files tab
+  selectedFilePath: null,        // path of the file open in the content pane
+  fileContent: null,     // { path, content } | { path, binary } | { path, tooLarge, size } | { path, error } | { path, loading: true }
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   actions: [],           // [{ id, label, description?, confirmMessage?, params? }]
@@ -324,6 +352,11 @@ async function selectSession(id) {
   state.diffExpansions = new Map();
   state.reportToggle = new Map();
   state.feedbackToggle = new Map();
+  state.files = [];
+  state.filesLoaded = false;
+  state.fileTreeCollapsed = new Set();
+  state.selectedFilePath = null;
+  state.fileContent = null;
   state.openActionId = null;
   state.actionResults = new Map();
   renderSessionList();
@@ -348,7 +381,45 @@ async function refreshDetail() {
   state.feedbackHistory = feedbackRes.messages;
   state.lastSeq = events.length > 0 ? events[events.length - 1].seq : 0;
   if (state.activeTab === "diff") await refreshDiff();
+  if (state.activeTab === "files") await ensureFilesLoaded(true);
   renderDetail();
+}
+
+async function ensureFilesLoaded(force = false) {
+  if (!state.selected) return;
+  if (state.filesLoaded && !force) return;
+  try {
+    const { paths } = await api("GET", `/sessions/${state.selected}/files`);
+    state.files = Array.isArray(paths) ? paths : [];
+  } catch {
+    state.files = [];
+  }
+  state.filesLoaded = true;
+}
+
+async function selectFile(path) {
+  if (!state.selected || !path) return;
+  state.selectedFilePath = path;
+  state.fileContent = { path, loading: true };
+  renderDetail();
+  let next;
+  try {
+    const res = await fetch(`/sessions/${state.selected}/file?path=${encodeURIComponent(path)}`);
+    if (res.ok) {
+      next = await res.json();
+    } else {
+      let msg = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+      next = { path, error: msg };
+    }
+  } catch (e) {
+    next = { path, error: e.message };
+  }
+  // A newer click may have superseded this fetch; only apply if still current.
+  if (state.selectedFilePath === path) {
+    state.fileContent = next;
+    renderDetail();
+  }
 }
 
 async function refreshDiff() {
@@ -527,6 +598,7 @@ function renderDetail() {
     <div class="tabs">
       <button class="tab-btn ${state.activeTab === "reports" ? "active" : ""}" data-tab="reports">Reports</button>
       <button class="tab-btn ${state.activeTab === "diff" ? "active" : ""}" data-tab="diff">Diff</button>
+      <button class="tab-btn ${state.activeTab === "files" ? "active" : ""}" data-tab="files">Files</button>
       <button class="tab-btn ${state.activeTab === "events" ? "active" : ""}" data-tab="events">Events <span class="tab-count">(${eventCount})</span><span class="tab-event-age"${lastEvent ? "" : ` style="display:none"`}>${lastEvent ? `· ${formatRelative(lastEvent.timestamp)}` : ""}</span></button>
       ${state.activeTab === "diff" ? `
         <span class="diff-base-toggle">
@@ -543,6 +615,7 @@ function renderDetail() {
   `;
 
   const tabContent = state.activeTab === "diff" ? renderDiffHtml()
+    : state.activeTab === "files" ? renderFilesHtml()
     : state.activeTab === "events" ? renderEventsHtml()
     : reportsHtml;
 
@@ -584,7 +657,7 @@ function renderDetail() {
     </div>
     <form class="feedback-form" id="feedbackForm">
       ${anchorChip}
-      <textarea id="feedbackInput" placeholder="${state.anchor ? "Comment on the selected lines... (Enter で送信 / Shift+Enter で改行)" : "Plain feedback (picked up at the agent's next turn). Click a diff or report line to anchor. (Enter で送信 / Shift+Enter で改行)"}" rows="3"></textarea>
+      <textarea id="feedbackInput" placeholder="${state.anchor ? "Comment on the selected lines... (Enter で送信 / Shift+Enter で改行)" : "Plain feedback (picked up at the agent's next turn). Click a diff, file, or report line to anchor. (Enter で送信 / Shift+Enter で改行)"}" rows="3"></textarea>
       <div class="row">
         <span class="spacer"></span>
         <button type="submit" ${isTerminal ? "disabled" : ""}>Send feedback</button>
@@ -673,6 +746,19 @@ function onDetailBodyClick(e) {
       Number(expandBtn.getAttribute("data-expand-to")),
       expandBtn.getAttribute("data-expand-dir"),
     );
+    return;
+  }
+  const dirToggle = e.target.closest("[data-dir-toggle]");
+  if (dirToggle) {
+    const path = dirToggle.getAttribute("data-dir-toggle");
+    if (state.fileTreeCollapsed.has(path)) state.fileTreeCollapsed.delete(path);
+    else state.fileTreeCollapsed.add(path);
+    renderDetail();
+    return;
+  }
+  const fileOpen = e.target.closest("[data-file-open]");
+  if (fileOpen) {
+    selectFile(fileOpen.getAttribute("data-file-open"));
     return;
   }
   onLineClick(e);
@@ -784,6 +870,7 @@ async function switchTab(tab) {
   if (tab === state.activeTab) return;
   state.activeTab = tab;
   if (tab === "diff") await refreshDiff();
+  if (tab === "files") await ensureFilesLoaded();
   renderDetail();
 }
 
@@ -967,6 +1054,86 @@ function renderDiffExpandRow(hiddenRows, escapedPath) {
   const label = `<span class="diff-expand-label">${count} unchanged line${count === 1 ? "" : "s"}${chunked ? " — click to expand all" : " — click to expand"}</span>`;
   // The whole row falls back to data-expand-dir="all"; the ↑/↓ buttons override it.
   return `<div class="diff-line diff-expand-row" ${data} data-expand-dir="all" role="button"><span class="ln">⋯</span><span class="ln"></span><span class="body">${down}${label}${up}</span></div>`;
+}
+
+// Files tab: a worktree file explorer. The tree is built client-side from the
+// flat path list /sessions/:id/files returns; selecting a leaf fetches that
+// file's full text. Every content line carries the same data-anchor-* attrs
+// the diff view uses, so anchored feedback works on whole files too.
+function renderFilesHtml() {
+  const treeHtml = !state.filesLoaded
+    ? `<div class="empty"><span class="spinner"></span> loading…</div>`
+    : state.files.length === 0
+      ? `<div class="empty">No files in this worktree.</div>`
+      : `<div class="file-tree-list">${renderFileTreeNode(buildFileTree(state.files), 0)}</div>`;
+  return `<div class="file-explorer">
+    <div class="file-tree-pane">${treeHtml}</div>
+    <div class="file-content-pane">${renderFileContentHtml()}</div>
+  </div>`;
+}
+
+function buildFileTree(paths) {
+  const root = { name: "", path: "", dirs: new Map(), files: [] };
+  for (const p of paths) {
+    const parts = p.split("/");
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i];
+      let child = node.dirs.get(seg);
+      if (!child) {
+        child = { name: seg, path: node.path ? `${node.path}/${seg}` : seg, dirs: new Map(), files: [] };
+        node.dirs.set(seg, child);
+      }
+      node = child;
+    }
+    node.files.push({ name: parts[parts.length - 1], path: p });
+  }
+  return root;
+}
+
+function renderFileTreeNode(node, depth) {
+  const indent = n => `padding-left:${(0.3 + n * 0.9).toFixed(2)}rem`;
+  const out = [];
+  for (const name of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
+    const dir = node.dirs.get(name);
+    const collapsed = state.fileTreeCollapsed.has(dir.path);
+    out.push(`<div class="file-tree-row is-dir${collapsed ? " collapsed" : ""}" data-dir-toggle="${escapeHtml(dir.path)}" style="${indent(depth)}" title="${escapeHtml(dir.path)}"><span class="twisty">▾</span><span class="name">${escapeHtml(name)}/</span></div>`);
+    if (!collapsed) out.push(renderFileTreeNode(dir, depth + 1));
+  }
+  for (const f of node.files.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+    const sel = f.path === state.selectedFilePath ? " selected" : "";
+    out.push(`<div class="file-tree-row is-file${sel}" data-file-open="${escapeHtml(f.path)}" style="${indent(depth)}" title="${escapeHtml(f.path)}"><span class="twisty">▾</span><span class="name">${escapeHtml(f.name)}</span></div>`);
+  }
+  return out.join("");
+}
+
+function renderFileContentHtml() {
+  const fc = state.fileContent;
+  if (!fc) return `<div class="placeholder">Select a file from the tree to view it.</div>`;
+  const path = fc.path || state.selectedFilePath || "";
+  const escapedPath = escapeHtml(path);
+  const header = meta => `<div class="file-content-header"><span>${escapedPath}</span>${meta ? `<span class="file-content-meta">${escapeHtml(meta)}</span>` : ""}</div>`;
+  if (fc.loading) return `${header("")}<div class="file-msg"><span class="spinner"></span> loading…</div>`;
+  if (fc.error) return `${header("")}<div class="file-msg">⚠ ${escapeHtml(fc.error)}</div>`;
+  if (fc.binary) return `${header("binary")}<div class="file-msg">Binary file — not shown.</div>`;
+  if (fc.tooLarge) return `${header(formatBytes(fc.size))}<div class="file-msg">File too large to display (${escapeHtml(formatBytes(fc.size))}).</div>`;
+  const content = fc.content ?? "";
+  const lines = content.split("\n");
+  // A trailing newline yields a final empty element; drop it so there's no phantom last line.
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  const rows = lines.map((line, i) => {
+    const n = i + 1;
+    const sel = isAnchored(path, n) ? " selected" : "";
+    return `<div class="file-line${sel}" data-anchor-line="${n}" data-anchor-path="${escapedPath}"><span class="ln">${n}</span><span class="body">${escapeHtml(line)}</span></div>`;
+  }).join("");
+  return `${header(`${lines.length} line${lines.length === 1 ? "" : "s"}`)}<div class="file-content-body">${rows}</div>`;
+}
+
+function formatBytes(n) {
+  if (n == null || !Number.isFinite(n)) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function onArchive() {

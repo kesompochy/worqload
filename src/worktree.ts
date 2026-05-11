@@ -98,6 +98,12 @@ export async function currentBranch(repoDir: string): Promise<string> {
   return out.trim();
 }
 
+// worqload injects a `.worqload-reports` symlink at the worktree root; it points
+// outside the worktree (into .worqload/) so it isn't browsable anyway, and it's
+// not project content, so keep it out of the explorer even when the user hasn't
+// gitignored it.
+const HIDDEN_WORKTREE_ENTRIES = new Set([".worqload-reports"]);
+
 // Files the agent can inspect in a session worktree: everything git tracks plus
 // new untracked files, minus anything .gitignore (and friends) excludes — so
 // build artefacts and node_modules don't drown the explorer, but a file the
@@ -114,7 +120,7 @@ export async function listWorktreeFiles(worktreePath: string): Promise<string[]>
     const err = await new Response(proc.stderr).text();
     throw new Error(`git ls-files failed: ${err.trim()}`);
   }
-  return out.split("\0").filter(p => p !== "").sort();
+  return out.split("\0").filter(p => p !== "" && !HIDDEN_WORKTREE_ENTRIES.has(p)).sort();
 }
 
 // 2 MiB: large enough for any source file worth reading in a browser, small
