@@ -34,6 +34,9 @@ async function bootServer(repoDir: string, mockMode: "init" | "echo" | "hang" = 
     port: 0,
     repoDir,
     spawnCommand: ["bun", MOCK, mockMode],
+    // Skip real claude branch-name generation so the test doesn't depend on
+    // `claude` being on PATH; resolveBranchName falls back to <shortId>.
+    branchNameGenerator: async () => null,
   });
   trackCleanup(() => started.shutdown());
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -55,6 +58,7 @@ test("startServer auto-shifts to a free port when the requested port is in use",
     port: 0,
     repoDir: repoDir1,
     spawnCommand: ["bun", MOCK, "hang"],
+    branchNameGenerator: async () => null,
   });
   trackCleanup(() => first.shutdown());
 
@@ -64,6 +68,7 @@ test("startServer auto-shifts to a free port when the requested port is in use",
     port: requestedPort,
     repoDir: repoDir2,
     spawnCommand: ["bun", MOCK, "hang"],
+    branchNameGenerator: async () => null,
   });
   trackCleanup(() => second.shutdown());
 
@@ -97,11 +102,68 @@ test("POST /sessions creates a session, worktree, meta.json", async () => {
   expect(body.meta.status).toBe("running");
   expect(body.meta.baseBranch).toBe(TEST_BASE);
   expect(body.meta.worktreePath).toContain(".worktrees");
+  // generator is stubbed to return null in tests, so the branch falls back
+  // to the 8-char short id (no "worqload/" prefix).
+  expect(body.meta.branchName).toBe(body.meta.id.slice(0, 8));
+  expect(body.meta.branchName).not.toContain("worqload");
 
   const meta = await loadSessionMeta(body.meta.id, ctx.sessionsDir);
   expect(meta).not.toBeNull();
   expect(existsSync(body.meta.worktreePath)).toBe(true);
   expect(existsSync(join(body.meta.worktreePath, ".worqload-reports"))).toBe(true);
+});
+
+test("POST /sessions accepts an explicit branchName", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await postJson(baseUrl, "/sessions", {
+    prompt: "do thing",
+    baseBranch: TEST_BASE,
+    branchName: "fix-login-bug",
+  });
+  expect(res.status).toBe(201);
+  const body = await res.json();
+  expect(body.meta.branchName).toBe("fix-login-bug");
+
+  // git knows about the branch under the requested name
+  const list = Bun.spawnSync(["git", "branch", "--list", "fix-login-bug"], {
+    cwd: repoDir,
+    env: cleanGitEnv,
+  });
+  expect(new TextDecoder().decode(list.stdout).trim()).toContain("fix-login-bug");
+});
+
+test("POST /sessions uses generated branch name when no explicit one is given", async () => {
+  const repoDir = makeRepo();
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    spawnCommand: ["bun", MOCK, "hang"],
+    branchNameGenerator: async () => "auto-name",
+  });
+  trackCleanup(() => started.shutdown());
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const res = await postJson(baseUrl, "/sessions", {
+    prompt: "do thing",
+    baseBranch: TEST_BASE,
+  });
+  expect(res.status).toBe(201);
+  const body = await res.json();
+  expect(body.meta.branchName).toBe("auto-name");
+});
+
+test("POST /sessions returns 400 when branchName is invalid", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await postJson(baseUrl, "/sessions", {
+    prompt: "do thing",
+    baseBranch: TEST_BASE,
+    branchName: "-leading-dash",
+  });
+  expect(res.status).toBe(400);
 });
 
 test("GET /sessions lists created sessions", async () => {
@@ -438,7 +500,12 @@ test("GET /sessions/:id/feedback merges inbox and read with status", async () =>
 test("startServer reconciles orphan sessions on boot to crashed", async () => {
   const repoDir = makeRepo();
   // First server: create a session
-  const first = await startServer({ port: 0, repoDir, spawnCommand: ["bun", MOCK, "hang"] });
+  const first = await startServer({
+    port: 0,
+    repoDir,
+    spawnCommand: ["bun", MOCK, "hang"],
+    branchNameGenerator: async () => null,
+  });
   trackCleanup(() => first.shutdown());
   const baseUrl1 = `http://127.0.0.1:${first.server.port}`;
   const created = await postJson(baseUrl1, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
@@ -461,7 +528,12 @@ test("startServer reconciles orphan sessions on boot to crashed", async () => {
   }
 
   // Second server: should reconcile the orphan
-  const second = await startServer({ port: 0, repoDir, spawnCommand: ["bun", MOCK, "hang"] });
+  const second = await startServer({
+    port: 0,
+    repoDir,
+    spawnCommand: ["bun", MOCK, "hang"],
+    branchNameGenerator: async () => null,
+  });
   trackCleanup(() => second.shutdown());
   const baseUrl2 = `http://127.0.0.1:${second.server.port}`;
 

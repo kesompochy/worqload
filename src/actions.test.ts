@@ -33,10 +33,12 @@ function makeRepo(): string {
 async function makeSessionWorktree(repoDir: string, sessionId: string): Promise<SessionMeta> {
   const reportsDir = join(repoDir, ".worqload", "sessions", sessionId, "reports");
   mkdirSync(reportsDir, { recursive: true });
+  const branchName = `test-${sessionId.slice(0, 8)}`;
   const { worktreePath } = await createSessionWorktree({
     sessionId,
     repoDir,
     baseBranch: TEST_BASE,
+    branchName,
     reportsDirAbsolute: reportsDir,
   });
   return {
@@ -46,6 +48,7 @@ async function makeSessionWorktree(repoDir: string, sessionId: string): Promise<
     baseBranch: TEST_BASE,
     baseCommit: "irrelevant",
     worktreePath,
+    branchName,
     status: "running",
     createdAt: new Date().toISOString(),
   };

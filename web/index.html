@@ -55,6 +55,9 @@
     box-shadow: 0 0 0 2px var(--bg);
     margin-top: 1px;
   }
+  .session-card-actions { display: none; gap: .3rem; margin-top: .55rem; }
+  .session-card.active .session-card-actions { display: flex; }
+  .session-card-actions button { font-size: 11px; padding: .2rem .55rem; }
   .badge { display: inline-block; padding: .05rem .4rem; border-radius: 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-right: .35rem; vertical-align: middle; }
   .badge-running { background: rgba(63,185,80,.15); color: var(--running); }
   .badge-waiting_human { background: rgba(210,153,34,.18); color: var(--waiting); }
@@ -194,6 +197,9 @@
     <textarea id="modalPrompt" placeholder="What should the agent do?" rows="6"></textarea>
     <div class="row" style="margin-top:.7rem">
       <input id="modalBranch" placeholder="base branch (default: current HEAD)" style="flex:1">
+    </div>
+    <div class="row" style="margin-top:.7rem">
+      <input id="modalBranchName" placeholder="branch name (default: auto-generated)" style="flex:1">
     </div>
     <div class="row" style="margin-top:.7rem">
       <span class="spacer"></span>
@@ -377,20 +383,38 @@ function renderSessionList() {
   root.innerHTML = "";
   for (const s of state.sessions) {
     const card = document.createElement("div");
-    card.className = "session-card" + (s.id === state.selected ? " active" : "");
+    const isActive = s.id === state.selected;
+    card.className = "session-card" + (isActive ? " active" : "");
+    const isTerminal = s.status === "stopped" || s.status === "crashed";
     const unread = Number(s.unreadReportCount) || 0;
     const badgeText = unread > 99 ? "99+" : String(unread);
     const badgeHtml = unread > 0
       ? `<span class="unread-badge" aria-label="${unread} unread report${unread === 1 ? "" : "s"}" title="${unread} unread report${unread === 1 ? "" : "s"}">${badgeText}</span>`
       : "";
+    const actionsHtml = isActive
+      ? `<div class="session-card-actions">
+           <button class="btn-card-stop" ${isTerminal ? "disabled" : ""}>Stop</button>
+           <button class="btn-card-archive" ${isTerminal ? "" : "disabled"}>Archive</button>
+           <button class="btn-card-cancel danger" ${isTerminal ? "disabled" : ""}>Cancel</button>
+         </div>`
+      : "";
     card.innerHTML = `
       <div class="session-card-main">
         <p class="title"><span class="badge badge-${s.status}">${s.status.replace("_", " ")}</span>${escapeHtml(s.title || s.prompt.slice(0, 80))}</p>
         <div class="meta">${escapeHtml(s.baseBranch)} · ${formatRelative(s.createdAt)}</div>
+        ${actionsHtml}
       </div>
       ${badgeHtml}
     `;
     card.addEventListener("click", () => selectSession(s.id));
+    if (isActive) {
+      const stopBtn = card.querySelector(".btn-card-stop");
+      const archiveBtn = card.querySelector(".btn-card-archive");
+      const cancelBtn = card.querySelector(".btn-card-cancel");
+      stopBtn?.addEventListener("click", e => { e.stopPropagation(); onStop(); });
+      archiveBtn?.addEventListener("click", e => { e.stopPropagation(); onArchive(); });
+      cancelBtn?.addEventListener("click", e => { e.stopPropagation(); onCancel(); });
+    }
     root.appendChild(card);
   }
 }
@@ -500,12 +524,11 @@ function renderDetail() {
   root.innerHTML = `
     <div class="detail-header">
       <div class="title"><span class="badge badge-${m.status}">${m.status.replace("_", " ")}</span>${escapeHtml(m.title || m.prompt.slice(0, 100))}</div>
-      <button id="btnStop" ${isTerminal ? "disabled" : ""}>Stop</button>
-      <button id="btnArchive" ${isTerminal ? "" : "disabled"}>Archive</button>
-      <button id="btnCancel" class="danger" ${isTerminal ? "disabled" : ""}>Cancel</button>
     </div>
     <div class="detail-meta">
-      branch: <code>${escapeHtml(m.baseBranch)}</code> · started ${formatRelative(m.createdAt)}
+      base: <code>${escapeHtml(m.baseBranch)}</code>
+      ${m.branchName ? `· branch: <code>${escapeHtml(m.branchName)}</code>` : ""}
+      · started ${formatRelative(m.createdAt)}
       ${m.endedAt ? ` · ended ${formatRelative(m.endedAt)}` : ""}
       · worktree: <code>${escapeHtml(m.worktreePath)}</code>
     </div>
@@ -525,9 +548,6 @@ function renderDetail() {
       </div>
     </form>
   `;
-  $("#btnStop").addEventListener("click", () => onStop());
-  $("#btnCancel").addEventListener("click", () => onCancel());
-  $("#btnArchive").addEventListener("click", () => onArchive());
   document.querySelectorAll(".btn-action").forEach(b => {
     b.addEventListener("click", () => openActionModal(b.getAttribute("data-action-id")));
   });
@@ -849,6 +869,7 @@ function openModal() {
   $("#modal").classList.remove("hidden");
   $("#modalPrompt").value = "";
   $("#modalBranch").value = "";
+  $("#modalBranchName").value = "";
   $("#modalPrompt").focus();
 }
 function closeModal() { $("#modal").classList.add("hidden"); }
@@ -942,9 +963,11 @@ async function createSession() {
   const prompt = $("#modalPrompt").value.trim();
   if (prompt === "") { toast("prompt is required"); return; }
   const baseBranch = $("#modalBranch").value.trim();
+  const branchName = $("#modalBranchName").value.trim();
   try {
     const body = { prompt };
     if (baseBranch) body.baseBranch = baseBranch;
+    if (branchName) body.branchName = branchName;
     const { meta } = await api("POST", "/sessions", body);
     closeModal();
     await fetchSessions();

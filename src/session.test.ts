@@ -21,6 +21,7 @@ const baseParams = {
   baseBranch: "main",
   baseCommit: "abc123",
   worktreePath: "/tmp/wt/abc",
+  branchName: "do-something",
 };
 
 test("createSession returns valid meta", () => {
@@ -31,6 +32,7 @@ test("createSession returns valid meta", () => {
   expect(meta.baseBranch).toBe("main");
   expect(meta.baseCommit).toBe("abc123");
   expect(meta.worktreePath).toBe("/tmp/wt/abc");
+  expect(meta.branchName).toBe("do-something");
   expect(meta.status).toBe("running");
   expect(meta.createdAt).toBeDefined();
   expect(meta.endedAt).toBeUndefined();
