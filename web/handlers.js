@@ -197,15 +197,18 @@ export async function onDiffBaseChange(value) {
   renderDetail();
 }
 
-export async function onArchive() {
-  if (!state.selected) return;
+export async function onArchive(id = state.selected) {
+  if (!id) return;
   try {
-    await api("POST", `/sessions/${state.selected}/archive`, {});
-    const archivedId = state.selected;
+    await api("POST", `/sessions/${id}/archive`, {});
     await fetchSessions();
-    // Move to first remaining session, or empty pane
-    const next = state.sessions.find(s => s.id !== archivedId);
-    await selectSession(next ? next.id : null);
+    // Archiving the session in the detail pane empties it — move to the first
+    // session left, or an empty pane. Archiving some other card via its hover
+    // button leaves the current selection (and the pane) untouched.
+    if (id === state.selected) {
+      const next = state.sessions.find(s => s.id !== id);
+      await selectSession(next ? next.id : null);
+    }
   } catch (e) {
     toast(`failed: ${e.message}`);
   }
@@ -248,11 +251,11 @@ export async function onFeedback() {
   }
 }
 
-export async function onStop() {
-  if (!state.selected) return;
+export async function onStop(id = state.selected) {
+  if (!id) return;
   try {
-    await api("POST", `/sessions/${state.selected}/stop`, {});
-    await refreshDetail();
+    await api("POST", `/sessions/${id}/stop`, {});
+    if (id === state.selected) await refreshDetail();
     await fetchSessions();
   } catch (e) {
     toast(`failed: ${e.message}`);
@@ -275,27 +278,29 @@ export async function onStopAndMarkRead() {
   }
 }
 
-export async function onCancel() {
-  if (!state.selected) return;
+export async function onCancel(id = state.selected) {
+  if (!id) return;
   if (!confirm("Cancel this session? The worktree will be REMOVED.")) return;
   try {
-    await api("POST", `/sessions/${state.selected}/cancel`, {});
-    await refreshDetail();
+    await api("POST", `/sessions/${id}/cancel`, {});
+    if (id === state.selected) await refreshDetail();
     await fetchSessions();
   } catch (e) {
     toast(`failed: ${e.message}`);
   }
 }
 
-export async function onResume() {
-  if (!state.selected) return;
-  const input = $("#feedbackInput");
+export async function onResume(id = state.selected) {
+  if (!id) return;
+  // The composer textarea holds a prompt for the session shown in the detail
+  // pane; resuming a different card from its hover button carries no prompt.
+  const input = id === state.selected ? $("#feedbackInput") : null;
   const prompt = input ? input.value.trim() : "";
   try {
-    await api("POST", `/sessions/${state.selected}/resume`, prompt ? { prompt } : {});
+    await api("POST", `/sessions/${id}/resume`, prompt ? { prompt } : {});
     if (input) input.value = "";
     toast("session resumed");
-    await refreshDetail();
+    if (id === state.selected) await refreshDetail();
     await fetchSessions();
   } catch (e) {
     toast(`failed: ${e.message}`);

@@ -49,8 +49,8 @@ export function renderSessionList() {
     const isActive = s.id === state.selected;
     card.className = "session-card" + (isActive ? " active" : "");
     const isTerminal = s.status === "stopped" || s.status === "crashed";
-    // Renaming is only offered on the active card; guard on isActive too so a
-    // stale renamingSessionId never sprouts an input on some other card.
+    // The inline rename input only renders on the active card; guard on isActive
+    // too so a stale renamingSessionId never sprouts an input on some other card.
     const isRenaming = isActive && s.id === state.renamingSessionId;
     const unread = Number(s.unreadReportCount) || 0;
     const badgeText = unread > 99 ? "99+" : String(unread);
@@ -62,16 +62,17 @@ export function renderSessionList() {
       ? `<p class="title">${statusBadge}</p>
          <input class="session-rename-input" type="text" maxlength="120" placeholder="alias（空欄でプロンプト先頭）" value="${escapeHtml(s.title || "")}">`
       : `<p class="title">${statusBadge}${escapeHtml(s.title || s.prompt.slice(0, 80))}</p>`;
-    const actionsHtml = isActive
-      ? `<div class="session-card-actions">
-           ${isRenaming ? "" : `<button class="btn-card-rename">Rename</button>`}
+    // Action buttons sit on every card and are revealed on hover (CSS); the
+    // active card keeps them visible always. Rename is offered only on the
+    // active card because its in-place input renders there only.
+    const actionsHtml = `<div class="session-card-actions">
+           ${isActive && !isRenaming ? `<button class="btn-card-rename">Rename</button>` : ""}
            ${isTerminal
              ? `<button class="btn-card-resume">Resume</button>`
              : `<button class="btn-card-stop">Stop</button>`}
            <button class="btn-card-archive" ${isTerminal ? "" : "disabled"}>Archive</button>
            <button class="btn-card-cancel danger" ${isTerminal ? "disabled" : ""}>Cancel</button>
-         </div>`
-      : "";
+         </div>`;
     card.innerHTML = `
       <div class="session-card-main">
         ${titleHtml}
@@ -81,18 +82,16 @@ export function renderSessionList() {
       ${badgeHtml}
     `;
     card.addEventListener("click", () => selectSession(s.id));
-    if (isActive) {
-      const renameBtn = card.querySelector(".btn-card-rename");
-      const resumeBtn = card.querySelector(".btn-card-resume");
-      const stopBtn = card.querySelector(".btn-card-stop");
-      const archiveBtn = card.querySelector(".btn-card-archive");
-      const cancelBtn = card.querySelector(".btn-card-cancel");
-      renameBtn?.addEventListener("click", e => { e.stopPropagation(); onRenameStart(s.id); });
-      resumeBtn?.addEventListener("click", e => { e.stopPropagation(); onResume(); });
-      stopBtn?.addEventListener("click", e => { e.stopPropagation(); onStop(); });
-      archiveBtn?.addEventListener("click", e => { e.stopPropagation(); onArchive(); });
-      cancelBtn?.addEventListener("click", e => { e.stopPropagation(); onCancel(); });
-    }
+    const renameBtn = card.querySelector(".btn-card-rename");
+    const resumeBtn = card.querySelector(".btn-card-resume");
+    const stopBtn = card.querySelector(".btn-card-stop");
+    const archiveBtn = card.querySelector(".btn-card-archive");
+    const cancelBtn = card.querySelector(".btn-card-cancel");
+    renameBtn?.addEventListener("click", e => { e.stopPropagation(); onRenameStart(s.id); });
+    resumeBtn?.addEventListener("click", e => { e.stopPropagation(); onResume(s.id); });
+    stopBtn?.addEventListener("click", e => { e.stopPropagation(); onStop(s.id); });
+    archiveBtn?.addEventListener("click", e => { e.stopPropagation(); onArchive(s.id); });
+    cancelBtn?.addEventListener("click", e => { e.stopPropagation(); onCancel(s.id); });
     if (isRenaming) {
       const input = card.querySelector(".session-rename-input");
       input.addEventListener("click", e => e.stopPropagation());
