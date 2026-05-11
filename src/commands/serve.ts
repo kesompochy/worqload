@@ -77,7 +77,16 @@ export async function serve(args: string[]): Promise<void> {
     ? spawnEnv.trim().split(/\s+/)
     : undefined;
 
-  const { ctx } = await startServer({ port: requestedPort, spawnCommand });
+  // WORQLOAD_HOST_COMMAND is the equivalent escape hatch for the per-session
+  // host launcher. Required when running serve in an environment where the
+  // installed `worqload` binary isn't on PATH (e.g. local dev without
+  // `bun link`).
+  const hostEnv = process.env.WORQLOAD_HOST_COMMAND;
+  const hostCommand = hostEnv && hostEnv.trim() !== ""
+    ? hostEnv.trim().split(/\s+/)
+    : undefined;
+
+  const { ctx } = await startServer({ port: requestedPort, spawnCommand, hostCommand });
   if (requestedPort !== 0 && ctx.port !== requestedPort) {
     console.log(`port ${requestedPort} was in use; using ${ctx.port} instead`);
   }

@@ -36,7 +36,8 @@ Usage:
                                          Start HTTP/WS server (default port 3456; auto-shifts if busy;
                                          opens browser unless --no-open).
                                          --watch reruns the server under \`bun --watch\` so source
-                                         changes hot-reload (running sessions get orphaned: dev use).
+                                         changes hot-reload. Running sessions live in detached host
+                                         processes and survive the restart.
   worqload init [path]                   Initialize .worqload/
 
 Agent-side (called by claude inside a session):
