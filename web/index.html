@@ -84,12 +84,28 @@
   .diff-line.add .body::before { content: "+"; color: var(--running); }
   .diff-line.remove .body::before { content: "-"; color: var(--crashed); }
   .diff-line.context .body::before { content: " "; }
-  .report .lines { display: block; }
-  .report .ln-row { display: grid; grid-template-columns: 4ch 1fr; cursor: pointer; }
-  .report .ln-row:hover { background: rgba(88,166,255,.08); }
-  .report .ln-row.selected { background: rgba(88,166,255,.18); }
-  .report .ln-row .ln { text-align: right; padding-right: .5rem; color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 12px; user-select: none; }
-  .report .ln-row .body { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 13px; }
+  .md { word-break: break-word; }
+  .md > * { margin: 0; }
+  .md > * + * { margin-top: .55rem; }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { font-weight: 600; line-height: 1.3; color: var(--text); }
+  .md h1 { font-size: 1.35rem; }
+  .md h2 { font-size: 1.15rem; }
+  .md h3 { font-size: 1.02rem; }
+  .md h4, .md h5, .md h6 { font-size: .95rem; }
+  .md h2, .md h3 { border-bottom: 1px solid var(--border); padding-bottom: .25rem; }
+  .md p { line-height: 1.55; white-space: pre-wrap; }
+  .md ul, .md ol { padding-left: 1.4rem; line-height: 1.55; }
+  .md li + li { margin-top: .2rem; }
+  .md blockquote { border-left: 3px solid var(--border); color: var(--text-dim); padding: .15rem .8rem; }
+  .md blockquote p { white-space: pre-wrap; }
+  .md hr { border: none; border-top: 1px solid var(--border); }
+  .md code { background: rgba(110,118,129,.18); padding: .05rem .35rem; border-radius: 3px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .md pre { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .55rem .75rem; overflow-x: auto; }
+  .md pre code { background: transparent; padding: 0; border-radius: 0; font-size: 12.5px; white-space: pre; display: block; }
+  .md a { color: var(--accent); }
+  .md [data-anchor-line] { cursor: pointer; border-radius: 3px; padding-left: .25rem; padding-right: .25rem; margin-left: -.25rem; margin-right: -.25rem; transition: background-color .08s ease; }
+  .md [data-anchor-line]:hover { background: rgba(88,166,255,.08); }
+  .md [data-anchor-line][aria-current="true"] { background: rgba(88,166,255,.18); }
   .anchor-chip { display: inline-flex; align-items: center; gap: .35rem; background: rgba(88,166,255,.15); border: 1px solid rgba(88,166,255,.4); color: var(--accent); padding: .2rem .55rem; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; margin-bottom: .5rem; }
   .anchor-chip button { background: transparent; border: none; color: var(--accent); padding: 0 .2rem; cursor: pointer; font-size: 14px; line-height: 1; }
   .event-row { display: grid; grid-template-columns: 5ch 12rem 8rem 1fr; gap: .5rem; padding: .25rem .5rem; border-bottom: 1px solid var(--border); font-family: ui-monospace, monospace; font-size: 12px; align-items: baseline; }
@@ -170,6 +186,7 @@
 <div id="toast" class="toast hidden"></div>
 
 <script type="module">
+import { renderMarkdown } from "/assets/markdown.js";
 const $ = sel => document.querySelector(sel);
 const state = {
   sessions: [],
@@ -326,7 +343,7 @@ function renderDetail() {
          ${state.asking.map(a => `
            <article data-asking="${escapeHtml(a.filename)}" style="margin-top:.6rem">
              <div class="filename">${escapeHtml(a.filename)}</div>
-             <pre>${escapeHtml(a.content)}</pre>
+             <div class="md">${renderMarkdown(a.content)}</div>
              <textarea class="ask-answer" rows="3" placeholder="Your answer..." style="margin-top:.4rem"></textarea>
              <div class="row" style="margin-top:.3rem">
                <span class="spacer"></span>
@@ -339,16 +356,11 @@ function renderDetail() {
   const reportsHtml = state.reports.length > 0
     ? state.reports.slice().reverse().map(r => {
         const path = `./.worqload-reports/${r.filename}`;
-        const lines = r.content.split("\n");
-        const rows = lines.map((line, i) => {
-          const lineNo = i + 1;
-          const sel = isAnchored(path, lineNo) ? "selected" : "";
-          return `<div class="ln-row ${sel}" data-anchor-line="${lineNo}" data-anchor-path="${escapeHtml(path)}"><span class="ln">${lineNo}</span><span class="body">${escapeHtml(line) || "&nbsp;"}</span></div>`;
-        }).join("");
+        const body = renderMarkdown(r.content, { anchorPath: path, anchor: state.anchor });
         return `
           <article class="report">
             <div class="filename">${escapeHtml(r.filename)}</div>
-            <div class="lines">${rows}</div>
+            <div class="md">${body}</div>
           </article>
         `;
       }).join("")
@@ -361,7 +373,7 @@ function renderDetail() {
             ${escapeHtml(f.filename)}
             <span class="badge badge-${f.status === "unread" ? "waiting_human" : "stopped"}" style="margin-left:.4rem">${f.status}</span>
           </div>
-          <pre>${escapeHtml(f.content)}</pre>
+          <div class="md">${renderMarkdown(f.content)}</div>
         </article>
       `).join("")
     : "";
@@ -490,16 +502,18 @@ function onLineClick(e) {
   const target = e.target.closest("[data-anchor-line]");
   if (!target) return;
   const path = target.getAttribute("data-anchor-path");
-  const line = Number(target.getAttribute("data-anchor-line"));
-  if (!path || !Number.isFinite(line)) return;
+  const lineStart = Number(target.getAttribute("data-anchor-line"));
+  const lineEndAttr = target.getAttribute("data-anchor-line-end");
+  const lineEnd = lineEndAttr !== null ? Number(lineEndAttr) : lineStart;
+  if (!path || !Number.isFinite(lineStart) || !Number.isFinite(lineEnd)) return;
   if (e.shiftKey && state.anchor && state.anchor.path === path) {
     state.anchor = {
       path,
-      lineStart: Math.min(state.anchor.lineStart, line),
-      lineEnd: Math.max(state.anchor.lineStart, line),
+      lineStart: Math.min(state.anchor.lineStart, lineStart),
+      lineEnd: Math.max(state.anchor.lineEnd, lineEnd),
     };
   } else {
-    state.anchor = { path, lineStart: line, lineEnd: line };
+    state.anchor = { path, lineStart, lineEnd };
   }
   renderDetail();
 }

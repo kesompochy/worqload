@@ -308,6 +308,7 @@ function defineRoute(
 
 const ROUTES: Route[] = [
   defineRoute("GET",  "/", getIndex),
+  defineRoute("GET",  "/assets/:filename", getAsset),
   defineRoute("POST", "/sessions", postSessions),
   defineRoute("GET",  "/sessions", getSessions),
   defineRoute("GET",  "/sessions/:id", getSessionDetail),
@@ -327,11 +328,27 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
 ];
 
-const INDEX_HTML_PATH = join(import.meta.dir, "..", "web", "index.html");
+const WEB_DIR = join(import.meta.dir, "..", "web");
+const INDEX_HTML_PATH = join(WEB_DIR, "index.html");
 
 async function getIndex(): Promise<Response> {
   return new Response(Bun.file(INDEX_HTML_PATH), {
     headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+// Whitelist + extension map for files served from /assets/:filename. We avoid
+// shipping the whole web/ directory because directory traversal protection is
+// easier to reason about with an explicit table.
+const ASSETS: Record<string, { path: string; contentType: string }> = {
+  "markdown.js": { path: join(WEB_DIR, "markdown.js"), contentType: "text/javascript; charset=utf-8" },
+};
+
+async function getAsset(_req: Request, _ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  const entry = ASSETS[params.filename];
+  if (!entry) return new Response("not found", { status: 404 });
+  return new Response(Bun.file(entry.path), {
+    headers: { "content-type": entry.contentType },
   });
 }
 
