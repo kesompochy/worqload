@@ -25,6 +25,9 @@ export async function selectSession(id) {
   state.reports = [];
   state.asking = [];
   state.detail = null;
+  // An anchor's path resolves only inside the previous session's worktree, so
+  // it must not ride along to feedback sent to the newly selected one.
+  state.anchor = null;
   state.collapsedFiles = new Set();
   state.diffExpansions = new Map();
   state.reportToggle = new Map();
