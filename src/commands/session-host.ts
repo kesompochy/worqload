@@ -5,7 +5,7 @@ import { classifyClaudeLine, readLines } from "../claude-stream";
 import { appendEvent, readEvents } from "../event-log";
 import { exitWithUsage } from "./cli-helpers";
 import { buildUserMessage, PROTOCOL_PREFIX } from "../session-bootstrap";
-import { loadSessionMeta, saveSessionMeta } from "../session";
+import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
 import {
   encodeMessage,
   type HostToServeMessage,
@@ -50,8 +50,12 @@ export async function runHost(opts: HostOptions): Promise<number> {
     if (typeof v === "string") claudeEnv[k] = v;
   }
   // The agent CLI inside claude needs these to reach serve's /internal routes.
+  // WORQLOAD_ENDPOINT is the bootstrap-time fallback; WORQLOAD_ENDPOINT_FILE
+  // points at the file serve keeps up to date so the agent follows serve
+  // across a restart on a different port.
   claudeEnv.WORQLOAD_SESSION_ID = opts.sessionId;
   claudeEnv.WORQLOAD_ENDPOINT = opts.agentEndpoint;
+  claudeEnv.WORQLOAD_ENDPOINT_FILE = agentEndpointPath(opts.sessionsDir, opts.sessionId);
 
   const claude = Bun.spawn(opts.spawnCommand, {
     cwd: meta.worktreePath || undefined,

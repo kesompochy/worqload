@@ -65,6 +65,11 @@ function metaPath(sessionsDir: string, id: string): string {
   return `${sessionsDir}/${id}/meta.json`;
 }
 
+// Path of the file holding the current serve base URL for a session.
+export function agentEndpointPath(sessionsDir: string, sessionId: string): string {
+  return `${sessionsDir}/${sessionId}/agent-endpoint`;
+}
+
 export async function saveSessionMeta(
   meta: SessionMeta,
   sessionsDir: string = DEFAULT_SESSIONS_DIR,

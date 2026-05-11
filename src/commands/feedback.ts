@@ -1,14 +1,14 @@
 // agent-side CLI: `worqload feedback fetch`
 
 import { fetchFeedback } from "../agent-client";
-import { requireEnv, exitWithUsage } from "./cli-helpers";
+import { requireEnv, resolveAgentEndpoint, exitWithUsage } from "./cli-helpers";
 
 export async function feedback(args: string[]): Promise<void> {
   if (args[0] !== "fetch") {
     exitWithUsage("worqload feedback fetch");
   }
   const sessionId = requireEnv("WORQLOAD_SESSION_ID");
-  const endpoint = requireEnv("WORQLOAD_ENDPOINT");
+  const endpoint = resolveAgentEndpoint();
   try {
     const result = await fetchFeedback(endpoint, sessionId);
     if (result.messages.length === 0) {

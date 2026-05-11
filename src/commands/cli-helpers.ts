@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 export function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v) {
@@ -5,6 +7,23 @@ export function requireEnv(name: string): string {
     process.exit(2);
   }
   return v;
+}
+
+// Resolves the serve base URL the agent CLI should talk to. WORQLOAD_ENDPOINT_FILE
+// (a path serve rewrites on every (re)connect) wins so the agent follows serve
+// across a restart that lands on a different port; WORQLOAD_ENDPOINT is the
+// bootstrap-time fallback.
+export function resolveAgentEndpoint(): string {
+  const file = process.env.WORQLOAD_ENDPOINT_FILE;
+  if (file) {
+    try {
+      const fromFile = readFileSync(file, "utf8").trim();
+      if (fromFile !== "") return fromFile;
+    } catch {
+      // file not written yet (initial spawn window) — fall through to env
+    }
+  }
+  return requireEnv("WORQLOAD_ENDPOINT");
 }
 
 export function requireFlag(args: string[], flag: string): string {

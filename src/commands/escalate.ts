@@ -1,7 +1,7 @@
 // agent-side CLI: `worqload escalate submit --slug <slug>` (body via stdin)
 
 import { submitEscalation } from "../agent-client";
-import { readAllStdin, requireEnv, requireFlag, exitWithUsage } from "./cli-helpers";
+import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, exitWithUsage } from "./cli-helpers";
 
 export async function escalate(args: string[]): Promise<void> {
   if (args[0] !== "submit") {
@@ -14,7 +14,7 @@ export async function escalate(args: string[]): Promise<void> {
     process.exit(2);
   }
   const sessionId = requireEnv("WORQLOAD_SESSION_ID");
-  const endpoint = requireEnv("WORQLOAD_ENDPOINT");
+  const endpoint = resolveAgentEndpoint();
   try {
     const result = await submitEscalation(endpoint, sessionId, slug, content);
     console.log(result.filename);

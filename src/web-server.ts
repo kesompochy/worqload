@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  agentEndpointPath,
   createSession,
   saveSessionMeta,
   loadSessionMeta,
@@ -139,6 +140,13 @@ function feedbackReadDirFor(ctx: ServerContext, sessionId: string): string {
   return join(ctx.sessionsDir, sessionId, "feedback", "read");
 }
 
+// serve rewrites this file (its current base URL) on every (re)connect; the
+// agent CLI reads it so it follows serve across a restart on a different port.
+async function writeAgentEndpointFile(ctx: ServerContext, sessionId: string): Promise<void> {
+  await mkdir(join(ctx.sessionsDir, sessionId), { recursive: true });
+  await Bun.write(agentEndpointPath(ctx.sessionsDir, sessionId), ctx.baseUrlForAgent);
+}
+
 function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./event-log").Event): void {
   const payload = JSON.stringify({ sessionId, event });
   for (const ws of ctx.wsClients) {
@@ -177,6 +185,7 @@ async function transitionStatus(
 // host (not serve) writes session_started and the bootstrap user message.
 async function spawnAndAttachHost(ctx: ServerContext, meta: SessionMeta): Promise<HostClient> {
   const socketPath = hostSocketPathFor(meta.id);
+  await writeAgentEndpointFile(ctx, meta.id);
   const hostProc = spawnDetachedHost({
     sessionId: meta.id,
     sessionsDir: ctx.sessionsDir,
@@ -205,6 +214,7 @@ async function spawnAndAttachHost(ctx: ServerContext, meta: SessionMeta): Promis
 async function reconnectToHost(ctx: ServerContext, meta: SessionMeta): Promise<HostClient | null> {
   if (!meta.hostSocketPath) return null;
   try {
+    await writeAgentEndpointFile(ctx, meta.id);
     const lastSeq = (await readEvents(meta.id, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
     const client = await connectToHost({
       socketPath: meta.hostSocketPath,

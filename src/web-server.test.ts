@@ -1,8 +1,8 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
-import { mkdirSync, writeFileSync, existsSync, readdirSync } from "fs";
+import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "fs";
 import { startServer } from "./web-server";
-import { loadSessionMeta } from "./session";
+import { agentEndpointPath, loadSessionMeta } from "./session";
 import { readEvents } from "./event-log";
 import { makeTmpDir, cleanupAll, trackCleanup } from "./test-helpers";
 
@@ -440,6 +440,11 @@ test("startServer reconnects to a still-running host across a serve restart", as
   const detail = await fetch(`${baseUrl2}/sessions/${sid}`).then(r => r.json());
   expect(detail.meta.status).toBe("running");
   expect(detail.meta.endedAt).toBeUndefined();
+
+  // The agent-endpoint file must now point at the second server, so the
+  // agent CLI follows it across the restart.
+  const endpointFile = agentEndpointPath(second.ctx.sessionsDir, sid);
+  expect(readFileSync(endpointFile, "utf8").trim()).toBe(`http://127.0.0.1:${second.server.port}`);
 
   // shutdown({killHosts:true}) on a reconnected server must still kill the
   // host even though we don't own its Subprocess handle.
