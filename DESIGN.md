@@ -104,6 +104,7 @@ interface Event {
 
 type EventKind =
   | "session_started"
+  | "session_resumed"          // 終端 session を resume したとき
   | "claude_assistant_message"
   | "claude_tool_use"
   | "claude_tool_result"
@@ -182,10 +183,19 @@ type EventKind =
 
 ### 5.6 Stop / Cancel
 
-- **Stop**: `killProcessTree(pid)` → 数秒待って残っていれば SIGKILL → status = stopped。worktree は残す (人間が後で diff を見たい場合のため)。
-- **Cancel**: Stop と同様に kill した上で `git worktree remove --force` で worktree を削除。session metadata (`meta.json`, `events.ndjson`, `reports/`, etc.) は残す。
+- **Stop**: `killProcessTree(pid)` → 数秒待って残っていれば SIGKILL → status = stopped。worktree は残す (人間が後で diff を見たい場合のため、そして resume できるように)。
+- **Cancel**: Stop と同様に kill した上で `git worktree remove --force` で worktree を削除。session metadata (`meta.json`, `events.ndjson`, `reports/`, etc.) は残す。Cancel 済み session は worktree が無いので resume できない。
 
-### 5.7 クラッシュと server 再起動
+### 5.7 Resume
+
+- 終端状態 (`stopped` / `crashed`) かつ worktree が残っている session を、同一 worktree で claude の会話ごと再起動する。
+- `POST /sessions/:id/resume { prompt? }` で:
+  1. `prompt` があれば `feedback/inbox/` に積む (介入経路は通常の feedback と同じ)。
+  2. status を `running` に戻し `endedAt` をクリア。
+  3. host を resume モードで再 spawn — claude の起動コマンドに `--continue` を足して直前の会話を引き継ぎ、host は `session_started` ではなく `session_resumed` event を emit、初回 user message は protocol bootstrap ではなく「resumed; feedback を確認して続行」のキックオフを送る。
+- agent は次 turn の頭で `worqload feedback fetch` を呼び、resume 時に積まれた指示を受け取る。
+
+### 5.8 クラッシュと server 再起動
 
 - claude プロセスが非0で異常終了 → status = crashed、`session_crashed` event を emit。
 - worqload server が再起動したら、`status = running | waiting_human` の session を全件 PID 確認 (`process.kill(pid, 0)` で生存判定)。死んでいれば crashed に遷移。
@@ -205,6 +215,7 @@ type EventKind =
 | `POST` | `/sessions/:id/escalations/:eid/resolve` | escalation 解決 |
 | `POST` | `/sessions/:id/stop` | Stop |
 | `POST` | `/sessions/:id/cancel` | Cancel |
+| `POST` | `/sessions/:id/resume` | Resume (`{ prompt? }`) |
 | `GET` | `/sessions/:id/diff?base=session-start\|base-branch` | diff 取得 |
 | `GET` | `/sessions/:id/files/*` | worktree 内ファイル取得 |
 | `GET` | `/sessions/:id/reports` | report 一覧 |
@@ -260,6 +271,7 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
 - feedback の本文に `Re: <path>:<lines>` プレフィックスがあれば、対応するファイルを Read して context に含めること。`./.worqload-reports/` 配下は自分が書いた report への参照。
 - 生ログは人間が読まないので、報告すべき内容は report に書くこと。tool の実行結果を貼るだけの薄い report ではなく、要約と判断を含めること。
 - worqload 自体は merge / push / branch lifecycle を扱わない。それらは人間の責務。
+- resume された場合 (`[resumed]` で始まる user message を受け取ったとき) は、turn の頭で `worqload feedback fetch` を呼んで新しい指示を取り、それに従って続行すること。新しい指示が無く前回 report がタスク完了と言っているなら、その旨の短い report を出して終えること。
 
 ---
 
@@ -297,6 +309,7 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
 ```
 
 - 上部ツールバー: status, worktree branch, **Stop** / **Cancel**
+- 終端 (stopped / crashed) のとき: 画面下のコンポーザが「Resume session」になり、書いた指示を添えて resume できる (worktree が残っている場合のみ)。
 - waiting_human のとき: asking/ の未解決質問が画面上部にバナー表示。応答 box が前面に出る。応答送信 = escalation resolve。
 - diff viewer の行範囲選択 → 画面下の plain feedback box ではなく、選択箇所に inline で「コメントを書く」UI が出て、anchor (file + lines) が自動入力された feedback box になる。
 - report timeline の行範囲選択でも同様の anchor 付き feedback。
@@ -307,7 +320,8 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
 2. **観測**: 詳細画面で report timeline をリアルタイム閲覧。必要に応じて diff も覗く。生ログは普段見ない。
 3. **介入**: report の特定行に anchored feedback / plain feedback / diff の行に anchored feedback。送信は agent の inbox に積まれ、次 turn で agent が拾う。
 4. **escalation 応答**: waiting_human セッションで質問に答えて resolve → agent が再開。
-5. **完了**: 人間が満足したら **Cancel** で worktree を削除。後で diff を見たければ **Stop** で worktree を残しておく。session metadata は両者ともに残る。
+5. **再開**: stopped / crashed セッションのコンポーザに指示を書いて **Resume** → 同じ worktree で claude の会話ごと再起動し、書いた指示を feedback として拾わせる。
+6. **完了**: 人間が満足したら **Cancel** で worktree を削除。後で diff を見たり resume したければ **Stop** で worktree を残しておく。session metadata は両者ともに残る。
 
 ---
 
@@ -330,7 +344,7 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
 - `claude --input-format stream-json` の挙動
   - turn 終了後の stdin 待ち動作
   - ウェイクアップ用の "中身ゼロ" message の許容
-  - `--resume` の挙動 (本設計では使わないが、将来 v2 で使う可能性がある)
+  - `--continue` の挙動 (resume で使う。worktree を CWD にして再 spawn すれば直前の会話を引き継ぐはず)
 
 ---
 
@@ -342,7 +356,6 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
 - **multi-user**: 認証 + 同時編集の整合性。
 - **multi-repo**: 一つの worqload server で複数 repo を管理。
 - **network exposure**: localhost 以外への bind と auth。
-- **`claude --resume`**: done session への follow-up を context 継承で実現。
 
 ---
 
