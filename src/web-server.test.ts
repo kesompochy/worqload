@@ -468,6 +468,25 @@ test("POST /sessions/:id/cancel removes worktree and marks stopped", async () =>
   expect(meta?.status).toBe("stopped");
 });
 
+test("GET /assets/markdown.js serves the renderer module", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/assets/markdown.js`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("javascript");
+  const body = await res.text();
+  expect(body).toContain("export function renderMarkdown");
+});
+
+test("GET /assets/<unknown> returns 404", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/assets/nope.js`);
+  expect(res.status).toBe(404);
+});
+
 test("GET /actions exposes the built-in action registry", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");

@@ -62,9 +62,11 @@ Polling discipline:
 
 Anchors in feedback: a feedback message may begin with \`Re: <path>:<lineStart>-<lineEnd>\\n\\n...\`. The path is relative to your CWD. \`./.worqload-reports/<filename>\` points at your own past reports — Read them when referenced.
 
-Files:
+Files & git:
 - CWD is a git worktree branched from the human's base branch. Edit code here freely.
-- worqload does NOT merge or commit. The human handles git workflow themselves.
+- Commit your work yourself in small, descriptive units. Reports about completed work — logical-unit completions, task completion, "I changed X" status updates — should describe a state that is already committed in this worktree at the time of the report. The human reads the report and the diff together; uncommitted edits invalidate that pairing.
+- Reports that are not about completed work (initial plan, pre-flight thinking, escalations, mid-flight progress notes on a single change) do not require a prior commit.
+- worqload itself does NOT merge, push, or manage branches. The human owns merge / push / branch lifecycle.
 
 Your task follows. Begin by submitting a brief plan report, then start work.
 
@@ -308,6 +310,7 @@ function defineRoute(
 
 const ROUTES: Route[] = [
   defineRoute("GET",  "/", getIndex),
+  defineRoute("GET",  "/assets/:filename", getAsset),
   defineRoute("POST", "/sessions", postSessions),
   defineRoute("GET",  "/sessions", getSessions),
   defineRoute("GET",  "/sessions/:id", getSessionDetail),
@@ -329,11 +332,27 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
 ];
 
-const INDEX_HTML_PATH = join(import.meta.dir, "..", "web", "index.html");
+const WEB_DIR = join(import.meta.dir, "..", "web");
+const INDEX_HTML_PATH = join(WEB_DIR, "index.html");
 
 async function getIndex(): Promise<Response> {
   return new Response(Bun.file(INDEX_HTML_PATH), {
     headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+// Whitelist + extension map for files served from /assets/:filename. We avoid
+// shipping the whole web/ directory because directory traversal protection is
+// easier to reason about with an explicit table.
+const ASSETS: Record<string, { path: string; contentType: string }> = {
+  "markdown.js": { path: join(WEB_DIR, "markdown.js"), contentType: "text/javascript; charset=utf-8" },
+};
+
+async function getAsset(_req: Request, _ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  const entry = ASSETS[params.filename];
+  if (!entry) return new Response("not found", { status: 404 });
+  return new Response(Bun.file(entry.path), {
+    headers: { "content-type": entry.contentType },
   });
 }
 
