@@ -74,6 +74,14 @@ test("link renders as anchor with target blank", () => {
   expect(html).toContain(">docs</a>");
 });
 
+test("link with a title still renders as an anchor and carries the title", () => {
+  const html = renderMarkdown(`see [docs](https://example.com "the docs")`);
+  expect(html).toContain(`<a href="https://example.com"`);
+  expect(html).toContain(`title="the docs"`);
+  expect(html).toContain(`target="_blank"`);
+  expect(html).toContain(">docs</a>");
+});
+
 test("table renders thead/tbody with header and body cells", () => {
   const html = renderMarkdown("| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n");
   expect(html).toContain("<table>");

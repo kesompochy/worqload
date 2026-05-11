@@ -335,9 +335,10 @@ function renderInline(text) {
 
   s = escapeHtml(s);
 
-  // Links: [text](url "title")
+  // Links: [text](url "title"). escapeHtml above leaves '"' untouched, so the
+  // title delimiter is still a literal double quote at this point.
   s = s.replace(
-    /\[([^\]]+)\]\(([^\s)]+)(?:\s+&quot;([^&]*)&quot;)?\)/g,
+    /\[([^\]]+)\]\(([^\s)]+)(?:\s+"([^"]*)")?\)/g,
     (_, body, url, title) => {
       const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
       return `<a href="${escapeAttr(url)}"${titleAttr} rel="noreferrer" target="_blank">${body}</a>`;
