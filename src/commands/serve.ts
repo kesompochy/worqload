@@ -1,8 +1,68 @@
 import { startServer } from "../web-server";
 
+// Set on the re-spawned child so it knows the outer `worqload serve --watch`
+// already wrapped it in `bun --watch` and it should boot normally instead of
+// forking again.
+export const WATCH_RESPAWN_MARKER = "WORQLOAD_WATCH_RESPAWNED";
+
+export interface WatchRespawnPlan {
+  command: string[];
+  env: Record<string, string>;
+}
+
+export interface WatchRespawnOptions {
+  execPath: string;
+  scriptPath: string;
+  env: Record<string, string | undefined>;
+}
+
+export function planWatchRespawn(args: string[], options: WatchRespawnOptions): WatchRespawnPlan | null {
+  if (!args.includes("--watch")) return null;
+  if (options.env[WATCH_RESPAWN_MARKER]) return null;
+
+  const filtered = args.filter((a) => a !== "--watch");
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(options.env)) {
+    if (v !== undefined) env[k] = v;
+  }
+  env[WATCH_RESPAWN_MARKER] = "1";
+
+  return {
+    command: [options.execPath, "--watch", options.scriptPath, "serve", ...filtered],
+    env,
+  };
+}
+
+async function respawnUnderWatch(plan: WatchRespawnPlan): Promise<never> {
+  console.log(`watch mode: respawning under \`${plan.command.slice(0, 3).join(" ")} ...\``);
+  const child = Bun.spawn(plan.command, {
+    env: plan.env,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const exitCode = await child.exited;
+  process.exit(exitCode ?? 0);
+}
+
 export async function serve(args: string[]): Promise<void> {
-  const flags = new Set(args.filter((a) => a.startsWith("--")));
-  const positional = args.filter((a) => !a.startsWith("--"));
+  const plan = planWatchRespawn(args, {
+    execPath: process.execPath,
+    // process.argv[1] is the entry script bun was launched with. When invoked
+    // through `bun link` this is the symlinked cli.ts; bun resolves the
+    // symlink itself when watching imports.
+    scriptPath: process.argv[1],
+    env: process.env,
+  });
+  if (plan) {
+    await respawnUnderWatch(plan);
+    return;
+  }
+
+  // Strip --watch in case we are the re-spawned child.
+  const effectiveArgs = args.filter((a) => a !== "--watch");
+  const flags = new Set(effectiveArgs.filter((a) => a.startsWith("--")));
+  const positional = effectiveArgs.filter((a) => !a.startsWith("--"));
   const noOpen = flags.has("--no-open");
 
   const requestedPort = positional[0] ? Number(positional[0]) : 3456;
@@ -26,7 +86,9 @@ export async function serve(args: string[]): Promise<void> {
   console.log(`sessions: ${ctx.sessionsDir}`);
   console.log(`spawn: ${ctx.spawnCommand.join(" ")}`);
 
-  if (!noOpen) {
+  // Re-spawned children skip the browser open because the original parent
+  // (or a previous reload cycle) already opened it.
+  if (!noOpen && !process.env[WATCH_RESPAWN_MARKER]) {
     openInBrowser(ctx.baseUrlForAgent);
   }
 

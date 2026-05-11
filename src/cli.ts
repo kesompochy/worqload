@@ -30,7 +30,11 @@ function printUsage() {
   console.log(`worqload — asynchronous claude session viewer
 
 Usage:
-  worqload serve [port] [--no-open]      Start HTTP/WS server (default port 3456; auto-shifts if busy; opens browser unless --no-open)
+  worqload serve [port] [--no-open] [--watch]
+                                         Start HTTP/WS server (default port 3456; auto-shifts if busy;
+                                         opens browser unless --no-open).
+                                         --watch reruns the server under \`bun --watch\` so source
+                                         changes hot-reload (running sessions get orphaned: dev use).
   worqload init [path]                   Initialize .worqload/
 
 Agent-side (called by claude inside a session):

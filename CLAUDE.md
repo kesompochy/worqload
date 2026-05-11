@@ -8,6 +8,7 @@
 bun test                   # run tests
 bun run dev                # serve with --watch
 worqload <command>         # CLI (built from src/cli.ts)
+worqload serve --watch     # bun link 経由でホットリロード起動 (稼働中セッションは crashed 扱いになる点に注意)
 ```
 
 ## Conventions
