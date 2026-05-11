@@ -28,6 +28,22 @@ export function bindEnterToSubmit(textarea, onSubmit) {
   });
 }
 
+// Wire a single-line edit input: a non-composing Enter commits, Escape cancels.
+// IME composition is tracked the same way bindEnterToSubmit does it — the
+// browser's native prompt() has no such guard, so a confirming Enter mid-IME
+// also "submits" the dialog; this avoids that.
+export function bindInlineEdit(input, { onCommit, onCancel }) {
+  if (!input) return;
+  let composing = false;
+  input.addEventListener("compositionstart", () => { composing = true; });
+  input.addEventListener("compositionend", () => { composing = false; });
+  input.addEventListener("keydown", e => {
+    if (composing || e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") { e.preventDefault(); onCancel(); return; }
+    if (e.key === "Enter") { e.preventDefault(); onCommit(); }
+  });
+}
+
 export function escapeHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")

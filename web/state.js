@@ -27,6 +27,7 @@ export const state = {
   actions: [],           // [{ id, label, description?, confirmMessage?, params? }]
   openActionId: null,    // id of the action whose inline panel is open (null = closed)
   actionResults: new Map(),  // actionId -> last run result observed in this browser view
+  renamingSessionId: null,   // session id whose sidebar title is being edited inline (null = none)
 };
 
 // Diff view: the server hands us full file context; we collapse unchanged

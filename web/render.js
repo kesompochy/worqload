@@ -3,7 +3,7 @@
 // on every change and re-attaches its event listeners; the tab-specific HTML
 // comes from the *-view modules, the click/submit handlers from handlers.js.
 
-import { $, escapeHtml, formatRelative, bindEnterToSubmit } from "./dom.js";
+import { $, escapeHtml, formatRelative, bindEnterToSubmit, bindInlineEdit } from "./dom.js";
 import { renderMarkdown } from "./markdown.js";
 import { state, isReportExpanded, isFeedbackExpanded } from "./state.js";
 import { renderDiffHtml } from "./diff-view.js";
@@ -16,7 +16,9 @@ import {
   onArchive,
   onCancel,
   onResume,
-  onRename,
+  onRenameStart,
+  onRenameCommit,
+  onRenameCancel,
   onFeedback,
   onResolve,
   onDetailBodyClick,
@@ -31,6 +33,11 @@ import {
 
 export function renderSessionList() {
   const root = $("#sessionList");
+  // The 30s poll and live events both rebuild this list; if the user is in the
+  // middle of an inline rename, carry the in-progress text (and focus) across.
+  const prevRenameInput = root.querySelector(".session-rename-input");
+  const renamePreserved = prevRenameInput ? prevRenameInput.value : null;
+  const renameWasFocused = prevRenameInput !== null && document.activeElement === prevRenameInput;
   if (state.sessions.length === 0) {
     root.innerHTML = `<div style="padding:1rem; color:var(--text-dim)">No sessions yet.</div>`;
     return;
@@ -41,13 +48,22 @@ export function renderSessionList() {
     const isActive = s.id === state.selected;
     card.className = "session-card" + (isActive ? " active" : "");
     const isTerminal = s.status === "stopped" || s.status === "crashed";
+    // Renaming is only offered on the active card; guard on isActive too so a
+    // stale renamingSessionId never sprouts an input on some other card.
+    const isRenaming = isActive && s.id === state.renamingSessionId;
     const unread = Number(s.unreadReportCount) || 0;
     const badgeText = unread > 99 ? "99+" : String(unread);
     const badgeHtml = unread > 0
       ? `<span class="unread-badge" aria-label="${unread} unread report${unread === 1 ? "" : "s"}" title="${unread} unread report${unread === 1 ? "" : "s"}">${badgeText}</span>`
       : "";
+    const statusBadge = `<span class="badge badge-${s.status}">${s.status.replace("_", " ")}</span>`;
+    const titleHtml = isRenaming
+      ? `<p class="title">${statusBadge}</p>
+         <input class="session-rename-input" type="text" maxlength="120" placeholder="alias（空欄でプロンプト先頭）" value="${escapeHtml(s.title || "")}">`
+      : `<p class="title">${statusBadge}${escapeHtml(s.title || s.prompt.slice(0, 80))}</p>`;
     const actionsHtml = isActive
       ? `<div class="session-card-actions">
+           ${isRenaming ? "" : `<button class="btn-card-rename">Rename</button>`}
            ${isTerminal
              ? `<button class="btn-card-resume">Resume</button>`
              : `<button class="btn-card-stop">Stop</button>`}
@@ -57,7 +73,7 @@ export function renderSessionList() {
       : "";
     card.innerHTML = `
       <div class="session-card-main">
-        <p class="title"><span class="badge badge-${s.status}">${s.status.replace("_", " ")}</span>${escapeHtml(s.title || s.prompt.slice(0, 80))}</p>
+        ${titleHtml}
         <div class="meta">${escapeHtml(s.baseBranch)} · ${formatRelative(s.createdAt)}</div>
         ${actionsHtml}
       </div>
@@ -65,16 +81,38 @@ export function renderSessionList() {
     `;
     card.addEventListener("click", () => selectSession(s.id));
     if (isActive) {
+      const renameBtn = card.querySelector(".btn-card-rename");
       const resumeBtn = card.querySelector(".btn-card-resume");
       const stopBtn = card.querySelector(".btn-card-stop");
       const archiveBtn = card.querySelector(".btn-card-archive");
       const cancelBtn = card.querySelector(".btn-card-cancel");
+      renameBtn?.addEventListener("click", e => { e.stopPropagation(); onRenameStart(s.id); });
       resumeBtn?.addEventListener("click", e => { e.stopPropagation(); onResume(); });
       stopBtn?.addEventListener("click", e => { e.stopPropagation(); onStop(); });
       archiveBtn?.addEventListener("click", e => { e.stopPropagation(); onArchive(); });
       cancelBtn?.addEventListener("click", e => { e.stopPropagation(); onCancel(); });
     }
+    if (isRenaming) {
+      const input = card.querySelector(".session-rename-input");
+      input.addEventListener("click", e => e.stopPropagation());
+      input.addEventListener("blur", () => onRenameCommit(s.id, input.value));
+      bindInlineEdit(input, {
+        onCommit: () => onRenameCommit(s.id, input.value),
+        onCancel: onRenameCancel,
+      });
+    }
     root.appendChild(card);
+  }
+  const renameInput = root.querySelector(".session-rename-input");
+  if (renameInput) {
+    if (renamePreserved !== null) renameInput.value = renamePreserved;
+    if (renameWasFocused || renamePreserved === null) {
+      renameInput.focus();
+      // Fresh start (no carried text) → select all so typing replaces the old
+      // alias; a mid-edit re-render → leave the caret at the end.
+      if (renamePreserved === null) renameInput.select();
+      else renameInput.setSelectionRange(renameInput.value.length, renameInput.value.length);
+    }
   }
 }
 
@@ -203,7 +241,6 @@ export function renderDetail() {
   root.innerHTML = `
     <div class="detail-header">
       <div class="title"><span class="badge badge-${m.status}">${m.status.replace("_", " ")}</span>${escapeHtml(m.title || m.prompt.slice(0, 100))}</div>
-      <button class="btn-rename" type="button" title="Set the alias shown in the sidebar">✎ Rename</button>
     </div>
     <div class="detail-meta">
       base: <code>${escapeHtml(m.baseBranch)}</code>
@@ -235,7 +272,6 @@ export function renderDetail() {
       </div>
     </form>
   `;
-  document.querySelector(".btn-rename")?.addEventListener("click", onRename);
   document.querySelectorAll(".btn-action").forEach(b => {
     b.addEventListener("click", () => toggleActionPanel(b.getAttribute("data-action-id")));
   });
