@@ -428,6 +428,7 @@ const ASSET_FILENAMES = [
   "notify.js",
   "diff-view.js",
   "files-view.js",
+  "events-view.js",
   "actions-view.js",
   "markdown.js",
   "syntax-highlight.js",

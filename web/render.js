@@ -8,6 +8,7 @@ import { renderMarkdown } from "./markdown.js";
 import { state, isReportExpanded, isFeedbackExpanded } from "./state.js";
 import { renderDiffHtml } from "./diff-view.js";
 import { renderFilesHtml } from "./files-view.js";
+import { renderEventsHtml } from "./events-view.js";
 import { renderActionPanelHtml } from "./actions-view.js";
 import {
   selectSession,
@@ -282,23 +283,4 @@ export function refreshEventsTabLabel() {
       ageEl.style.display = "none";
     }
   }
-}
-
-function renderEventsHtml() {
-  const events = state.detail?.events ?? [];
-  if (events.length === 0) {
-    return `<div class="diff-empty">No events yet.</div>`;
-  }
-  return events.slice().reverse().map(e => {
-    const payload = JSON.stringify(e.payload);
-    const truncated = payload.length > 400 ? payload.slice(0, 400) + " …" : payload;
-    return `
-      <div class="event-row" data-event-seq="${e.seq}">
-        <span class="event-seq">${e.seq}</span>
-        <span class="event-kind">${escapeHtml(e.kind)}</span>
-        <span class="event-ts">${formatRelative(e.timestamp)}</span>
-        <span class="event-payload">${escapeHtml(truncated)}</span>
-      </div>
-    `;
-  }).join("");
 }
