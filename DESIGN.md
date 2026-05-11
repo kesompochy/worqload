@@ -253,10 +253,13 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
   - 一つの論理単位を完了したとき
   - 不確実性が増したとき
   - タスク完了時 (最終 report)
+- 完了報告 (論理単位の完了 / タスク完了 / 「X を変更した」系の進捗報告) は、対象の変更を worktree に commit した上で出すこと。人間は report と diff を対で読むので、未コミットの変更があるとそのペアリングが崩れる。1 つの論理単位は小さな descriptive commit としてまとめる。
+- 完了状態を報告しない種類の report — 初期計画、調査メモ、escalation、単一変更の途中経過 — は事前 commit 不要。
 - 人間の判断が必要なときは `worqload escalate submit --slug <slug>` で質問を出し、その後 stdin で応答を待つこと。
 - turn の頭、および長い tool 呼び出しの前後で `worqload feedback fetch` を呼んで inbox を確認すること。
 - feedback の本文に `Re: <path>:<lines>` プレフィックスがあれば、対応するファイルを Read して context に含めること。`./.worqload-reports/` 配下は自分が書いた report への参照。
 - 生ログは人間が読まないので、報告すべき内容は report に書くこと。tool の実行結果を貼るだけの薄い report ではなく、要約と判断を含めること。
+- worqload 自体は merge / push / branch lifecycle を扱わない。それらは人間の責務。
 
 ---
 
