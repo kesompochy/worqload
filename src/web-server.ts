@@ -655,13 +655,18 @@ async function getAsking(_req: Request, ctx: ServerContext, params: Record<strin
   });
 }
 
+// We hand the full file content (every unchanged line) to the browser so the
+// diff view can let the human expand context locally without another round
+// trip. -U with a value larger than any realistic file effectively means "all".
+const FULL_FILE_CONTEXT_LINES = 1_000_000;
+
 async function getDiff(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const url = new URL(req.url);
     const base = url.searchParams.get("base") || "session-start";
     const target = base === "base-branch" ? meta.baseBranch : meta.baseCommit;
     try {
-      const diff = await gitDiff(meta.worktreePath, target);
+      const diff = await gitDiff(meta.worktreePath, target, FULL_FILE_CONTEXT_LINES);
       return new Response(diff, { headers: { "content-type": "text/plain; charset=utf-8" } });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

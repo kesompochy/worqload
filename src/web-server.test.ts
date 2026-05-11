@@ -446,6 +446,33 @@ test("GET /sessions/:id/diff returns git diff against session-start commit", asy
   expect(diff).toContain("changed in session");
 });
 
+test("GET /sessions/:id/diff returns full file context (unchanged lines included)", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  // Commit a 30-line file to the base branch, then change one line deep in the
+  // middle in the worktree. The default `git diff -U3` would hide lines 1-30
+  // except a few around the change; the endpoint must include all of them.
+  const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+  writeFileSync(join(repoDir, "many.txt"), lines.join("\n") + "\n");
+  git(["add", "many.txt"], repoDir);
+  git(["commit", "-m", "add many.txt"], repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+
+  const changed = [...lines];
+  changed[14] = "line 15 CHANGED";
+  writeFileSync(join(wt, "many.txt"), changed.join("\n") + "\n");
+
+  const diff = await fetch(`${baseUrl}/sessions/${sid}/diff`).then(r => r.text());
+  expect(diff).toContain("line 15 CHANGED");
+  // Lines far from the change are present too because we requested full context.
+  expect(diff).toContain("line 1");
+  expect(diff).toContain("line 30");
+});
+
 test("GET /sessions/:id/asking returns pending escalations", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
