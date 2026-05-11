@@ -15,7 +15,15 @@ import {
 } from "./session";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents } from "./event-log";
-import { createSessionWorktree, removeWorktree, resolveBaseCommit, currentBranch, gitDiff } from "./worktree";
+import {
+  createSessionWorktree,
+  removeWorktree,
+  resolveBaseCommit,
+  currentBranch,
+  gitDiff,
+  listWorktreeFiles,
+  readWorktreeFile,
+} from "./worktree";
 import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState } from "./file-store";
 import { listActions, findAction } from "./actions";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
@@ -376,6 +384,8 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/reports/:filename/unread", postReportUnread),
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
+  defineRoute("GET",  "/sessions/:id/files", getFiles),
+  defineRoute("GET",  "/sessions/:id/file", getFile),
   defineRoute("GET",  "/actions", getActions),
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
@@ -671,6 +681,29 @@ async function getDiff(req: Request, ctx: ServerContext, params: Record<string, 
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return json({ error: message }, 500);
+    }
+  });
+}
+
+async function getFiles(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const paths = await listWorktreeFiles(meta.worktreePath);
+    return json({ paths });
+  });
+}
+
+async function getFile(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const relPath = new URL(req.url).searchParams.get("path");
+    if (!relPath || relPath.trim() === "") return json({ error: "path query is required" }, 400);
+    const result = await readWorktreeFile(meta.worktreePath, relPath);
+    switch (result.kind) {
+      case "text": return json({ path: relPath, content: result.content });
+      case "binary": return json({ path: relPath, binary: true });
+      case "too-large": return json({ path: relPath, tooLarge: true, size: result.size });
+      case "not-found": return json({ error: "file not found" }, 404);
+      case "not-a-file": return json({ error: "not a file" }, 400);
+      case "denied": return json({ error: "path outside worktree" }, 403);
     }
   });
 }
