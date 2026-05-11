@@ -496,7 +496,13 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
   const includeArchived = url.searchParams.get("includeArchived") === "true";
   const sessions = await listSessionMetas(ctx.sessionsDir);
   const filtered = includeArchived ? sessions : sessions.filter(s => !s.archivedAt);
-  return json({ sessions: filtered });
+  const decorated = await Promise.all(filtered.map(async meta => {
+    const dir = reportsDirFor(ctx, meta.id);
+    const [reports, readSet] = await Promise.all([listAllFiles(dir), readReadState(dir)]);
+    const unreadReportCount = reports.reduce((n, r) => n + (readSet.has(r.filename) ? 0 : 1), 0);
+    return { ...meta, unreadReportCount };
+  }));
+  return json({ sessions: decorated });
 }
 
 async function postArchive(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
