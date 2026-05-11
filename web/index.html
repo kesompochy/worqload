@@ -158,6 +158,8 @@
   .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1.2rem; width: min(520px, 90vw); }
   .modal h2 { margin: 0 0 .8rem 0; font-size: 1rem; }
   .hidden { display: none !important; }
+  .spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: -.15em; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .toast { position: fixed; bottom: 1rem; right: 1rem; background: var(--panel-2); border: 1px solid var(--border); padding: .5rem .8rem; border-radius: 4px; font-size: 13px; }
   .action-output { margin-top: .8rem; }
   .action-output h3 { margin: .6rem 0 .25rem 0; font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-dim); }
@@ -988,10 +990,16 @@ function renderActionResult(result, httpStatus) {
 }
 
 async function createSession() {
+  const createBtn = $("#modalCreate");
+  if (createBtn.disabled) return;
   const prompt = $("#modalPrompt").value.trim();
   if (prompt === "") { toast("prompt is required"); return; }
   const baseBranch = $("#modalBranch").value.trim();
   const branchName = $("#modalBranchName").value.trim();
+  const cancelBtn = $("#modalCancel");
+  createBtn.disabled = true;
+  cancelBtn.disabled = true;
+  createBtn.innerHTML = `<span class="spinner"></span> Creating…`;
   try {
     const body = { prompt };
     if (baseBranch) body.baseBranch = baseBranch;
@@ -1002,6 +1010,10 @@ async function createSession() {
     await selectSession(meta.id);
   } catch (e) {
     toast(`failed: ${e.message}`);
+  } finally {
+    createBtn.disabled = false;
+    cancelBtn.disabled = false;
+    createBtn.textContent = "Create";
   }
 }
 
