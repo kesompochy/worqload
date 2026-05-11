@@ -2,8 +2,9 @@
 // inline panel rather than a modal: the run log stays on screen alongside the
 // rest of the session, and (because the server records each run as an
 // action_invoked event) it survives a reload. The confirmation step is the
-// explicit "Confirm & Run" button next to the highlighted confirmMessage — the
-// panel is the gate, not a separate dialog.
+// explicit "Confirm & Run" button, kept in the panel head — directly under the
+// action bar — so it is a short reach from the button that opened the panel.
+// The panel is the gate, not a separate dialog.
 
 import { escapeHtml, formatRelative } from "./dom.js";
 import { state } from "./state.js";
@@ -32,16 +33,13 @@ export function renderActionPanelHtml() {
     <div class="action-panel">
       <div class="action-panel-head">
         <strong>${escapeHtml(action.label)}</strong>
+        <button class="action-run" data-action-panel-run>${action.confirmMessage ? "Confirm &amp; Run" : "Run"}</button>
         ${action.description ? `<span class="desc">${escapeHtml(action.description)}</span>` : ""}
         <span class="spacer"></span>
         <button class="close" data-action-panel-close title="Close">×</button>
       </div>
       ${confirmHtml}
       ${paramsHtml ? `<div class="action-form">${paramsHtml}</div>` : ""}
-      <div class="row" style="margin-top:.7rem">
-        <span class="spacer"></span>
-        <button data-action-panel-run>${action.confirmMessage ? "Confirm &amp; Run" : "Run"}</button>
-      </div>
       <div class="action-output">${renderActionOutputHtml(action.id)}</div>
     </div>
   `;
