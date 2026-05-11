@@ -823,6 +823,17 @@ test("GET /assets/syntax-highlight.js serves the highlighter module", async () =
   expect(body).toContain("export function highlightCode");
 });
 
+test("GET /assets/notifications.js serves the notifications helper module", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const res = await fetch(`${baseUrl}/assets/notifications.js`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("javascript");
+  const body = await res.text();
+  expect(body).toContain("export function notificationForEvent");
+});
+
 test("GET /assets/<unknown> returns 404", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
