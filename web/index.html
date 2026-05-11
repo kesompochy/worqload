@@ -52,8 +52,20 @@
   .detail-body h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin: 0 0 .5rem 0; }
   .asking { background: rgba(210,153,34,.08); border: 1px solid rgba(210,153,34,.4); padding: .8rem 1rem; border-radius: 4px; }
   .asking .label { color: var(--waiting); font-size: 12px; text-transform: uppercase; letter-spacing: .07em; margin-bottom: .3rem; }
-  .report { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: .7rem .9rem; margin-bottom: .7rem; }
-  .report .filename { color: var(--accent); font-size: 12px; font-family: ui-monospace, monospace; margin-bottom: .3rem; }
+  .report { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; margin-bottom: .7rem; overflow: hidden; }
+  .report.unread { border-left: 3px solid var(--accent); }
+  .report-header { display: flex; align-items: center; gap: .5rem; padding: .55rem .8rem; cursor: pointer; user-select: none; }
+  .report-header:hover { background: var(--panel-2); }
+  .report-chevron { color: var(--text-dim); width: 1ch; display: inline-block; transition: transform .12s ease; }
+  .report.collapsed .report-chevron { transform: rotate(-90deg); }
+  .report-filename { color: var(--accent); font-size: 12px; font-family: ui-monospace, monospace; flex: 1; }
+  .report-status { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: .05rem .4rem; border-radius: 3px; }
+  .report-status.unread { background: rgba(88,166,255,.18); color: var(--accent); }
+  .report-status.read { background: rgba(139,149,163,.16); color: var(--text-dim); }
+  .report-toggle-read { background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: .15rem .55rem; font-size: 11px; border-radius: 3px; cursor: pointer; }
+  .report-toggle-read:hover { color: var(--text); background: var(--panel-2); }
+  .report-body { padding: .55rem .9rem .7rem .9rem; border-top: 1px solid var(--border); }
+  .report.collapsed .report-body { display: none; }
   .report-empty { color: var(--text-dim); font-style: italic; }
   .tabs { display: flex; gap: .25rem; padding: 0 1.1rem; border-bottom: 1px solid var(--border); background: var(--panel); }
   .tab-btn { background: transparent; border: 1px solid transparent; border-bottom: none; padding: .45rem .9rem; border-radius: 4px 4px 0 0; color: var(--text-dim); cursor: pointer; }
@@ -185,6 +197,7 @@ const state = {
   diffBase: "session-start",
   anchor: null,          // { path, lineStart, lineEnd } | null
   collapsedFiles: new Set(),  // paths of diff files the user collapsed
+  reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   actions: [],           // [{ id, label, description?, confirmMessage?, params? }]
   pendingAction: null,   // descriptor currently displayed in action modal
 };
@@ -228,6 +241,7 @@ async function selectSession(id) {
   state.asking = [];
   state.detail = null;
   state.collapsedFiles = new Set();
+  state.reportToggle = new Map();
   renderSessionList();
   renderDetail();
   if (!id) return;
@@ -280,7 +294,8 @@ function openWs(id) {
     }
     if (state.activeTab === "events") renderDetail();
     // For "interesting" events refresh the relevant slice.
-    if (ev.kind === "report_submitted" || ev.kind === "feedback_received" || ev.kind === "feedback_fetched"
+    if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread"
+        || ev.kind === "feedback_received" || ev.kind === "feedback_fetched"
         || ev.kind === "escalation_requested" || ev.kind === "escalation_resolved"
         || ev.kind === "session_stopped" || ev.kind === "session_crashed") {
       await refreshDetail();
@@ -345,10 +360,21 @@ function renderDetail() {
           const sel = isAnchored(path, lineNo) ? "selected" : "";
           return `<div class="ln-row ${sel}" data-anchor-line="${lineNo}" data-anchor-path="${escapeHtml(path)}"><span class="ln">${lineNo}</span><span class="body">${escapeHtml(line) || "&nbsp;"}</span></div>`;
         }).join("");
+        const expanded = isReportExpanded(r);
+        const statusLabel = r.read ? "read" : "unread";
+        const toggleLabel = r.read ? "未読にする" : "既読にする";
+        const escapedFilename = escapeHtml(r.filename);
         return `
-          <article class="report">
-            <div class="filename">${escapeHtml(r.filename)}</div>
-            <div class="lines">${rows}</div>
+          <article class="report ${r.read ? "" : "unread"} ${expanded ? "" : "collapsed"}" data-report-filename="${escapedFilename}">
+            <div class="report-header" data-report-toggle="${escapedFilename}">
+              <span class="report-chevron">▾</span>
+              <span class="report-filename">${escapedFilename}</span>
+              <span class="report-status ${statusLabel}">${statusLabel}</span>
+              <button type="button" class="report-toggle-read" data-report-mark="${escapedFilename}" data-report-mark-to="${r.read ? "unread" : "read"}">${toggleLabel}</button>
+            </div>
+            <div class="report-body">
+              <div class="lines">${rows}</div>
+            </div>
           </article>
         `;
       }).join("")
@@ -462,6 +488,23 @@ function isAnchored(path, lineNo) {
 }
 
 function onDetailBodyClick(e) {
+  const markBtn = e.target.closest("[data-report-mark]");
+  if (markBtn) {
+    e.stopPropagation();
+    const filename = markBtn.getAttribute("data-report-mark");
+    const to = markBtn.getAttribute("data-report-mark-to");
+    onReportMark(filename, to === "read");
+    return;
+  }
+  const reportToggle = e.target.closest("[data-report-toggle]");
+  if (reportToggle) {
+    const filename = reportToggle.getAttribute("data-report-toggle");
+    const report = state.reports.find(r => r.filename === filename);
+    const currentlyExpanded = report ? isReportExpanded(report) : true;
+    state.reportToggle.set(filename, !currentlyExpanded);
+    renderDetail();
+    return;
+  }
   const toggle = e.target.closest("[data-diff-toggle]");
   if (toggle) {
     const path = toggle.getAttribute("data-diff-toggle");
@@ -471,6 +514,27 @@ function onDetailBodyClick(e) {
     return;
   }
   onLineClick(e);
+}
+
+function isReportExpanded(report) {
+  if (state.reportToggle.has(report.filename)) {
+    return state.reportToggle.get(report.filename);
+  }
+  return !report.read;
+}
+
+async function onReportMark(filename, read) {
+  if (!state.selected) return;
+  const verb = read ? "read" : "unread";
+  try {
+    await api("POST", `/sessions/${state.selected}/reports/${encodeURIComponent(filename)}/${verb}`, {});
+    // Drop any explicit toggle so the new default (collapsed when read,
+    // expanded when unread) takes effect on the next render.
+    state.reportToggle.delete(filename);
+    await refreshDetail();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
 }
 
 function onExpandAllDiffFiles() {

@@ -243,7 +243,62 @@ test("GET /sessions/:id/reports returns all reports with content", async () => {
   expect(res.reports).toHaveLength(2);
   expect(res.reports[0].filename).toBe("001-plan.md");
   expect(res.reports[0].content).toBe("the plan");
+  expect(res.reports[0].read).toBe(false);
   expect(res.reports[1].filename).toBe("002-build.md");
+  expect(res.reports[1].read).toBe(false);
+});
+
+test("POST /sessions/:id/reports/:filename/read marks a report as read", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "build", content: "build result" });
+
+  const marked = await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/read`, {}).then(r => r.json());
+  expect(marked.ok).toBe(true);
+  expect(marked.read).toBe(true);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then(r => r.json());
+  const byName = Object.fromEntries(res.reports.map((r: { filename: string; read: boolean }) => [r.filename, r.read]));
+  expect(byName["001-plan.md"]).toBe(true);
+  expect(byName["002-build.md"]).toBe(false);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.some(e => e.kind === "report_read")).toBe(true);
+});
+
+test("POST /sessions/:id/reports/:filename/unread reverts read state", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/read`, {});
+  const reverted = await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/unread`, {}).then(r => r.json());
+  expect(reverted.read).toBe(false);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then(r => r.json());
+  expect(res.reports[0].read).toBe(false);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.some(e => e.kind === "report_unread")).toBe(true);
+});
+
+test("POST /sessions/:id/reports/:filename/read returns 404 for missing report", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/reports/nope.md/read`, {});
+  expect(res.status).toBe(404);
 });
 
 test("GET /sessions/:id/diff returns git diff against session-start commit", async () => {

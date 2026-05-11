@@ -14,7 +14,7 @@ import {
 import { startSessionRunner, type SessionRunner } from "./session-runner";
 import { appendEvent, readEvents } from "./event-log";
 import { createSessionWorktree, removeWorktree, resolveBaseCommit, currentBranch, gitDiff } from "./worktree";
-import { writeNumberedFile, listAllFiles, moveFile } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState } from "./file-store";
 import { listActions, findAction } from "./actions";
 
 // worqload protocol commands are part of the system contract; they must run
@@ -318,6 +318,8 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("POST", "/sessions/:id/escalations/:filename/resolve", postEscalationResolve),
   defineRoute("GET",  "/sessions/:id/reports", getReports),
+  defineRoute("POST", "/sessions/:id/reports/:filename/read", postReportRead),
+  defineRoute("POST", "/sessions/:id/reports/:filename/unread", postReportUnread),
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
   defineRoute("GET",  "/actions", getActions),
@@ -487,11 +489,43 @@ async function getSessionDetail(_req: Request, ctx: ServerContext, params: Recor
 
 async function getReports(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const reports = await listAllFiles(reportsDirFor(ctx, meta.id));
+    const dir = reportsDirFor(ctx, meta.id);
+    const [reports, readSet] = await Promise.all([listAllFiles(dir), readReadState(dir)]);
     return json({
-      reports: reports.map(r => ({ filename: r.filename, content: r.content })),
+      reports: reports.map(r => ({
+        filename: r.filename,
+        content: r.content,
+        read: readSet.has(r.filename),
+      })),
     });
   });
+}
+
+async function setReportReadFlag(
+  ctx: ServerContext,
+  params: Record<string, string>,
+  read: boolean,
+): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const dir = reportsDirFor(ctx, meta.id);
+    const filename = decodeURIComponent(params.filename);
+    const target = Bun.file(join(dir, filename));
+    if (!(await target.exists())) return json({ error: "report not found" }, 404);
+    await setReadState(dir, filename, read);
+    await appendAndBroadcast(ctx, meta.id, {
+      kind: read ? "report_read" : "report_unread",
+      payload: { filename },
+    });
+    return json({ ok: true, filename, read });
+  });
+}
+
+async function postReportRead(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return setReportReadFlag(ctx, params, true);
+}
+
+async function postReportUnread(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return setReportReadFlag(ctx, params, false);
 }
 
 async function getAsking(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {

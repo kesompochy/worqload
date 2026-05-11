@@ -2,6 +2,8 @@ import { mkdir, readdir, rename } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { withLock } from "./lock";
 
+const READ_STATE_BASENAME = ".read-state.json";
+
 const SLUG_RE = /[^a-zA-Z0-9_-]+/g;
 const TRIM_RE = /^-+|-+$/g;
 const NUMBER_RE = /^(\d+)-/;
@@ -84,4 +86,34 @@ export async function listAllFiles(dir: string): Promise<ReadFile[]> {
 export async function moveFile(srcPath: string, destPath: string): Promise<void> {
   await mkdir(dirname(destPath), { recursive: true });
   await rename(srcPath, destPath);
+}
+
+function readStatePath(dir: string): string {
+  return join(dir, READ_STATE_BASENAME);
+}
+
+export async function readReadState(dir: string): Promise<Set<string>> {
+  const file = Bun.file(readStatePath(dir));
+  if (!(await file.exists())) return new Set();
+  try {
+    const data = await file.json() as { read?: string[] };
+    return new Set(data.read ?? []);
+  } catch {
+    return new Set();
+  }
+}
+
+export async function setReadState(
+  dir: string,
+  filename: string,
+  read: boolean,
+): Promise<void> {
+  const path = readStatePath(dir);
+  await mkdir(dir, { recursive: true });
+  await withLock(path, async () => {
+    const current = await readReadState(dir);
+    if (read) current.add(filename);
+    else current.delete(filename);
+    await Bun.write(path, JSON.stringify({ read: [...current].sort() }, null, 2));
+  });
 }
