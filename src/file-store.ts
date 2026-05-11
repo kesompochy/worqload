@@ -17,12 +17,12 @@ function pad(n: number): string {
   return String(n).padStart(3, "0");
 }
 
-async function nextNumber(dir: string): Promise<number> {
+async function maxNumberIn(dir: string): Promise<number> {
   let entries: string[];
   try {
     entries = await readdir(dir);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 1;
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
     throw err;
   }
   let max = 0;
@@ -33,6 +33,15 @@ async function nextNumber(dir: string): Promise<number> {
       if (n > max) max = n;
     }
   }
+  return max;
+}
+
+async function nextNumber(dir: string, archiveDirs: string[]): Promise<number> {
+  let max = await maxNumberIn(dir);
+  for (const archiveDir of archiveDirs) {
+    const n = await maxNumberIn(archiveDir);
+    if (n > max) max = n;
+  }
   return max + 1;
 }
 
@@ -42,16 +51,26 @@ export interface NumberedFile {
   path: string;
 }
 
+export interface WriteNumberedFileOptions {
+  // Directories that hold files previously archived out of `dir` (e.g. a
+  // drained feedback "inbox" whose messages were moved to "read"). Their
+  // filenames count toward the next number so the sequence stays monotonic
+  // across the whole lifecycle instead of resetting once `dir` empties.
+  archiveDirs?: string[];
+}
+
 export async function writeNumberedFile(
   dir: string,
   slug: string,
   content: string,
+  options: WriteNumberedFileOptions = {},
 ): Promise<NumberedFile> {
+  const archiveDirs = options.archiveDirs ?? [];
   // Lock on the directory itself so concurrent writes get unique seq numbers.
   const lockKey = join(dir, ".numbering");
   await mkdir(dir, { recursive: true });
   return withLock(lockKey, async () => {
-    const seq = await nextNumber(dir);
+    const seq = await nextNumber(dir, archiveDirs);
     const filename = `${pad(seq)}-${sanitiseSlug(slug)}.md`;
     const path = join(dir, filename);
     await Bun.write(path, content);

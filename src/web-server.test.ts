@@ -271,6 +271,24 @@ test("feedback inbox round trip: POST writes, GET fetches and moves to read", as
   expect(readdirSync(readDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md"]);
 });
 
+test("feedback numbering stays monotonic after a fetch drains the inbox", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "first", slug: "a" });
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  const second = await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "second", slug: "b" }).then(r => r.json());
+
+  expect(second.filename).toBe("002-b.md");
+  expect(second.seq).toBe(2);
+
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  expect(readdirSync(inboxDir)).toEqual(["002-b.md"]);
+});
+
 test("POST /sessions/:id/stop kills the host and sets status stopped", async () => {
   const repoDir = makeRepo();
   const { baseUrl, ctx } = await bootServer(repoDir, "hang");
@@ -354,6 +372,24 @@ test("escalation resolve keeps waiting_human when other escalations remain", asy
 
   const detail = await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json());
   expect(detail.meta.status).toBe("waiting_human");
+});
+
+test("escalation numbering stays monotonic after a resolve archives the file", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "first", content: "A?" });
+  await postJson(baseUrl, `/sessions/${sid}/escalations/001-first.md/resolve`, { content: "answer A" });
+  const second = await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "second", content: "B?" }).then(r => r.json());
+
+  expect(second.filename).toBe("002-second.md");
+  expect(second.seq).toBe(2);
+
+  const askingDir = join(ctx.sessionsDir, sid, "asking");
+  expect(readdirSync(askingDir).filter(f => f.endsWith(".md"))).toEqual(["002-second.md"]);
 });
 
 test("GET /sessions/:id/reports returns all reports with content", async () => {
