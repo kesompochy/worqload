@@ -22,6 +22,7 @@ import {
   resolveBaseCommit,
   currentBranch,
   gitDiff,
+  gitDiffAgainstBaseBranch,
   listWorktreeFiles,
   readWorktreeFile,
 } from "./worktree";
@@ -755,9 +756,10 @@ async function getDiff(req: Request, ctx: ServerContext, params: Record<string, 
   return withSession(ctx, params.id, async meta => {
     const url = new URL(req.url);
     const base = url.searchParams.get("base") || "session-start";
-    const target = base === "base-branch" ? meta.baseBranch : meta.baseCommit;
     try {
-      const diff = await gitDiff(meta.worktreePath, target, FULL_FILE_CONTEXT_LINES);
+      const diff = base === "base-branch"
+        ? await gitDiffAgainstBaseBranch(meta.worktreePath, meta.baseBranch, meta.baseCommit, FULL_FILE_CONTEXT_LINES)
+        : await gitDiff(meta.worktreePath, meta.baseCommit, FULL_FILE_CONTEXT_LINES);
       return new Response(diff, { headers: { "content-type": "text/plain; charset=utf-8" } });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
