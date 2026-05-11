@@ -459,7 +459,7 @@ function renderDetail() {
     </div>
     <form class="feedback-form" id="feedbackForm">
       ${anchorChip}
-      <textarea id="feedbackInput" placeholder="${state.anchor ? "Comment on the selected lines..." : "Plain feedback (picked up at the agent's next turn). Click a diff or report line to anchor."}" rows="3"></textarea>
+      <textarea id="feedbackInput" placeholder="${state.anchor ? "Comment on the selected lines... (Enter で送信 / Shift+Enter で改行)" : "Plain feedback (picked up at the agent's next turn). Click a diff or report line to anchor. (Enter で送信 / Shift+Enter で改行)"}" rows="3"></textarea>
       <div class="row">
         <span class="spacer"></span>
         <button type="submit" ${isTerminal ? "disabled" : ""}>Send feedback</button>
@@ -476,6 +476,7 @@ function renderDetail() {
     e.preventDefault();
     onFeedback();
   });
+  bindFeedbackEnterToSubmit($("#feedbackInput"));
   document.querySelectorAll(".tab-btn").forEach(b => {
     b.addEventListener("click", () => switchTab(b.getAttribute("data-tab")));
   });
@@ -719,6 +720,23 @@ async function onResolve(filename, articleEl) {
   } catch (e) {
     toast(`failed: ${e.message}`);
   }
+}
+
+function bindFeedbackEnterToSubmit(textarea) {
+  if (!textarea) return;
+  // Track IME composition explicitly. `event.isComposing` and `keyCode === 229`
+  // cover most browsers, but on some macOS browsers the commit-Enter keydown
+  // fires AFTER compositionend with both flags clear. The explicit flag is the
+  // backstop so a confirming Enter does not also submit.
+  let composing = false;
+  textarea.addEventListener("compositionstart", () => { composing = true; });
+  textarea.addEventListener("compositionend", () => { composing = false; });
+  textarea.addEventListener("keydown", e => {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    if (composing || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    onFeedback();
+  });
 }
 
 async function onFeedback() {
