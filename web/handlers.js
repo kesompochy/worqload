@@ -20,6 +20,7 @@ import { renderSessionList, renderDetail } from "./render.js";
 export async function selectSession(id) {
   if (state.ws) { state.ws.close(); state.ws = null; }
   state.selected = id;
+  state.renamingSessionId = null;
   state.lastSeq = 0;
   state.reports = [];
   state.asking = [];
@@ -282,23 +283,39 @@ export async function onResume() {
   }
 }
 
-// The sidebar/detail title defaults to the head of the initial prompt, which
-// reads as the user's opening message and is hard to tell sessions apart by.
-// This lets the human give the session a short alias; a blank value clears it
-// and reinstates the prompt-head fallback.
-export async function onRename() {
-  if (!state.selected || !state.detail) return;
-  const current = state.detail.meta.title || "";
-  const next = prompt("Session alias (blank to show the prompt text):", current);
-  if (next === null) return;
+// Inline rename of a session's display title (the "alias"). The sidebar/detail
+// title defaults to the head of the initial prompt, which reads as the user's
+// opening message and is hard to tell sessions apart by; a short alias fixes
+// that. A blank value clears the alias and reinstates the prompt-head fallback.
+export function onRenameStart(id) {
+  if (!id) return;
+  state.renamingSessionId = id;
+  renderSessionList(); // renders (and focuses) the inline input for this card
+}
+
+export function onRenameCancel() {
+  if (!state.renamingSessionId) return;
+  state.renamingSessionId = null;
+  renderSessionList();
+}
+
+export async function onRenameCommit(id, rawValue) {
+  // Guard against a second invocation: pressing Enter commits and a `blur`
+  // (when the re-render removes the input, or focus moves away) would call this
+  // again — by then renamingSessionId no longer matches and we no-op.
+  if (state.renamingSessionId !== id) return;
+  state.renamingSessionId = null;
+  const title = (rawValue ?? "").trim();
+  const card = state.sessions.find(s => s.id === id);
+  if (title === ((card && card.title) || "")) { renderSessionList(); return; }
   try {
-    const { meta } = await api("POST", `/sessions/${state.selected}/title`, { title: next.trim() });
-    state.detail.meta = meta;
-    const card = state.sessions.find(s => s.id === state.selected);
+    const { meta } = await api("POST", `/sessions/${id}/title`, { title });
     if (card) card.title = meta.title;
+    if (state.detail && state.detail.meta && state.detail.meta.id === id) state.detail.meta = meta;
     renderSessionList();
     renderDetail();
   } catch (e) {
+    renderSessionList();
     toast(`failed: ${e.message}`);
   }
 }
