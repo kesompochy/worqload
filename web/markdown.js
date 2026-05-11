@@ -6,6 +6,7 @@
 //   - Blockquotes (> ...)
 //   - Unordered lists (-, *, +)
 //   - Ordered lists (1.  2.  ...)
+//   - GFM tables (| a | b | + a |---|---| delimiter row, with :--: alignment)
 //   - Horizontal rules (---, ***, ___)
 //   - Paragraphs
 //
@@ -53,6 +54,7 @@ function parseBlocks(source) {
     if (isBlockquoteLine(line)) { i = consumeBlockquote(lines, i, blocks); continue; }
     if (isUnorderedListItem(line)) { i = consumeUnorderedList(lines, i, blocks); continue; }
     if (isOrderedListItem(line)) { i = consumeOrderedList(lines, i, blocks); continue; }
+    if (isTableStart(lines, i)) { i = consumeTable(lines, i, blocks); continue; }
 
     i = consumeParagraph(lines, i, blocks);
   }
@@ -70,6 +72,34 @@ function isBlockquoteLine(line) { return /^>\s?/.test(line); }
 function isUnorderedListItem(line) { return /^[-*+]\s+/.test(line); }
 function isOrderedListItem(line) { return /^\d+\.\s+/.test(line); }
 function isListContinuation(line) { return /^\s{2,}\S/.test(line); }
+
+// A GFM table starts where a header row (which must contain at least one pipe,
+// so a lone "---" stays a horizontal rule) is immediately followed by a
+// delimiter row such as "| :-- | --: |".
+function isTableStart(lines, i) {
+  const line = lines[i];
+  if (line === undefined || isBlankLine(line) || !line.includes("|")) return false;
+  if (!isTableDelimiterRow(lines[i + 1])) return false;
+  // GFM requires the header and delimiter rows to have the same column count.
+  return splitTableRow(line).length === splitTableRow(lines[i + 1]).length;
+}
+
+function isTableDelimiterRow(line) {
+  if (line === undefined) return false;
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every(cell => /^:?-+:?$/.test(cell));
+}
+
+// Body rows run until a blank line or the start of another block-level element.
+function isTableBodyRow(line) {
+  if (line === undefined || isBlankLine(line)) return false;
+  return !isFenceLine(line)
+      && !isHeadingLine(line)
+      && !isHrLine(line)
+      && !isBlockquoteLine(line)
+      && !isUnorderedListItem(line)
+      && !isOrderedListItem(line);
+}
 
 function consumeFencedCode(lines, start, out) {
   const startLine = start + 1;
@@ -146,11 +176,55 @@ function consumeList(lines, start, out, kind, markerRe) {
   return i;
 }
 
+function consumeTable(lines, start, out) {
+  const startLine = start + 1;
+  const headerCells = splitTableRow(lines[start]);
+  const aligns = parseTableAlignments(lines[start + 1]);
+  const rows = [];
+  let i = start + 2;
+  while (i < lines.length && isTableBodyRow(lines[i])) {
+    rows.push({ cells: splitTableRow(lines[i]), line: i + 1 });
+    i++;
+  }
+  out.push({
+    kind: "table",
+    headerCells,
+    aligns,
+    rows,
+    // The header element is anchored to both the header and delimiter source lines.
+    headerStartLine: startLine,
+    headerEndLine: start + 2,
+    startLine,
+    endLine: i,
+  });
+  return i;
+}
+
+// Split a table row into trimmed cell contents. Leading and trailing pipes are
+// optional; a backslash-escaped pipe (\|) stays inside its cell.
+function splitTableRow(line) {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|") && !s.slice(0, -1).endsWith("\\")) s = s.slice(0, -1);
+  return s.split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, "|"));
+}
+
+function parseTableAlignments(delimiterLine) {
+  return splitTableRow(delimiterLine).map(cell => {
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    if (left) return "left";
+    return null;
+  });
+}
+
 function consumeParagraph(lines, start, out) {
   const startLine = start + 1;
   const body = [];
   let i = start;
-  while (i < lines.length && !paragraphEnds(lines[i])) {
+  while (i < lines.length && !paragraphEnds(lines, i)) {
     body.push(lines[i]);
     i++;
   }
@@ -163,14 +237,16 @@ function consumeParagraph(lines, start, out) {
   return i;
 }
 
-function paragraphEnds(line) {
+function paragraphEnds(lines, i) {
+  const line = lines[i];
   return isBlankLine(line)
       || isFenceLine(line)
       || isHeadingLine(line)
       || isHrLine(line)
       || isBlockquoteLine(line)
       || isUnorderedListItem(line)
-      || isOrderedListItem(line);
+      || isOrderedListItem(line)
+      || isTableStart(lines, i);
 }
 
 // ---------- block-level rendering ----------
@@ -184,6 +260,7 @@ function renderBlock(block, ctx) {
     case "blockquote": return renderBlockquote(block, ctx);
     case "ul":         return renderList("ul", block, ctx);
     case "ol":         return renderList("ol", block, ctx);
+    case "table":      return renderTable(block, ctx);
     default:           return "";
   }
 }
@@ -222,6 +299,26 @@ function renderList(tag, block, ctx) {
     return `<li${attrs}>${renderInline(item.content)}</li>`;
   }).join("");
   return `<${tag}>${items}</${tag}>`;
+}
+
+function renderTable(block, ctx) {
+  const cell = (tag, content, columnIndex) => {
+    const align = block.aligns[columnIndex];
+    const style = align ? ` style="text-align:${align};"` : "";
+    return `<${tag}${style}>${renderInline(content)}</${tag}>`;
+  };
+  const columnCount = block.headerCells.length;
+  const headerAttrs = anchorAttrs(block.headerStartLine, block.headerEndLine, ctx);
+  const headerRow = `<tr${headerAttrs}>`
+    + block.headerCells.map((content, i) => cell("th", content, i)).join("")
+    + `</tr>`;
+  const bodyRows = block.rows.map(row => {
+    const attrs = anchorAttrs(row.line, row.line, ctx);
+    let cells = "";
+    for (let i = 0; i < columnCount; i++) cells += cell("td", row.cells[i] ?? "", i);
+    return `<tr${attrs}>${cells}</tr>`;
+  }).join("");
+  return `<table><thead>${headerRow}</thead><tbody>${bodyRows}</tbody></table>`;
 }
 
 // ---------- inline rendering ----------
