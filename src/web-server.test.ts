@@ -866,6 +866,22 @@ test("GET / serves the HTML shell linking the stylesheet and entry module", asyn
   expect(body).toContain(`src="/assets/app.js"`);
 });
 
+test("every web/ frontend asset is reachable under /assets", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  // The /assets whitelist is hand-maintained; this guards against adding a
+  // module file under web/ but forgetting to list it (the browser would 404).
+  const webDir = join(import.meta.dir, "..", "web");
+  const assetFiles = readdirSync(webDir).filter((f) => f.endsWith(".js") || f.endsWith(".css"));
+  expect(assetFiles.length).toBeGreaterThan(0);
+  const statuses: Record<string, number> = {};
+  for (const f of assetFiles) {
+    statuses[f] = (await fetch(`${baseUrl}/assets/${f}`)).status;
+  }
+  expect(statuses).toEqual(Object.fromEntries(assetFiles.map((f) => [f, 200])));
+});
+
 test("GET /assets/<unknown> returns 404", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
