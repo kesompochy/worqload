@@ -28,6 +28,7 @@ export async function selectSession(id) {
   state.diffExpansions = new Map();
   state.reportToggle = new Map();
   state.feedbackToggle = new Map();
+  state.eventToggle = new Map();
   state.files = [];
   state.filesLoaded = false;
   state.fileTreeCollapsed = new Set();
@@ -66,6 +67,13 @@ export function onDetailBodyClick(e) {
     const feedback = state.feedbackHistory.find(f => f.filename === filename);
     const currentlyExpanded = feedback ? isFeedbackExpanded(feedback) : true;
     state.feedbackToggle.set(filename, !currentlyExpanded);
+    renderDetail();
+    return;
+  }
+  const eventToggle = e.target.closest("[data-event-toggle]");
+  if (eventToggle) {
+    const seq = Number(eventToggle.getAttribute("data-event-toggle"));
+    state.eventToggle.set(seq, state.eventToggle.get(seq) !== true);
     renderDetail();
     return;
   }

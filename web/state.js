@@ -23,6 +23,7 @@ export const state = {
   fileContent: null,     // { path, content } | { path, binary } | { path, tooLarge, size } | { path, error } | { path, loading: true }
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
+  eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked
   actions: [],           // [{ id, label, description?, confirmMessage?, params? }]
   openActionId: null,    // id of the action whose inline panel is open (null = closed)
   actionResults: new Map(),  // actionId -> last run result observed in this browser view
@@ -53,4 +54,8 @@ export function isFeedbackExpanded(feedback) {
   // "unread" feedback (the agent has not fetched it yet) is the recently sent
   // one the human most likely still wants to see; collapse it once consumed.
   return feedback.status === "unread";
+}
+
+export function isEventExpanded(event) {
+  return state.eventToggle.get(event?.seq) === true;
 }
