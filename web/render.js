@@ -80,13 +80,23 @@ export function renderSessionList() {
 // renderDetail rebuilds the whole detail pane, replacing #detailBody (the
 // scroll container) and every row inside it — so the browser's native scroll
 // anchoring has nothing to correlate and the view snaps back to the top. These
-// two helpers carry the position across the rebuild. We anchor to the topmost
-// row still reaching into the viewport (rows carry stable data-* ids) and the
-// gap below the viewport top it sits at, rather than reusing scrollTop, because
-// the Events and Reports lists render newest-first: a new item prepended above
-// the anchor would otherwise shift everything the user is looking at. Sitting
+// helpers carry the position across the rebuild. We anchor to the topmost row
+// still reaching into the viewport (rows carry stable data-* ids) and the gap
+// below the viewport top it sits at, rather than reusing scrollTop, because the
+// Events and Reports lists render newest-first: a new item prepended above the
+// anchor would otherwise shift everything the user is looking at. Sitting
 // exactly at the top is preserved as-is so a freshly arrived item stays visible.
+//
+// When the active tab changes the anchor row no longer exists in the rebuilt
+// DOM; instead renderDetail() stashes the outgoing tab's position in
+// state.tabScroll and restores the incoming tab's stashed position, so flipping
+// between tabs returns each to where it was left.
 const SCROLL_ANCHOR_ATTRS = ["data-event-seq", "data-report-filename", "data-feedback-filename", "data-diff-path", "data-asking"];
+
+// The tab whose content currently occupies #detailBody — i.e. what the next
+// captureDetailScroll() will be measuring. Reset to null whenever the pane is
+// torn down (empty state / session switch) so a stale position is never reused.
+let renderedTab = null;
 
 function captureDetailScroll() {
   const body = $("#detailBody");
@@ -110,7 +120,7 @@ function restoreDetailScroll(saved) {
   if (!body) return;
   if (saved.scrollTop !== undefined) { body.scrollTop = saved.scrollTop; return; }
   const el = body.querySelector(`[${saved.attr}=${CSS.escape(saved.value)}]`);
-  if (!el) return; // the anchored row is gone (e.g. tab switched) — leave the rebuilt pane at its top
+  if (!el) return; // the anchored row is gone — leave the rebuilt pane at its top
   const offset = el.getBoundingClientRect().top - body.getBoundingClientRect().top;
   body.scrollTop += offset - saved.offset;
 }
@@ -127,7 +137,12 @@ export function renderDetail() {
   }
   if (!state.selected || !state.detail) {
     root.innerHTML = `<div class="detail-empty">Select a session, or create a new one.</div>`;
+    renderedTab = null;
     return;
+  }
+  // Switching tabs: remember where the outgoing tab was left.
+  if (renderedTab !== null && renderedTab !== state.activeTab && savedScroll) {
+    state.tabScroll.set(renderedTab, savedScroll);
   }
   const m = state.detail.meta;
   const askingHtml = state.asking.length > 0
@@ -305,7 +320,10 @@ export function renderDetail() {
     const el = document.getElementById(`actionParam-${name}`);
     if (el) el.value = value;
   }
-  restoreDetailScroll(savedScroll);
+  // Re-render of the same tab: re-anchor to where it was. Tab switch: restore
+  // that tab's last position (absent for a tab not yet visited → stays at top).
+  restoreDetailScroll(renderedTab === state.activeTab ? savedScroll : (state.tabScroll.get(state.activeTab) ?? null));
+  renderedTab = state.activeTab;
 }
 
 // Keep the Events tab's "(count) · Ns ago" label current between full
