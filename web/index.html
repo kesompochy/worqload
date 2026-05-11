@@ -390,7 +390,7 @@ function renderDetail() {
              <textarea class="ask-answer" rows="3" placeholder="Your answer..." style="margin-top:.4rem"></textarea>
              <div class="row" style="margin-top:.3rem">
                <span class="spacer"></span>
-               <button class="ask-resolve">Resolve</button>
+               <button class="ask-resolve">Answer</button>
              </div>
            </article>
          `).join("")}
@@ -749,7 +749,7 @@ async function onResolve(filename, articleEl) {
   if (text === "") { toast("answer is required"); return; }
   try {
     await api("POST", `/sessions/${state.selected}/escalations/${encodeURIComponent(filename)}/resolve`, { content: text });
-    toast("escalation resolved");
+    toast("answer sent");
     await refreshDetail();
     await fetchSessions();
   } catch (e) {
