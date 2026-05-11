@@ -1,4 +1,5 @@
 import type { Server, ServerWebSocket, Subprocess } from "bun";
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -81,11 +82,14 @@ function buildDefaultHostCommand(): string[] {
   return ["worqload", "session-host"];
 }
 
-// Per-session unix sockets live under tmpdir to dodge the ~104-char path
-// limit on macOS that .worqload/sessions/<uuid>/host.sock would routinely
-// blow past on tmp-rooted test setups.
+// Per-host unix sockets live under tmpdir to dodge the ~104-char path limit
+// on macOS that .worqload/sessions/<uuid>/host.sock would routinely blow past
+// on tmp-rooted test setups. The random suffix makes the name unique per
+// spawn so a resume never reuses the path the previous (now-exiting) host is
+// about to unlink — `runHost` records the chosen path in meta.hostSocketPath
+// for reconnect, so it does not need to be derivable from the session id.
 function hostSocketPathFor(sessionId: string): string {
-  return join(tmpdir(), "worqload", `${sessionId}.sock`);
+  return join(tmpdir(), "worqload", `${sessionId.slice(0, 8)}-${crypto.randomUUID().slice(0, 8)}.sock`);
 }
 
 interface WsClientData {
@@ -194,9 +198,15 @@ async function transitionStatus(
   return updated;
 }
 
-// Spawn a detached host for a brand-new session, then connect to it. The
-// host (not serve) writes session_started and the bootstrap user message.
-async function spawnAndAttachHost(ctx: ServerContext, meta: SessionMeta): Promise<HostClient> {
+// Spawn a detached host and connect to it. The host (not serve) writes the
+// session_started / session_resumed event and the first user message. On
+// resume the prior claude conversation is continued (`--continue`) and the
+// host replays the existing event log to us, so we connect from seq 0 too.
+async function spawnAndAttachHost(
+  ctx: ServerContext,
+  meta: SessionMeta,
+  opts: { resume?: boolean } = {},
+): Promise<HostClient> {
   const socketPath = hostSocketPathFor(meta.id);
   await writeAgentEndpointFile(ctx, meta.id);
   const hostProc = spawnDetachedHost({
@@ -204,8 +214,9 @@ async function spawnAndAttachHost(ctx: ServerContext, meta: SessionMeta): Promis
     sessionsDir: ctx.sessionsDir,
     socketPath,
     agentEndpoint: ctx.baseUrlForAgent,
-    spawnCommand: ctx.spawnCommand,
+    spawnCommand: opts.resume ? [...ctx.spawnCommand, "--continue"] : ctx.spawnCommand,
     hostCommand: ctx.hostCommand,
+    ...(opts.resume && { resume: true }),
   });
 
   const client = await connectToHost({
@@ -375,6 +386,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id", getSessionDetail),
   defineRoute("POST", "/sessions/:id/stop", postStop),
   defineRoute("POST", "/sessions/:id/cancel", postCancel),
+  defineRoute("POST", "/sessions/:id/resume", postResume),
   defineRoute("POST", "/sessions/:id/archive", postArchive),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
@@ -756,6 +768,40 @@ async function postCancel(_req: Request, ctx: ServerContext, params: Record<stri
       : await transitionStatus(ctx, meta, "stopped");
     await appendAndBroadcast(ctx, meta.id, { kind: "session_stopped", payload: { reason: "cancel" } });
     return json({ meta: updated });
+  });
+}
+
+interface ResumeBody {
+  prompt?: string;
+}
+
+// Resume a stopped/crashed session: respawn the host on its preserved
+// worktree with `claude --continue` so the prior conversation carries over.
+// An optional prompt is queued like ordinary feedback — the resumed agent
+// picks it up via `worqload feedback fetch`.
+async function postResume(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    if (!isTerminal(meta.status)) {
+      return json({ error: "session is not stopped; nothing to resume" }, 400);
+    }
+    if (!meta.worktreePath || !existsSync(meta.worktreePath)) {
+      return json({ error: "session worktree no longer exists (it was cancelled); cannot resume" }, 400);
+    }
+    const body = (await req.json().catch(() => ({}))) as ResumeBody;
+    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+    if (prompt !== "") {
+      const inbox = feedbackInboxDirFor(ctx, meta.id);
+      const file = await writeNumberedFile(inbox, "resume", prompt);
+      await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
+    }
+
+    const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = meta;
+    const resumed: SessionMeta = { ...rest, status: "running" };
+    await saveSessionMeta(resumed, ctx.sessionsDir);
+    await spawnAndAttachHost(ctx, resumed, { resume: true });
+
+    const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
+    return json({ meta: stored ?? resumed });
   });
 }
 

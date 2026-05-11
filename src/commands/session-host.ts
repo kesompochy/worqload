@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { classifyClaudeLine, readLines } from "../claude-stream";
 import { appendEvent, readEvents } from "../event-log";
 import { exitWithUsage } from "./cli-helpers";
-import { buildUserMessage, PROTOCOL_PREFIX } from "../session-bootstrap";
+import { buildUserMessage, PROTOCOL_PREFIX, RESUME_KICKOFF } from "../session-bootstrap";
 import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
 import {
   encodeMessage,
@@ -21,6 +21,10 @@ export interface HostOptions {
   // CLI) as WORQLOAD_ENDPOINT.
   agentEndpoint: string;
   spawnCommand: string[];
+  // Resume mode: emit session_resumed instead of session_started and send
+  // RESUME_KICKOFF as the first message instead of the protocol bootstrap.
+  // spawnCommand is expected to already carry `--continue`.
+  resume?: boolean;
 }
 
 interface ClientState {
@@ -148,12 +152,18 @@ export async function runHost(opts: HostOptions): Promise<number> {
     opts.sessionsDir,
   );
 
-  await writeEvent({ kind: "session_started", payload: { prompt: meta.prompt } });
+  await writeEvent({
+    kind: opts.resume ? "session_resumed" : "session_started",
+    payload: { prompt: meta.prompt },
+  });
 
-  // Bootstrap: the agent learns the worqload protocol from PROTOCOL_PREFIX,
-  // and meta.prompt carries the actual task.
+  // First message. On a fresh start the agent learns the protocol from
+  // PROTOCOL_PREFIX and the task from meta.prompt. On resume the prior
+  // conversation is restored by `claude --continue`, so we only nudge it back
+  // into the loop (any new instruction was queued to the feedback inbox).
+  const firstMessage = opts.resume ? RESUME_KICKOFF : PROTOCOL_PREFIX + meta.prompt;
   try {
-    claude.stdin.write(`${JSON.stringify(buildUserMessage(PROTOCOL_PREFIX + meta.prompt))}\n`);
+    claude.stdin.write(`${JSON.stringify(buildUserMessage(firstMessage))}\n`);
     await claude.stdin.flush();
   } catch (err) {
     console.error("session-host: initial bootstrap write failed:", err);
@@ -213,7 +223,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
 }
 
 const HOST_USAGE =
-  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> -- <claude command...>";
+  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> [--resume] -- <claude command...>";
 
 // Splits the host CLI argv. Layout is `<sessionId> --flag value ... -- <claude command...>`.
 // Everything after the literal `--` is the claude spawn command verbatim (its
@@ -227,10 +237,11 @@ export function parseHostArgs(args: string[]): HostOptions | null {
   const sessionsDir = takeFlag(head, "--sessions-dir");
   const socketPath = takeFlag(head, "--socket-path");
   const agentEndpoint = takeFlag(head, "--agent-endpoint");
+  const resume = head.includes("--resume");
   if (!sessionId || !sessionsDir || !socketPath || !agentEndpoint || spawnCommand.length === 0) {
     return null;
   }
-  return { sessionId, sessionsDir, socketPath, agentEndpoint, spawnCommand };
+  return { sessionId, sessionsDir, socketPath, agentEndpoint, spawnCommand, ...(resume && { resume }) };
 }
 
 export async function sessionHost(args: string[]): Promise<void> {

@@ -21,8 +21,10 @@ export interface SessionMeta {
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   running: ["waiting_human", "stopped", "crashed"],
   waiting_human: ["running", "stopped", "crashed"],
-  stopped: [],
-  crashed: [],
+  // A terminal session re-enters "running" only via resume (a fresh host on
+  // the preserved worktree, continuing the prior claude conversation).
+  stopped: ["running"],
+  crashed: ["running"],
 };
 
 export function validateTransition(from: SessionStatus, to: SessionStatus): void {

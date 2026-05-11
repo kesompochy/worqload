@@ -466,7 +466,7 @@ function openWs(id) {
     if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread"
         || ev.kind === "feedback_received" || ev.kind === "feedback_fetched"
         || ev.kind === "escalation_requested" || ev.kind === "escalation_resolved"
-        || ev.kind === "session_stopped" || ev.kind === "session_crashed") {
+        || ev.kind === "session_stopped" || ev.kind === "session_crashed" || ev.kind === "session_resumed") {
       await refreshDetail();
       await fetchSessions();
     }
@@ -624,7 +624,9 @@ function renderDetail() {
     : state.activeTab === "events" ? renderEventsHtml()
     : reportsHtml;
 
-  const anchorChip = state.anchor
+  // Anchored comments target the feedback inbox; the resume composer (terminal
+  // sessions) sends a plain prompt instead, so the chip is hidden there.
+  const anchorChip = state.anchor && !isTerminal
     ? `<div class="anchor-chip">Re: ${escapeHtml(state.anchor.path)}:${state.anchor.lineStart}${state.anchor.lineEnd !== state.anchor.lineStart ? `-${state.anchor.lineEnd}` : ""} <button id="anchorClear" title="clear anchor">×</button></div>`
     : "";
 
@@ -662,10 +664,16 @@ function renderDetail() {
     </div>
     <form class="feedback-form" id="feedbackForm">
       ${anchorChip}
-      <textarea id="feedbackInput" placeholder="${state.anchor ? "Comment on the selected lines... (Enter で送信 / Shift+Enter で改行)" : "Plain feedback (picked up at the agent's next turn). Click a diff, file, or report line to anchor. (Enter で送信 / Shift+Enter で改行)"}" rows="3"></textarea>
+      <textarea id="feedbackInput" placeholder="${
+        isTerminal
+          ? "Instructions for the resumed session (optional — picked up via worqload feedback fetch). Enter で再開 / Shift+Enter で改行"
+          : state.anchor
+            ? "Comment on the selected lines... (Enter で送信 / Shift+Enter で改行)"
+            : "Plain feedback (picked up at the agent's next turn). Click a diff, file, or report line to anchor. (Enter で送信 / Shift+Enter で改行)"
+      }" rows="3"></textarea>
       <div class="row">
         <span class="spacer"></span>
-        <button type="submit" ${isTerminal ? "disabled" : ""}>Send feedback</button>
+        <button type="submit">${isTerminal ? "Resume session" : "Send feedback"}</button>
       </div>
     </form>
   `;
@@ -676,11 +684,12 @@ function renderDetail() {
   if (actionCloseBtn) actionCloseBtn.addEventListener("click", () => toggleActionPanel(state.openActionId));
   const actionRunBtn = document.querySelector("[data-action-panel-run]");
   if (actionRunBtn) actionRunBtn.addEventListener("click", runOpenAction);
+  const onComposerSubmit = isTerminal ? onResume : onFeedback;
   $("#feedbackForm").addEventListener("submit", e => {
     e.preventDefault();
-    onFeedback();
+    onComposerSubmit();
   });
-  bindFeedbackEnterToSubmit($("#feedbackInput"));
+  bindEnterToSubmit($("#feedbackInput"), onComposerSubmit);
   document.querySelectorAll(".tab-btn").forEach(b => {
     b.addEventListener("click", () => switchTab(b.getAttribute("data-tab")));
   });
@@ -1170,7 +1179,7 @@ async function onResolve(filename, articleEl) {
   }
 }
 
-function bindFeedbackEnterToSubmit(textarea) {
+function bindEnterToSubmit(textarea, onSubmit) {
   if (!textarea) return;
   // Track IME composition explicitly. `event.isComposing` and `keyCode === 229`
   // cover most browsers, but on some macOS browsers the commit-Enter keydown
@@ -1183,7 +1192,7 @@ function bindFeedbackEnterToSubmit(textarea) {
     if (e.key !== "Enter" || e.shiftKey) return;
     if (composing || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
-    onFeedback();
+    onSubmit();
   });
 }
 
@@ -1227,6 +1236,21 @@ async function onCancel() {
   if (!confirm("Cancel this session? The worktree will be REMOVED.")) return;
   try {
     await api("POST", `/sessions/${state.selected}/cancel`, {});
+    await refreshDetail();
+    await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
+async function onResume() {
+  if (!state.selected) return;
+  const input = $("#feedbackInput");
+  const prompt = input ? input.value.trim() : "";
+  try {
+    await api("POST", `/sessions/${state.selected}/resume`, prompt ? { prompt } : {});
+    if (input) input.value = "";
+    toast("session resumed");
     await refreshDetail();
     await fetchSessions();
   } catch (e) {

@@ -22,6 +22,7 @@ interface HostFixture {
 async function setupHost(
   mockMode: "hang" | "echo" | "init" | "crash" | "env",
   agentEndpoint = "http://127.0.0.1:0",
+  opts: { resume?: boolean } = {},
 ): Promise<HostFixture> {
   const sessionsDir = makeTmpDir("host-test");
   const worktree = makeTmpDir("host-test-wt");
@@ -41,6 +42,7 @@ async function setupHost(
     socketPath,
     agentEndpoint,
     spawnCommand: ["bun", MOCK, mockMode],
+    ...(opts.resume && { resume: true }),
   });
   return { sessionsDir, socketPath, sessionId: meta.id, hostExit };
 }
@@ -248,4 +250,27 @@ test("runHost marks meta as crashed on claude non-zero exit", async () => {
 
   const meta = await loadSessionMeta(sessionId, sessionsDir);
   expect(meta?.status).toBe("crashed");
+});
+
+test("runHost in resume mode emits session_resumed and sends the resume kickoff (not the protocol bootstrap)", async () => {
+  const { sessionsDir, sessionId, hostExit, socketPath } = await setupHost("echo", undefined, { resume: true });
+  const client = await connectClient(socketPath);
+  client.send({ type: "hello", sinceSeq: 0 });
+  await client.next((m) => m.type === "replay_done");
+
+  const echoed = await client.next(
+    (m) => m.type === "event" && m.event.kind === "claude_assistant_message",
+  );
+  if (echoed.type !== "event") throw new Error("unreachable");
+  expect(JSON.stringify(echoed.event.payload)).toContain("[resumed]");
+  expect(JSON.stringify(echoed.event.payload)).not.toContain("You are running inside a worqload session");
+
+  client.send({ type: "kill", signal: "SIGTERM" });
+  await client.next((m) => m.type === "exited").catch(() => {});
+  await hostExit;
+
+  const events = await readEvents(sessionId, 1, sessionsDir);
+  const kinds = events.map((e) => e.kind);
+  expect(kinds).toContain("session_resumed");
+  expect(kinds).not.toContain("session_started");
 });
