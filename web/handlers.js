@@ -29,6 +29,7 @@ export async function selectSession(id) {
   state.reportToggle = new Map();
   state.feedbackToggle = new Map();
   state.eventToggle = new Map();
+  state.tabScroll = new Map();
   state.files = [];
   state.filesLoaded = false;
   state.fileTreeCollapsed = new Set();

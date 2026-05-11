@@ -11,6 +11,7 @@ export const state = {
   ws: null,
   lastSeq: 0,
   activeTab: "reports",  // "reports" | "diff" | "files" | "events"
+  tabScroll: new Map(),  // tab name -> remembered scroll position (see render.js), so switching back returns there
   diff: "",              // text/plain diff (full file context, -U<huge>)
   diffBase: "session-start",
   anchor: null,          // { path, lineStart, lineEnd } | null
