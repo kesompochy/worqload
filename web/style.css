@@ -55,7 +55,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
   margin-top: 1px;
 }
 .session-card-actions { display: none; gap: .3rem; margin-top: .55rem; }
-.session-card.active .session-card-actions { display: flex; }
+.session-card:hover .session-card-actions, .session-card.active .session-card-actions { display: flex; }
 .session-card-actions button { font-size: 11px; padding: .2rem .55rem; }
 .btn-card-resume { color: var(--running); border-color: rgba(63,185,80,.5); }
 .btn-card-resume:hover { background: rgba(63,185,80,.12); }
