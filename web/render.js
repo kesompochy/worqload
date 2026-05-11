@@ -77,8 +77,47 @@ export function renderSessionList() {
   }
 }
 
+// renderDetail rebuilds the whole detail pane, replacing #detailBody (the
+// scroll container) and every row inside it — so the browser's native scroll
+// anchoring has nothing to correlate and the view snaps back to the top. These
+// two helpers carry the position across the rebuild. We anchor to the topmost
+// row still reaching into the viewport (rows carry stable data-* ids) and the
+// gap below the viewport top it sits at, rather than reusing scrollTop, because
+// the Events and Reports lists render newest-first: a new item prepended above
+// the anchor would otherwise shift everything the user is looking at. Sitting
+// exactly at the top is preserved as-is so a freshly arrived item stays visible.
+const SCROLL_ANCHOR_ATTRS = ["data-event-seq", "data-report-filename", "data-feedback-filename", "data-diff-path", "data-asking"];
+
+function captureDetailScroll() {
+  const body = $("#detailBody");
+  if (!body) return null;
+  if (body.scrollTop <= 0) return { atTop: true };
+  const bodyTop = body.getBoundingClientRect().top;
+  for (const el of body.querySelectorAll(SCROLL_ANCHOR_ATTRS.map(a => `[${a}]`).join(","))) {
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom <= bodyTop) continue; // entirely scrolled past
+    for (const attr of SCROLL_ANCHOR_ATTRS) {
+      const value = el.getAttribute(attr);
+      if (value) return { attr, value, offset: rect.top - bodyTop };
+    }
+  }
+  return { scrollTop: body.scrollTop };
+}
+
+function restoreDetailScroll(saved) {
+  if (!saved || saved.atTop) return;
+  const body = $("#detailBody");
+  if (!body) return;
+  if (saved.scrollTop !== undefined) { body.scrollTop = saved.scrollTop; return; }
+  const el = body.querySelector(`[${saved.attr}=${CSS.escape(saved.value)}]`);
+  if (!el) return; // the anchored row is gone (e.g. tab switched) — leave the rebuilt pane at its top
+  const offset = el.getBoundingClientRect().top - body.getBoundingClientRect().top;
+  body.scrollTop += offset - saved.offset;
+}
+
 export function renderDetail() {
   const root = $("#detail");
+  const savedScroll = captureDetailScroll();
   // preserve any in-progress feedback text across re-renders
   const preservedFeedback = ($("#feedbackInput")?.value) ?? "";
   // preserve any in-progress action-parameter input across re-renders
@@ -266,6 +305,7 @@ export function renderDetail() {
     const el = document.getElementById(`actionParam-${name}`);
     if (el) el.value = value;
   }
+  restoreDetailScroll(savedScroll);
 }
 
 // Keep the Events tab's "(count) · Ns ago" label current between full
