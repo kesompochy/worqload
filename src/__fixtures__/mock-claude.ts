@@ -8,6 +8,7 @@
 //   hang    : emit init, then read stdin forever (used to test kill)
 //   crash   : emit init, then exit 1
 //   tool    : emit init, then an assistant turn with a tool_use block, then exit 0
+//   env     : emit init, then emit a system line carrying the worqload env vars, then hang
 
 const mode = process.argv[2] ?? "init";
 
@@ -16,6 +17,18 @@ function writeLine(obj: unknown): void {
 }
 
 writeLine({ type: "system", subtype: "init", session_id: "mock" });
+
+if (mode === "env") {
+  writeLine({
+    type: "system",
+    subtype: "worqload_env",
+    sessionId: process.env.WORQLOAD_SESSION_ID ?? null,
+    endpoint: process.env.WORQLOAD_ENDPOINT ?? null,
+  });
+  process.stdin.on("data", () => {});
+  process.stdin.on("end", () => process.exit(0));
+  setInterval(() => {}, 1_000_000);
+}
 
 if (mode === "init") {
   process.exit(0);

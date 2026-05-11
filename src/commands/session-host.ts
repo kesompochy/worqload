@@ -17,6 +17,9 @@ export interface HostOptions {
   sessionId: string;
   sessionsDir: string;
   socketPath: string;
+  // Base URL of the serve instance, exposed to claude (and thus the agent
+  // CLI) as WORQLOAD_ENDPOINT.
+  agentEndpoint: string;
   spawnCommand: string[];
 }
 
@@ -46,6 +49,9 @@ export async function runHost(opts: HostOptions): Promise<number> {
   for (const [k, v] of Object.entries(process.env)) {
     if (typeof v === "string") claudeEnv[k] = v;
   }
+  // The agent CLI inside claude needs these to reach serve's /internal routes.
+  claudeEnv.WORQLOAD_SESSION_ID = opts.sessionId;
+  claudeEnv.WORQLOAD_ENDPOINT = opts.agentEndpoint;
 
   const claude = Bun.spawn(opts.spawnCommand, {
     cwd: meta.worktreePath || undefined,
@@ -202,25 +208,31 @@ export async function runHost(opts: HostOptions): Promise<number> {
   return exitCode ?? 0;
 }
 
+const HOST_USAGE =
+  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> -- <claude command...>";
+
+// Splits the host CLI argv. Layout is `<sessionId> --flag value ... -- <claude command...>`.
+// Everything after the literal `--` is the claude spawn command verbatim (its
+// args may contain spaces); the sessionId is the leading positional.
+export function parseHostArgs(args: string[]): HostOptions | null {
+  const sep = args.indexOf("--");
+  const head = sep === -1 ? args : args.slice(0, sep);
+  const spawnCommand = sep === -1 ? [] : args.slice(sep + 1);
+
+  const sessionId = head[0] && !head[0].startsWith("--") ? head[0] : undefined;
+  const sessionsDir = takeFlag(head, "--sessions-dir");
+  const socketPath = takeFlag(head, "--socket-path");
+  const agentEndpoint = takeFlag(head, "--agent-endpoint");
+  if (!sessionId || !sessionsDir || !socketPath || !agentEndpoint || spawnCommand.length === 0) {
+    return null;
+  }
+  return { sessionId, sessionsDir, socketPath, agentEndpoint, spawnCommand };
+}
+
 export async function sessionHost(args: string[]): Promise<void> {
-  const positional = args.filter((a) => !a.startsWith("--"));
-  const sessionId = positional[0];
-  if (!sessionId) exitWithUsage("worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path>");
-
-  const sessionsDir = takeFlag(args, "--sessions-dir");
-  const socketPath = takeFlag(args, "--socket-path");
-  if (!sessionsDir || !socketPath) {
-    exitWithUsage("worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path>");
-  }
-
-  const spawnEnv = process.env.WORQLOAD_SPAWN_COMMAND;
-  if (!spawnEnv || spawnEnv.trim() === "") {
-    console.error("session-host requires WORQLOAD_SPAWN_COMMAND to be set");
-    process.exit(2);
-  }
-  const spawnCommand = spawnEnv.trim().split(/\s+/);
-
-  const code = await runHost({ sessionId, sessionsDir, socketPath, spawnCommand });
+  const opts = parseHostArgs(args);
+  if (!opts) exitWithUsage(HOST_USAGE);
+  const code = await runHost(opts);
   process.exit(code);
 }
 

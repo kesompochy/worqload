@@ -84,9 +84,10 @@ interface WsClientData {
 
 interface SessionAttachment {
   client: HostClient;
-  // Defined only when this serve instance is the one that spawned the host
-  // (vs. reconnected to a pre-existing one). Used at shutdown to optionally
-  // kill the subprocess we own.
+  // PID of the host process (whether we spawned it or reconnected). Used at
+  // shutdown when killHosts is requested.
+  hostPid?: number;
+  // Defined only when this serve instance is the one that spawned the host.
   hostProc?: Subprocess;
 }
 
@@ -180,6 +181,7 @@ async function spawnAndAttachHost(ctx: ServerContext, meta: SessionMeta): Promis
     sessionId: meta.id,
     sessionsDir: ctx.sessionsDir,
     socketPath,
+    agentEndpoint: ctx.baseUrlForAgent,
     spawnCommand: ctx.spawnCommand,
     hostCommand: ctx.hostCommand,
   });
@@ -194,7 +196,7 @@ async function spawnAndAttachHost(ctx: ServerContext, meta: SessionMeta): Promis
   });
   await client.replayCompleted.catch(() => {});
 
-  ctx.clients.set(meta.id, { client, hostProc });
+  ctx.clients.set(meta.id, { client, hostProc, hostPid: hostProc.pid });
   return client;
 }
 
@@ -214,7 +216,7 @@ async function reconnectToHost(ctx: ServerContext, meta: SessionMeta): Promise<H
       },
     });
     await client.replayCompleted.catch(() => {});
-    ctx.clients.set(meta.id, { client });
+    ctx.clients.set(meta.id, { client, hostPid: meta.hostPid });
     return client;
   } catch {
     return null;
@@ -298,13 +300,13 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
       } catch {
         // ignore
       }
-      if (opts.killHosts && att.hostProc) {
+      if (opts.killHosts && att.hostPid !== undefined) {
         try {
-          att.hostProc.kill("SIGKILL");
+          process.kill(att.hostPid, "SIGKILL");
         } catch {
           // already dead
         }
-        await att.hostProc.exited.catch(() => {});
+        if (att.hostProc) await att.hostProc.exited.catch(() => {});
       }
     }
     ctx.clients.clear();

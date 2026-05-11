@@ -19,7 +19,10 @@ interface HostFixture {
   hostExit: Promise<number>;
 }
 
-async function setupHost(mockMode: "hang" | "echo" | "init" | "crash"): Promise<HostFixture> {
+async function setupHost(
+  mockMode: "hang" | "echo" | "init" | "crash" | "env",
+  agentEndpoint = "http://127.0.0.1:0",
+): Promise<HostFixture> {
   const sessionsDir = makeTmpDir("host-test");
   const worktree = makeTmpDir("host-test-wt");
   const meta = createSession({
@@ -35,6 +38,7 @@ async function setupHost(mockMode: "hang" | "echo" | "init" | "crash"): Promise<
     sessionId: meta.id,
     sessionsDir,
     socketPath,
+    agentEndpoint,
     spawnCommand: ["bun", MOCK, mockMode],
   });
   return { sessionsDir, socketPath, sessionId: meta.id, hostExit };
@@ -133,6 +137,24 @@ test("runHost writes session_started and updates meta with hostPid/hostSocketPat
 
   client.send({ type: "kill", signal: "SIGTERM" });
   await client.next((m) => m.type === "exited");
+  await hostExit;
+});
+
+test("runHost gives claude WORQLOAD_SESSION_ID and WORQLOAD_ENDPOINT", async () => {
+  const { sessionId, hostExit, socketPath } = await setupHost("env", "http://127.0.0.1:34567");
+  const client = await connectClient(socketPath);
+  client.send({ type: "hello", sinceSeq: 0 });
+  const envEvent = await client.next(
+    (m) =>
+      m.type === "event" &&
+      (m.event.payload as { subtype?: string })?.subtype === "worqload_env",
+  );
+  if (envEvent.type !== "event") throw new Error("unreachable");
+  const payload = envEvent.event.payload as { sessionId: string; endpoint: string };
+  expect(payload.sessionId).toBe(sessionId);
+  expect(payload.endpoint).toBe("http://127.0.0.1:34567");
+
+  client.send({ type: "kill", signal: "SIGTERM" });
   await hostExit;
 });
 

@@ -440,6 +440,17 @@ test("startServer reconnects to a still-running host across a serve restart", as
   const detail = await fetch(`${baseUrl2}/sessions/${sid}`).then(r => r.json());
   expect(detail.meta.status).toBe("running");
   expect(detail.meta.endedAt).toBeUndefined();
+
+  // shutdown({killHosts:true}) on a reconnected server must still kill the
+  // host even though we don't own its Subprocess handle.
+  const hostPid = detail.meta.hostPid as number;
+  expect(typeof hostPid).toBe("number");
+  await second.shutdown({ killHosts: true });
+  // small grace for the signal to land
+  await new Promise(r => setTimeout(r, 100));
+  let alive = true;
+  try { process.kill(hostPid, 0); } catch { alive = false; }
+  expect(alive).toBe(false);
 });
 
 test("startServer marks a session crashed when its host is dead on boot", async () => {

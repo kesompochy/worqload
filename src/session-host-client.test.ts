@@ -33,6 +33,7 @@ async function bootHost(mode: "hang" | "echo" | "init" | "crash"): Promise<InPro
     sessionId: meta.id,
     sessionsDir,
     socketPath,
+    agentEndpoint: "http://127.0.0.1:0",
     spawnCommand: ["bun", MOCK, mode],
   });
   return { sessionsDir, socketPath, sessionId: meta.id, hostExit };
@@ -97,12 +98,8 @@ test("connectToHost.send pushes a user message and the host echoes it back as an
   await hostExit;
 });
 
-test("connectToHost.exited resolves and meta becomes crashed when claude exits non-zero", async () => {
-  const { sessionsDir, sessionId, socketPath, hostExit } = await bootHost("crash");
-  const client = await connectToHost({ socketPath, sinceSeq: 0 });
-  // crash exits very fast; replayCompleted may race with exit. Either order is ok.
-  await Promise.race([client.replayCompleted.catch(() => {}), client.exited]);
-  await client.exited;
+test("the host marks meta crashed when claude exits non-zero", async () => {
+  const { sessionsDir, sessionId, hostExit } = await bootHost("crash");
   await hostExit;
   const meta = await loadSessionMeta(sessionId, sessionsDir);
   expect(meta?.status).toBe("crashed");

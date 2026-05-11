@@ -11,8 +11,12 @@ export interface SpawnHostOptions {
   sessionId: string;
   sessionsDir: string;
   socketPath: string;
-  // The claude command the host will spawn. Forwarded via env to avoid argv
-  // quoting headaches.
+  // Endpoint the agent-side CLI (`worqload report` etc.) talks to, i.e. this
+  // serve instance's base URL. The host puts it in claude's environment as
+  // WORQLOAD_ENDPOINT.
+  agentEndpoint: string;
+  // The claude command the host will spawn, as separate argv elements (some
+  // contain spaces, e.g. --allowedTools' value).
   spawnCommand: string[];
   // How to launch the host process itself. In production this is the
   // installed `worqload` CLI followed by `session-host`. Tests pass
@@ -20,21 +24,30 @@ export interface SpawnHostOptions {
   hostCommand: string[];
 }
 
-export function spawnDetachedHost(opts: SpawnHostOptions): Subprocess {
-  const argv = [
+// Builds the argv for a `session-host` invocation. Everything after `--` is
+// the claude spawn command verbatim, so argv boundaries (including args that
+// contain spaces) survive intact.
+export function buildHostArgv(opts: SpawnHostOptions): string[] {
+  return [
     ...opts.hostCommand,
     opts.sessionId,
     "--sessions-dir",
     opts.sessionsDir,
     "--socket-path",
     opts.socketPath,
+    "--agent-endpoint",
+    opts.agentEndpoint,
+    "--",
+    ...opts.spawnCommand,
   ];
+}
+
+export function spawnDetachedHost(opts: SpawnHostOptions): Subprocess {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (typeof v === "string") env[k] = v;
   }
-  env.WORQLOAD_SPAWN_COMMAND = opts.spawnCommand.join(" ");
-  const child = Bun.spawn(argv, {
+  const child = Bun.spawn(buildHostArgv(opts), {
     env,
     stdio: ["ignore", "ignore", "ignore"],
   });
