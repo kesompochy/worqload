@@ -74,6 +74,52 @@ test("link renders as anchor with target blank", () => {
   expect(html).toContain(">docs</a>");
 });
 
+test("table renders thead/tbody with header and body cells", () => {
+  const html = renderMarkdown("| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n");
+  expect(html).toContain("<table>");
+  expect(html).toContain("<thead>");
+  expect(html).toContain("<th>A</th>");
+  expect(html).toContain("<th>B</th>");
+  expect(html).toContain("<tbody>");
+  expect(html).toContain("<td>1</td>");
+  expect(html).toContain("<td>4</td>");
+});
+
+test("table delimiter colons set cell alignment", () => {
+  const html = renderMarkdown("| L | C | R |\n| :- | :-: | -: |\n| a | b | c |\n");
+  expect(html).toMatch(/<th style="text-align:left;">L<\/th>/);
+  expect(html).toMatch(/<th style="text-align:center;">C<\/th>/);
+  expect(html).toMatch(/<th style="text-align:right;">R<\/th>/);
+  expect(html).toMatch(/<td style="text-align:center;">b<\/td>/);
+});
+
+test("table without leading and trailing pipes is recognized", () => {
+  const html = renderMarkdown("A | B\n--- | ---\n1 | 2\n");
+  expect(html).toContain("<table>");
+  expect(html).toContain("<th>A</th>");
+  expect(html).toContain("<td>2</td>");
+});
+
+test("table cells render inline markup and honor escaped pipes", () => {
+  const html = renderMarkdown("| col |\n| --- |\n| **bold** \\| `x` |\n");
+  expect(html).toContain("<strong>bold</strong>");
+  expect(html).toContain("| <code>x</code>");
+});
+
+test("table rows carry anchor metadata", () => {
+  const html = renderMarkdown("| A |\n| - |\n| 1 |\n| 2 |\n", { anchorPath: "./r.md" });
+  // Header row spans the header line and the delimiter line.
+  expect(html).toMatch(/<tr [^>]*data-anchor-line="1"[^>]*data-anchor-line-end="2"[^>]*>/);
+  expect(html).toMatch(/<tr [^>]*data-anchor-line="3"[^>]*data-anchor-line-end="3"[^>]*>/);
+  expect(html).toMatch(/<tr [^>]*data-anchor-line="4"[^>]*data-anchor-line-end="4"[^>]*>/);
+});
+
+test("pipe line without a delimiter row stays a paragraph", () => {
+  const html = renderMarkdown("a | b | c\nnot a table\n");
+  expect(html).toContain("<p");
+  expect(html).not.toContain("<table>");
+});
+
 test("anchor metadata is omitted when anchorPath is not given", () => {
   const html = renderMarkdown("# Hi\n");
   expect(html).not.toContain("data-anchor-path");
