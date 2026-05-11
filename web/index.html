@@ -59,11 +59,11 @@
   .report-chevron { color: var(--text-dim); width: 1ch; display: inline-block; transition: transform .12s ease; }
   .report.collapsed .report-chevron { transform: rotate(-90deg); }
   .report-filename { color: var(--accent); font-size: 12px; font-family: ui-monospace, monospace; flex: 1; }
-  .report-status { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: .05rem .4rem; border-radius: 3px; }
+  .report-status { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: .1rem .5rem; border-radius: 3px; cursor: pointer; border: 1px solid transparent; transition: background-color .08s ease, border-color .08s ease; }
   .report-status.unread { background: rgba(88,166,255,.18); color: var(--accent); }
+  .report-status.unread:hover { background: rgba(88,166,255,.32); border-color: rgba(88,166,255,.5); }
   .report-status.read { background: rgba(139,149,163,.16); color: var(--text-dim); }
-  .report-toggle-read { background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: .15rem .55rem; font-size: 11px; border-radius: 3px; cursor: pointer; }
-  .report-toggle-read:hover { color: var(--text); background: var(--panel-2); }
+  .report-status.read:hover { background: rgba(139,149,163,.28); border-color: rgba(139,149,163,.5); color: var(--text); }
   .report-body { padding: .55rem .9rem .7rem .9rem; border-top: 1px solid var(--border); }
   .report.collapsed .report-body { display: none; }
   .report-empty { color: var(--text-dim); font-style: italic; }
@@ -374,15 +374,15 @@ function renderDetail() {
         const body = renderMarkdown(r.content, { anchorPath: path, anchor: state.anchor });
         const expanded = isReportExpanded(r);
         const statusLabel = r.read ? "read" : "unread";
-        const toggleLabel = r.read ? "未読にする" : "既読にする";
+        const markTo = r.read ? "unread" : "read";
+        const statusTitle = r.read ? "クリックで未読にする" : "クリックで既読にする";
         const escapedFilename = escapeHtml(r.filename);
         return `
           <article class="report ${r.read ? "" : "unread"} ${expanded ? "" : "collapsed"}" data-report-filename="${escapedFilename}">
             <div class="report-header" data-report-toggle="${escapedFilename}">
               <span class="report-chevron">▾</span>
               <span class="report-filename">${escapedFilename}</span>
-              <span class="report-status ${statusLabel}">${statusLabel}</span>
-              <button type="button" class="report-toggle-read" data-report-mark="${escapedFilename}" data-report-mark-to="${r.read ? "unread" : "read"}">${toggleLabel}</button>
+              <span class="report-status ${statusLabel}" data-report-mark="${escapedFilename}" data-report-mark-to="${markTo}" title="${statusTitle}">${statusLabel}</span>
             </div>
             <div class="report-body">
               <div class="md">${body}</div>
