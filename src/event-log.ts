@@ -8,6 +8,8 @@ export type EventKind =
   | "claude_tool_result"
   | "claude_system"
   | "report_submitted"
+  | "report_read"
+  | "report_unread"
   | "escalation_requested"
   | "escalation_resolved"
   | "feedback_received"

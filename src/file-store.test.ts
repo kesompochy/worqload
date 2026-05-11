@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { existsSync } from "fs";
-import { writeNumberedFile, listAllFiles, moveFile } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState } from "./file-store";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -60,6 +60,39 @@ test("listAllFiles returns empty when directory missing", async () => {
   const dir = makeTmpDir("file-store");
   const files = await listAllFiles(join(dir, "missing"));
   expect(files).toEqual([]);
+});
+
+test("readReadState returns empty when no state file exists", async () => {
+  const dir = makeTmpDir("file-store");
+  const set = await readReadState(dir);
+  expect(set.size).toBe(0);
+});
+
+test("setReadState true then read returns the filename in the set", async () => {
+  const dir = makeTmpDir("file-store");
+  await writeNumberedFile(dir, "first", "body");
+  await setReadState(dir, "001-first.md", true);
+  const set = await readReadState(dir);
+  expect(set.has("001-first.md")).toBe(true);
+});
+
+test("setReadState false removes a previously-read filename", async () => {
+  const dir = makeTmpDir("file-store");
+  await setReadState(dir, "001-foo.md", true);
+  await setReadState(dir, "002-bar.md", true);
+  await setReadState(dir, "001-foo.md", false);
+  const set = await readReadState(dir);
+  expect(set.has("001-foo.md")).toBe(false);
+  expect(set.has("002-bar.md")).toBe(true);
+});
+
+test("listAllFiles ignores the .read-state.json sidecar", async () => {
+  const dir = makeTmpDir("file-store");
+  await writeNumberedFile(dir, "a", "alpha");
+  await setReadState(dir, "001-a.md", true);
+  const files = await listAllFiles(dir);
+  expect(files).toHaveLength(1);
+  expect(files[0].filename).toBe("001-a.md");
 });
 
 test("moveFile relocates a file", async () => {
