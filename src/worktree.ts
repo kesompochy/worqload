@@ -15,11 +15,11 @@ export async function createSessionWorktree(params: {
   sessionId: string;
   repoDir: string;
   baseBranch: string;
+  branchName: string;
   reportsDirAbsolute: string;
 }): Promise<WorktreeInfo> {
-  const { sessionId, repoDir, baseBranch, reportsDirAbsolute } = params;
+  const { sessionId, repoDir, baseBranch, branchName, reportsDirAbsolute } = params;
   const shortId = sessionId.slice(0, 8);
-  const branchName = `worqload/${shortId}`;
   const worktreePath = join(resolve(repoDir), ".worktrees", shortId);
 
   await mkdir(reportsDirAbsolute, { recursive: true });

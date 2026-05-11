@@ -63,6 +63,7 @@ describe("createSessionWorktree", () => {
       sessionId,
       repoDir,
       baseBranch: TEST_BASE_BRANCH,
+      branchName: `test-${sessionId.slice(0, 8)}`,
       reportsDirAbsolute: reportsDir,
     });
 
@@ -81,6 +82,7 @@ describe("createSessionWorktree", () => {
       sessionId,
       repoDir,
       baseBranch: TEST_BASE_BRANCH,
+      branchName: `test-${sessionId.slice(0, 8)}`,
       reportsDirAbsolute: reportsDir,
     });
 
@@ -96,23 +98,31 @@ describe("createSessionWorktree", () => {
     const reportsDir = join(repoDir, ".worqload", "sessions", sessionId, "reports");
 
     expect(existsSync(reportsDir)).toBe(false);
-    await createSessionWorktree({ sessionId, repoDir, baseBranch: TEST_BASE_BRANCH, reportsDirAbsolute: reportsDir });
+    await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      branchName: `test-${sessionId.slice(0, 8)}`,
+      reportsDirAbsolute: reportsDir,
+    });
     expect(existsSync(reportsDir)).toBe(true);
   });
 
-  test("returns branch name worqload/<shortId>", async () => {
+  test("uses the supplied branch name verbatim", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
     const sessionId = crypto.randomUUID();
     const reportsDir = join(repoDir, ".worqload", "sessions", sessionId, "reports");
+    const requested = "fix-login-bug";
 
     const { branchName } = await createSessionWorktree({
       sessionId,
       repoDir,
       baseBranch: TEST_BASE_BRANCH,
+      branchName: requested,
       reportsDirAbsolute: reportsDir,
     });
-    expect(branchName).toBe(`worqload/${sessionId.slice(0, 8)}`);
+    expect(branchName).toBe(requested);
   });
 });
 
@@ -127,6 +137,7 @@ describe("removeWorktree", () => {
       sessionId,
       repoDir,
       baseBranch: TEST_BASE_BRANCH,
+      branchName: `test-${sessionId.slice(0, 8)}`,
       reportsDirAbsolute: reportsDir,
     });
     expect(existsSync(worktreePath)).toBe(true);

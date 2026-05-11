@@ -16,6 +16,7 @@ import { appendEvent, readEvents } from "./event-log";
 import { createSessionWorktree, removeWorktree, resolveBaseCommit, currentBranch, gitDiff } from "./worktree";
 import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState } from "./file-store";
 import { listActions, findAction } from "./actions";
+import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -105,6 +106,7 @@ export interface ServerContext {
   sessionsDir: string;          // <repo>/.worqload/sessions
   worktreesDir: string;         // <repo>/.worktrees
   spawnCommand: string[];
+  branchNameGenerator: BranchNameGenerator;
   runners: Map<string, SessionRunner>;
   baseUrlForAgent: string;
   wsClients: Set<ServerWebSocket<WsClientData>>;
@@ -114,6 +116,9 @@ export interface StartServerOptions {
   port?: number;                // 0 = random
   repoDir?: string;
   spawnCommand?: string[];      // override the claude binary command
+  // Overrides the helper that turns a prompt into a short branch name.
+  // Return null to skip generation; the caller then falls back to <shortId>.
+  branchNameGenerator?: BranchNameGenerator;
 }
 
 export interface StartedServer {
@@ -232,6 +237,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const sessionsDir = join(worqloadDir, "sessions");
   const worktreesDir = join(repoDir, ".worktrees");
   const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand();
+  const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
 
   await mkdir(sessionsDir, { recursive: true });
 
@@ -286,6 +292,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     sessionsDir,
     worktreesDir,
     spawnCommand,
+    branchNameGenerator,
     runners: new Map(),
     port: server.port,
     baseUrlForAgent: `http://127.0.0.1:${server.port}`,
@@ -451,6 +458,7 @@ interface PostSessionsBody {
   prompt: string;
   baseBranch?: string;
   title?: string;
+  branchName?: string;
 }
 
 async function postSessions(req: Request, ctx: ServerContext): Promise<Response> {
@@ -462,28 +470,62 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   const baseBranch = body.baseBranch?.trim() || (await currentBranch(ctx.repoDir));
   const baseCommit = await resolveBaseCommit(baseBranch, ctx.repoDir);
 
+  // worktreePath and branchName are populated after the id is assigned below
+  // (we need the id to compute the worktree dir and the shortId fallback).
   const tentative = createSession({
     prompt: body.prompt,
     baseBranch,
     baseCommit,
-    worktreePath: "",   // filled in below
+    worktreePath: "",
+    branchName: "",
     title: body.title,
   });
 
-  const reportsDir = reportsDirFor(ctx, tentative.id);
-  const { worktreePath } = await createSessionWorktree({
-    sessionId: tentative.id,
-    repoDir: ctx.repoDir,
-    baseBranch,
-    reportsDirAbsolute: reportsDir,
+  const branchName = await resolveBranchName({
+    explicit: body.branchName,
+    prompt: body.prompt,
+    fallback: tentative.id.slice(0, 8),
+    generator: ctx.branchNameGenerator,
   });
+  if (branchName === null) {
+    return json({ error: "branchName is not a valid git ref" }, 400);
+  }
 
-  const meta: SessionMeta = { ...tentative, worktreePath };
+  const reportsDir = reportsDirFor(ctx, tentative.id);
+  let worktreePath: string;
+  try {
+    ({ worktreePath } = await createSessionWorktree({
+      sessionId: tentative.id,
+      repoDir: ctx.repoDir,
+      baseBranch,
+      branchName,
+      reportsDirAbsolute: reportsDir,
+    }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return json({ error: message }, 400);
+  }
+
+  const meta: SessionMeta = { ...tentative, worktreePath, branchName };
   await saveSessionMeta(meta, ctx.sessionsDir);
   await spawnAndAttach(ctx, meta);
 
   const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
   return json({ meta: stored ?? meta }, 201);
+}
+
+async function resolveBranchName(params: {
+  explicit?: string;
+  prompt: string;
+  fallback: string;
+  generator: BranchNameGenerator;
+}): Promise<string | null> {
+  if (params.explicit && params.explicit.trim() !== "") {
+    return sanitizeBranchName(params.explicit);
+  }
+  const generated = await params.generator(params.prompt).catch(() => null);
+  if (generated !== null) return generated;
+  return params.fallback;
 }
 
 async function getSessions(req: Request, ctx: ServerContext): Promise<Response> {
@@ -621,7 +663,7 @@ async function postCancel(_req: Request, ctx: ServerContext, params: Record<stri
     }
     if (meta.worktreePath) {
       try {
-        const branchName = `worqload/${meta.id.slice(0, 8)}`;
+        const branchName = meta.branchName || `worqload/${meta.id.slice(0, 8)}`;
         await removeWorktree(meta.worktreePath, branchName, ctx.repoDir);
       } catch {}
     }

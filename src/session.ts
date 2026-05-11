@@ -9,6 +9,7 @@ export interface SessionMeta {
   baseBranch: string;
   baseCommit: string;
   worktreePath: string;
+  branchName: string;
   pid?: number;
   status: SessionStatus;
   createdAt: string;
@@ -38,6 +39,7 @@ export interface CreateSessionParams {
   baseBranch: string;
   baseCommit: string;
   worktreePath: string;
+  branchName: string;
   title?: string;
 }
 
@@ -53,6 +55,7 @@ export function createSession(params: CreateSessionParams): SessionMeta {
     baseBranch: params.baseBranch,
     baseCommit: params.baseCommit,
     worktreePath: params.worktreePath,
+    branchName: params.branchName,
     status: "running",
     createdAt: new Date().toISOString(),
   };
