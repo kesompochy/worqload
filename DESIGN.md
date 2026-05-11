@@ -211,6 +211,7 @@ type EventKind =
 | `POST` | `/sessions` | 新規セッション作成 |
 | `GET` | `/sessions` | 一覧 |
 | `GET` | `/sessions/:id` | 詳細 (meta + 直近イベント) |
+| `POST` | `/sessions/:id/title` | 表示名 (alias) の設定 (`{ title }`、空文字でクリア) |
 | `POST` | `/sessions/:id/feedback` | feedback 投入 |
 | `POST` | `/sessions/:id/escalations/:eid/resolve` | escalation 解決 |
 | `POST` | `/sessions/:id/stop` | Stop |

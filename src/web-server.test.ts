@@ -554,6 +554,47 @@ test("GET /sessions/:id/asking returns pending escalations", async () => {
   expect(res.asking[0].content).toBe("X or Y?");
 });
 
+test("POST /sessions/:id/title sets, updates and clears the display title", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", {
+    prompt: "あなたに長いお願いごとをしたいです、これはサイドバーで読みにくい",
+    baseBranch: TEST_BASE,
+  }).then(r => r.json());
+  const sid = created.meta.id;
+  expect(created.meta.title).toBeUndefined();
+
+  // set
+  const set = await postJson(baseUrl, `/sessions/${sid}/title`, { title: "  リファクタ祭り  " }).then(r => r.json());
+  expect(set.meta.title).toBe("リファクタ祭り");
+  expect((await loadSessionMeta(sid, ctx.sessionsDir))?.title).toBe("リファクタ祭り");
+  expect((await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json())).meta.title).toBe("リファクタ祭り");
+
+  // update
+  const updated = await postJson(baseUrl, `/sessions/${sid}/title`, { title: "別名" }).then(r => r.json());
+  expect(updated.meta.title).toBe("別名");
+
+  // clear (empty / whitespace → drop the field, fall back to the prompt)
+  const cleared = await postJson(baseUrl, `/sessions/${sid}/title`, { title: "   " }).then(r => r.json());
+  expect(cleared.meta.title).toBeUndefined();
+  expect((await loadSessionMeta(sid, ctx.sessionsDir))?.title).toBeUndefined();
+
+  // surfaced in the session list too
+  const list = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  expect(list.sessions.find((s: { id: string }) => s.id === sid)?.title).toBeUndefined();
+});
+
+test("POST /sessions/:id/title rejects a non-string title and an unknown session", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  expect((await postJson(baseUrl, `/sessions/${created.meta.id}/title`, { title: 123 })).status).toBe(400);
+  expect((await postJson(baseUrl, `/sessions/${created.meta.id}/title`, {})).status).toBe(400);
+  expect((await postJson(baseUrl, "/sessions/nope/title", { title: "x" })).status).toBe(404);
+});
+
 test("POST /sessions/:id/archive hides terminal sessions from default list", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");

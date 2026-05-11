@@ -388,6 +388,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/cancel", postCancel),
   defineRoute("POST", "/sessions/:id/resume", postResume),
   defineRoute("POST", "/sessions/:id/archive", postArchive),
+  defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("POST", "/sessions/:id/escalations/:filename/resolve", postEscalationResolve),
@@ -628,6 +629,29 @@ async function postArchive(_req: Request, ctx: ServerContext, params: Record<str
     }
     if (meta.archivedAt) return json({ meta });
     const updated: SessionMeta = { ...meta, archivedAt: new Date().toISOString() };
+    await saveSessionMeta(updated, ctx.sessionsDir);
+    return json({ meta: updated });
+  });
+}
+
+interface TitleBody {
+  title?: string;
+}
+
+// The display name shown in the sidebar and detail header. Without it the UI
+// falls back to the head of the initial prompt, which reads as the user's
+// opening message to the agent and is hard to tell apart at a glance — so this
+// lets the human give the session a short alias. Empty/whitespace drops the
+// field, reinstating the prompt-head fallback.
+async function postTitle(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json().catch(() => ({}))) as TitleBody;
+    if (typeof body.title !== "string") {
+      return json({ error: "title must be a string" }, 400);
+    }
+    const trimmed = body.title.trim();
+    const { title: _previous, ...rest } = meta;
+    const updated: SessionMeta = trimmed === "" ? rest : { ...rest, title: trimmed };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
   });
