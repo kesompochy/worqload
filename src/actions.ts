@@ -1,4 +1,11 @@
 import type { SessionMeta } from "./session";
+import { HIDDEN_WORKTREE_ENTRIES } from "./worktree";
+
+// Pathspecs that drop worqload's own injected worktree entries (the
+// `.worqload-reports` symlink) from `git status`, so a repo that hasn't
+// gitignored them still gets an honest read of whether the agent left work
+// uncommitted. Mirrors HIDDEN_WORKTREE_ENTRIES used by the file explorer.
+const WORQLOAD_ENTRY_EXCLUDES = [...HIDDEN_WORKTREE_ENTRIES].map((entry) => `:!${entry}`);
 
 export interface ActionResult {
   ok: boolean;
@@ -55,10 +62,16 @@ function fail(message: string): ActionResult {
 }
 
 // "dirty" includes untracked (non-gitignored) files because we want to catch
-// the case where the agent edited but forgot to commit. Users are expected to
-// gitignore .worqload/ and .worqload-reports per the deployment guide.
+// the case where the agent edited but forgot to commit. The `.worqload-reports`
+// symlink worqload injects at the worktree root is excluded: it isn't project
+// content, so a repo that hasn't gitignored it still gets a clean check.
 async function isWorktreeDirty(cwd: string): Promise<boolean> {
-  const proc = Bun.spawn(["git", "status", "--porcelain"], { cwd, stdout: "pipe", stderr: "pipe", env: cleanGitEnv() });
+  const proc = Bun.spawn(["git", "status", "--porcelain", "--", ".", ...WORQLOAD_ENTRY_EXCLUDES], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: cleanGitEnv(),
+  });
   const out = await new Response(proc.stdout).text();
   await proc.exited;
   return out.trim() !== "";
@@ -164,23 +177,45 @@ export const createPrAction: Action = {
   id: "create-pr",
   label: "Create PR",
   description: "Push the session branch to origin and create a pull request via the gh CLI.",
+  confirmMessage:
+    "Push this session's branch to origin and open a pull request with the gh CLI. Any uncommitted changes left in the session worktree are committed first, under the PR title.",
   params: [
     { name: "title", label: "Title", type: "string", placeholder: "(default: session title)" },
     { name: "body", label: "Body", type: "text", placeholder: "Optional PR body (markdown)" },
   ],
   async run({ meta, repoDir }, params) {
-    if (await isWorktreeDirty(meta.worktreePath)) {
-      return fail("session worktree has uncommitted changes; the agent must commit them before pushing");
-    }
     const branchName = sessionBranchName(meta);
     const title = (params.title?.trim() || defaultPrTitle(meta)).trim();
     const body = params.body ?? "";
     if (title === "") return fail("title resolved to empty string");
 
+    // The branch can't be pushed while work sits uncommitted. Rather than
+    // refuse — the agent has often already stopped, so it can't be told to
+    // commit — stage and commit it here under the PR title. `git add -A`
+    // skips the .worqload-reports symlink on a repo that gitignored it; we
+    // unstage it explicitly to cover repos that didn't, so it never lands in
+    // the PR.
+    const commitLog: string[] = [];
+    if (await isWorktreeDirty(meta.worktreePath)) {
+      const add = await runCommand(["git", "add", "-A"], meta.worktreePath);
+      if (!add.ok) {
+        return { ...add, message: "git add failed in the session worktree; nothing was committed or pushed" };
+      }
+      for (const entry of HIDDEN_WORKTREE_ENTRIES) {
+        await runCommand(["git", "reset", "-q", "--", entry], meta.worktreePath);
+      }
+      const commit = await runCommand(["git", "commit", "-m", title], meta.worktreePath);
+      if (!commit.ok) {
+        return { ...commit, message: "git commit failed in the session worktree; nothing was pushed" };
+      }
+      commitLog.push(`$ git commit -m ${JSON.stringify(title)}\n${commit.stdout}`);
+    }
+
     const push = await runCommand(["git", "push", "-u", "origin", branchName], repoDir);
     if (!push.ok) {
       return {
         ...push,
+        stdout: [...commitLog, `$ git push -u origin ${branchName}\n${push.stdout}`].join("\n"),
         message: "git push failed before gh pr create was attempted",
       };
     }
@@ -191,7 +226,11 @@ export const createPrAction: Action = {
     return {
       ok: gh.ok,
       exitCode: gh.exitCode,
-      stdout: `$ git push -u origin ${branchName}\n${push.stdout}\n$ gh pr create --base ${meta.baseBranch} --head ${branchName}\n${gh.stdout}`,
+      stdout: [
+        ...commitLog,
+        `$ git push -u origin ${branchName}\n${push.stdout}`,
+        `$ gh pr create --base ${meta.baseBranch} --head ${branchName}\n${gh.stdout}`,
+      ].join("\n"),
       stderr: [push.stderr, gh.stderr].filter((s) => s.trim() !== "").join("\n"),
     };
   },
