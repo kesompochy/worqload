@@ -54,6 +54,18 @@ export function onDetailBodyClick(e) {
   // which re-renders the pane and detaches the <a> before navigation, so the
   // new tab never opens.
   if (e.target.closest("a")) return;
+  // The pending-asking section (DetailBody.svelte) renders its resolve buttons
+  // natively; the answer textarea is read here off the enclosing article.
+  const askBtn = e.target.closest(".ask-resolve, .ask-approve, .ask-reject");
+  if (askBtn) {
+    const article = askBtn.closest("[data-asking]");
+    if (!article) return;
+    const filename = article.getAttribute("data-asking");
+    if (askBtn.classList.contains("ask-resolve")) onResolve(filename, article);
+    else if (askBtn.classList.contains("ask-approve")) onResolveCommand(filename, "approve", article);
+    else onResolveCommand(filename, "reject", article);
+    return;
+  }
   const markBtn = e.target.closest("[data-report-mark]");
   if (markBtn) {
     e.stopPropagation();

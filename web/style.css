@@ -66,6 +66,9 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .badge-crashed { background: rgba(248,81,73,.18); color: var(--crashed); }
 .detail { display: flex; flex-direction: column; min-height: 0; }
 .detail-main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* DetailBody.svelte mounts here; the wrapper itself generates no box so the
+   .detail-body it renders is a direct flex child of .detail-main. */
+#detailBodyMount { display: contents; }
 .detail-empty { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-dim); }
 .detail-header { padding: .9rem 1.1rem; border-bottom: 1px solid var(--border); display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .detail-header .title { font-size: 1.05rem; font-weight: 600; flex: 1 1 auto; word-break: break-word; }
