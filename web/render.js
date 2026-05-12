@@ -229,7 +229,7 @@ export function renderDetail() {
     ${actionBarHtml}
     ${actionPanelHtml}
     ${tabsHtml}
-    <div class="detail-body" id="detailBody">
+    <div class="detail-body${state.activeTab === "diff" ? " diff-view" : ""}" id="detailBody">
       ${askingHtml}
       ${tabContent}
       ${feedbackHtml ? `<section><h2>Feedback sent</h2>${feedbackHtml}</section>` : ""}
