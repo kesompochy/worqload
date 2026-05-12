@@ -1,5 +1,5 @@
 <script>
-  // Files tab full-text search (Ctrl/Cmd+F). Opened via the exported open()
+  // Files tab full-text search (Ctrl/Cmd+Shift+F). Opened via the exported open()
   // (wired to the keydown handler in main.ts). The human types a query; matches
   // are fetched from GET /sessions/:id/search as they type (debounced); picking
   // one switches to the Files tab and opens that file. Arrow keys move the

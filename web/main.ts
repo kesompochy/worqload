@@ -17,14 +17,14 @@ import Composer from "./svelte/Composer.svelte";
 const newSessionModal = mount(NewSessionModal, { target: document.body });
 document.getElementById("btnNew")?.addEventListener("click", () => newSessionModal.open());
 
-// Ctrl/Cmd+F opens the Files-tab full-text search over the selected session's
-// worktree; Ctrl/Cmd+P opens the filename search over the same files. We
-// override the browser's find-in-page / print only while a session is selected;
-// with none, the native shortcuts still work.
+// Ctrl/Cmd+Shift+F opens the Files-tab full-text search over the selected
+// session's worktree; Ctrl/Cmd+Shift+P opens the filename search over the same
+// files. The Shift variants avoid clobbering the browser's find-in-page (Cmd+F)
+// and print (Cmd+P).
 const fileSearchModal = mount(FileSearchModal, { target: document.body });
 const fileNameSearchModal = mount(FileNameSearchModal, { target: document.body });
 window.addEventListener("keydown", (e) => {
-  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
   if (!state.selected) return;
   const key = e.key.toLowerCase();
   if (key === "f") {

@@ -1,5 +1,5 @@
 <script>
-  // Files tab filename search (Ctrl/Cmd+P). Opened via the exported open()
+  // Files tab filename search (Ctrl/Cmd+Shift+P). Opened via the exported open()
   // (wired to the keydown handler in main.ts). The human types a query; the
   // worktree's file list (already fetched for the Files tab, ensured here) is
   // filtered with a fuzzy match as they type; picking one switches to the Files
