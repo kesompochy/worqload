@@ -119,7 +119,7 @@ export async function refreshDiff() {
   if (!state.selected) return;
   let next = "";
   try {
-    const res = await fetch(`/sessions/${state.selected}/diff?base=${state.diffBase}`);
+    const res = await fetch(`/sessions/${state.selected}/diff`);
     next = res.ok ? await res.text() : "";
   } catch {
     next = "";

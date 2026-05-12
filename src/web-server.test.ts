@@ -553,7 +553,7 @@ test("GET /sessions/:id/diff returns full file context (unchanged lines included
   expect(diff).toContain("line 30");
 });
 
-test("GET /sessions/:id/diff?base=base-branch shows only the branch's own changes (PR-style diff)", async () => {
+test("GET /sessions/:id/diff shows the branch's own changes, not commits the base branch gained after the fork", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
 
@@ -566,16 +566,15 @@ test("GET /sessions/:id/diff?base=base-branch shows only the branch's own change
   git(["add", "session-file.txt"], wt);
   git(["commit", "-m", "session change"], wt);
 
-  // Meanwhile the base branch moves on past the worktree's fork point.
-  writeFileSync(join(repoDir, "upstream-file.txt"), "upstream work\n");
-  git(["add", "upstream-file.txt"], repoDir);
-  git(["commit", "-m", "upstream change"], repoDir);
+  // Meanwhile the base branch moves on past the worktree's fork point — e.g.
+  // another session got merged in.
+  writeFileSync(join(repoDir, "other-session.txt"), "work from another session\n");
+  git(["add", "other-session.txt"], repoDir);
+  git(["commit", "-m", "merge another session"], repoDir);
 
-  const diff = await fetch(`${baseUrl}/sessions/${sid}/diff?base=base-branch`).then(r => r.text());
+  const diff = await fetch(`${baseUrl}/sessions/${sid}/diff`).then(r => r.text());
   expect(diff).toContain("session-file.txt");
-  // Diffing against the merge-base means the base-branch-only commit doesn't
-  // surface (a plain `git diff <baseBranch>` would render it as a deletion).
-  expect(diff).not.toContain("upstream-file.txt");
+  expect(diff).not.toContain("other-session.txt");
 });
 
 test("GET /sessions/:id/files lists worktree files including new untracked ones", async () => {

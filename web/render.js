@@ -26,7 +26,6 @@ import {
   onDetailBodyClick,
   onExpandAllDiffFiles,
   onCollapseAllDiffFiles,
-  onDiffBaseChange,
   switchTab,
   toggleActionPanel,
   runOpenAction,
@@ -265,11 +264,6 @@ export function renderDetail() {
         <span class="diff-base-toggle">
           <button id="btnExpandAll" type="button" class="diff-tool-btn">Expand all</button>
           <button id="btnCollapseAll" type="button" class="diff-tool-btn">Collapse all</button>
-          base:
-          <select id="diffBaseSel" style="background:transparent;border:1px solid var(--border);color:var(--text);padding:.1rem .3rem;border-radius:3px">
-            <option value="base-branch" ${state.diffBase === "base-branch" ? "selected" : ""}>${escapeHtml(m.baseBranch)}</option>
-            <option value="session-start" ${state.diffBase === "session-start" ? "selected" : ""}>session-start</option>
-          </select>
         </span>
       ` : ""}
     </div>
@@ -357,8 +351,6 @@ export function renderDetail() {
   document.querySelectorAll(".tab-btn").forEach(b => {
     b.addEventListener("click", () => switchTab(b.getAttribute("data-tab")));
   });
-  const baseSel = document.getElementById("diffBaseSel");
-  if (baseSel) baseSel.addEventListener("change", e => onDiffBaseChange(e.target.value));
   const btnExpandAll = document.getElementById("btnExpandAll");
   if (btnExpandAll) btnExpandAll.addEventListener("click", onExpandAllDiffFiles);
   const btnCollapseAll = document.getElementById("btnCollapseAll");

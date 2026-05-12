@@ -22,7 +22,6 @@ import {
   resolveBaseCommit,
   currentBranch,
   gitDiff,
-  gitDiffAgainstBaseBranch,
   listWorktreeFiles,
   readWorktreeFile,
 } from "./worktree";
@@ -855,14 +854,15 @@ async function getAsking(_req: Request, ctx: ServerContext, params: Record<strin
 // trip. -U with a value larger than any realistic file effectively means "all".
 const FULL_FILE_CONTEXT_LINES = 1_000_000;
 
-async function getDiff(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+async function getDiff(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const url = new URL(req.url);
-    const base = url.searchParams.get("base") || "session-start";
     try {
-      const diff = base === "base-branch"
-        ? await gitDiffAgainstBaseBranch(meta.worktreePath, meta.baseBranch, meta.baseCommit, FULL_FILE_CONTEXT_LINES)
-        : await gitDiff(meta.worktreePath, meta.baseCommit, FULL_FILE_CONTEXT_LINES);
+      // Diff against the base commit recorded when the session forked — the
+      // changes stacked on this branch. Deliberately not against the base
+      // branch's current tip or a remote ref: worqload only owns "show the
+      // diff", the human owns merge/push, and the base branch (and any remote)
+      // moves under us as other sessions land.
+      const diff = await gitDiff(meta.worktreePath, meta.baseCommit, FULL_FILE_CONTEXT_LINES);
       return new Response(diff, { headers: { "content-type": "text/plain; charset=utf-8" } });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
