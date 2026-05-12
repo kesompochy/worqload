@@ -66,6 +66,16 @@ export function onDetailBodyClick(e) {
     );
     return;
   }
+  const gotoFeedbackEl = e.target.closest("[data-goto-feedback]");
+  if (gotoFeedbackEl) {
+    gotoArticle("feedback", gotoFeedbackEl.getAttribute("data-goto-feedback"));
+    return;
+  }
+  const gotoReportEl = e.target.closest("[data-goto-report]");
+  if (gotoReportEl) {
+    gotoArticle("reports", gotoReportEl.getAttribute("data-goto-report"));
+    return;
+  }
   // The pending-asking section (DetailBody.svelte) renders its resolve buttons
   // natively; the answer textarea is read here off the enclosing article.
   const askBtn = e.target.closest(".ask-resolve, .ask-approve, .ask-reject");
@@ -259,7 +269,7 @@ const REPORTS_ANCHOR_PREFIX = "./.worqload-reports/";
 // originates) and falls back to the Files tab.
 export async function gotoAnchorTarget(path, lineStart, lineEnd) {
   if (!path) return;
-  const target = { path, lineStart, lineEnd: lineEnd || lineStart };
+  const target = { anchor: { path, lineStart, lineEnd: lineEnd || lineStart } };
   if (path.startsWith(REPORTS_ANCHOR_PREFIX)) {
     const filename = path.slice(REPORTS_ANCHOR_PREFIX.length);
     if (!state.reports.some(r => r.filename === filename)) { toast("anchor target not in this session"); return; }
@@ -286,6 +296,24 @@ export async function gotoAnchorTarget(path, lineStart, lineEnd) {
     return;
   }
   toast(`anchor target not in view: ${path}`);
+}
+
+// "Go to" the report or feedback article with the given filename: open its tab,
+// expand it, and have DetailBody scroll it into view and flash it. Used by the
+// report↔feedback reply-link chips.
+export async function gotoArticle(tab, filename) {
+  if (!filename) return;
+  if (tab === "reports") {
+    if (!state.reports.some(r => r.filename === filename)) { toast(`report not in this session: ${filename}`); return; }
+    state.reportToggle = new Map(state.reportToggle).set(filename, true);
+    await switchTab("reports");
+    state.pendingScrollTo = { article: { attr: "data-report-filename", value: filename } };
+  } else {
+    if (!state.feedbackHistory.some(f => f.filename === filename)) { toast(`feedback not in this session: ${filename}`); return; }
+    state.feedbackToggle = new Map(state.feedbackToggle).set(filename, true);
+    await switchTab("feedback");
+    state.pendingScrollTo = { article: { attr: "data-feedback-filename", value: filename } };
+  }
 }
 
 export async function onArchive(id = state.selected) {

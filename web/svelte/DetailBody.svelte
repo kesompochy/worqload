@@ -91,11 +91,13 @@
     });
   });
 
-  // "Go to anchor": clicking a feedback anchor chip has handlers.js switch to
-  // the right tab (and expand the report / un-collapse the diff file) and set
-  // appState.pendingScrollTo. Once that content has rendered, bring the anchored
-  // row into view and flash it. Best-effort: if the diff/file moved on and the
-  // line is gone, we just leave the user on the switched-to tab.
+  // "Go to" requests from anchor / reply-link chips: handlers.js switches to the
+  // right tab (and expands the report / un-collapses the diff file) and sets
+  // appState.pendingScrollTo to either { anchor: {path,lineStart,lineEnd} } (a
+  // diff/file/report line) or { article: {attr,value} } (a whole report/feedback
+  // card). Once the body has re-rendered with that content, bring the target
+  // into view and flash it. Best-effort: if the line is gone (diff moved on), we
+  // just leave the user on the switched-to tab.
   function findAnchorElement(root, path, lineStart, lineEnd) {
     let overlap = null;
     for (const el of root.querySelectorAll(`[data-anchor-path="${CSS.escape(path)}"][data-anchor-line]`)) {
@@ -109,12 +111,18 @@
     return overlap;
   }
 
+  function resolveScrollTarget(root, target) {
+    if (target.anchor) return findAnchorElement(root, target.anchor.path, target.anchor.lineStart, target.anchor.lineEnd);
+    if (target.article) return root.querySelector(`[${target.article.attr}="${CSS.escape(target.article.value)}"]`);
+    return null;
+  }
+
   $effect(() => {
     const target = appState.pendingScrollTo;
     if (!target) return;
     tick().then(() => {
       appState.pendingScrollTo = null;
-      const el = bodyEl && findAnchorElement(bodyEl, target.path, target.lineStart, target.lineEnd);
+      const el = bodyEl && resolveScrollTarget(bodyEl, target);
       if (!el) return;
       el.scrollIntoView({ block: "center", behavior: "smooth" });
       el.classList.add("anchor-flash");
@@ -161,6 +169,7 @@
     {:else if appState.activeTab === "feedback"}
       {#if appState.feedbackHistory.length > 0}
         {#each appState.feedbackHistory as f (f.filename)}
+          {@const replies = appState.reports.filter(rep => rep.replyTo === f.filename)}
           <article class="report" class:collapsed={!isFeedbackExpanded(f)} data-feedback-filename={f.filename}>
             <div class="report-header" data-feedback-toggle={f.filename}>
               <span class="report-chevron">▾</span>
@@ -170,6 +179,9 @@
               {/if}
               <span class="badge badge-{f.status === 'unread' ? 'waiting_human' : 'stopped'}">{f.status}</span>
             </div>
+            {#if replies.length > 0}
+              <div class="report-links"><span class="report-links-label">addressed by</span>{#each replies as rep (rep.filename)}<button class="report-anchor-chip" type="button" title="{rep.filename} — クリックでレポートへ" data-goto-report={rep.filename}>↳ {rep.filename}</button>{/each}</div>
+            {/if}
             <div class="report-body">
               <div class="md">{@html renderMarkdown(f.content)}</div>
             </div>
@@ -188,6 +200,9 @@
             <span class="report-filename">{r.filename}</span>
             <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
           </div>
+          {#if r.replyTo}
+            <div class="report-links"><span class="report-links-label">in reply to</span><button class="report-anchor-chip" type="button" title="Re: {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button></div>
+          {/if}
           <div class="report-body">
             <div class="md">{@html renderMarkdown(r.content, { anchorPath: `./.worqload-reports/${r.filename}`, anchor: appState.anchor })}</div>
           </div>

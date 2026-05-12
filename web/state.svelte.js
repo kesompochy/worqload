@@ -33,7 +33,7 @@ export const state = $state({
   actionRunInFlight: false,  // true while the open action's run request is outstanding (disables the Run button)
   actionResults: new Map(),  // actionId -> last run result observed in this browser view
   renamingSessionId: null,   // session id whose sidebar title is being edited inline (null = none)
-  pendingScrollTo: null,     // { path, lineStart, lineEnd } | null: a "go to anchor" request DetailBody resolves (scroll + flash) after the next render
+  pendingScrollTo: null,     // { anchor: {path,lineStart,lineEnd} } | { article: {attr,value} } | null: a "go to" request DetailBody resolves (scroll + flash) after the next render
 });
 
 // Diff view: the server hands us full file context; we collapse unchanged

@@ -59,6 +59,8 @@ export interface NumberedFile {
 export interface NumberedFileMeta {
   // The diff/file/report line a piece of feedback (or a report) is anchored to.
   anchor?: { path: string; lineStart: number; lineEnd: number };
+  // For a report: the filename of the feedback message it answers.
+  replyTo?: string;
 }
 
 export function metaFilenameFor(mdFilename: string): string {

@@ -34,10 +34,11 @@ export async function submitReport(
   sessionId: string,
   slug: string,
   content: string,
+  replyTo?: string,
 ): Promise<SubmitResult> {
   return postJson<SubmitResult>(
     `${endpoint}/internal/sessions/${sessionId}/reports`,
-    { slug, content },
+    replyTo ? { slug, content, replyTo } : { slug, content },
   );
 }
 

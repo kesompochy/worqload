@@ -814,6 +814,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
         filename: r.filename,
         content: r.content,
         read: readSet.has(r.filename),
+        replyTo: r.meta?.replyTo,
       })),
     });
   });
@@ -1172,7 +1173,11 @@ async function postSessionAction(req: Request, ctx: ServerContext, params: Recor
 interface NumberedBody {
   slug: string;
   content: string;
+  // Reports only: the feedback message this report answers (see `--re`).
+  replyTo?: string;
 }
+
+const NUMBERED_FILENAME_RE = /^\d+-[A-Za-z0-9_-]+\.md$/;
 
 async function postInternalReports(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
@@ -1180,8 +1185,19 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
     if (!body?.slug || typeof body.content !== "string") {
       return json({ error: "slug and content required" }, 400);
     }
+    const replyTo = typeof body.replyTo === "string" && body.replyTo !== "" ? body.replyTo : undefined;
+    if (replyTo) {
+      if (!NUMBERED_FILENAME_RE.test(replyTo)) {
+        return json({ error: `--re must be a feedback filename like 003-feedback.md, got: ${replyTo}` }, 400);
+      }
+      const inInbox = await Bun.file(join(feedbackInboxDirFor(ctx, meta.id), replyTo)).exists();
+      const inRead = await Bun.file(join(feedbackReadDirFor(ctx, meta.id), replyTo)).exists();
+      if (!inInbox && !inRead) {
+        return json({ error: `no such feedback message: ${replyTo}` }, 400);
+      }
+    }
     const dir = reportsDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(dir, body.slug, body.content);
+    const file = await writeNumberedFile(dir, body.slug, body.content, replyTo ? { meta: { replyTo } } : {});
     await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
     return json({ filename: file.filename, seq: file.seq });
   });

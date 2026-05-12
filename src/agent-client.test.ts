@@ -34,6 +34,36 @@ test("submitReport posts a numbered report", async () => {
   expect(r.seq).toBe(1);
 });
 
+test("submitReport --re links the report to a feedback message", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+  await fetch(`${endpoint}/sessions/${sessionId}/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "please fix the parser", slug: "feedback" }),
+  });
+
+  const r = await submitReport(endpoint, sessionId, "fix", "fixed the parser", "001-feedback.md");
+  expect(r.filename).toBe("001-fix.md");
+
+  const reports = await fetch(`${endpoint}/sessions/${sessionId}/reports`).then(res => res.json());
+  expect(reports.reports[0].replyTo).toBe("001-feedback.md");
+
+  // A report without --re carries no replyTo.
+  await submitReport(endpoint, sessionId, "more", "more work");
+  const after = await fetch(`${endpoint}/sessions/${sessionId}/reports`).then(res => res.json());
+  expect(after.reports.find((x: { filename: string }) => x.filename === "002-more.md").replyTo).toBeUndefined();
+});
+
+test("submitReport --re rejects a feedback filename that does not exist", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+  await expect(submitReport(endpoint, sessionId, "fix", "x", "099-nope.md")).rejects.toThrow();
+});
+
+test("submitReport --re rejects a malformed feedback filename", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+  await expect(submitReport(endpoint, sessionId, "fix", "x", "../../etc/passwd")).rejects.toThrow();
+});
+
 test("submitEscalation flips status to waiting_human", async () => {
   const { endpoint, sessionId } = await bootAndCreateSession();
 
