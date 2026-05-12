@@ -50,9 +50,11 @@ export function escapeHtml(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-export function formatRelative(iso) {
+// `now` defaults to the wall clock; callers that want the label to tick (the
+// Events UI) pass a reactive timestamp so Svelte re-derives once a second.
+export function formatRelative(iso, now = Date.now()) {
   if (!iso) return "";
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  const diff = (now - new Date(iso).getTime()) / 1000;
   if (diff < 60) return `${Math.floor(diff)}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
