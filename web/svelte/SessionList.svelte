@@ -11,7 +11,6 @@
     selectSession,
     onStop,
     onArchive,
-    onCancel,
     onResume,
     onRenameStart,
     onRenameCommit,
@@ -108,7 +107,6 @@
             <button class="btn-card-stop" onclick={(e) => { e.stopPropagation(); onStop(session.id); }}>Stop</button>
           {/if}
           <button class="btn-card-archive" disabled={!terminal} onclick={(e) => { e.stopPropagation(); onArchive(session.id); }}>Archive</button>
-          <button class="btn-card-cancel danger" disabled={terminal} onclick={(e) => { e.stopPropagation(); onCancel(session.id); }}>Cancel</button>
         </div>
       </div>
       {#if unread > 0}
