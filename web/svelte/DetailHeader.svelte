@@ -1,9 +1,10 @@
 <script>
   // The detail pane's top strip: title + status badge + action buttons, the
-  // metadata line, and the tab bar. Mounted into #detailHeader from main.ts;
-  // renders nothing until a session with loaded detail is selected. The action
-  // panel that opens when a "gh action" button is pressed (#detailActionArea) is
-  // ActionBar.svelte, the scroll body (#detailBodyMount) is DetailBody.svelte,
+  // metadata line, and the tab bar — plus the inline action panel
+  // (ActionBar.svelte), kept here directly under its buttons so it stays above
+  // the tab bar rather than landing inside the active tab's region. Mounted into
+  // #detailHeader from main.ts; renders nothing until a session with loaded
+  // detail is selected. The scroll body (#detailBodyMount) is DetailBody.svelte
   // and the feedback/resume composer (#detailComposer) is Composer.svelte. The
   // Events tab's "· Ns ago" label reads the reactive `clock` so it counts up
   // between streamed events.
@@ -13,6 +14,7 @@
   import { formatRelative } from "../dom.js";
   import { clock } from "../clock.svelte.js";
   import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, onStopAndMarkRead, toggleActionPanel } from "../handlers.js";
+  import ActionBar from "./ActionBar.svelte";
 
   const tabs = [
     { id: "reports", label: "Reports" },
@@ -48,6 +50,7 @@
       </div>
     {/if}
   </div>
+  <ActionBar />
   <div class="detail-meta">
     base: <code>{m.baseBranch}</code>
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}

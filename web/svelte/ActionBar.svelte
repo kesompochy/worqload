@@ -1,13 +1,13 @@
 <script>
-  // The inline panel that opens when a "gh action" button (in DetailHeader's
-  // title row) is pressed, mounted into #detailActionArea from main.ts. Sits
-  // above the scroll body (DetailBody.svelte) and the composer
-  // (Composer.svelte). The actions deliberately use an inline panel rather than
-  // a modal: the run log stays on screen alongside the rest of the session, and
-  // (because the server records each run as an action_invoked event) it
-  // survives a reload. The confirmation step is the explicit "Confirm & Run"
-  // button in the panel head — a short reach from the button that opened the
-  // panel; the panel is the gate, not a separate dialog.
+  // The inline panel that opens when a "gh action" button is pressed. Rendered
+  // by DetailHeader.svelte directly under the action button row, so it sits
+  // above the metadata line and tab bar instead of inside the active tab's
+  // region. The actions deliberately use an inline panel rather than a modal:
+  // the run log stays on screen alongside the rest of the session, and (because
+  // the server records each run as an action_invoked event) it survives a
+  // reload. The confirmation step is the explicit "Confirm & Run" button in the
+  // panel head — a short reach from the button that opened the panel; the panel
+  // is the gate, not a separate dialog.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
