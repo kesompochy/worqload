@@ -191,38 +191,3 @@ export async function gitDiff(
   }
   return out;
 }
-
-// The "diff against the base branch" view. We want the diff a pull request
-// would show — the branch's own changes only — so we diff against the
-// merge-base of the worktree's HEAD and the base branch, not the base branch
-// tip. That way commits the base branch accumulated after this worktree forked
-// (and were later pulled into the branch via a forge "update branch") drop out
-// instead of swamping the diff. The base branch is resolved to its
-// remote-tracking ref (`<base>@{upstream}`, usually `origin/<base>`) when one
-// exists, because a `git pull` run inside the worktree advances that ref but
-// never touches the local `<base>` branch in the main checkout. `fallbackCommit`
-// (the base commit recorded at session start) is used only when neither the
-// upstream ref nor the local base branch resolves.
-export async function gitDiffAgainstBaseBranch(
-  worktreePath: string,
-  baseBranch: string,
-  fallbackCommit: string,
-  contextLines?: number,
-): Promise<string> {
-  for (const ref of [`${baseBranch}@{upstream}`, baseBranch]) {
-    const mergeBase = await gitMergeBase(worktreePath, ref);
-    if (mergeBase) return gitDiff(worktreePath, mergeBase, contextLines);
-  }
-  return gitDiff(worktreePath, fallbackCommit, contextLines);
-}
-
-async function gitMergeBase(worktreePath: string, ref: string): Promise<string | null> {
-  const proc = Bun.spawn(
-    ["git", "merge-base", ref, "HEAD"],
-    { stdout: "pipe", stderr: "pipe", cwd: worktreePath, env: cleanGitEnv() },
-  );
-  const out = await new Response(proc.stdout).text();
-  if ((await proc.exited) !== 0) return null;
-  const sha = out.trim();
-  return sha === "" ? null : sha;
-}

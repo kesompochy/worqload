@@ -217,7 +217,7 @@ type EventKind =
 | `POST` | `/sessions/:id/stop` | Stop |
 | `POST` | `/sessions/:id/cancel` | Cancel |
 | `POST` | `/sessions/:id/resume` | Resume (`{ prompt? }`) |
-| `GET` | `/sessions/:id/diff?base=session-start\|base-branch` | diff 取得 |
+| `GET` | `/sessions/:id/diff` | diff 取得 (セッション開始時の base commit との差分。リモートにも base ブランチの現在地にも依存しない) |
 | `GET` | `/sessions/:id/files` | worktree のファイル一覧 (tracked + 未追跡、gitignore 除外) |
 | `GET` | `/sessions/:id/file?path=<relpath>` | worktree 内ファイル本文 (worktree 外パスは拒否、binary / サイズ超過はフラグのみ) |
 | `GET` | `/sessions/:id/reports` | report 一覧 |
@@ -296,7 +296,7 @@ session 起動時、worqload は claude に渡す system prompt / SKILL.md に�
 ```
 +----------------------------------+----------------------------------+
 | Reports timeline (主)            | Diff viewer (副)                 |
-|  001 plan.md                     |  base = session-start ▼          |
+|  001 plan.md                     |  [Expand all] [Collapse all]     |
 |    [本文]                        |  src/foo.ts                      |
 |    [Reply box]                   |  ...                             |
 |  002 build-failed.md             |                                  |

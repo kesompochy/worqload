@@ -212,12 +212,6 @@ export async function switchTab(tab) {
   renderDetail();
 }
 
-export async function onDiffBaseChange(value) {
-  state.diffBase = value;
-  await refreshDiff();
-  renderDetail();
-}
-
 export async function onArchive(id = state.selected) {
   if (!id) return;
   try {
