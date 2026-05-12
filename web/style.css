@@ -64,8 +64,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .badge-waiting_human { background: rgba(210,153,34,.18); color: var(--waiting); }
 .badge-stopped { background: rgba(139,149,163,.16); color: var(--stopped); }
 .badge-crashed { background: rgba(248,81,73,.18); color: var(--crashed); }
-.detail { display: flex; flex-direction: column; min-height: 0; }
-.detail-main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.detail-main { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 /* DetailBody.svelte mounts here; the wrapper itself generates no box so the
    .detail-body it renders is a direct flex child of .detail-main. */
 #detailBodyMount { display: contents; }
