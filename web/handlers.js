@@ -40,6 +40,7 @@ export async function selectSession(id) {
   state.selectedFilePath = null;
   state.fileContent = null;
   state.openActionId = null;
+  state.actionRunInFlight = false;
   state.actionResults = new Map();
   renderSessionList();
   renderDetail();
@@ -432,7 +433,6 @@ export function toggleActionPanel(actionId) {
   if (!actionId) return;
   state.openActionId = state.openActionId === actionId ? null : actionId;
   renderDetail();
-  if (state.openActionId) document.querySelector(".action-panel [data-action-param]")?.focus();
 }
 
 // Pulls the pull-request URL out of the create-pr run log. `gh pr create`
@@ -452,8 +452,11 @@ export async function runOpenAction() {
     const el = document.getElementById(`actionParam-${p.name}`);
     if (el) params[p.name] = el.value;
   }
-  const runBtn = document.querySelector("[data-action-panel-run]");
-  if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = `<span class="spinner"></span> Running…`; }
+  // actionResults is reassigned wholesale rather than mutated: Svelte 5's
+  // $state doesn't proxy Maps, so ActionBar only re-renders the run output
+  // when the property itself is replaced. The in-flight flag drives the Run
+  // button's disabled/spinner state the same way.
+  state.actionRunInFlight = true;
   try {
     const res = await fetch(`/sessions/${state.selected}/actions/${encodeURIComponent(action.id)}`, {
       method: "POST",
@@ -461,7 +464,7 @@ export async function runOpenAction() {
       body: JSON.stringify({ params }),
     });
     const data = await res.json().catch(() => ({}));
-    state.actionResults.set(action.id, {
+    state.actionResults = new Map(state.actionResults).set(action.id, {
       ok: !!data.ok,
       exitCode: data.exitCode ?? null,
       stdout: data.stdout ?? "",
@@ -485,9 +488,10 @@ export async function runOpenAction() {
       toast(data.ok ? `${action.label}: success` : `${action.label}: failed`);
     }
   } catch (e) {
-    state.actionResults.set(action.id, { ok: false, exitCode: null, stdout: "", stderr: "", message: e.message, ranAt: new Date().toISOString() });
+    state.actionResults = new Map(state.actionResults).set(action.id, { ok: false, exitCode: null, stdout: "", stderr: "", message: e.message, ranAt: new Date().toISOString() });
     toast(`failed: ${e.message}`);
   } finally {
+    state.actionRunInFlight = false;
     renderDetail();
   }
 }

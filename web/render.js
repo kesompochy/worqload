@@ -1,23 +1,15 @@
-// renderDetail rebuilds the parts of the session detail pane that are still
-// vanilla: the action bar + action panel (#detailActionArea, above the scroll
-// body) and the feedback/resume composer (#detailComposer, below it). The
-// scroll body itself — the pending-asking section, the active tab's content,
-// the "Feedback sent" list — is DetailBody.svelte (mounted into
-// #detailBodyMount from main.ts); the header / meta line / tab bar above it is
-// DetailHeader.svelte; the sidebar is SessionList.svelte. All three re-render
-// reactively off `state`.
+// renderDetail rebuilds the part of the session detail pane that is still
+// vanilla: the feedback/resume composer (#detailComposer, below the scroll
+// body). The action bar + action panel above the body is ActionBar.svelte
+// (mounted into #detailActionArea from main.ts); the scroll body itself — the
+// pending-asking section, the active tab's content, the "Feedback sent" list —
+// is DetailBody.svelte (mounted into #detailBodyMount); the header / meta line
+// / tab bar above it is DetailHeader.svelte; the sidebar is SessionList.svelte.
+// All of those re-render reactively off `state`.
 
 import { $, escapeHtml, bindEnterToSubmit } from "./dom.js";
 import { state } from "./state.svelte.js";
-import { renderActionPanelHtml } from "./actions-view.js";
-import {
-  onStopAndMarkRead,
-  onResume,
-  onFeedback,
-  toggleActionPanel,
-  runOpenAction,
-  clearAnchor,
-} from "./handlers.js";
+import { onResume, onFeedback, clearAnchor } from "./handlers.js";
 
 // The sidebar is now SessionList.svelte (mounted from main.ts), which re-renders
 // itself off the reactive `state`. This stays exported because api.js and
@@ -26,11 +18,9 @@ import {
 export function renderSessionList() {}
 
 export function renderDetail() {
-  const actionArea = $("#detailActionArea");
   const composer = $("#detailComposer");
-  if (!actionArea || !composer) return;
+  if (!composer) return;
   if (!state.selected || !state.detail) {
-    actionArea.innerHTML = "";
     composer.innerHTML = "";
     return;
   }
@@ -39,31 +29,6 @@ export function renderDetail() {
 
   // preserve any in-progress feedback text across re-renders
   const preservedFeedback = ($("#feedbackInput")?.value) ?? "";
-  // preserve any in-progress action-parameter input across re-renders
-  const preservedActionParams = {};
-  for (const el of document.querySelectorAll("[data-action-param]")) {
-    preservedActionParams[el.getAttribute("data-action-param")] = el.value;
-  }
-
-  const actionButtonsHtml = state.actions.map(a => `
-    <button class="btn-action ${state.openActionId === a.id ? "open" : ""}" data-action-id="${escapeHtml(a.id)}" title="${escapeHtml(a.description || "")}">${escapeHtml(a.label)}</button>
-  `).join("");
-
-  // A client-side composite (not a server "gh action"): mark every report read,
-  // then stop. Pointless once the session is already stopped/crashed, so it's
-  // hidden there.
-  const stopAndReadBtnHtml = isTerminal
-    ? ""
-    : `<button class="btn-action" data-stop-and-read title="Mark every report read, then stop the session">Stop &amp; mark all read</button>`;
-
-  const actionBarHtml = state.actions.length > 0 || stopAndReadBtnHtml
-    ? `<div class="action-bar">
-         <span class="label">Actions</span>
-         <div class="buttons">${stopAndReadBtnHtml}${actionButtonsHtml}</div>
-       </div>`
-    : "";
-
-  actionArea.innerHTML = `${actionBarHtml}${renderActionPanelHtml()}`;
 
   // Anchored comments target the feedback inbox; the resume composer (terminal
   // sessions) sends a plain prompt instead, so the chip is hidden there.
@@ -88,15 +53,6 @@ export function renderDetail() {
     </form>
   `;
 
-  document.querySelector("[data-stop-and-read]")?.addEventListener("click", onStopAndMarkRead);
-  document.querySelectorAll(".btn-action[data-action-id]").forEach(b => {
-    b.addEventListener("click", () => toggleActionPanel(b.getAttribute("data-action-id")));
-  });
-  const actionCloseBtn = document.querySelector("[data-action-panel-close]");
-  if (actionCloseBtn) actionCloseBtn.addEventListener("click", () => toggleActionPanel(state.openActionId));
-  const actionRunBtn = document.querySelector("[data-action-panel-run]");
-  if (actionRunBtn) actionRunBtn.addEventListener("click", runOpenAction);
-
   const onComposerSubmit = isTerminal ? onResume : onFeedback;
   $("#feedbackForm").addEventListener("submit", e => {
     e.preventDefault();
@@ -106,8 +62,4 @@ export function renderDetail() {
   if (state.anchor && !isTerminal) $("#anchorClear")?.addEventListener("click", clearAnchor);
 
   if (preservedFeedback) $("#feedbackInput").value = preservedFeedback;
-  for (const [name, value] of Object.entries(preservedActionParams)) {
-    const el = document.getElementById(`actionParam-${name}`);
-    if (el) el.value = value;
-  }
 }

@@ -15,8 +15,7 @@ mock.module("../web/api.js", () => ({
   selectFile: async () => {},
   openWs() {},
 }));
-
-const { selectSession, extractPullRequestUrl, onDetailBodyClick } = await import("../web/handlers.js");
+const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction } = await import("../web/handlers.js");
 const { state, isReportExpanded } = await import("../web/state.svelte.js");
 
 // onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
@@ -67,4 +66,33 @@ test("clicking a report header toggles its expansion with a fresh Map (so Svelte
   // second click collapses again.
   onDetailBodyClick(reportToggleClick("001-plan.md"));
   expect(isReportExpanded(state.reports[0])).toBe(false);
+});
+
+test("runOpenAction records the run on a fresh actionResults Map (so ActionBar re-renders)", async () => {
+  // runOpenAction reads action-parameter inputs off the DOM (none here) and
+  // pops a toast on completion; stub just enough document/window for that, and
+  // restore the globals so later test files keep the real fetch/document.
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
+  globalThis.document = { getElementById: () => null, querySelector: () => toastEl };
+  globalThis.window = { open() {} };
+  globalThis.fetch = async () => ({ json: async () => ({ ok: true, exitCode: 0, stdout: "", stderr: "" }) });
+  try {
+    state.selected = "session-a";
+    state.actions = [{ id: "noop", label: "Noop", params: [] }];
+    state.openActionId = "noop";
+    state.actionResults = new Map();
+    state.actionRunInFlight = false;
+    const before = state.actionResults;
+
+    await runOpenAction();
+
+    expect(state.actionResults).not.toBe(before);
+    expect(state.actionResults.get("noop").ok).toBe(true);
+    expect(state.actionRunInFlight).toBe(false);
+  } finally {
+    globalThis.document = saved.document;
+    globalThis.window = saved.window;
+    globalThis.fetch = saved.fetch;
+  }
 });
