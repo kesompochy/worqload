@@ -12,7 +12,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
-  import { state as appState, isReportExpanded, isFeedbackExpanded, anchorLabel } from "../state.svelte.js";
+  import { state as appState, isReportExpanded, isFeedbackExpanded, anchorLabel, feedbackAnchorsForPath } from "../state.svelte.js";
   import { renderMarkdown } from "../markdown.js";
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
@@ -126,7 +126,16 @@
       if (!el) return;
       el.scrollIntoView({ block: "center", behavior: "smooth" });
       el.classList.add("anchor-flash");
-      setTimeout(() => el.classList.remove("anchor-flash"), 1600);
+      // Drop the class when the ::after fade ends (not on a timer that could
+      // clip it); the timeout is a fallback for when the animation is suppressed
+      // (prefers-reduced-motion) so the class doesn't linger.
+      const clear = (e) => {
+        if (e && e.animationName !== "anchor-flash") return;
+        el.removeEventListener("animationend", clear);
+        el.classList.remove("anchor-flash");
+      };
+      el.addEventListener("animationend", clear);
+      setTimeout(clear, 2000);
     });
   });
 </script>
@@ -177,11 +186,11 @@
               {#if f.anchor}
                 <button class="report-anchor-chip" type="button" title="Re: {anchorLabel(f.anchor)} — クリックでアンカー先へ" data-goto-anchor-path={f.anchor.path} data-goto-anchor-line={f.anchor.lineStart} data-goto-anchor-line-end={f.anchor.lineEnd}>↳ {anchorLabel(f.anchor)}</button>
               {/if}
+              {#each replies as rep (rep.filename)}
+                <button class="report-anchor-chip" type="button" title="addressed by {rep.filename} — クリックでレポートへ" data-goto-report={rep.filename}>↳ {rep.filename}</button>
+              {/each}
               <span class="badge badge-{f.status === 'unread' ? 'waiting_human' : 'stopped'}">{f.status}</span>
             </div>
-            {#if replies.length > 0}
-              <div class="report-links"><span class="report-links-label">addressed by</span>{#each replies as rep (rep.filename)}<button class="report-anchor-chip" type="button" title="{rep.filename} — クリックでレポートへ" data-goto-report={rep.filename}>↳ {rep.filename}</button>{/each}</div>
-            {/if}
             <div class="report-body">
               <div class="md">{@html renderMarkdown(f.content)}</div>
             </div>
@@ -194,17 +203,19 @@
       {#each reportsNewestFirst as r (r.filename)}
         {@const expanded = isReportExpanded(r)}
         {@const markTo = r.read ? "unread" : "read"}
+        {@const reportAnchorPath = `./.worqload-reports/${r.filename}`}
+        {@const reportFeedbackAnchors = feedbackAnchorsForPath(reportAnchorPath).map(f => ({ lineStart: f.anchor.lineStart, lineEnd: f.anchor.lineEnd, filename: f.filename }))}
         <article class="report" class:unread={!r.read} class:collapsed={!expanded} data-report-filename={r.filename}>
           <div class="report-header" data-report-toggle={r.filename}>
             <span class="report-chevron">▾</span>
             <span class="report-filename">{r.filename}</span>
+            {#if r.replyTo}
+              <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
+            {/if}
             <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
           </div>
-          {#if r.replyTo}
-            <div class="report-links"><span class="report-links-label">in reply to</span><button class="report-anchor-chip" type="button" title="Re: {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button></div>
-          {/if}
           <div class="report-body">
-            <div class="md">{@html renderMarkdown(r.content, { anchorPath: `./.worqload-reports/${r.filename}`, anchor: appState.anchor })}</div>
+            <div class="md">{@html renderMarkdown(r.content, { anchorPath: reportAnchorPath, anchor: appState.anchor, feedbackAnchors: reportFeedbackAnchors })}</div>
           </div>
         </article>
       {/each}

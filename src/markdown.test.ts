@@ -152,3 +152,18 @@ test("aria-current ignores anchor on a different path", () => {
   });
   expect(html).not.toContain("aria-current");
 });
+
+test("data-feedback-here marks blocks overlapping a sent-feedback anchor", () => {
+  const html = renderMarkdown("# Title\n\nbody line\n", {
+    anchorPath: "./r.md",
+    feedbackAnchors: [{ lineStart: 3, lineEnd: 3, filename: "004-feedback.md" }],
+  });
+  // Heading is line 1 (no overlap); paragraph is line 3 (overlap).
+  expect(html).not.toMatch(/<h1 [^>]*data-feedback-here/);
+  expect(html).toMatch(/<p [^>]*data-feedback-here="004-feedback.md"/);
+});
+
+test("data-feedback-here is absent when no feedback anchors are passed", () => {
+  const html = renderMarkdown("body\n", { anchorPath: "./r.md" });
+  expect(html).not.toContain("data-feedback-here");
+});

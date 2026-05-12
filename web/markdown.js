@@ -34,6 +34,9 @@ export function renderMarkdown(source, options = {}) {
   const ctx = {
     anchorPath: options.anchorPath ?? null,
     currentAnchor: options.anchor ?? null,
+    // [{ lineStart, lineEnd, filename }] — sent feedback anchored into this
+    // source; blocks overlapping a range get a data-feedback-here marker.
+    feedbackAnchors: options.feedbackAnchors ?? [],
   };
   return blocks.map(b => renderBlock(b, ctx)).join("");
 }
@@ -363,10 +366,13 @@ function anchorAttrs(startLine, endLine, ctx) {
   const selected = isOverlap(startLine, endLine, ctx.currentAnchor, ctx.anchorPath)
     ? ` aria-current="true"`
     : "";
+  const feedback = ctx.feedbackAnchors.find(a => startLine <= a.lineEnd && endLine >= a.lineStart);
+  const feedbackAttr = feedback ? ` data-feedback-here="${escapeAttr(feedback.filename)}"` : "";
   return ` data-anchor-path="${escapeAttr(ctx.anchorPath)}"`
        + ` data-anchor-line="${startLine}"`
        + ` data-anchor-line-end="${endLine}"`
-       + selected;
+       + selected
+       + feedbackAttr;
 }
 
 function isOverlap(startLine, endLine, anchor, anchorPath) {
