@@ -208,6 +208,29 @@ test("GET /sessions lists created sessions", async () => {
   expect(body.sessions).toHaveLength(2);
 });
 
+test("POST /sessions/order persists the sidebar order", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const a = await postJson(baseUrl, "/sessions", { prompt: "first", baseBranch: TEST_BASE }).then(r => r.json());
+  const b = await postJson(baseUrl, "/sessions", { prompt: "second", baseBranch: TEST_BASE }).then(r => r.json());
+  const c = await postJson(baseUrl, "/sessions", { prompt: "third", baseBranch: TEST_BASE }).then(r => r.json());
+  const ids = [a.meta.id, b.meta.id, c.meta.id];
+
+  const res = await postJson(baseUrl, "/sessions/order", { ids });
+  expect(res.status).toBe(200);
+
+  const body = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(ids);
+});
+
+test("POST /sessions/order rejects a non-string-array body", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+  const res = await postJson(baseUrl, "/sessions/order", { ids: "nope" });
+  expect(res.status).toBe(400);
+});
+
 test("GET /sessions exposes unread report counts per session", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

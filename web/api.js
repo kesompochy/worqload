@@ -40,6 +40,13 @@ export function updateLoadAverage() {
   el.title = `未読レポート ${unreadReports} + 未解決エスカレ ${unresolvedEscalations}`;
 }
 
+// Persist the drag-reordered sidebar order. The caller has already mutated
+// `state.sessions` so the UI reflects the new order immediately; this just
+// makes it survive the 30s poll (which overwrites `state.sessions` from /sessions).
+export async function reorderSessions(orderedIds) {
+  await api("POST", "/sessions/order", { ids: orderedIds });
+}
+
 export async function fetchActions() {
   try {
     const { actions } = await api("GET", "/actions");

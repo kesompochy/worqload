@@ -9,6 +9,7 @@ import { parseDiffFiles, mergeLineRanges } from "./diff-view.js";
 import {
   api,
   fetchSessions,
+  reorderSessions,
   refreshDetail,
   refreshDiff,
   ensureFilesLoaded,
@@ -396,6 +397,26 @@ export async function onRenameCommit(id, rawValue) {
     if (state.detail && state.detail.meta && state.detail.meta.id === id) state.detail.meta = meta;
   } catch (e) {
     toast(`failed: ${e.message}`);
+  }
+}
+
+// Drag-reorder the sidebar: move the dragged card so it lands immediately
+// before `beforeId` (or to the end when that's null), update the in-browser
+// list at once, then persist so the 30s poll keeps the new order.
+export async function onReorderSessions(draggedId, beforeId) {
+  if (!draggedId || draggedId === beforeId) return;
+  const next = state.sessions.slice();
+  const from = next.findIndex(s => s.id === draggedId);
+  if (from === -1) return;
+  const [moved] = next.splice(from, 1);
+  const to = beforeId === null ? next.length : next.findIndex(s => s.id === beforeId);
+  next.splice(to === -1 ? next.length : to, 0, moved);
+  state.sessions = next;
+  try {
+    await reorderSessions(next.map(s => s.id));
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+    await fetchSessions();
   }
 }
 

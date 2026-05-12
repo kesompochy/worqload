@@ -2,16 +2,18 @@ import { test, expect, mock } from "bun:test";
 
 // selectSession reaches into the network (api); stub it so the per-session
 // state reset can be asserted in isolation.
+const reorderSessionsCalls: string[][] = [];
 mock.module("../web/api.js", () => ({
   api: async () => ({}),
   fetchSessions: async () => {},
+  reorderSessions: async (ids: string[]) => { reorderSessionsCalls.push(ids); },
   refreshDetail: async () => {},
   refreshDiff: async () => {},
   ensureFilesLoaded: async () => {},
   selectFile: async () => {},
   openWs() {},
 }));
-const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction } = await import("../web/handlers.js");
+const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions } = await import("../web/handlers.js");
 const { state, isReportExpanded } = await import("../web/state.svelte.js");
 
 // onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
@@ -91,4 +93,34 @@ test("runOpenAction records the run on a fresh actionResults Map (so ActionBar r
     globalThis.window = saved.window;
     globalThis.fetch = saved.fetch;
   }
+});
+
+test("onReorderSessions moves the dragged session before the target and persists the new order", async () => {
+  state.sessions = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  reorderSessionsCalls.length = 0;
+
+  await onReorderSessions("c", "a");
+
+  expect(state.sessions.map((s: { id: string }) => s.id)).toEqual(["c", "a", "b"]);
+  expect(reorderSessionsCalls).toEqual([["c", "a", "b"]]);
+});
+
+test("onReorderSessions appends the dragged session when the target is null", async () => {
+  state.sessions = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  reorderSessionsCalls.length = 0;
+
+  await onReorderSessions("a", null);
+
+  expect(state.sessions.map((s: { id: string }) => s.id)).toEqual(["b", "c", "a"]);
+  expect(reorderSessionsCalls).toEqual([["b", "c", "a"]]);
+});
+
+test("onReorderSessions is a no-op when dropped onto itself", async () => {
+  state.sessions = [{ id: "a" }, { id: "b" }];
+  reorderSessionsCalls.length = 0;
+
+  await onReorderSessions("a", "a");
+
+  expect(state.sessions.map((s: { id: string }) => s.id)).toEqual(["a", "b"]);
+  expect(reorderSessionsCalls).toEqual([]);
 });
