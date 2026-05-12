@@ -245,12 +245,14 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .diff-line.selected > .line-feedback-chips,
 .file-line.selected > .line-feedback-chips,
 .md [data-feedback-here][aria-current="true"] > .line-feedback-chips { display: flex; }
+/* Opaque background — these chips float over code/prose, so anything translucent
+   would be unreadable where it overlaps the text behind it. */
 .line-feedback-chip {
-  background: rgba(188,140,255,.2); border: 1px solid rgba(188,140,255,.5); color: #c9aaff;
+  background: #251f33; border: 1px solid #7c5fb8; color: #d6c4ff;
   padding: 0 .35rem; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.6;
   cursor: pointer; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.line-feedback-chip:hover { background: rgba(188,140,255,.34); border-color: rgba(188,140,255,.75); }
+.line-feedback-chip:hover { background: #322a44; border-color: #9a7ad0; }
 .event-row { border-bottom: 1px solid var(--border); font-family: ui-monospace, monospace; font-size: 12px; }
 .event-line { display: grid; grid-template-columns: 1ch 5ch 12rem 6rem 1fr; gap: .5rem; padding: .3rem .5rem; align-items: baseline; cursor: pointer; user-select: none; }
 .event-line:hover { background: var(--panel); }
