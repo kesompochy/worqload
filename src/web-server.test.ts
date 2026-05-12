@@ -1,9 +1,10 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "fs";
-import { startServer } from "./web-server";
+import { startServer, type HostLauncher } from "./web-server";
 import { agentEndpointPath, loadSessionMeta } from "./session";
-import { readEvents } from "./event-log";
+import { appendEvent, readEvents } from "./event-log";
+import type { HostClient } from "./session-host-client";
 import { makeRepoFromTemplate, cleanupAll, trackCleanup } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -14,8 +15,36 @@ const MOCK = join(import.meta.dir, "__fixtures__", "mock-claude.ts");
 const CLI = join(import.meta.dir, "cli.ts");
 // Run the host as a child of the test process so we exercise the real
 // detached-spawn path. `bun <cli> session-host` is the same binding
-// `worqload session-host` would invoke after `bun link`.
+// `worqload session-host` would invoke after `bun link`. Only the tests that
+// actually depend on a live host subprocess (restart/reconnect, orphan
+// detection) use this; everything else uses `inProcessHostLauncher` to skip the
+// per-session spawn.
 const HOST_COMMAND = ["bun", CLI, "session-host"];
+
+// In-memory stand-in for a session host: writes the session_started/_resumed
+// event the real host would write on attach, then behaves as an idle host whose
+// claude process exits on kill/close. Lets the bulk of the suite create
+// sessions without spawning the host (and its claude child) as subprocesses.
+function inProcessHostLauncher(): HostLauncher {
+  return async ({ meta, sessionsDir, resume, onEvent }) => {
+    const event = await appendEvent(
+      meta.id,
+      { kind: resume ? "session_resumed" : "session_started", payload: { prompt: meta.prompt } },
+      sessionsDir,
+    );
+    onEvent(event);
+    let resolveExited!: (code: number | null) => void;
+    const exited = new Promise<number | null>((r) => { resolveExited = r; });
+    const client: HostClient = {
+      async send() {},
+      async kill() { resolveExited(null); },
+      async close() { resolveExited(null); },
+      replayCompleted: Promise.resolve({ lastSeq: event.seq }),
+      exited,
+    };
+    return { client };
+  };
+}
 
 function git(args: string[], cwd: string) {
   return Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: cleanGitEnv });
@@ -34,15 +63,14 @@ function makeRepo(): string {
   });
 }
 
-async function bootServer(repoDir: string, mockMode: "init" | "echo" | "hang" = "hang") {
+async function bootServer(repoDir: string, _mockMode: "init" | "echo" | "hang" = "hang") {
   const started = await startServer({
     port: 0,
     repoDir,
-    spawnCommand: ["bun", MOCK, mockMode],
     // Skip real claude branch-name generation so the test doesn't depend on
     // `claude` being on PATH; resolveBranchName falls back to <shortId>.
     branchNameGenerator: async () => null,
-    hostCommand: HOST_COMMAND,
+    hostLauncher: inProcessHostLauncher(),
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -147,9 +175,8 @@ test("POST /sessions uses generated branch name when no explicit one is given", 
   const started = await startServer({
     port: 0,
     repoDir,
-    spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => "auto-name",
-    hostCommand: HOST_COMMAND,
+    hostLauncher: inProcessHostLauncher(),
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -295,9 +322,6 @@ test("POST /sessions/:id/stop kills the host and sets status stopped", async () 
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-
-  // give the host a moment to be alive
-  await new Promise(r => setTimeout(r, 100));
 
   const stopped = await postJson(baseUrl, `/sessions/${sid}/stop`, {}).then(r => r.json());
   expect(stopped.meta.status).toBe("stopped");
@@ -706,7 +730,6 @@ test("POST /sessions/:id/archive hides terminal sessions from default list", asy
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 80));
 
   // Cannot archive while running
   const tooEarly = await fetch(`${baseUrl}/sessions/${sid}/archive`, { method: "POST" });
@@ -834,9 +857,6 @@ test("WS /sessions/:id/stream replays past events on subscribe and pushes live o
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
 
-  // Wait briefly so session_started has been written
-  await new Promise(r => setTimeout(r, 80));
-
   const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/sessions/${sid}/stream`);
   await new Promise<void>(resolve => ws.addEventListener("open", () => resolve(), { once: true }));
 
@@ -868,7 +888,6 @@ test("POST /sessions/:id/cancel removes worktree and marks stopped", async () =>
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 100));
 
   const wt = created.meta.worktreePath;
   expect(existsSync(wt)).toBe(true);
@@ -886,7 +905,6 @@ test("POST /sessions/:id/resume respawns the host and returns the session to run
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 100));
 
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
   expect(ctx.clients.has(sid)).toBe(false);
@@ -910,7 +928,6 @@ test("POST /sessions/:id/resume queues the optional prompt as feedback", async (
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 100));
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
 
   await postJson(baseUrl, `/sessions/${sid}/resume`, { prompt: "now do the other thing" });
@@ -939,7 +956,6 @@ test("POST /sessions/:id/resume rejects a cancelled session whose worktree is go
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 100));
   await postJson(baseUrl, `/sessions/${sid}/cancel`, {});
   expect(existsSync(created.meta.worktreePath)).toBe(false);
 

@@ -15,7 +15,7 @@ import {
   type SessionStatus,
 } from "./session";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
-import { appendEvent, readEvents } from "./event-log";
+import { appendEvent, readEvents, type Event } from "./event-log";
 import {
   createSessionWorktree,
   removeWorktree,
@@ -102,9 +102,24 @@ interface SessionAttachment {
   // PID of the host process (whether we spawned it or reconnected). Used at
   // shutdown when killHosts is requested.
   hostPid?: number;
-  // Defined only when this serve instance is the one that spawned the host.
+  // Defined only when this serve instance is the one that spawned the host
+  // (and that host runs as a real subprocess).
   hostProc?: Subprocess;
 }
+
+// Brings a session's host to life and returns a client for talking to it. The
+// production launcher spawns `worqload session-host` as a detached subprocess;
+// tests inject an in-process stand-in so the suite doesn't pay one (or two)
+// process spawns per session.
+export interface HostLaunchRequest {
+  meta: SessionMeta;
+  sessionsDir: string;
+  agentEndpoint: string;
+  resume: boolean;
+  onEvent: (event: Event) => void;
+  onDisconnect: () => void;
+}
+export type HostLauncher = (req: HostLaunchRequest) => Promise<{ client: HostClient; hostProc?: Subprocess }>;
 
 export interface ServerContext {
   port: number;
@@ -114,7 +129,7 @@ export interface ServerContext {
   worktreesDir: string;         // <repo>/.worktrees
   spawnCommand: string[];
   branchNameGenerator: BranchNameGenerator;
-  hostCommand: string[];
+  hostLauncher: HostLauncher;
   clients: Map<string, SessionAttachment>;
   baseUrlForAgent: string;
   wsClients: Set<ServerWebSocket<WsClientData>>;
@@ -127,7 +142,8 @@ export interface StartServerOptions {
   // Overrides the helper that turns a prompt into a short branch name.
   // Return null to skip generation; the caller then falls back to <shortId>.
   branchNameGenerator?: BranchNameGenerator;
-  hostCommand?: string[];       // override how the host process itself is launched
+  hostCommand?: string[];       // override how the (subprocess) host is launched
+  hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
 }
 
 export interface ShutdownOptions {
@@ -290,38 +306,47 @@ async function transitionStatus(
   return updated;
 }
 
-// Spawn a detached host and connect to it. The host (not serve) writes the
-// session_started / session_resumed event and the first user message. On
-// resume the prior claude conversation is continued (`--continue`) and the
-// host replays the existing event log to us, so we connect from seq 0 too.
+// Production host launcher: spawn `worqload session-host` (test override:
+// `bun src/cli.ts session-host`) as a detached child, connect over its unix
+// socket, and wait for it to finish replaying the event log (empty for a fresh
+// session). The host — not serve — writes the session_started / session_resumed
+// event and sends claude its first message. On resume claude's prior
+// conversation is continued (`--continue`), so we still connect from seq 0.
+function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: string[] }): HostLauncher {
+  return async ({ meta, sessionsDir, agentEndpoint, resume, onEvent, onDisconnect }) => {
+    const socketPath = hostSocketPathFor(meta.id);
+    const hostProc = spawnDetachedHost({
+      sessionId: meta.id,
+      sessionsDir,
+      socketPath,
+      agentEndpoint,
+      spawnCommand: resume ? [...config.spawnCommand, "--continue"] : config.spawnCommand,
+      hostCommand: config.hostCommand,
+      ...(resume && { resume: true }),
+    });
+    const client = await connectToHost({ socketPath, sinceSeq: 0, onEvent, onDisconnect });
+    await client.replayCompleted.catch(() => {});
+    return { client, hostProc };
+  };
+}
+
 async function spawnAndAttachHost(
   ctx: ServerContext,
   meta: SessionMeta,
   opts: { resume?: boolean } = {},
 ): Promise<HostClient> {
-  const socketPath = hostSocketPathFor(meta.id);
   await writeAgentEndpointFile(ctx, meta.id);
-  const hostProc = spawnDetachedHost({
-    sessionId: meta.id,
+  const { client, hostProc } = await ctx.hostLauncher({
+    meta,
     sessionsDir: ctx.sessionsDir,
-    socketPath,
     agentEndpoint: ctx.baseUrlForAgent,
-    spawnCommand: opts.resume ? [...ctx.spawnCommand, "--continue"] : ctx.spawnCommand,
-    hostCommand: ctx.hostCommand,
-    ...(opts.resume && { resume: true }),
-  });
-
-  const client = await connectToHost({
-    socketPath,
-    sinceSeq: 0,
+    resume: opts.resume ?? false,
     onEvent: (event) => broadcastEvent(ctx, meta.id, event),
     onDisconnect: () => {
       ctx.clients.delete(meta.id);
     },
   });
-  await client.replayCompleted.catch(() => {});
-
-  ctx.clients.set(meta.id, { client, hostProc, hostPid: hostProc.pid });
+  ctx.clients.set(meta.id, { client, hostProc, hostPid: hostProc?.pid });
   return client;
 }
 
@@ -357,6 +382,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand();
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
+  const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand });
 
   await mkdir(sessionsDir, { recursive: true });
 
@@ -412,7 +438,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     worktreesDir,
     spawnCommand,
     branchNameGenerator,
-    hostCommand,
+    hostLauncher,
     clients: new Map(),
     port: server.port,
     baseUrlForAgent: `http://127.0.0.1:${server.port}`,
