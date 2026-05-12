@@ -15,7 +15,7 @@ mock.module("../web/api.js", () => ({
   openWs() {},
 }));
 const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark } = await import("../web/handlers.js");
-const { state, isReportExpanded } = await import("../web/state.svelte.js");
+const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
 // enough of it: closest(selector) returns a stub element for the toggle row.
@@ -65,6 +65,17 @@ test("clicking a report header toggles its expansion with a fresh Map (so Svelte
   // second click collapses again.
   onDetailBodyClick(reportToggleClick("001-plan.md"));
   expect(isReportExpanded(state.reports[0])).toBe(false);
+});
+
+test("command-result feedback is expanded only until the agent consumes it", () => {
+  state.feedbackToggle = new Map();
+  // Right after the run the feedback is still unread → shown.
+  expect(isFeedbackExpanded({ filename: "012-command-approve.md", status: "unread" })).toBe(true);
+  // Once the agent fetches it (e.g. after a reload) it collapses.
+  expect(isFeedbackExpanded({ filename: "012-command-approve.md", status: "read" })).toBe(false);
+  // An explicit toggle still wins.
+  state.feedbackToggle = new Map([["012-command-approve.md", true]]);
+  expect(isFeedbackExpanded({ filename: "012-command-approve.md", status: "read" })).toBe(true);
 });
 
 test("onReportMark refreshes the session list so the sidebar unread badge updates immediately", async () => {
