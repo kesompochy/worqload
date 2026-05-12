@@ -1,9 +1,8 @@
 <script>
   // The detail pane's action strip and the inline panel for a "gh action",
   // mounted into #detailActionArea from main.ts. Sits above the scroll body
-  // (DetailBody.svelte); the composer below it is still rebuilt by render.js's
-  // renderDetail() into #detailComposer. The actions deliberately use an
-  // inline panel rather than a modal: the run log stays on screen alongside
+  // (DetailBody.svelte) and the composer (Composer.svelte). The actions
+  // deliberately use an inline panel rather than a modal: the run log stays on screen alongside
   // the rest of the session, and (because the server records each run as an
   // action_invoked event) it survives a reload. The confirmation step is the
   // explicit "Confirm & Run" button in the panel head — a short reach from the

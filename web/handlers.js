@@ -1,7 +1,7 @@
 // Every user-initiated action: switching sessions, clicking in the detail
 // pane, the composer (feedback / resume), session lifecycle (stop / cancel /
 // archive), gh actions, the new-session modal. Each handler mutates `state`
-// and/or calls the data layer, then triggers a re-render.
+// and/or calls the data layer; the Svelte components re-render reactively.
 
 import { $, toast } from "./dom.js";
 import { state, isReportExpanded, isFeedbackExpanded, DIFF_EXPAND_CHUNK } from "./state.svelte.js";
@@ -15,7 +15,6 @@ import {
   selectFile,
   openWs,
 } from "./api.js";
-import { renderSessionList, renderDetail } from "./render.js";
 
 export async function selectSession(id) {
   if (state.ws) { state.ws.close(); state.ws = null; }
@@ -42,8 +41,6 @@ export async function selectSession(id) {
   state.openActionId = null;
   state.actionRunInFlight = false;
   state.actionResults = new Map();
-  renderSessionList();
-  renderDetail();
   if (!id) return;
   await refreshDetail();
   openWs(id);
@@ -83,7 +80,6 @@ export function onDetailBodyClick(e) {
     // Reassign rather than mutate in place: Svelte 5's $state doesn't proxy
     // Maps, so the components only re-render when the property itself is replaced.
     state.reportToggle = new Map(state.reportToggle).set(filename, !currentlyExpanded);
-    renderDetail();
     return;
   }
   const feedbackToggle = e.target.closest("[data-feedback-toggle]");
@@ -92,14 +88,12 @@ export function onDetailBodyClick(e) {
     const feedback = state.feedbackHistory.find(f => f.filename === filename);
     const currentlyExpanded = feedback ? isFeedbackExpanded(feedback) : true;
     state.feedbackToggle = new Map(state.feedbackToggle).set(filename, !currentlyExpanded);
-    renderDetail();
     return;
   }
   const eventToggle = e.target.closest("[data-event-toggle]");
   if (eventToggle) {
     const seq = Number(eventToggle.getAttribute("data-event-toggle"));
     state.eventToggle = new Map(state.eventToggle).set(seq, state.eventToggle.get(seq) !== true);
-    renderDetail();
     return;
   }
   // The copy button lives inside the click-to-collapse diff-file header, so this
@@ -121,7 +115,6 @@ export function onDetailBodyClick(e) {
     if (next.has(path)) next.delete(path);
     else next.add(path);
     state.collapsedFiles = next;
-    renderDetail();
     return;
   }
   const expandBtn = e.target.closest("[data-expand-dir]");
@@ -177,7 +170,6 @@ export function onExpandAllDiffFiles() {
   const expansions = new Map();
   for (const file of parseDiffFiles(state.diff)) expansions.set(file.path, [[1, Infinity]]);
   state.diffExpansions = expansions;
-  renderDetail();
 }
 
 export function onCollapseAllDiffFiles() {
@@ -188,7 +180,6 @@ export function onCollapseAllDiffFiles() {
   }
   state.collapsedFiles = collapsed;
   state.diffExpansions = new Map();
-  renderDetail();
 }
 
 export function expandDiffGap(path, from, to, dir) {
@@ -201,7 +192,6 @@ export function expandDiffGap(path, from, to, dir) {
   const next = new Map(state.diffExpansions);
   next.set(path, mergeLineRanges([...existing, range]));
   state.diffExpansions = next;
-  renderDetail();
 }
 
 export function onLineClick(e) {
@@ -227,12 +217,10 @@ export function onLineClick(e) {
   } else {
     state.anchor = { path, lineStart, lineEnd };
   }
-  renderDetail();
 }
 
 export function clearAnchor() {
   state.anchor = null;
-  renderDetail();
 }
 
 export async function switchTab(tab) {
@@ -240,7 +228,6 @@ export async function switchTab(tab) {
   state.activeTab = tab;
   if (tab === "diff") await refreshDiff();
   if (tab === "files") await ensureFilesLoaded();
-  renderDetail();
 }
 
 export async function onArchive(id = state.selected) {
@@ -399,13 +386,11 @@ export async function onResume(id = state.selected) {
 export function onRenameStart(id) {
   if (!id) return;
   state.renamingSessionId = id;
-  renderSessionList(); // renders (and focuses) the inline input for this card
 }
 
 export function onRenameCancel() {
   if (!state.renamingSessionId) return;
   state.renamingSessionId = null;
-  renderSessionList();
 }
 
 export async function onRenameCommit(id, rawValue) {
@@ -416,15 +401,12 @@ export async function onRenameCommit(id, rawValue) {
   state.renamingSessionId = null;
   const title = (rawValue ?? "").trim();
   const card = state.sessions.find(s => s.id === id);
-  if (title === ((card && card.title) || "")) { renderSessionList(); return; }
+  if (title === ((card && card.title) || "")) return;
   try {
     const { meta } = await api("POST", `/sessions/${id}/title`, { title });
     if (card) card.title = meta.title;
     if (state.detail && state.detail.meta && state.detail.meta.id === id) state.detail.meta = meta;
-    renderSessionList();
-    renderDetail();
   } catch (e) {
-    renderSessionList();
     toast(`failed: ${e.message}`);
   }
 }
@@ -432,7 +414,6 @@ export async function onRenameCommit(id, rawValue) {
 export function toggleActionPanel(actionId) {
   if (!actionId) return;
   state.openActionId = state.openActionId === actionId ? null : actionId;
-  renderDetail();
 }
 
 // Pulls the pull-request URL out of the create-pr run log. `gh pr create`
@@ -492,7 +473,6 @@ export async function runOpenAction() {
     toast(`failed: ${e.message}`);
   } finally {
     state.actionRunInFlight = false;
-    renderDetail();
   }
 }
 

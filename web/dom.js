@@ -10,28 +10,13 @@ export function toast(text, ms = 2400) {
   toast._t = setTimeout(() => el.classList.add("hidden"), ms);
 }
 
-// Wire a textarea so a bare Enter submits and Shift+Enter inserts a newline.
-export function bindEnterToSubmit(textarea, onSubmit) {
-  if (!textarea) return;
-  // Track IME composition explicitly. `event.isComposing` and `keyCode === 229`
-  // cover most browsers, but on some macOS browsers the commit-Enter keydown
-  // fires AFTER compositionend with both flags clear. The explicit flag is the
-  // backstop so a confirming Enter does not also submit.
-  let composing = false;
-  textarea.addEventListener("compositionstart", () => { composing = true; });
-  textarea.addEventListener("compositionend", () => { composing = false; });
-  textarea.addEventListener("keydown", e => {
-    if (e.key !== "Enter" || e.shiftKey) return;
-    if (composing || e.isComposing || e.keyCode === 229) return;
-    e.preventDefault();
-    onSubmit();
-  });
-}
-
 // Wire a single-line edit input: a non-composing Enter commits, Escape cancels.
-// IME composition is tracked the same way bindEnterToSubmit does it — the
-// browser's native prompt() has no such guard, so a confirming Enter mid-IME
-// also "submits" the dialog; this avoids that.
+// IME composition is tracked explicitly: `event.isComposing` and
+// `keyCode === 229` cover most browsers, but on some macOS browsers the
+// commit-Enter keydown fires after compositionend with both flags clear, so
+// the explicit flag is the backstop. (The browser's native prompt() has no
+// such guard, so a confirming Enter mid-IME also "submits" the dialog; this
+// avoids that.)
 export function bindInlineEdit(input, { onCommit, onCancel }) {
   if (!input) return;
   let composing = false;

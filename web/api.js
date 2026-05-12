@@ -1,11 +1,10 @@
 // The data layer: every call to the worqload HTTP API plus the per-session
-// WebSocket. Functions here mutate `state` then re-render; they don't build
-// HTML themselves.
+// WebSocket. Functions here mutate `state`; the Svelte components re-render
+// reactively off it. They don't build HTML themselves.
 
 import { workLoad, notificationForEvent, notificationsFromSessionPoll, pendingNotificationCount } from "./notifications.js";
 import { notify, fireNotification } from "./notify.js";
 import { state } from "./state.svelte.js";
-import { renderSessionList, renderDetail } from "./render.js";
 
 export async function api(method, path, body) {
   const init = { method, headers: { "content-type": "application/json" } };
@@ -26,7 +25,6 @@ export async function fetchSessions() {
       fireNotification(n);
     }
   }
-  renderSessionList();
   updateDocumentTitle();
   updateLoadAverage();
 }
@@ -98,7 +96,6 @@ export async function refreshDetail() {
   state.lastSeq = events.length > 0 ? events[events.length - 1].seq : 0;
   if (state.activeTab === "diff") await refreshDiff();
   if (state.activeTab === "files") await ensureFilesLoaded(true);
-  renderDetail();
 }
 
 export async function ensureFilesLoaded(force = false) {
@@ -117,7 +114,6 @@ export async function selectFile(path) {
   if (!state.selected || !path) return;
   state.selectedFilePath = path;
   state.fileContent = { path, loading: true };
-  renderDetail();
   let next;
   try {
     const res = await fetch(`/sessions/${state.selected}/file?path=${encodeURIComponent(path)}`);
@@ -134,7 +130,6 @@ export async function selectFile(path) {
   // A newer click may have superseded this fetch; only apply if still current.
   if (state.selectedFilePath === path) {
     state.fileContent = next;
-    renderDetail();
   }
 }
 
@@ -169,10 +164,6 @@ export function openWs(id) {
     if (state.detail) {
       state.detail.events = [...(state.detail.events ?? []), ev];
     }
-    if (state.activeTab === "events") renderDetail();
-    // Keep the open action panel's "last run" view current (a run may have been
-    // triggered from another browser view).
-    else if (ev.kind === "action_invoked" && state.openActionId) renderDetail();
     // For "interesting" events refresh the relevant slice.
     if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread"
         || ev.kind === "feedback_received" || ev.kind === "feedback_fetched"

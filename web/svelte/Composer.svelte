@@ -12,7 +12,7 @@
   import { onFeedback, onResume, clearAnchor } from "../handlers.js";
 
   // Tracked across the textarea's keydowns so a confirming Enter mid-IME
-  // composition doesn't also submit (mirrors dom.js's bindEnterToSubmit).
+  // composition doesn't also submit (same guard as dom.js's bindInlineEdit).
   let composing = $state(false);
 
   function submit(isTerminal) {
