@@ -17,7 +17,7 @@ import {
 } from "./session";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
-import { realWorktreeOps, type WorktreeOps } from "./worktree";
+import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
 import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
@@ -525,6 +525,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
   defineRoute("GET",  "/sessions/:id/files", getFiles),
   defineRoute("GET",  "/sessions/:id/file", getFile),
+  defineRoute("GET",  "/sessions/:id/search", getFileSearch),
   defineRoute("GET",  "/actions", getActions),
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
@@ -923,6 +924,18 @@ async function getFile(req: Request, ctx: ServerContext, params: Record<string, 
       case "not-a-file": return json({ error: "not a file" }, 400);
       case "denied": return json({ error: "path outside worktree" }, 403);
     }
+  });
+}
+
+// Full-text search across the session worktree's files (the Files tab's Ctrl+F):
+// the human types a query, picks a hit, and the Files tab opens that file.
+async function getFileSearch(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const query = (new URL(req.url).searchParams.get("q") ?? "").trim();
+    if (query === "") return json({ matches: [], truncated: false });
+    const paths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
+    const { matches, truncated } = await searchFileContents(meta.worktreePath, paths, query);
+    return json({ matches, truncated });
   });
 }
 

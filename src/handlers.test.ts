@@ -14,7 +14,7 @@ mock.module("../web/api.js", () => ({
   selectFile: async () => {},
   openWs() {},
 }));
-const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, gotoAnchorTarget, gotoArticle } = await import("../web/handlers.js");
+const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, gotoAnchorTarget, gotoArticle } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
@@ -84,6 +84,28 @@ test("command-result feedback is expanded only until the agent consumes it", () 
   // An explicit toggle still wins.
   state.feedbackToggle = new Map([["012-command-approve.md", true]]);
   expect(isFeedbackExpanded({ filename: "012-command-approve.md", status: "read" })).toBe(true);
+});
+
+test("revealReport switches to a different session, opens the Reports tab, and expands the report", async () => {
+  state.selected = "session-a";
+  state.activeTab = "diff";
+  state.reportToggle = new Map();
+
+  await revealReport("session-b", "003-build-failed.md");
+
+  expect(state.selected).toBe("session-b");
+  expect(state.activeTab).toBe("reports");
+  expect(state.reportToggle.get("003-build-failed.md")).toBe(true);
+});
+
+test("revealReport without a filename still brings the session's Reports tab into view", async () => {
+  state.selected = "session-a";
+  state.activeTab = "files";
+
+  await revealReport("session-a", null);
+
+  expect(state.selected).toBe("session-a");
+  expect(state.activeTab).toBe("reports");
 });
 
 test("onReportMark refreshes the session list so the sidebar unread badge updates immediately", async () => {

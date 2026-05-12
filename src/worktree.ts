@@ -171,6 +171,48 @@ export async function readWorktreeFile(
   return { kind: "text", content: new TextDecoder().decode(bytes) };
 }
 
+export interface FileSearchMatch {
+  path: string;   // worktree-relative
+  line: number;   // 1-based line number of the match
+  text: string;   // the matching line (truncated if very long)
+}
+
+// 200 matches is enough to find what you're after; beyond that the query is too
+// broad to scroll through, so we stop and let the caller say "narrow it down".
+const FILE_SEARCH_MATCH_LIMIT = 200;
+// A single minified-bundle line can be hundreds of KB; clip it so the response
+// stays small and the result row stays one line.
+const FILE_SEARCH_LINE_MAX_CHARS = 240;
+
+// Full-text search over the given worktree-relative files: case-insensitive
+// substring match, reported line by line. Binary, too-large, and otherwise
+// unreadable files are skipped (the same files the Files explorer can't show).
+// Stops at FILE_SEARCH_MATCH_LIMIT matches and sets `truncated` so the caller
+// can tell the human there are more.
+export async function searchFileContents(
+  worktreePath: string,
+  relPaths: string[],
+  query: string,
+): Promise<{ matches: FileSearchMatch[]; truncated: boolean }> {
+  const needle = query.toLowerCase();
+  if (needle === "") return { matches: [], truncated: false };
+  const matches: FileSearchMatch[] = [];
+  for (const relPath of relPaths) {
+    const file = await readWorktreeFile(worktreePath, relPath);
+    if (file.kind !== "text") continue;
+    const lines = file.content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i].toLowerCase().includes(needle)) continue;
+      const text = lines[i].length > FILE_SEARCH_LINE_MAX_CHARS
+        ? lines[i].slice(0, FILE_SEARCH_LINE_MAX_CHARS) + "…"
+        : lines[i];
+      matches.push({ path: relPath, line: i + 1, text });
+      if (matches.length >= FILE_SEARCH_MATCH_LIMIT) return { matches, truncated: true };
+    }
+  }
+  return { matches, truncated: false };
+}
+
 // The Diff View shows the changes stacked on this branch — what a reviewer of
 // this branch alone would see. The naive base is `baseCommit`, the base
 // branch's tip recorded when the session forked. But once the human runs

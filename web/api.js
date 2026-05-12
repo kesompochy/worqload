@@ -140,6 +140,18 @@ export async function selectFile(path) {
   }
 }
 
+// Full-text search across the selected session's worktree files (Files tab's
+// Ctrl+F). Returns { matches: [{ path, line, text }], truncated } — never
+// throws; a failure becomes an empty result so the modal just shows "no hits".
+export async function searchFiles(query) {
+  if (!state.selected || !query) return { matches: [], truncated: false };
+  try {
+    return await api("GET", `/sessions/${state.selected}/search?q=${encodeURIComponent(query)}`);
+  } catch {
+    return { matches: [], truncated: false };
+  }
+}
+
 export async function refreshDiff() {
   if (!state.selected) return;
   let next = "";
