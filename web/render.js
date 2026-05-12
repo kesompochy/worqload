@@ -1,7 +1,10 @@
-// Renders the two persistent panes: the session list (left sidebar) and the
-// session detail (right). renderDetail rebuilds the detail pane from `state`
-// on every change and re-attaches its event listeners; the tab-specific HTML
-// comes from the *-view modules, the click/submit handlers from handlers.js.
+// renderDetail rebuilds #detailMain — the lower part of the session detail
+// pane: the pending-asking section, the active tab's content, the "Feedback
+// sent" list, and the feedback/resume composer — from `state` on every change,
+// re-attaching its event listeners. The tab-specific HTML comes from the
+// *-view modules, the click/submit handlers from handlers.js. The header / meta
+// line / tab bar above it is DetailHeader.svelte; the sidebar is
+// SessionList.svelte (both mounted from main.ts off the reactive `state`).
 
 import { $, escapeHtml, formatRelative, bindEnterToSubmit } from "./dom.js";
 import { renderMarkdown } from "./markdown.js";
@@ -17,9 +20,6 @@ import {
   onResolve,
   onResolveCommand,
   onDetailBodyClick,
-  onExpandAllDiffFiles,
-  onCollapseAllDiffFiles,
-  switchTab,
   toggleActionPanel,
   runOpenAction,
   clearAnchor,
@@ -31,8 +31,8 @@ import {
 // mutations already update `state`, so there is nothing left to do here.
 export function renderSessionList() {}
 
-// renderDetail rebuilds the whole detail pane, replacing #detailBody (the
-// scroll container) and every row inside it — so the browser's native scroll
+// renderDetail rebuilds #detailMain, replacing #detailBody (the scroll
+// container) and every row inside it — so the browser's native scroll
 // anchoring has nothing to correlate and the view snaps back to the top. These
 // helpers carry the position across the rebuild. We anchor to the topmost row
 // still reaching into the viewport (rows carry stable data-* ids) and the gap
@@ -80,7 +80,7 @@ function restoreDetailScroll(saved) {
 }
 
 export function renderDetail() {
-  const root = $("#detail");
+  const root = $("#detailMain");
   const savedScroll = captureDetailScroll();
   // preserve any in-progress feedback text across re-renders
   const preservedFeedback = ($("#feedbackInput")?.value) ?? "";
@@ -167,23 +167,6 @@ export function renderDetail() {
 
   const isTerminal = m.status === "stopped" || m.status === "crashed";
 
-  const eventCount = state.detail.events?.length ?? 0;
-  const lastEvent = eventCount > 0 ? state.detail.events[eventCount - 1] : null;
-  const tabsHtml = `
-    <div class="tabs">
-      <button class="tab-btn ${state.activeTab === "reports" ? "active" : ""}" data-tab="reports">Reports</button>
-      <button class="tab-btn ${state.activeTab === "diff" ? "active" : ""}" data-tab="diff">Diff</button>
-      <button class="tab-btn ${state.activeTab === "files" ? "active" : ""}" data-tab="files">Files</button>
-      <button class="tab-btn ${state.activeTab === "events" ? "active" : ""}" data-tab="events">Events <span class="tab-count">(${eventCount})</span><span class="tab-event-age"${lastEvent ? "" : ` style="display:none"`}>${lastEvent ? `· ${formatRelative(lastEvent.timestamp)}` : ""}</span></button>
-      ${state.activeTab === "diff" ? `
-        <span class="diff-base-toggle">
-          <button id="btnExpandAll" type="button" class="diff-tool-btn">Expand all</button>
-          <button id="btnCollapseAll" type="button" class="diff-tool-btn">Collapse all</button>
-        </span>
-      ` : ""}
-    </div>
-  `;
-
   const tabContent = state.activeTab === "diff" ? renderDiffHtml()
     : state.activeTab === "files" ? renderFilesHtml()
     : state.activeTab === "events" ? renderEventsHtml()
@@ -216,19 +199,8 @@ export function renderDetail() {
   const actionPanelHtml = renderActionPanelHtml();
 
   root.innerHTML = `
-    <div class="detail-header">
-      <div class="title"><span class="badge badge-${m.status}">${m.status.replace("_", " ")}</span>${escapeHtml(m.title || m.prompt.slice(0, 100))}</div>
-    </div>
-    <div class="detail-meta">
-      base: <code>${escapeHtml(m.baseBranch)}</code>
-      ${m.branchName ? `· branch: <code>${escapeHtml(m.branchName)}</code>` : ""}
-      · started ${formatRelative(m.createdAt)}
-      ${m.endedAt ? ` · ended ${formatRelative(m.endedAt)}` : ""}
-      · worktree: <code>${escapeHtml(m.worktreePath)}</code>
-    </div>
     ${actionBarHtml}
     ${actionPanelHtml}
-    ${tabsHtml}
     <div class="detail-body${state.activeTab === "diff" ? " diff-view" : ""}" id="detailBody">
       ${askingHtml}
       ${tabContent}
@@ -263,13 +235,6 @@ export function renderDetail() {
     onComposerSubmit();
   });
   bindEnterToSubmit($("#feedbackInput"), onComposerSubmit);
-  document.querySelectorAll(".tab-btn").forEach(b => {
-    b.addEventListener("click", () => switchTab(b.getAttribute("data-tab")));
-  });
-  const btnExpandAll = document.getElementById("btnExpandAll");
-  if (btnExpandAll) btnExpandAll.addEventListener("click", onExpandAllDiffFiles);
-  const btnCollapseAll = document.getElementById("btnCollapseAll");
-  if (btnCollapseAll) btnCollapseAll.addEventListener("click", onCollapseAllDiffFiles);
   document.querySelectorAll("[data-asking]").forEach(el => {
     const filename = el.getAttribute("data-asking");
     el.querySelector(".ask-resolve")?.addEventListener("click", () => onResolve(filename, el));
@@ -289,10 +254,12 @@ export function renderDetail() {
   renderedTab = state.activeTab;
 }
 
-// Keep the Events tab's "(count) · Ns ago" label current between full
-// re-renders. state.detail.events is updated on every streamed event even when
-// the events tab isn't the active view, so reading it here is enough; a full
-// renderDetail() would disturb scroll position and the feedback textarea.
+// Age the Events tab's "· Ns ago" relative timestamp in place every second.
+// The tab bar lives in DetailHeader.svelte, which re-renders the count and
+// timestamp reactively when a new event streams into state.detail.events — but
+// between events the relative label still needs to tick, and nothing changes a
+// reactive dep for that, so this pokes the rendered nodes directly. (Folds into
+// an $effect / time-tick $state once the Events tab itself is Svelte-migrated.)
 export function refreshEventsTabLabel() {
   const btn = document.querySelector('.tab-btn[data-tab="events"]');
   if (!btn) return;

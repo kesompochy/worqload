@@ -6,9 +6,13 @@ import "./app.js";
 import { mount } from "svelte";
 import NewSessionModal from "./svelte/NewSessionModal.svelte";
 import SessionList from "./svelte/SessionList.svelte";
+import DetailHeader from "./svelte/DetailHeader.svelte";
 
 const newSessionModal = mount(NewSessionModal, { target: document.body });
 document.getElementById("btnNew")?.addEventListener("click", () => newSessionModal.open());
 
 const sessionListTarget = document.getElementById("sessionList");
 if (sessionListTarget) mount(SessionList, { target: sessionListTarget });
+
+const detailHeaderTarget = document.getElementById("detailHeader");
+if (detailHeaderTarget) mount(DetailHeader, { target: detailHeaderTarget });
