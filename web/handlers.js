@@ -134,9 +134,12 @@ export function onDetailBodyClick(e) {
   const dirToggle = e.target.closest("[data-dir-toggle]");
   if (dirToggle) {
     const path = dirToggle.getAttribute("data-dir-toggle");
-    if (state.fileTreeCollapsed.has(path)) state.fileTreeCollapsed.delete(path);
-    else state.fileTreeCollapsed.add(path);
-    renderDetail();
+    // Reassigned wholesale, not mutated: $state doesn't proxy Set, so the
+    // Files explorer only re-renders when the property itself changes.
+    const next = new Set(state.fileTreeCollapsed);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    state.fileTreeCollapsed = next;
     return;
   }
   const fileOpen = e.target.closest("[data-file-open]");

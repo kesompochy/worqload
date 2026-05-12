@@ -1,6 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildFileTree, renderFilesHtml } from "../web/files-view.js";
-import { state } from "../web/state.svelte.js";
+import { buildFileTree, flattenFileTree } from "../web/files-view.js";
 
 test("buildFileTree groups flat paths into a directory tree", () => {
   const root = buildFileTree(["src/a.js", "src/b/c.js", "README.md"]);
@@ -25,13 +24,21 @@ test("buildFileTree returns an empty root for no paths", () => {
   expect(root.dirs.size).toBe(0);
 });
 
-test("renderFilesHtml puts a copy-path control in the file content header", () => {
-  state.files = ["src/foo.ts"];
-  state.filesLoaded = true;
-  state.fileTreeCollapsed = new Set();
-  state.selectedFilePath = "src/foo.ts";
-  state.fileContent = { path: "src/foo.ts", content: "a\nb\n" };
-  state.anchor = null;
-  const html = renderFilesHtml();
-  expect(html).toContain(`data-copy-path="src/foo.ts"`);
+test("flattenFileTree walks dirs before files, depth-first, alphabetical", () => {
+  const rows = flattenFileTree(["src/a.js", "src/b/c.js", "README.md"], new Set());
+  expect(rows).toEqual([
+    { kind: "dir", name: "src", path: "src", depth: 0, collapsed: false },
+    { kind: "dir", name: "b", path: "src/b", depth: 1, collapsed: false },
+    { kind: "file", name: "c.js", path: "src/b/c.js", depth: 2 },
+    { kind: "file", name: "a.js", path: "src/a.js", depth: 1 },
+    { kind: "file", name: "README.md", path: "README.md", depth: 0 },
+  ]);
+});
+
+test("flattenFileTree omits the subtree of a collapsed directory", () => {
+  const rows = flattenFileTree(["src/a.js", "src/b/c.js", "README.md"], new Set(["src"]));
+  expect(rows).toEqual([
+    { kind: "dir", name: "src", path: "src", depth: 0, collapsed: true },
+    { kind: "file", name: "README.md", path: "README.md", depth: 0 },
+  ]);
 });
