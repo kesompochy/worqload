@@ -133,7 +133,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .diff-line .ln { text-align: right; padding-right: .5rem; color: var(--text-dim); user-select: none; }
 .diff-line.add { background: rgba(63,185,80,.08); }
 .diff-line.remove { background: rgba(248,81,73,.08); }
-.diff-line .body { white-space: pre; padding-right: .7rem; overflow-x: auto; }
+.diff-line .body { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: .7rem; }
 .diff-line.add .body::before { content: "+"; color: var(--running); }
 .diff-line.remove .body::before { content: "-"; color: var(--crashed); }
 .diff-line.context .body::before { content: " "; }
@@ -169,7 +169,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .file-line:hover { background: rgba(88,166,255,.08); }
 .file-line.selected { background: rgba(88,166,255,.18) !important; }
 .file-line .ln { text-align: right; padding-right: .7rem; color: var(--text-dim); user-select: none; }
-.file-line .body { white-space: pre; padding-right: .7rem; overflow-x: auto; }
+.file-line .body { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: .7rem; }
 .md { word-break: break-word; }
 .md > * { margin: 0; }
 .md > * + * { margin-top: .55rem; }
