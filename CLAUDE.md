@@ -1,6 +1,6 @@
 # worqload
 
-並走する claude セッションをブラウザから観測・介入する基盤。設計の詳細は `DESIGN.md` を参照。
+並走する claude セッションをブラウザから観測・介入する基盤。
 
 ## Development
 
