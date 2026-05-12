@@ -61,9 +61,9 @@ export function onDetailBodyClick(e) {
     const article = askBtn.closest("[data-asking]");
     if (!article) return;
     const filename = article.getAttribute("data-asking");
-    if (askBtn.classList.contains("ask-resolve")) onResolve(filename, article);
-    else if (askBtn.classList.contains("ask-approve")) onResolveCommand(filename, "approve", article);
-    else onResolveCommand(filename, "reject", article);
+    if (askBtn.classList.contains("ask-resolve")) onResolve(filename, article, askBtn);
+    else if (askBtn.classList.contains("ask-approve")) onResolveCommand(filename, "approve", article, askBtn);
+    else onResolveCommand(filename, "reject", article, askBtn);
     return;
   }
   const markBtn = e.target.closest("[data-report-mark]");
@@ -252,16 +252,33 @@ export async function onArchive(id = state.selected) {
   }
 }
 
-export async function onResolve(filename, articleEl) {
+// Disable every button in the asking article (and show "Sending…" on the one
+// the human clicked) while its resolve request is in flight, so a second click
+// can't fire a duplicate POST. On success refreshDetail tears the article down;
+// on failure the returned restore() re-enables it for a retry.
+function lockAskingArticle(articleEl, activeButton) {
+  const buttons = articleEl ? [...articleEl.querySelectorAll("button")] : [];
+  const activeLabel = activeButton ? activeButton.textContent : null;
+  for (const b of buttons) b.disabled = true;
+  if (activeButton) activeButton.textContent = "Sending…";
+  return () => {
+    for (const b of buttons) b.disabled = false;
+    if (activeButton) activeButton.textContent = activeLabel;
+  };
+}
+
+export async function onResolve(filename, articleEl, buttonEl) {
   if (!state.selected) return;
   const text = articleEl.querySelector(".ask-answer").value.trim();
   if (text === "") { toast("answer is required"); return; }
+  const restore = lockAskingArticle(articleEl, buttonEl);
   try {
     await api("POST", `/sessions/${state.selected}/escalations/${encodeURIComponent(filename)}/resolve`, { content: text });
     toast("answer sent");
     await refreshDetail();
     await fetchSessions();
   } catch (e) {
+    restore();
     toast(`failed: ${e.message}`);
   }
 }
@@ -269,19 +286,21 @@ export async function onResolve(filename, articleEl) {
 // Resolve a command-approval escalation: the human either approves (the server
 // runs the command and feeds back its output) or rejects it, optionally with a
 // reason typed into the article's textarea that's relayed to the agent.
-export async function onResolveCommand(filename, decision, articleEl) {
+export async function onResolveCommand(filename, decision, articleEl, buttonEl) {
   if (!state.selected) return;
   const body = { decision };
   if (decision === "reject") {
     const reason = articleEl?.querySelector(".ask-answer")?.value.trim() ?? "";
     if (reason !== "") body.content = reason;
   }
+  const restore = lockAskingArticle(articleEl, buttonEl);
   try {
     const res = await api("POST", `/sessions/${state.selected}/escalations/${encodeURIComponent(filename)}/resolve`, body);
     toast(decision === "approve" ? `command ran (exit ${res.exitCode ?? "?"})` : "command rejected");
     await refreshDetail();
     await fetchSessions();
   } catch (e) {
+    restore();
     toast(`failed: ${e.message}`);
   }
 }
