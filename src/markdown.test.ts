@@ -160,7 +160,19 @@ test("a feedback anchor stripes the overlapping block and appends a goto chip", 
   });
   // Heading is line 1 (no overlap); paragraph is line 3 (overlap).
   expect(html).not.toMatch(/<h1 [^>]*data-feedback-here/);
-  expect(html).toMatch(/<p [^>]*data-feedback-here[^>]*>body line<button [^>]*class="line-feedback-chip"[^>]*data-goto-feedback="004-feedback.md"/);
+  expect(html).toMatch(/<p [^>]*data-feedback-here[^>]*>body line<span class="line-feedback-chips"><button [^>]*data-goto-feedback="004-feedback.md"[^>]*>↳ 004-feedback.md<\/button><\/span><\/p>/);
+});
+
+test("every feedback anchored to a block gets its own chip", () => {
+  const html = renderMarkdown("body line\n", {
+    anchorPath: "./r.md",
+    feedbackAnchors: [
+      { lineStart: 1, lineEnd: 1, filename: "005-anchored.md" },
+      { lineStart: 1, lineEnd: 2, filename: "004-anchored.md" },
+    ],
+  });
+  expect(html).toContain(`data-goto-feedback="005-anchored.md"`);
+  expect(html).toContain(`data-goto-feedback="004-anchored.md"`);
 });
 
 test("no feedback marker when no feedback anchors are passed", () => {

@@ -8,7 +8,7 @@
   // line anchoring) — there are no local click handlers.
   // (`state` is imported as `appState`: a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
-  import { state as appState, isAnchored, feedbackAnchoredAt } from "../state.svelte.js";
+  import { state as appState, isAnchored, feedbacksAnchoredAt } from "../state.svelte.js";
   import { flattenFileTree } from "../files-view.js";
   import { highlightCode, languageForPath } from "../syntax-highlight.js";
   import { formatBytes } from "../dom.js";
@@ -78,10 +78,10 @@
       {:else}
         <div class="file-content-body">
           {#each fileLines as line (line.no)}
-            {@const fbHere = feedbackAnchoredAt(fileContentPath, line.no)}
-            <div class="file-line" class:selected={isAnchored(fileContentPath, line.no)} class:has-feedback={!!fbHere} data-anchor-line={line.no} data-anchor-path={fileContentPath}>
+            {@const fbHere = feedbacksAnchoredAt(fileContentPath, line.no)}
+            <div class="file-line" class:selected={isAnchored(fileContentPath, line.no)} class:has-feedback={fbHere.length > 0} data-anchor-line={line.no} data-anchor-path={fileContentPath}>
               <span class="ln">{line.no}</span><span class="body">{@html line.html}</span>
-              {#if fbHere}<button type="button" class="line-feedback-chip" title="フィードバック {fbHere} — クリックで表示" data-goto-feedback={fbHere}>↳ {fbHere}</button>{/if}
+              {#if fbHere.length > 0}<span class="line-feedback-chips">{#each fbHere as fn (fn)}<button type="button" class="line-feedback-chip" title="フィードバック {fn} — クリックで表示" data-goto-feedback={fn}>↳ {fn}</button>{/each}</span>{/if}
             </div>
           {/each}
         </div>
