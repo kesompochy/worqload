@@ -45,7 +45,7 @@
                 <span class="ln">{seg.row.kind === "remove" ? seg.row.oldNo : ""}</span>
                 <span class="ln">{seg.row.kind === "remove" ? "" : seg.row.newNo}</span>
                 <span class="body">{@html highlightCode(seg.row.body, file.lang)}</span>
-                {#if fbHere}<button type="button" class="line-feedback-mark" title="フィードバックがこの行に — クリックで表示" data-goto-feedback={fbHere}>💬</button>{/if}
+                {#if fbHere}<button type="button" class="line-feedback-chip" title="フィードバック {fbHere} — クリックで表示" data-goto-feedback={fbHere}>↳ {fbHere}</button>{/if}
               </div>
             {/if}
           {/each}

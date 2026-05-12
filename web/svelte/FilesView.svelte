@@ -81,7 +81,7 @@
             {@const fbHere = feedbackAnchoredAt(fileContentPath, line.no)}
             <div class="file-line" class:selected={isAnchored(fileContentPath, line.no)} class:has-feedback={!!fbHere} data-anchor-line={line.no} data-anchor-path={fileContentPath}>
               <span class="ln">{line.no}</span><span class="body">{@html line.html}</span>
-              {#if fbHere}<button type="button" class="line-feedback-mark" title="フィードバックがこの行に — クリックで表示" data-goto-feedback={fbHere}>💬</button>{/if}
+              {#if fbHere}<button type="button" class="line-feedback-chip" title="フィードバック {fbHere} — クリックで表示" data-goto-feedback={fbHere}>↳ {fbHere}</button>{/if}
             </div>
           {/each}
         </div>
