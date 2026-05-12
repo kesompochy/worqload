@@ -2,7 +2,7 @@
 // WebSocket. Functions here mutate `state` then re-render; they don't build
 // HTML themselves.
 
-import { notificationForEvent, notificationsFromSessionPoll, pendingNotificationCount } from "./notifications.js";
+import { workLoad, notificationForEvent, notificationsFromSessionPoll, pendingNotificationCount } from "./notifications.js";
 import { notify, fireNotification } from "./notify.js";
 import { state } from "./state.svelte.js";
 import { renderSessionList, renderDetail } from "./render.js";
@@ -28,6 +28,18 @@ export async function fetchSessions() {
   }
   renderSessionList();
   updateDocumentTitle();
+  updateLoadAverage();
+}
+
+// The "労働の load average" pill in the sidebar header: total pending work for
+// the human, with the unread-report / unresolved-escalation split in its title.
+export function updateLoadAverage() {
+  const el = document.getElementById("loadAverage");
+  if (!el) return;
+  const { unreadReports, unresolvedEscalations, total } = workLoad(state.sessions);
+  el.textContent = `⚖ ${total}`;
+  el.classList.toggle("idle", total === 0);
+  el.title = `労働の load average: 未読レポート ${unreadReports} + 未解決エスカレ ${unresolvedEscalations}`;
 }
 
 export async function fetchActions() {

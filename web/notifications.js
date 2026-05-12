@@ -97,14 +97,24 @@ export function notificationsFromSessionPoll(prevSessions, nextSessions, { selec
   return out;
 }
 
-// How many things across all sessions are waiting for the human: every unread
-// report plus every session sitting in waiting_human. Used to prefix the
-// browser tab title so the count shows even when the tab isn't focused.
-export function pendingNotificationCount(sessions) {
-  let count = 0;
+// The "労働の load average": how much work this worqload instance is currently
+// asking of the human, split into its two sources — unread reports and
+// unresolved escalations — plus their sum. A session sits in `waiting_human`
+// exactly while one of its escalations is unresolved (escalating pauses the
+// turn, so there is at most one), hence waiting_human sessions count the
+// unresolved escalations.
+export function workLoad(sessions) {
+  let unreadReports = 0;
+  let unresolvedEscalations = 0;
   for (const s of sessions ?? []) {
-    count += Number(s?.unreadReportCount) || 0;
-    if (s?.status === "waiting_human") count += 1;
+    unreadReports += Number(s?.unreadReportCount) || 0;
+    if (s?.status === "waiting_human") unresolvedEscalations += 1;
   }
-  return count;
+  return { unreadReports, unresolvedEscalations, total: unreadReports + unresolvedEscalations };
+}
+
+// How many things across all sessions are waiting for the human. Used to prefix
+// the browser tab title so the count shows even when the tab isn't focused.
+export function pendingNotificationCount(sessions) {
+  return workLoad(sessions).total;
 }
