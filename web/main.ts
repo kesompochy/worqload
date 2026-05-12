@@ -9,6 +9,7 @@ import SessionList from "./svelte/SessionList.svelte";
 import DetailHeader from "./svelte/DetailHeader.svelte";
 import ActionBar from "./svelte/ActionBar.svelte";
 import DetailBody from "./svelte/DetailBody.svelte";
+import Composer from "./svelte/Composer.svelte";
 
 const newSessionModal = mount(NewSessionModal, { target: document.body });
 document.getElementById("btnNew")?.addEventListener("click", () => newSessionModal.open());
@@ -24,3 +25,6 @@ if (detailActionAreaTarget) mount(ActionBar, { target: detailActionAreaTarget })
 
 const detailBodyTarget = document.getElementById("detailBodyMount");
 if (detailBodyTarget) mount(DetailBody, { target: detailBodyTarget });
+
+const detailComposerTarget = document.getElementById("detailComposer");
+if (detailComposerTarget) mount(Composer, { target: detailComposerTarget });
