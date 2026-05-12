@@ -1,4 +1,4 @@
-// Files tab filename search (Ctrl/Cmd+P): a fuzzy finder over the worktree's
+// Files tab filename search (Ctrl/Cmd+Shift+P): a fuzzy finder over the worktree's
 // flat path list. Pure so it's easy to test; FileNameSearchModal.svelte feeds
 // it `state.files` and paints whatever paths come back. A query matches a path
 // when its characters appear in order somewhere in the path (case-insensitive);
