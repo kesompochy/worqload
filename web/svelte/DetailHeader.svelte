@@ -1,17 +1,18 @@
 <script>
-  // The detail pane's top strip: title + status badge, the metadata line, and
-  // the tab bar. Mounted into #detailHeader from main.ts; renders nothing until
-  // a session with loaded detail is selected. The action bar / action panels
-  // (#detailActionArea) are ActionBar.svelte, the scroll body (#detailBodyMount)
-  // is DetailBody.svelte, and the feedback/resume composer (#detailComposer) is
-  // Composer.svelte. The Events tab's "· Ns ago" label reads the reactive
-  // `clock` so it counts up between streamed events.
+  // The detail pane's top strip: title + status badge + action buttons, the
+  // metadata line, and the tab bar. Mounted into #detailHeader from main.ts;
+  // renders nothing until a session with loaded detail is selected. The action
+  // panel that opens when a "gh action" button is pressed (#detailActionArea) is
+  // ActionBar.svelte, the scroll body (#detailBodyMount) is DetailBody.svelte,
+  // and the feedback/resume composer (#detailComposer) is Composer.svelte. The
+  // Events tab's "· Ns ago" label reads the reactive `clock` so it counts up
+  // between streamed events.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
   import { formatRelative } from "../dom.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, onStopAndMarkRead, toggleActionPanel } from "../handlers.js";
 
   const tabs = [
     { id: "reports", label: "Reports" },
@@ -19,6 +20,13 @@
     { id: "files", label: "Files" },
     { id: "events", label: "Events" },
   ];
+
+  // Action buttons live in the title row, not in a strip below the tabs: a
+  // tab-independent control under the tab bar competes with the mental model
+  // that everything below the tabs belongs to the active tab.
+  const isTerminal = $derived(
+    appState.detail?.meta.status === "stopped" || appState.detail?.meta.status === "crashed",
+  );
 </script>
 
 {#if appState.selected && appState.detail}
@@ -27,6 +35,18 @@
   {@const lastEvent = events.length > 0 ? events[events.length - 1] : null}
   <div class="detail-header">
     <div class="title"><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
+    {#if appState.actions.length > 0 || !isTerminal}
+      <div class="header-actions">
+        {#if !isTerminal}
+          <!-- A client-side composite (not a server "gh action"): mark every
+               report read, then stop — pointless once already stopped/crashed. -->
+          <button class="btn-action" title="Mark every report read, then stop the session" onclick={onStopAndMarkRead}>Stop &amp; mark all read</button>
+        {/if}
+        {#each appState.actions as a (a.id)}
+          <button class="btn-action" class:open={appState.openActionId === a.id} title={a.description || ""} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
+        {/each}
+      </div>
+    {/if}
   </div>
   <div class="detail-meta">
     base: <code>{m.baseBranch}</code>
