@@ -2,7 +2,7 @@
 // WebSocket. Functions here mutate `state` then re-render; they don't build
 // HTML themselves.
 
-import { notificationForEvent, notificationsFromSessionPoll } from "./notifications.js";
+import { notificationForEvent, notificationsFromSessionPoll, pendingNotificationCount } from "./notifications.js";
 import { notify, fireNotification } from "./notify.js";
 import { state } from "./state.js";
 import { renderSessionList, renderDetail } from "./render.js";
@@ -27,6 +27,7 @@ export async function fetchSessions() {
     }
   }
   renderSessionList();
+  updateDocumentTitle();
 }
 
 export async function fetchActions() {
@@ -47,16 +48,26 @@ export async function fetchMeta() {
   }
 }
 
+let repoDisplayName = "worqload";
+
 function applyMeta({ repoDir, repoName }) {
-  const name = repoName || "worqload";
-  document.title = `${name} · worqload`;
+  repoDisplayName = repoName || "worqload";
+  updateDocumentTitle();
   const repoEl = document.getElementById("repoName");
   if (repoEl) {
-    repoEl.textContent = name;
-    repoEl.title = repoDir || name;
+    repoEl.textContent = repoDisplayName;
+    repoEl.title = repoDir || repoDisplayName;
   }
   const titleEl = document.getElementById("sidebarTitle");
-  if (titleEl) titleEl.title = repoDir || name;
+  if (titleEl) titleEl.title = repoDir || repoDisplayName;
+}
+
+// Browser tab title: the repo name, prefixed with `(N) ` when N reports /
+// escalations across all sessions are waiting for the human.
+export function updateDocumentTitle() {
+  const count = pendingNotificationCount(state.sessions);
+  const prefix = count > 0 ? `(${count}) ` : "";
+  document.title = `${prefix}${repoDisplayName} · worqload`;
 }
 
 export async function refreshDetail() {

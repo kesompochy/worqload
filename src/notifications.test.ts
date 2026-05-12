@@ -3,6 +3,7 @@ import {
   headlineFromMarkdown,
   notificationForEvent,
   notificationsFromSessionPoll,
+  pendingNotificationCount,
   sessionLabel,
 } from "../web/notifications.js";
 
@@ -124,4 +125,20 @@ test("notificationsFromSessionPoll reports both a new report and a new wait at o
     { sessionId: "a", tag: "worqload:report:a", title: "A", body: "📄 new report" },
     { sessionId: "a", tag: "worqload:ask:a", title: "A", body: "🙋 waiting for your input" },
   ]);
+});
+
+test("pendingNotificationCount sums unread reports and waiting_human sessions", () => {
+  const sessions = [
+    { id: "a", status: "running", unreadReportCount: 2 },
+    { id: "b", status: "waiting_human", unreadReportCount: 0 },
+    { id: "c", status: "waiting_human", unreadReportCount: 1 },
+    { id: "d", status: "stopped", unreadReportCount: 0 },
+  ];
+  expect(pendingNotificationCount(sessions)).toBe(2 + 1 + 1 + 1);
+});
+
+test("pendingNotificationCount is zero for no sessions or quiet sessions", () => {
+  expect(pendingNotificationCount([])).toBe(0);
+  expect(pendingNotificationCount(undefined)).toBe(0);
+  expect(pendingNotificationCount([{ id: "a", status: "running", unreadReportCount: 0 }])).toBe(0);
 });
