@@ -382,6 +382,15 @@ export function toggleActionPanel(actionId) {
   if (state.openActionId) document.querySelector(".action-panel [data-action-param]")?.focus();
 }
 
+// Pulls the pull-request URL out of the create-pr run log. `gh pr create`
+// prints the URL on its own line; the run log wraps it with the shell-style
+// command echoes, so scan for the last GitHub-style `.../pull/<n>` URL (works
+// for github.com and GHES alike).
+export function extractPullRequestUrl(stdout) {
+  const matches = stdout.match(/https?:\/\/\S+\/pull\/\d+/g);
+  return matches ? matches[matches.length - 1] : null;
+}
+
 export async function runOpenAction() {
   const action = state.actions.find(a => a.id === state.openActionId);
   if (!action || !state.selected) return;
@@ -407,7 +416,21 @@ export async function runOpenAction() {
       message: data.message,
       ranAt: new Date().toISOString(),
     });
-    toast(data.ok ? `${action.label}: success` : `${action.label}: failed`);
+    if (data.ok && action.id === "create-pr") {
+      const url = extractPullRequestUrl(data.stdout ?? "");
+      if (url) {
+        // `gh pr create` already did the work; jumping straight to the PR is
+        // the next thing the user wants. Popup blockers may swallow this since
+        // it fires after the fetch resolves rather than directly on the click —
+        // the URL still shows in the run output below as a fallback.
+        window.open(url, "_blank", "noopener");
+        toast(`PR created: ${url}`);
+      } else {
+        toast(`${action.label}: success`);
+      }
+    } else {
+      toast(data.ok ? `${action.label}: success` : `${action.label}: failed`);
+    }
   } catch (e) {
     state.actionResults.set(action.id, { ok: false, exitCode: null, stdout: "", stderr: "", message: e.message, ranAt: new Date().toISOString() });
     toast(`failed: ${e.message}`);
