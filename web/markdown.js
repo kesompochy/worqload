@@ -34,6 +34,9 @@ export function renderMarkdown(source, options = {}) {
   const ctx = {
     anchorPath: options.anchorPath ?? null,
     currentAnchor: options.anchor ?? null,
+    // [{ lineStart, lineEnd, filename }] — sent feedback anchored into this
+    // source; blocks overlapping a range get a data-feedback-here marker.
+    feedbackAnchors: options.feedbackAnchors ?? [],
   };
   return blocks.map(b => renderBlock(b, ctx)).join("");
 }
@@ -267,18 +270,18 @@ function renderBlock(block, ctx) {
 
 function renderHeading(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
-  return `<h${block.level}${attrs}>${renderInline(block.content)}</h${block.level}>`;
+  return `<h${block.level}${attrs}>${renderInline(block.content)}${feedbackChip(block.startLine, block.endLine, ctx)}</h${block.level}>`;
 }
 
 function renderParagraph(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
-  return `<p${attrs}>${renderInline(block.content)}</p>`;
+  return `<p${attrs}>${renderInline(block.content)}${feedbackChip(block.startLine, block.endLine, ctx)}</p>`;
 }
 
 function renderCode(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
   const langAttr = block.lang ? ` class="language-${escapeAttr(block.lang)}"` : "";
-  return `<pre${attrs}><code${langAttr}>${escapeHtml(block.content)}</code></pre>`;
+  return `<pre${attrs}><code${langAttr}>${escapeHtml(block.content)}</code>${feedbackChip(block.startLine, block.endLine, ctx)}</pre>`;
 }
 
 function renderHr(block, ctx) {
@@ -290,13 +293,13 @@ function renderBlockquote(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
   // We do not recurse into the quote body; rendering it as a single paragraph
   // keeps the renderer simple and covers the typical agent-report use.
-  return `<blockquote${attrs}><p>${renderInline(block.content)}</p></blockquote>`;
+  return `<blockquote${attrs}><p>${renderInline(block.content)}</p>${feedbackChip(block.startLine, block.endLine, ctx)}</blockquote>`;
 }
 
 function renderList(tag, block, ctx) {
   const items = block.items.map(item => {
     const attrs = anchorAttrs(item.startLine, item.endLine, ctx);
-    return `<li${attrs}>${renderInline(item.content)}</li>`;
+    return `<li${attrs}>${renderInline(item.content)}${feedbackChip(item.startLine, item.endLine, ctx)}</li>`;
   }).join("");
   return `<${tag}>${items}</${tag}>`;
 }
@@ -363,10 +366,29 @@ function anchorAttrs(startLine, endLine, ctx) {
   const selected = isOverlap(startLine, endLine, ctx.currentAnchor, ctx.anchorPath)
     ? ` aria-current="true"`
     : "";
+  // The block gets `data-feedback-here` (the left stripe); the clickable chip is
+  // appended as a child by feedbackChip().
+  const feedbackAttr = feedbackAnchorFor(startLine, endLine, ctx) ? ` data-feedback-here` : "";
   return ` data-anchor-path="${escapeAttr(ctx.anchorPath)}"`
        + ` data-anchor-line="${startLine}"`
        + ` data-anchor-line-end="${endLine}"`
-       + selected;
+       + selected
+       + feedbackAttr;
+}
+
+function feedbackAnchorFor(startLine, endLine, ctx) {
+  return ctx.feedbackAnchors.find(a => startLine <= a.lineEnd && endLine >= a.lineStart) ?? null;
+}
+
+// A small floating chip linking the block to the sent feedback anchored over it
+// (newest, if several). Appended as the last child of the block so it floats at
+// its top-right; the same `data-goto-feedback` hook the report↔feedback reply
+// chips use carries the navigation.
+function feedbackChip(startLine, endLine, ctx) {
+  const f = feedbackAnchorFor(startLine, endLine, ctx);
+  if (!f) return "";
+  return `<button type="button" class="line-feedback-chip" data-goto-feedback="${escapeAttr(f.filename)}"`
+       + ` title="フィードバック ${escapeAttr(f.filename)} — クリックで表示">↳ ${escapeHtml(f.filename)}</button>`;
 }
 
 function isOverlap(startLine, endLine, anchor, anchorPath) {

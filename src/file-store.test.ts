@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { existsSync } from "fs";
-import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState, markAllRead } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, metaFilenameFor, readReadState, setReadState, markAllRead } from "./file-store";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -152,4 +152,62 @@ test("moveFile relocates a file", async () => {
 
   expect(existsSync(join(inbox, filename))).toBe(false);
   expect(existsSync(join(read, filename))).toBe(true);
+});
+
+test("writeNumberedFile writes a .meta.json sidecar and listAllFiles reads it back", async () => {
+  const dir = makeTmpDir("file-store");
+  const anchor = { path: "src/foo.ts", lineStart: 3, lineEnd: 7 };
+  const { filename } = await writeNumberedFile(dir, "msg", "the body", { meta: { anchor } });
+
+  expect(filename).toBe("001-msg.md");
+  expect(existsSync(join(dir, "001-msg.meta.json"))).toBe(true);
+
+  const files = await listAllFiles(dir);
+  expect(files).toHaveLength(1);
+  expect(files[0].content).toBe("the body");
+  expect(files[0].meta).toEqual({ anchor });
+});
+
+test("writeNumberedFile writes no sidecar when meta is omitted or empty", async () => {
+  const dir = makeTmpDir("file-store");
+  await writeNumberedFile(dir, "a", "body");
+  await writeNumberedFile(dir, "b", "body", { meta: {} });
+
+  expect(existsSync(join(dir, "001-a.meta.json"))).toBe(false);
+  expect(existsSync(join(dir, "002-b.meta.json"))).toBe(false);
+  const files = await listAllFiles(dir);
+  expect(files.every(f => f.meta === undefined)).toBe(true);
+});
+
+test("listAllFiles ignores .meta.json sidecars as standalone entries", async () => {
+  const dir = makeTmpDir("file-store");
+  await writeNumberedFile(dir, "msg", "body", { meta: { anchor: { path: "p", lineStart: 1, lineEnd: 1 } } });
+  const files = await listAllFiles(dir);
+  expect(files.map(f => f.filename)).toEqual(["001-msg.md"]);
+});
+
+test("moveNumberedFile relocates the file and its sidecar", async () => {
+  const dir = makeTmpDir("file-store");
+  const inbox = join(dir, "inbox");
+  const read = join(dir, "read");
+  const { filename } = await writeNumberedFile(inbox, "msg", "hello", { meta: { anchor: { path: "p", lineStart: 2, lineEnd: 2 } } });
+
+  await moveNumberedFile(inbox, read, filename);
+
+  expect(existsSync(join(inbox, filename))).toBe(false);
+  expect(existsSync(join(inbox, metaFilenameFor(filename)))).toBe(false);
+  expect(existsSync(join(read, filename))).toBe(true);
+  expect(existsSync(join(read, metaFilenameFor(filename)))).toBe(true);
+});
+
+test("moveNumberedFile tolerates a missing sidecar", async () => {
+  const dir = makeTmpDir("file-store");
+  const inbox = join(dir, "inbox");
+  const read = join(dir, "read");
+  const { filename } = await writeNumberedFile(inbox, "msg", "hello");
+
+  await moveNumberedFile(inbox, read, filename);
+
+  expect(existsSync(join(read, filename))).toBe(true);
+  expect(existsSync(join(read, metaFilenameFor(filename)))).toBe(false);
 });

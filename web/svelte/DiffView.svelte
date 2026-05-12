@@ -8,7 +8,7 @@
   // expand, copy-path, line anchoring) — there are no local click handlers.
   // (`state` is imported as `appState`: a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
-  import { state as appState, isAnchored, DIFF_EXPAND_CHUNK } from "../state.svelte.js";
+  import { state as appState, isAnchored, feedbackAnchoredAt, DIFF_EXPAND_CHUNK } from "../state.svelte.js";
   import { buildDiffModel } from "../diff-view.js";
   import { highlightCode } from "../syntax-highlight.js";
 
@@ -24,6 +24,7 @@
         <span class="diff-chevron">▾</span>
         <span>{file.path}</span>
         <button type="button" class="copy-path-btn" data-copy-path={file.path} title="ファイル名をコピー">⧉</button>
+        <button type="button" class="copy-path-btn" data-permalink-path={file.path} title="GitHub permalink をコピー">🔗</button>
         <span class="diff-summary"><span class="add-count">+{file.adds}</span><span class="remove-count">−{file.removes}</span></span>
       </div>
       <div class="diff-file-body">
@@ -40,10 +41,12 @@
             {:else if seg.row.kind === "meta"}
               <div class="diff-line meta"><span class="ln"></span><span class="ln"></span><span class="body">{seg.row.body}</span></div>
             {:else}
-              <div class="diff-line {seg.row.kind}" class:selected={seg.row.anchorable && isAnchored(file.path, seg.row.newNo)} data-anchor-line={seg.row.anchorable ? seg.row.newNo : undefined} data-anchor-path={seg.row.anchorable ? file.path : undefined}>
+              {@const fbHere = seg.row.anchorable ? feedbackAnchoredAt(file.path, seg.row.newNo) : null}
+              <div class="diff-line {seg.row.kind}" class:selected={seg.row.anchorable && isAnchored(file.path, seg.row.newNo)} class:has-feedback={!!fbHere} data-anchor-line={seg.row.anchorable ? seg.row.newNo : undefined} data-anchor-path={seg.row.anchorable ? file.path : undefined}>
                 <span class="ln">{seg.row.kind === "remove" ? seg.row.oldNo : ""}</span>
                 <span class="ln">{seg.row.kind === "remove" ? "" : seg.row.newNo}</span>
                 <span class="body">{@html highlightCode(seg.row.body, file.lang)}</span>
+                {#if fbHere}<button type="button" class="line-feedback-chip" title="フィードバック {fbHere} — クリックで表示" data-goto-feedback={fbHere}>↳ {fbHere}</button>{/if}
               </div>
             {/if}
           {/each}

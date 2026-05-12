@@ -8,8 +8,8 @@
   // in-progress text survives without a manual save/restore.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
-  import { state as appState } from "../state.svelte.js";
-  import { onFeedback, onResume, clearAnchor } from "../handlers.js";
+  import { state as appState, anchorLabel } from "../state.svelte.js";
+  import { onFeedback, onResume, clearAnchor, copyAnchorPermalink } from "../handlers.js";
 
   // Tracked across the textarea's keydowns so a confirming Enter mid-IME
   // composition doesn't also submit (same guard as dom.js's bindInlineEdit).
@@ -29,9 +29,6 @@
 
   // onFeedback/onResume read the textarea via getElementById("feedbackInput"),
   // so it stays an uncontrolled input keyed by that id rather than bind:value.
-  function anchorLabel(anchor) {
-    return `${anchor.path}:${anchor.lineStart}${anchor.lineEnd !== anchor.lineStart ? `-${anchor.lineEnd}` : ""}`;
-  }
 </script>
 
 {#if appState.selected && appState.detail}
@@ -44,7 +41,7 @@
     {#if appState.anchor && !isTerminal}
       <!-- Anchored comments target the feedback inbox; the resume composer
            (terminal sessions) sends a plain prompt, so the chip is hidden there. -->
-      <div class="anchor-chip">Re: {anchorLabel(appState.anchor)} <button type="button" title="clear anchor" onclick={clearAnchor}>×</button></div>
+      <div class="anchor-chip">Re: {anchorLabel(appState.anchor)} <button type="button" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button> <button type="button" title="clear anchor" onclick={clearAnchor}>×</button></div>
     {/if}
     <textarea
       id="feedbackInput"

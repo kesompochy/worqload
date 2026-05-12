@@ -8,7 +8,7 @@
   // line anchoring) — there are no local click handlers.
   // (`state` is imported as `appState`: a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
-  import { state as appState, isAnchored } from "../state.svelte.js";
+  import { state as appState, isAnchored, feedbackAnchoredAt } from "../state.svelte.js";
   import { flattenFileTree } from "../files-view.js";
   import { highlightCode, languageForPath } from "../syntax-highlight.js";
   import { formatBytes } from "../dom.js";
@@ -65,6 +65,7 @@
       <div class="file-content-header">
         <span>{fileContentPath}</span>
         <button type="button" class="copy-path-btn" data-copy-path={fileContentPath} title="ファイル名をコピー">⧉</button>
+        <button type="button" class="copy-path-btn" data-permalink-path={fileContentPath} title="GitHub permalink をコピー">🔗</button>
         {#if fileContentMeta}<span class="file-content-meta">{fileContentMeta}</span>{/if}
       </div>
       {#if appState.fileContent.loading}
@@ -78,8 +79,10 @@
       {:else}
         <div class="file-content-body">
           {#each fileLines as line (line.no)}
-            <div class="file-line" class:selected={isAnchored(fileContentPath, line.no)} data-anchor-line={line.no} data-anchor-path={fileContentPath}>
+            {@const fbHere = feedbackAnchoredAt(fileContentPath, line.no)}
+            <div class="file-line" class:selected={isAnchored(fileContentPath, line.no)} class:has-feedback={!!fbHere} data-anchor-line={line.no} data-anchor-path={fileContentPath}>
               <span class="ln">{line.no}</span><span class="body">{@html line.html}</span>
+              {#if fbHere}<button type="button" class="line-feedback-chip" title="フィードバック {fbHere} — クリックで表示" data-goto-feedback={fbHere}>↳ {fbHere}</button>{/if}
             </div>
           {/each}
         </div>

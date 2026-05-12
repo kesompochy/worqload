@@ -16,7 +16,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav } = await import("../web/handlers.js");
+const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
@@ -24,6 +24,14 @@ const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/sta
 function reportToggleClick(filename) {
   const row = { getAttribute: (a) => (a === "data-report-toggle" ? filename : null) };
   return { target: { closest: (sel) => (sel === "[data-report-toggle]" ? row : null) } };
+}
+
+function gotoAnchorClick(path, lineStart, lineEnd) {
+  const el = { getAttribute: (a) =>
+    a === "data-goto-anchor-path" ? path :
+    a === "data-goto-anchor-line" ? String(lineStart) :
+    a === "data-goto-anchor-line-end" ? String(lineEnd) : null };
+  return { target: { closest: (sel) => (sel === "[data-goto-anchor-path]" ? el : null) } };
 }
 
 test("extractPullRequestUrl pulls the PR URL out of a create-pr run log", () => {
@@ -175,6 +183,85 @@ test("runOpenAction records the run on a fresh actionResults Map (so ActionBar r
     globalThis.window = saved.window;
     globalThis.fetch = saved.fetch;
   }
+});
+
+test("gotoAnchorTarget opens the Reports tab and expands the referenced report", async () => {
+  state.reports = [{ filename: "003-progress.md", content: "x", read: true }];
+  state.reportToggle = new Map();
+  state.activeTab = "diff";
+  state.pendingScrollTo = null;
+
+  await gotoAnchorTarget("./.worqload-reports/003-progress.md", 5, 7);
+
+  expect(state.activeTab).toBe("reports");
+  expect(state.reportToggle.get("003-progress.md")).toBe(true);
+  expect(state.pendingScrollTo).toEqual({ anchor: { path: "./.worqload-reports/003-progress.md", lineStart: 5, lineEnd: 7 } });
+});
+
+test("gotoAnchorTarget opens the Diff tab and un-collapses the anchored file", async () => {
+  state.diff = "diff --git a/src/foo.ts b/src/foo.ts\n@@ -1,2 +1,2 @@\n-a\n+b\n";
+  state.collapsedFiles = new Set(["src/foo.ts"]);
+  state.activeTab = "reports";
+  state.pendingScrollTo = null;
+
+  await gotoAnchorTarget("src/foo.ts", 1, 1);
+
+  expect(state.activeTab).toBe("diff");
+  expect(state.collapsedFiles.has("src/foo.ts")).toBe(false);
+  expect(state.pendingScrollTo).toEqual({ anchor: { path: "src/foo.ts", lineStart: 1, lineEnd: 1 } });
+});
+
+test("clicking a feedback anchor chip routes to gotoAnchorTarget", async () => {
+  state.diff = "diff --git a/src/bar.ts b/src/bar.ts\n@@ -1,1 +1,1 @@\n-a\n+b\n";
+  state.collapsedFiles = new Set();
+  state.activeTab = "reports";
+  state.pendingScrollTo = null;
+
+  onDetailBodyClick(gotoAnchorClick("src/bar.ts", 1, 1));
+  await new Promise(resolve => setTimeout(resolve, 10));  // gotoAnchorTarget is async
+
+  expect(state.activeTab).toBe("diff");
+  expect(state.pendingScrollTo).toEqual({ anchor: { path: "src/bar.ts", lineStart: 1, lineEnd: 1 } });
+});
+
+test("gotoAnchorTarget falls back to the Files tab when the path is not in the diff", async () => {
+  state.diff = "";  // path is not part of the diff
+  state.files = ["src/util.ts"];
+  state.activeTab = "reports";
+  state.pendingScrollTo = null;
+
+  await gotoAnchorTarget("src/util.ts", 9, 9);
+
+  expect(state.activeTab).toBe("files");
+  expect(state.pendingScrollTo).toEqual({ anchor: { path: "src/util.ts", lineStart: 9, lineEnd: 9 } });
+});
+
+test("gotoArticle opens the Feedback tab, expands the feedback, and queues a scroll to its card", async () => {
+  state.feedbackHistory = [{ filename: "004-feedback.md", content: "x", status: "read" }];
+  state.feedbackToggle = new Map();
+  state.activeTab = "reports";
+  state.pendingScrollTo = null;
+
+  await gotoArticle("feedback", "004-feedback.md");
+
+  expect(state.activeTab).toBe("feedback");
+  expect(state.feedbackToggle.get("004-feedback.md")).toBe(true);
+  expect(state.pendingScrollTo).toEqual({ article: { attr: "data-feedback-filename", value: "004-feedback.md" } });
+});
+
+test("clicking a report's reply-link chip routes to the referenced feedback", async () => {
+  state.feedbackHistory = [{ filename: "002-feedback.md", content: "x", status: "read" }];
+  state.feedbackToggle = new Map();
+  state.activeTab = "reports";
+  state.pendingScrollTo = null;
+  const chip = { getAttribute: (a) => (a === "data-goto-feedback" ? "002-feedback.md" : null) };
+  const event = { target: { closest: (sel) => (sel === "[data-goto-feedback]" ? chip : null) } };
+
+  onDetailBodyClick(event);
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  expect(state.activeTab).toBe("feedback");
+  expect(state.pendingScrollTo).toEqual({ article: { attr: "data-feedback-filename", value: "002-feedback.md" } });
 });
 
 test("onReorderSessions moves the dragged session before the target and persists the new order", async () => {

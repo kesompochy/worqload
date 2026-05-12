@@ -45,6 +45,7 @@ export async function selectSession(id) {
   state.openActionId = null;
   state.actionRunInFlight = false;
   state.actionResults = new Map();
+  state.pendingScrollTo = null;
   if (!id) return;
   await refreshDetail();
   openWs(id);
@@ -56,6 +57,28 @@ export function onDetailBodyClick(e) {
   // which re-renders the pane and detaches the <a> before navigation, so the
   // new tab never opens.
   if (e.target.closest("a")) return;
+  // A feedback anchor chip: jump to the diff/file/report line it points at.
+  // Sits before the data-feedback-toggle branch because the chip lives inside
+  // the feedback header (which carries that attribute).
+  const gotoAnchor = e.target.closest("[data-goto-anchor-path]");
+  if (gotoAnchor) {
+    gotoAnchorTarget(
+      gotoAnchor.getAttribute("data-goto-anchor-path"),
+      Number(gotoAnchor.getAttribute("data-goto-anchor-line")),
+      Number(gotoAnchor.getAttribute("data-goto-anchor-line-end")),
+    );
+    return;
+  }
+  const gotoFeedbackEl = e.target.closest("[data-goto-feedback]");
+  if (gotoFeedbackEl) {
+    gotoArticle("feedback", gotoFeedbackEl.getAttribute("data-goto-feedback"));
+    return;
+  }
+  const gotoReportEl = e.target.closest("[data-goto-report]");
+  if (gotoReportEl) {
+    gotoArticle("reports", gotoReportEl.getAttribute("data-goto-report"));
+    return;
+  }
   // The pending-asking section (DetailBody.svelte) renders its resolve buttons
   // natively; the answer textarea is read here off the enclosing article.
   const askBtn = e.target.closest(".ask-resolve, .ask-approve, .ask-reject");
@@ -108,6 +131,14 @@ export function onDetailBodyClick(e) {
     e.stopPropagation();
     const path = copyPathBtn.getAttribute("data-copy-path");
     navigator.clipboard.writeText(path).then(() => toast("path copied")).catch(() => toast("copy failed"));
+    return;
+  }
+  // Lives inside the click-to-collapse diff-file header too — same as copy-path,
+  // stop before the data-diff-toggle branch folds the file.
+  const permalinkBtn = e.target.closest("[data-permalink-path]");
+  if (permalinkBtn) {
+    e.stopPropagation();
+    copyPermalink(permalinkBtn.getAttribute("data-permalink-path"));
     return;
   }
   const toggle = e.target.closest("[data-diff-toggle]");
@@ -224,18 +255,15 @@ export function closeCodeNav() {
 
 // Jump the Files tab to a path:line — the action behind a code-nav popover
 // entry. Opens the file if it isn't the one shown, anchors the line (so it's
-// highlighted and feedback sent now refers to it), and scrolls it into view.
+// highlighted and feedback sent now refers to it), and hands DetailBody the
+// request to scroll there and flash it (the same mechanism the anchor chips use).
 export async function revealFileLocation(path, line) {
   if (!path || !Number.isFinite(line)) return;
+  state.codeNav = null;
   if (state.activeTab !== "files") await switchTab("files");
   if (path !== state.selectedFilePath) await selectFile(path);
   state.anchor = { path, lineStart: line, lineEnd: line };
-  state.codeNav = null;
-  if (typeof requestAnimationFrame !== "function") return;
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    const el = document.querySelector(`.file-line[data-anchor-line="${line}"][data-anchor-path="${CSS.escape(path)}"]`);
-    if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
-  }));
+  state.pendingScrollTo = { anchor: { path, lineStart: line, lineEnd: line } };
 }
 
 export async function onReportMark(filename, read) {
@@ -319,11 +347,102 @@ export function clearAnchor() {
   state.anchor = null;
 }
 
+// Copy a GitHub-style permalink to a worktree file (and optional line range) at
+// the session's current HEAD. The server resolves the remote and sha; we just
+// surface the URL or the reason it couldn't. The link only works once the
+// session branch is pushed, hence the caveat in the success toast.
+export async function copyPermalink(path, lineStart, lineEnd) {
+  if (!state.selected || !path) return;
+  const params = new URLSearchParams({ path });
+  if (lineStart != null) params.set("lineStart", String(lineStart));
+  if (lineEnd != null && lineEnd !== lineStart) params.set("lineEnd", String(lineEnd));
+  try {
+    const res = await api("GET", `/sessions/${state.selected}/permalink?${params}`);
+    if (!res.url) {
+      const why = res.reason === "no-remote" ? "no git remote"
+        : res.reason === "unsupported-host" ? "remote isn't a GitHub host"
+        : "no commit on this branch yet";
+      toast(`no permalink: ${why}`);
+      return;
+    }
+    await navigator.clipboard.writeText(res.url);
+    toast(res.branch ? `permalink copied — resolves once ${res.branch} is pushed` : "permalink copied");
+  } catch (e) {
+    toast(`permalink failed: ${e.message}`);
+  }
+}
+
+export function copyAnchorPermalink() {
+  if (!state.anchor) return;
+  copyPermalink(state.anchor.path, state.anchor.lineStart, state.anchor.lineEnd);
+}
+
 export async function switchTab(tab) {
   if (tab === state.activeTab) return;
   state.activeTab = tab;
   if (tab === "diff") await refreshDiff();
   if (tab === "files") await ensureFilesLoaded();
+}
+
+// An anchor whose path is `./.worqload-reports/<filename>` points at a line in
+// that report's markdown rather than at a worktree file.
+const REPORTS_ANCHOR_PREFIX = "./.worqload-reports/";
+
+// "Go to anchor" from a feedback anchor chip: open the tab that holds the
+// anchored content, make sure the row is visible (expand the report / un-collapse
+// the diff file), then hand DetailBody the request to scroll there and flash it.
+// A worktree path is tried against the diff first (where most anchored feedback
+// originates) and falls back to the Files tab.
+export async function gotoAnchorTarget(path, lineStart, lineEnd) {
+  if (!path) return;
+  const target = { anchor: { path, lineStart, lineEnd: lineEnd || lineStart } };
+  if (path.startsWith(REPORTS_ANCHOR_PREFIX)) {
+    const filename = path.slice(REPORTS_ANCHOR_PREFIX.length);
+    if (!state.reports.some(r => r.filename === filename)) { toast("anchor target not in this session"); return; }
+    state.reportToggle = new Map(state.reportToggle).set(filename, true);
+    await switchTab("reports");
+    state.pendingScrollTo = target;
+    return;
+  }
+  // Refresh both listings first so a stale view — or one that was never opened —
+  // doesn't hide the target.
+  await refreshDiff();
+  if (parseDiffFiles(state.diff).some(f => f.path === path)) {
+    if (state.collapsedFiles.has(path)) {
+      const next = new Set(state.collapsedFiles);
+      next.delete(path);
+      state.collapsedFiles = next;
+    }
+    await switchTab("diff");
+    state.pendingScrollTo = target;
+    return;
+  }
+  await ensureFilesLoaded(true);
+  if (state.files.includes(path)) {
+    await switchTab("files");
+    await selectFile(path);
+    state.pendingScrollTo = target;
+    return;
+  }
+  toast(`anchor target not in view: ${path}`);
+}
+
+// "Go to" the report or feedback article with the given filename: open its tab,
+// expand it, and have DetailBody scroll it into view and flash it. Used by the
+// report↔feedback reply-link chips.
+export async function gotoArticle(tab, filename) {
+  if (!filename) return;
+  if (tab === "reports") {
+    if (!state.reports.some(r => r.filename === filename)) { toast(`report not in this session: ${filename}`); return; }
+    state.reportToggle = new Map(state.reportToggle).set(filename, true);
+    await switchTab("reports");
+    state.pendingScrollTo = { article: { attr: "data-report-filename", value: filename } };
+  } else {
+    if (!state.feedbackHistory.some(f => f.filename === filename)) { toast(`feedback not in this session: ${filename}`); return; }
+    state.feedbackToggle = new Map(state.feedbackToggle).set(filename, true);
+    await switchTab("feedback");
+    state.pendingScrollTo = { article: { attr: "data-feedback-filename", value: filename } };
+  }
 }
 
 // Jump the detail pane to a specific report — the action behind a desktop
@@ -432,6 +551,7 @@ export async function onFeedback() {
     await api("POST", `/sessions/${state.selected}/feedback`, body);
     $("#feedbackInput").value = "";
     state.anchor = null;
+    state.activeTab = "feedback";  // show the message land in the feedback list
     toast("feedback queued");
     await refreshDetail();
   } catch (e) {

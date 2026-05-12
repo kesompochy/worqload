@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveAgentEndpoint } from "./cli-helpers";
+import { resolveAgentEndpoint, requireFlag, optionalFlag } from "./cli-helpers";
 import { cleanupAll, makeTmpDir } from "../test-helpers";
 
 afterEach(() => {
@@ -38,4 +38,13 @@ test("resolveAgentEndpoint falls back to WORQLOAD_ENDPOINT when the file is empt
 test("resolveAgentEndpoint uses WORQLOAD_ENDPOINT when no file env var is set", () => {
   process.env.WORQLOAD_ENDPOINT = "http://127.0.0.1:3456";
   expect(resolveAgentEndpoint()).toBe("http://127.0.0.1:3456");
+});
+
+test("requireFlag returns the value following the flag", () => {
+  expect(requireFlag(["--slug", "plan", "--re", "001-x.md"], "--slug")).toBe("plan");
+});
+
+test("optionalFlag returns the value when present and undefined when absent", () => {
+  expect(optionalFlag(["--slug", "plan", "--re", "001-x.md"], "--re")).toBe("001-x.md");
+  expect(optionalFlag(["--slug", "plan"], "--re")).toBeUndefined();
 });

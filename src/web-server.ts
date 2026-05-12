@@ -19,7 +19,11 @@ import { connectToHost, type HostClient, spawnDetachedHost } from "./session-hos
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
 import { findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
-import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState, markAllRead } from "./file-store";
+import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead } from "./file-store";
+import type { WriteNumberedFileOptions } from "./file-store";
+import { formatAnchorRefLine } from "./anchor-ref";
+import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
 import { listActions, findAction } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
@@ -382,6 +386,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
 
   await mkdir(sessionsDir, { recursive: true });
+  // Migrate any anchored feedback still carrying its anchor as a `Re:` line in
+  // the body over to the `.meta.json` sidecar (no-op once everything's migrated).
+  await backfillFeedbackAnchors(sessionsDir);
   // The frontend is a Vite build under web/dist/; produce it on first run so a
   // fresh checkout (or a forgotten `bun run web:build`) still serves a working
   // UI. Editing the frontend afterwards needs a rebuild (`bun run web:build`).
@@ -524,6 +531,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/search", getFileSearch),
   defineRoute("GET",  "/sessions/:id/code-nav/definition", getCodeNavDefinition),
   defineRoute("GET",  "/sessions/:id/code-nav/references", getCodeNavReferences),
+  defineRoute("GET",  "/sessions/:id/permalink", getPermalink),
   defineRoute("GET",  "/actions", getActions),
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
@@ -789,8 +797,8 @@ async function getFeedbackHistory(_req: Request, ctx: ServerContext, params: Rec
     const inbox = await listAllFiles(feedbackInboxDirFor(ctx, meta.id));
     const read = await listAllFiles(feedbackReadDirFor(ctx, meta.id));
     const all = [
-      ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const })),
-      ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const })),
+      ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const, anchor: f.meta?.anchor })),
+      ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const, anchor: f.meta?.anchor })),
     ];
     all.sort((a, b) => b.filename.localeCompare(a.filename));
     return json({ messages: all });
@@ -813,6 +821,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
         filename: r.filename,
         content: r.content,
         read: readSet.has(r.filename),
+        replyTo: r.meta?.replyTo,
       })),
     });
   });
@@ -922,6 +931,45 @@ async function getFile(req: Request, ctx: ServerContext, params: Record<string, 
       case "denied": return json({ error: "path outside worktree" }, 403);
     }
   });
+}
+
+// A GitHub-style "permalink" to a worktree file (and optional line range): the
+// blob URL of `path` at the worktree's current HEAD on the repo's `origin`
+// remote. HEAD may not be pushed yet, so the link only resolves once the branch
+// is — the response carries `branch` so the UI can say so. Returns
+// `{ url: null, reason }` when there's no remote, the remote isn't a
+// GitHub-shaped host, or HEAD can't be resolved; the UI then offers no link.
+async function getPermalink(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const query = new URL(req.url).searchParams;
+    const relPath = query.get("path");
+    if (!relPath || relPath.trim() === "") return json({ error: "path query is required" }, 400);
+    if (relPath.startsWith("/") || relPath.split("/").includes("..")) return json({ error: "path outside worktree" }, 400);
+    const lineStart = parsePositiveIntParam(query.get("lineStart"));
+    const lineEnd = parsePositiveIntParam(query.get("lineEnd"));
+
+    const remoteUrl = await ctx.worktreeOps.gitRemoteUrl(meta.worktreePath);
+    if (!remoteUrl) return json({ url: null, reason: "no-remote" });
+    const repo = parseGitRemoteUrl(remoteUrl);
+    if (!repo) return json({ url: null, reason: "unsupported-host" });
+    const sha = await ctx.worktreeOps.gitHeadSha(meta.worktreePath);
+    if (!sha) return json({ url: null, reason: "no-commit" });
+
+    const url = buildBlobPermalink({
+      webBaseUrl: repo.webBaseUrl,
+      ref: sha,
+      path: relPath,
+      lineStart: lineStart ?? undefined,
+      lineEnd: lineEnd ?? undefined,
+    });
+    return json({ url, ref: sha, branch: meta.branchName });
+  });
+}
+
+function parsePositiveIntParam(raw: string | null): number | null {
+  if (raw === null) return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : null;
 }
 
 // Full-text search across the session worktree's files (the Files tab's Ctrl+F):
@@ -1047,16 +1095,13 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
       return json({ error: "content is required" }, 400);
     }
     const slug = body.slug ?? "feedback";
-    let content = body.content;
+    const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
     if (body.anchor) {
       const { path, lineStart, lineEnd } = body.anchor;
-      const range = lineEnd && lineEnd !== lineStart ? `${lineStart}-${lineEnd}` : `${lineStart}`;
-      content = `Re: ${path}:${range}\n\n${content}`;
+      writeOpts.meta = { anchor: { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart } };
     }
     const inbox = feedbackInboxDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(inbox, slug, content, {
-      archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
-    });
+    const file = await writeNumberedFile(inbox, slug, body.content, writeOpts);
     await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
 
     // Wake the host's claude child if idle (fire-and-forget)
@@ -1224,7 +1269,11 @@ async function postSessionAction(req: Request, ctx: ServerContext, params: Recor
 interface NumberedBody {
   slug: string;
   content: string;
+  // Reports only: the feedback message this report answers (see `--re`).
+  replyTo?: string;
 }
+
+const NUMBERED_FILENAME_RE = /^\d+-[A-Za-z0-9_-]+\.md$/;
 
 async function postInternalReports(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
@@ -1232,8 +1281,19 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
     if (!body?.slug || typeof body.content !== "string") {
       return json({ error: "slug and content required" }, 400);
     }
+    const replyTo = typeof body.replyTo === "string" && body.replyTo !== "" ? body.replyTo : undefined;
+    if (replyTo) {
+      if (!NUMBERED_FILENAME_RE.test(replyTo)) {
+        return json({ error: `--re must be a feedback filename like 003-feedback.md, got: ${replyTo}` }, 400);
+      }
+      const inInbox = await Bun.file(join(feedbackInboxDirFor(ctx, meta.id), replyTo)).exists();
+      const inRead = await Bun.file(join(feedbackReadDirFor(ctx, meta.id), replyTo)).exists();
+      if (!inInbox && !inRead) {
+        return json({ error: `no such feedback message: ${replyTo}` }, 400);
+      }
+    }
     const dir = reportsDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(dir, body.slug, body.content);
+    const file = await writeNumberedFile(dir, body.slug, body.content, replyTo ? { meta: { replyTo } } : {});
     await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
     return json({ filename: file.filename, seq: file.seq });
   });
@@ -1296,13 +1356,18 @@ async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Re
     const readDir = feedbackReadDirFor(ctx, meta.id);
     const messages = await listAllFiles(inbox);
     for (const m of messages) {
-      await moveFile(m.path, join(readDir, m.filename));
+      await moveNumberedFile(inbox, readDir, m.filename);
     }
     if (messages.length > 0) {
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_fetched", payload: { count: messages.length } });
     }
     return json({
-      messages: messages.map(m => ({ filename: m.filename, content: m.content })),
+      messages: messages.map(m => ({
+        filename: m.filename,
+        // The anchor lives in a sidecar now; re-derive the `Re:` line the agent
+        // is told to expect at the head of an anchored message.
+        content: m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content,
+      })),
     });
   });
 }

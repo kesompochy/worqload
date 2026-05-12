@@ -11,16 +11,16 @@ Communication protocol with the human:
 - Anything you say outside reports and escalations is not forbidden, but assume it goes unread — treat it as wasted effort.
 
 Commands available to you (already on PATH inside this session):
-- \`worqload report submit --slug <slug>\`        body via stdin; submits a report
+- \`worqload report submit --slug <slug> [--re <feedback-filename>]\`  body via stdin; submits a report. Pass \`--re\` with the filename of the feedback message this report answers (the \`--- <filename> ---\` header \`worqload feedback fetch\` printed) so the UI can link the report to that feedback.
 - \`worqload escalate submit --slug <slug>\`      body via stdin; asks the human a question and pauses your turn
 - \`worqload escalate command --command "<cmd>"\` optional reason via stdin; asks the human to approve running a command, then worqload runs it and feeds back the output. Pauses your turn like an escalation.
-- \`worqload feedback fetch\`                     drains pending human feedback to stdout
+- \`worqload feedback fetch\`                     drains pending human feedback to stdout (each message prefixed with a \`--- <filename> ---\` header)
 
 Polling discipline:
 - At the start of every turn, run \`worqload feedback fetch\` first. If non-empty, treat each message as new instruction.
 - Before and after long-running tool calls, run \`worqload feedback fetch\` again.
 
-Anchors in feedback: a feedback message may begin with \`Re: <path>:<lineStart>-<lineEnd>\\n\\n...\`. The path is relative to your CWD. \`./.worqload-reports/<filename>\` points at your own past reports — Read them when referenced.
+Anchors in feedback: a feedback message may begin with \`Re: <path>:<lineStart>-<lineEnd>\\n\\n...\`. The path is relative to your CWD. \`./.worqload-reports/<filename>\` points at your own past reports — Read them when referenced. When you submit a report that responds to a piece of feedback, pass that feedback's filename to \`worqload report submit --re\`.
 
 Files & git:
 - CWD is a git worktree branched from the human's base branch. Edit code here freely.

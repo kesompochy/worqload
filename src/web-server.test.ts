@@ -303,16 +303,22 @@ test("feedback inbox round trip: POST writes, GET fetches and moves to read", as
   });
 
   const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
-  expect(readdirSync(inboxDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md"]);
+  // The anchored message gets a `.meta.json` sidecar; its body stays clean.
+  expect(readdirSync(inboxDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md", "002-fix-this.meta.json"]);
+  expect(readFileSync(join(inboxDir, "002-fix-this.md"), "utf8")).toBe("fix this please");
+  expect(JSON.parse(readFileSync(join(inboxDir, "002-fix-this.meta.json"), "utf8"))).toEqual({
+    anchor: { path: "src/foo.ts", lineStart: 40, lineEnd: 45 },
+  });
 
   const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
   expect(fetched.messages).toHaveLength(2);
-  expect(fetched.messages[1].content).toContain("Re: src/foo.ts:40-45");
+  // The agent still sees the `Re:` line at the head of an anchored message.
+  expect(fetched.messages[1].content).toBe("Re: src/foo.ts:40-45\n\nfix this please");
 
-  // After fetch, inbox should be empty and read/ should contain them
+  // After fetch, inbox should be empty and read/ should contain them (sidecar too)
   expect(readdirSync(inboxDir)).toEqual([]);
   const readDir = join(ctx.sessionsDir, sid, "feedback", "read");
-  expect(readdirSync(readDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md"]);
+  expect(readdirSync(readDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md", "002-fix-this.meta.json"]);
 });
 
 test("feedback numbering stays monotonic after a fetch drains the inbox", async () => {
@@ -675,6 +681,38 @@ test("GET /sessions/:id/code-nav/definition reports unavailable for a language w
   expect((await fetch(`${baseUrl}/sessions/${sid}/code-nav/definition?line=0&character=0`)).status).toBe(400);
 });
 
+// How a git remote URL maps to a web URL is `permalink`'s contract — see
+// permalink.test.ts. Here we check the endpoint pulls the remote/HEAD from
+// worktreeOps and threads them through, including the branch the link needs.
+test("GET /sessions/:id/permalink returns a blob URL at HEAD for a file and line range", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const file = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=src/a.ts`).then(r => r.json());
+  expect(file.url).toBe(`https://github.com/owner/repo/blob/${"f".repeat(40)}/src/a.ts`);
+  expect(file.branch).toBe(created.meta.branchName);
+
+  const range = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=src/a.ts&lineStart=3&lineEnd=8`).then(r => r.json());
+  expect(range.url).toBe(`https://github.com/owner/repo/blob/${"f".repeat(40)}/src/a.ts#L3-L8`);
+
+  expect((await fetch(`${baseUrl}/sessions/${sid}/permalink`)).status).toBe(400);
+});
+
+test("GET /sessions/:id/permalink returns null with a reason when the worktree has no remote", async () => {
+  const repoDir = makeGitRepo();
+  const { baseUrl } = await bootServerRealGit(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=README.md`).then(r => r.json());
+  expect(res.url).toBeNull();
+  expect(res.reason).toBe("no-remote");
+});
+
 test("GET /sessions/:id/asking returns pending escalations", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
@@ -775,6 +813,27 @@ test("GET /sessions/:id/feedback merges inbox and read with status", async () =>
   expect(byContent["first"]).toBe("read");
   expect(byContent["second"]).toBe("read");
   expect(byContent["third"]).toBe("unread");
+});
+
+test("GET /sessions/:id/feedback exposes the structured anchor and keeps the body clean", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "plain", slug: "feedback" });
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, {
+    content: "look at these lines",
+    slug: "anchored",
+    anchor: { path: "src/foo.ts", lineStart: 10, lineEnd: 12 },
+  });
+
+  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then(r => r.json());
+  const anchored = history.messages.find((m: { content: string }) => m.content === "look at these lines");
+  expect(anchored.anchor).toEqual({ path: "src/foo.ts", lineStart: 10, lineEnd: 12 });
+  const plain = history.messages.find((m: { content: string }) => m.content === "plain");
+  expect(plain.anchor).toBeUndefined();
 });
 
 test("startServer reconnects to a still-running host across a serve restart", async () => {
