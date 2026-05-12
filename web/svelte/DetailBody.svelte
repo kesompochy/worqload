@@ -5,18 +5,19 @@
   // active tab's content, and the "Feedback sent" list. Mounted into
   // #detailBodyMount from main.ts. The Reports tab, the Feedback-sent list, the
   // asking section, and the Diff tab (DiffView.svelte) are rendered natively
-  // here off the reactive `appState`; the Files / Events tabs still come from
-  // the *-view modules as HTML strings via {@html} (those will be migrated
-  // next). Click handling for the {@html} tabs, for the diff (file collapse,
-  // gap expand, copy-path, line anchoring), for line anchors inside report
-  // markdown, and for the asking buttons is delegated to onDetailBodyClick.
+  // here off the reactive `appState` (and DiffView / FilesView do the same);
+  // the Events tab still comes from events-view.js as an HTML string via
+  // {@html} (migrated next). Click handling for the {@html} tab, for the diff
+  // and files explorers (collapse, gap expand, file open, copy-path, line
+  // anchoring), for line anchors inside report markdown, and for the asking
+  // buttons is delegated to onDetailBodyClick.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
   import { state as appState, isReportExpanded, isFeedbackExpanded } from "../state.svelte.js";
   import { renderMarkdown } from "../markdown.js";
   import DiffView from "./DiffView.svelte";
-  import { renderFilesHtml } from "../files-view.js";
+  import FilesView from "./FilesView.svelte";
   import { renderEventsHtml } from "../events-view.js";
   import { onDetailBodyClick } from "../handlers.js";
 
@@ -128,7 +129,7 @@
     {#if appState.activeTab === "diff"}
       <DiffView />
     {:else if appState.activeTab === "files"}
-      {@html renderFilesHtml()}
+      <FilesView />
     {:else if appState.activeTab === "events"}
       {@html renderEventsHtml()}
     {:else if reportsNewestFirst.length > 0}
