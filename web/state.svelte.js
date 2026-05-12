@@ -1,7 +1,10 @@
 // Single source of truth for the worqload frontend's in-browser view state,
-// plus the small pure queries that derive display flags from it.
+// plus the small pure queries that derive display flags from it. `$state`
+// makes mutations reactive for the Svelte components; the still-vanilla
+// modules read and write it exactly as before. (`bun test` loads this module
+// without the Svelte compiler — see src/svelte-runes-test-shim.ts.)
 
-export const state = {
+export const state = $state({
   sessions: [],
   selected: null,        // session id
   detail: null,          // { meta, events }
@@ -28,7 +31,7 @@ export const state = {
   openActionId: null,    // id of the action whose inline panel is open (null = closed)
   actionResults: new Map(),  // actionId -> last run result observed in this browser view
   renamingSessionId: null,   // session id whose sidebar title is being edited inline (null = none)
-};
+});
 
 // Diff view: the server hands us full file context; we collapse unchanged
 // stretches by default and let the human expand them GitHub-style.

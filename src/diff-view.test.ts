@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { parseDiffFiles, mergeLineRanges, renderDiffHtml } from "../web/diff-view.js";
-import { state } from "../web/state.js";
+import { state } from "../web/state.svelte.js";
 
 test("parseDiffFiles splits a unified diff into files, hunks and counts", () => {
   const diff = [

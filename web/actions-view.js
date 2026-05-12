@@ -7,7 +7,7 @@
 // The panel is the gate, not a separate dialog.
 
 import { escapeHtml, formatRelative } from "./dom.js";
-import { state } from "./state.js";
+import { state } from "./state.svelte.js";
 
 export function renderActionPanelHtml() {
   const action = state.actions.find(a => a.id === state.openActionId);

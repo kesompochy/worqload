@@ -5,6 +5,10 @@ import "./style.css";
 import "./app.js";
 import { mount } from "svelte";
 import NewSessionModal from "./svelte/NewSessionModal.svelte";
+import SessionList from "./svelte/SessionList.svelte";
 
 const newSessionModal = mount(NewSessionModal, { target: document.body });
 document.getElementById("btnNew")?.addEventListener("click", () => newSessionModal.open());
+
+const sessionListTarget = document.getElementById("sessionList");
+if (sessionListTarget) mount(SessionList, { target: sessionListTarget });

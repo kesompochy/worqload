@@ -7,7 +7,7 @@
 
 import { escapeHtml, formatRelative } from "./dom.js";
 import { renderMarkdown } from "./markdown.js";
-import { state, isEventExpanded } from "./state.js";
+import { state, isEventExpanded } from "./state.svelte.js";
 
 // ---- pure: event -> { summary, sections } -------------------------------
 //

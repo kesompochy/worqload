@@ -4,7 +4,7 @@
 // and/or calls the data layer, then triggers a re-render.
 
 import { $, toast } from "./dom.js";
-import { state, isReportExpanded, isFeedbackExpanded, DIFF_EXPAND_CHUNK } from "./state.js";
+import { state, isReportExpanded, isFeedbackExpanded, DIFF_EXPAND_CHUNK } from "./state.svelte.js";
 import { parseDiffFiles, mergeLineRanges } from "./diff-view.js";
 import {
   api,
