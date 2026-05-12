@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { watchWebFrontend } from "../web-build";
 import { startServer } from "../web-server";
 
 // Set on the re-spawned child so it knows the outer `worqload serve --watch`
@@ -130,6 +131,16 @@ export async function serve(args: string[]): Promise<void> {
     // future watch session.
     const openSentinel = noOpen ? null : join(tmpdir(), `worqload-watch-${process.pid}.open`);
     const portSentinelPath = join(tmpdir(), `worqload-watch-${process.pid}.port`);
+    // Rebuild web/dist/ on frontend changes. This watcher lives in the outer
+    // process, which stays up across the inner server's `bun --watch` reloads
+    // (those only react to the server's TS import graph, not web/). The browser
+    // still needs a manual reload to pick up a rebuild.
+    try {
+      await watchWebFrontend();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`watch mode: frontend build watcher did not start (${message}); run \`bun run web:watch\` separately`);
+    }
     await respawnUnderWatch(plan, openSentinel, portSentinelPath);
     return;
   }

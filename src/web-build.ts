@@ -25,3 +25,18 @@ export function buildWebFrontend(): Promise<void> {
   }
   return inFlightBuild;
 }
+
+export interface FrontendBuildWatcher {
+  close(): Promise<void>;
+}
+
+// Rebuild web/dist/ whenever a frontend source file changes. Used by
+// `worqload serve --watch`, whose `bun --watch` only watches the server's TS
+// import graph — the browser frontend is a separate Vite build.
+export async function watchWebFrontend(): Promise<FrontendBuildWatcher> {
+  const { build } = await import("vite");
+  // With build.watch set, build() returns a RollupWatcher (a .close()-able
+  // chokidar-backed watcher) instead of resolving once and exiting.
+  const watcher = await build({ configFile: join(repoRoot, "vite.config.ts"), build: { watch: {} } });
+  return watcher as unknown as FrontendBuildWatcher;
+}
