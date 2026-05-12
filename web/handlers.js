@@ -249,6 +249,26 @@ export async function onResolve(filename, articleEl) {
   }
 }
 
+// Resolve a command-approval escalation: the human either approves (the server
+// runs the command and feeds back its output) or rejects it, optionally with a
+// reason typed into the article's textarea that's relayed to the agent.
+export async function onResolveCommand(filename, decision, articleEl) {
+  if (!state.selected) return;
+  const body = { decision };
+  if (decision === "reject") {
+    const reason = articleEl?.querySelector(".ask-answer")?.value.trim() ?? "";
+    if (reason !== "") body.content = reason;
+  }
+  try {
+    const res = await api("POST", `/sessions/${state.selected}/escalations/${encodeURIComponent(filename)}/resolve`, body);
+    toast(decision === "approve" ? `command ran (exit ${res.exitCode ?? "?"})` : "command rejected");
+    await refreshDetail();
+    await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 export async function onFeedback() {
   if (!state.selected) return;
   const text = $("#feedbackInput").value.trim();
