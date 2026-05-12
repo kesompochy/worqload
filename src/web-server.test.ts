@@ -1115,3 +1115,98 @@ test("invoking an action records an action_invoked event so the run log persists
   expect(payload.actionId).toBe("merge-to-base");
   expect(payload.ok).toBe(false);
 });
+
+test("command approval: request creates asking + sidecar, sets waiting_human, getAsking exposes the command", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const dangerousCommand = "npm publish --access public";
+  const req = await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, {
+    command: dangerousCommand,
+    reason: "release the package",
+  }).then(r => r.json());
+  expect(req.filename).toBe("001-command-approval.md");
+
+  const askingDir = join(ctx.sessionsDir, sid, "asking");
+  expect(readdirSync(askingDir).sort()).toEqual(["001-command-approval.command.json", "001-command-approval.md"]);
+  expect(JSON.parse(readFileSync(join(askingDir, "001-command-approval.command.json"), "utf8")).command).toBe(dangerousCommand);
+
+  const meta = await loadSessionMeta(sid, ctx.sessionsDir);
+  expect(meta?.status).toBe("waiting_human");
+
+  const asking = await fetch(`${baseUrl}/sessions/${sid}/asking`).then(r => r.json());
+  expect(asking.asking).toHaveLength(1);
+  expect(asking.asking[0].command).toBe(dangerousCommand);
+  expect(asking.asking[0].content).toContain("REQUIRE APPROVAL");
+});
+
+test("command approval: approve runs the command in the worktree and feeds back its output", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "echo approved-ok" });
+
+  const resolved = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, {
+    decision: "approve",
+  }).then(r => r.json());
+  expect(resolved.ok).toBe(true);
+  expect(resolved.exitCode).toBe(0);
+  expect(resolved.stdout).toContain("approved-ok");
+
+  const askingDir = join(ctx.sessionsDir, sid, "asking");
+  expect(readdirSync(askingDir).filter(f => f.endsWith(".md") || f.endsWith(".json"))).toEqual([]);
+  expect(readdirSync(join(askingDir, "resolved")).sort()).toEqual(["001-command-approval.command.json", "001-command-approval.md"]);
+
+  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json());
+  expect(detail.meta.status).toBe("running");
+
+  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  expect(inbox.messages).toHaveLength(1);
+  expect(inbox.messages[0].content).toContain("approved this command");
+  expect(inbox.messages[0].content).toContain("approved-ok");
+  expect(inbox.messages[0].content).toContain("Exit code");
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const resolvedEvent = events.find(e => e.kind === "escalation_resolved");
+  expect((resolvedEvent?.payload as { decision?: string })?.decision).toBe("approve");
+});
+
+test("command approval: reject does not run the command and feeds back the rejection", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const marker = join(repoDir, "should-not-exist");
+  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: `touch ${JSON.stringify(marker)}` });
+
+  const resolved = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, {
+    decision: "reject",
+    content: "we never touch that path",
+  }).then(r => r.json());
+  expect(resolved.ok).toBe(true);
+  expect(existsSync(marker)).toBe(false);
+
+  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  expect(inbox.messages[0].content).toContain("rejected this command");
+  expect(inbox.messages[0].content).toContain("we never touch that path");
+});
+
+test("command approval: resolve without a decision is rejected", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "echo hi" });
+  const res = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, { content: "yes please" });
+  expect(res.status).toBe(400);
+});
