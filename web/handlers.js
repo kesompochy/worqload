@@ -278,17 +278,20 @@ export async function gotoAnchorTarget(path, lineStart, lineEnd) {
     state.pendingScrollTo = target;
     return;
   }
-  await switchTab("diff");
+  // Refresh both listings first so a stale view — or one that was never opened —
+  // doesn't hide the target.
+  await refreshDiff();
   if (parseDiffFiles(state.diff).some(f => f.path === path)) {
     if (state.collapsedFiles.has(path)) {
       const next = new Set(state.collapsedFiles);
       next.delete(path);
       state.collapsedFiles = next;
     }
+    await switchTab("diff");
     state.pendingScrollTo = target;
     return;
   }
-  await ensureFilesLoaded();
+  await ensureFilesLoaded(true);
   if (state.files.includes(path)) {
     await switchTab("files");
     await selectFile(path);

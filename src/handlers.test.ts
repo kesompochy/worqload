@@ -166,6 +166,18 @@ test("clicking a feedback anchor chip routes to gotoAnchorTarget", async () => {
   expect(state.pendingScrollTo).toEqual({ anchor: { path: "src/bar.ts", lineStart: 1, lineEnd: 1 } });
 });
 
+test("gotoAnchorTarget falls back to the Files tab when the path is not in the diff", async () => {
+  state.diff = "";  // path is not part of the diff
+  state.files = ["src/util.ts"];
+  state.activeTab = "reports";
+  state.pendingScrollTo = null;
+
+  await gotoAnchorTarget("src/util.ts", 9, 9);
+
+  expect(state.activeTab).toBe("files");
+  expect(state.pendingScrollTo).toEqual({ anchor: { path: "src/util.ts", lineStart: 9, lineEnd: 9 } });
+});
+
 test("gotoArticle opens the Feedback tab, expands the feedback, and queues a scroll to its card", async () => {
   state.feedbackHistory = [{ filename: "004-feedback.md", content: "x", status: "read" }];
   state.feedbackToggle = new Map();
