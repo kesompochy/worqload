@@ -235,6 +235,26 @@ export async function switchTab(tab) {
   if (tab === "files") await ensureFilesLoaded();
 }
 
+// Jump the detail pane to a specific report — the action behind a desktop
+// notification click. Selects the report's session if it isn't the one on
+// screen, switches to the Reports tab, forces the report expanded (a click from
+// a notification means "show me this now", overriding a collapse or a read
+// mark), and scrolls it into view: a report that arrived over the websocket sits
+// where the scroll anchor left it (see DetailBody.svelte), which may be
+// off-screen. `filename` is null for the per-session-poll notifications, which
+// only know a session gained unread reports — then just open the Reports tab.
+export async function revealReport(sessionId, filename) {
+  if (sessionId && sessionId !== state.selected) await selectSession(sessionId);
+  await switchTab("reports");
+  if (!filename) return;
+  state.reportToggle = new Map(state.reportToggle).set(filename, true);
+  if (typeof requestAnimationFrame !== "function") return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const el = document.querySelector(`[data-report-filename="${CSS.escape(filename)}"]`);
+    if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+  }));
+}
+
 export async function onArchive(id = state.selected) {
   if (!id) return;
   try {
