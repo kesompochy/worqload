@@ -16,9 +16,13 @@
   $effect(() => {
     if (!nav) return;
     const onKeydown = (e) => { if (e.key === "Escape") { e.preventDefault(); closeCodeNav(); } };
-    const onScroll = () => closeCodeNav();
+    // The popover is fixed at the token's position, so a scroll of the page
+    // (e.g. the detail body) leaves it stale — close it. But scrolling *inside*
+    // the popover's own overflow (paging through a long references list) also
+    // fires a scroll event; that must not close it.
+    const onScroll = (e) => { if (!e.target?.closest?.(".code-nav-popover")) closeCodeNav(); };
     window.addEventListener("keydown", onKeydown);
-    // Capture phase so scrolling the detail body (which doesn't bubble) closes it.
+    // Capture phase so scrolling the detail body (which doesn't bubble) is seen.
     window.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("keydown", onKeydown);
