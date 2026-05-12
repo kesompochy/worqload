@@ -65,6 +65,7 @@
       <div class="file-content-header">
         <span>{fileContentPath}</span>
         <button type="button" class="copy-path-btn" data-copy-path={fileContentPath} title="ファイル名をコピー">⧉</button>
+        <button type="button" class="copy-path-btn" data-permalink-path={fileContentPath} title="GitHub permalink をコピー">🔗</button>
         {#if fileContentMeta}<span class="file-content-meta">{fileContentMeta}</span>{/if}
       </div>
       {#if appState.fileContent.loading}

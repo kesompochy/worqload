@@ -130,6 +130,14 @@ export function onDetailBodyClick(e) {
     navigator.clipboard.writeText(path).then(() => toast("path copied")).catch(() => toast("copy failed"));
     return;
   }
+  // Lives inside the click-to-collapse diff-file header too — same as copy-path,
+  // stop before the data-diff-toggle branch folds the file.
+  const permalinkBtn = e.target.closest("[data-permalink-path]");
+  if (permalinkBtn) {
+    e.stopPropagation();
+    copyPermalink(permalinkBtn.getAttribute("data-permalink-path"));
+    return;
+  }
   const toggle = e.target.closest("[data-diff-toggle]");
   if (toggle) {
     const path = toggle.getAttribute("data-diff-toggle");
@@ -249,6 +257,36 @@ export function onLineClick(e) {
 
 export function clearAnchor() {
   state.anchor = null;
+}
+
+// Copy a GitHub-style permalink to a worktree file (and optional line range) at
+// the session's current HEAD. The server resolves the remote and sha; we just
+// surface the URL or the reason it couldn't. The link only works once the
+// session branch is pushed, hence the caveat in the success toast.
+export async function copyPermalink(path, lineStart, lineEnd) {
+  if (!state.selected || !path) return;
+  const params = new URLSearchParams({ path });
+  if (lineStart != null) params.set("lineStart", String(lineStart));
+  if (lineEnd != null && lineEnd !== lineStart) params.set("lineEnd", String(lineEnd));
+  try {
+    const res = await api("GET", `/sessions/${state.selected}/permalink?${params}`);
+    if (!res.url) {
+      const why = res.reason === "no-remote" ? "no git remote"
+        : res.reason === "unsupported-host" ? "remote isn't a GitHub host"
+        : "no commit on this branch yet";
+      toast(`no permalink: ${why}`);
+      return;
+    }
+    await navigator.clipboard.writeText(res.url);
+    toast(res.branch ? `permalink copied — resolves once ${res.branch} is pushed` : "permalink copied");
+  } catch (e) {
+    toast(`permalink failed: ${e.message}`);
+  }
+}
+
+export function copyAnchorPermalink() {
+  if (!state.anchor) return;
+  copyPermalink(state.anchor.path, state.anchor.lineStart, state.anchor.lineEnd);
 }
 
 export async function switchTab(tab) {
