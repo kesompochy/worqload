@@ -209,6 +209,14 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .md [data-anchor-line][aria-current="true"] { background: rgba(88,166,255,.18); }
 .anchor-chip { display: inline-flex; align-items: center; gap: .35rem; background: rgba(88,166,255,.15); border: 1px solid rgba(88,166,255,.4); color: var(--accent); padding: .2rem .55rem; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; margin-bottom: .5rem; }
 .anchor-chip button { background: transparent; border: none; color: var(--accent); padding: 0 .2rem; cursor: pointer; font-size: 14px; line-height: 1; }
+.report-anchor-chip { background: rgba(88,166,255,.12); border: 1px solid rgba(88,166,255,.35); color: var(--accent); padding: .05rem .4rem; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 11px; cursor: pointer; max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-anchor-chip:hover { background: rgba(88,166,255,.24); border-color: rgba(88,166,255,.55); }
+@keyframes anchor-flash {
+  0%, 100% { background: transparent; }
+  15% { background: rgba(210,153,34,.45); }
+  50% { background: rgba(210,153,34,.28); }
+}
+.anchor-flash { animation: anchor-flash 1.6s ease; border-radius: 3px; }
 .event-row { border-bottom: 1px solid var(--border); font-family: ui-monospace, monospace; font-size: 12px; }
 .event-line { display: grid; grid-template-columns: 1ch 5ch 12rem 6rem 1fr; gap: .5rem; padding: .3rem .5rem; align-items: baseline; cursor: pointer; user-select: none; }
 .event-line:hover { background: var(--panel); }

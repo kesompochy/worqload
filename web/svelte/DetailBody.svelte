@@ -12,7 +12,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
-  import { state as appState, isReportExpanded, isFeedbackExpanded } from "../state.svelte.js";
+  import { state as appState, isReportExpanded, isFeedbackExpanded, anchorLabel } from "../state.svelte.js";
   import { renderMarkdown } from "../markdown.js";
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
@@ -90,6 +90,37 @@
       renderedTab = targetTab;
     });
   });
+
+  // "Go to anchor": clicking a feedback anchor chip has handlers.js switch to
+  // the right tab (and expand the report / un-collapse the diff file) and set
+  // appState.pendingScrollTo. Once that content has rendered, bring the anchored
+  // row into view and flash it. Best-effort: if the diff/file moved on and the
+  // line is gone, we just leave the user on the switched-to tab.
+  function findAnchorElement(root, path, lineStart, lineEnd) {
+    let overlap = null;
+    for (const el of root.querySelectorAll(`[data-anchor-path="${CSS.escape(path)}"][data-anchor-line]`)) {
+      const start = Number(el.getAttribute("data-anchor-line"));
+      const endAttr = el.getAttribute("data-anchor-line-end");
+      const end = endAttr !== null ? Number(endAttr) : start;
+      if (start > lineEnd || end < lineStart) continue;  // no overlap with [lineStart, lineEnd]
+      if (start === lineStart) return el;                // exact row (diff / file line)
+      if (overlap === null) overlap = el;                // first block overlapping the range (report markdown)
+    }
+    return overlap;
+  }
+
+  $effect(() => {
+    const target = appState.pendingScrollTo;
+    if (!target) return;
+    tick().then(() => {
+      appState.pendingScrollTo = null;
+      const el = bodyEl && findAnchorElement(bodyEl, target.path, target.lineStart, target.lineEnd);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("anchor-flash");
+      setTimeout(() => el.classList.remove("anchor-flash"), 1600);
+    });
+  });
 </script>
 
 {#if appState.selected && appState.detail}
@@ -134,6 +165,9 @@
             <div class="report-header" data-feedback-toggle={f.filename}>
               <span class="report-chevron">▾</span>
               <span class="report-filename">{f.filename}</span>
+              {#if f.anchor}
+                <button class="report-anchor-chip" type="button" title="Re: {anchorLabel(f.anchor)} — クリックでアンカー先へ" data-goto-anchor-path={f.anchor.path} data-goto-anchor-line={f.anchor.lineStart} data-goto-anchor-line-end={f.anchor.lineEnd}>↳ {anchorLabel(f.anchor)}</button>
+              {/if}
               <span class="badge badge-{f.status === 'unread' ? 'waiting_human' : 'stopped'}">{f.status}</span>
             </div>
             <div class="report-body">

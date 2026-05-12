@@ -42,6 +42,7 @@ export async function selectSession(id) {
   state.openActionId = null;
   state.actionRunInFlight = false;
   state.actionResults = new Map();
+  state.pendingScrollTo = null;
   if (!id) return;
   await refreshDetail();
   openWs(id);
@@ -53,6 +54,18 @@ export function onDetailBodyClick(e) {
   // which re-renders the pane and detaches the <a> before navigation, so the
   // new tab never opens.
   if (e.target.closest("a")) return;
+  // A feedback anchor chip: jump to the diff/file/report line it points at.
+  // Sits before the data-feedback-toggle branch because the chip lives inside
+  // the feedback header (which carries that attribute).
+  const gotoAnchor = e.target.closest("[data-goto-anchor-path]");
+  if (gotoAnchor) {
+    gotoAnchorTarget(
+      gotoAnchor.getAttribute("data-goto-anchor-path"),
+      Number(gotoAnchor.getAttribute("data-goto-anchor-line")),
+      Number(gotoAnchor.getAttribute("data-goto-anchor-line-end")),
+    );
+    return;
+  }
   // The pending-asking section (DetailBody.svelte) renders its resolve buttons
   // natively; the answer textarea is read here off the enclosing article.
   const askBtn = e.target.closest(".ask-resolve, .ask-approve, .ask-reject");
@@ -233,6 +246,46 @@ export async function switchTab(tab) {
   state.activeTab = tab;
   if (tab === "diff") await refreshDiff();
   if (tab === "files") await ensureFilesLoaded();
+}
+
+// An anchor whose path is `./.worqload-reports/<filename>` points at a line in
+// that report's markdown rather than at a worktree file.
+const REPORTS_ANCHOR_PREFIX = "./.worqload-reports/";
+
+// "Go to anchor" from a feedback anchor chip: open the tab that holds the
+// anchored content, make sure the row is visible (expand the report / un-collapse
+// the diff file), then hand DetailBody the request to scroll there and flash it.
+// A worktree path is tried against the diff first (where most anchored feedback
+// originates) and falls back to the Files tab.
+export async function gotoAnchorTarget(path, lineStart, lineEnd) {
+  if (!path) return;
+  const target = { path, lineStart, lineEnd: lineEnd || lineStart };
+  if (path.startsWith(REPORTS_ANCHOR_PREFIX)) {
+    const filename = path.slice(REPORTS_ANCHOR_PREFIX.length);
+    if (!state.reports.some(r => r.filename === filename)) { toast("anchor target not in this session"); return; }
+    state.reportToggle = new Map(state.reportToggle).set(filename, true);
+    await switchTab("reports");
+    state.pendingScrollTo = target;
+    return;
+  }
+  await switchTab("diff");
+  if (parseDiffFiles(state.diff).some(f => f.path === path)) {
+    if (state.collapsedFiles.has(path)) {
+      const next = new Set(state.collapsedFiles);
+      next.delete(path);
+      state.collapsedFiles = next;
+    }
+    state.pendingScrollTo = target;
+    return;
+  }
+  await ensureFilesLoaded();
+  if (state.files.includes(path)) {
+    await switchTab("files");
+    await selectFile(path);
+    state.pendingScrollTo = target;
+    return;
+  }
+  toast(`anchor target not in view: ${path}`);
 }
 
 export async function onArchive(id = state.selected) {
