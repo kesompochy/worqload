@@ -53,21 +53,14 @@ export function isReportExpanded(report) {
   return !report.read;
 }
 
-// Feedback messages worqload generates from an approved/rejected command
-// approval (slug `command-approve` / `command-reject`). Their body is the
-// command's output, which the human wants to keep visible.
-function isCommandResultFeedback(feedback) {
-  return /^\d+-command-(approve|reject)\.md$/.test(feedback.filename ?? "");
-}
-
 export function isFeedbackExpanded(feedback) {
   if (state.feedbackToggle.has(feedback.filename)) {
     return state.feedbackToggle.get(feedback.filename);
   }
-  // Command-execution results stay open by default so the output is visible
-  // without expanding each one. Ordinary feedback is "unread" until the agent
-  // fetches it — show it while it's the recently sent one, collapse it after.
-  if (isCommandResultFeedback(feedback)) return true;
+  // "unread" feedback (the agent has not fetched it yet) is the recently sent
+  // one the human most likely still wants to see — including command-execution
+  // results just after the run; collapse it once consumed so a reload doesn't
+  // reopen it.
   return feedback.status === "unread";
 }
 
