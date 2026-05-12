@@ -16,8 +16,15 @@ mock.module("../web/api.js", () => ({
   openWs() {},
 }));
 
-const { selectSession, extractPullRequestUrl } = await import("../web/handlers.js");
-const { state } = await import("../web/state.svelte.js");
+const { selectSession, extractPullRequestUrl, onDetailBodyClick } = await import("../web/handlers.js");
+const { state, isReportExpanded } = await import("../web/state.svelte.js");
+
+// onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
+// enough of it: closest(selector) returns a stub element for the toggle row.
+function reportToggleClick(filename) {
+  const row = { getAttribute: (a) => (a === "data-report-toggle" ? filename : null) };
+  return { target: { closest: (sel) => (sel === "[data-report-toggle]" ? row : null) } };
+}
 
 test("extractPullRequestUrl pulls the PR URL out of a create-pr run log", () => {
   const log = [
@@ -45,4 +52,19 @@ test("selectSession drops a line anchor left over from the previously viewed ses
 
   expect(state.selected).toBe("session-b");
   expect(state.anchor).toBeNull();
+});
+
+test("clicking a report header toggles its expansion with a fresh Map (so Svelte re-renders)", () => {
+  state.reports = [{ filename: "001-plan.md", content: "x", read: true }];
+  state.reportToggle = new Map();
+  const before = state.reportToggle;
+
+  // read reports default to collapsed; first click expands.
+  onDetailBodyClick(reportToggleClick("001-plan.md"));
+  expect(state.reportToggle).not.toBe(before);
+  expect(isReportExpanded(state.reports[0])).toBe(true);
+
+  // second click collapses again.
+  onDetailBodyClick(reportToggleClick("001-plan.md"));
+  expect(isReportExpanded(state.reports[0])).toBe(false);
 });

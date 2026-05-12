@@ -79,7 +79,9 @@ export function onDetailBodyClick(e) {
     const filename = reportToggle.getAttribute("data-report-toggle");
     const report = state.reports.find(r => r.filename === filename);
     const currentlyExpanded = report ? isReportExpanded(report) : true;
-    state.reportToggle.set(filename, !currentlyExpanded);
+    // Reassign rather than mutate in place: Svelte 5's $state doesn't proxy
+    // Maps, so the components only re-render when the property itself is replaced.
+    state.reportToggle = new Map(state.reportToggle).set(filename, !currentlyExpanded);
     renderDetail();
     return;
   }
@@ -88,14 +90,14 @@ export function onDetailBodyClick(e) {
     const filename = feedbackToggle.getAttribute("data-feedback-toggle");
     const feedback = state.feedbackHistory.find(f => f.filename === filename);
     const currentlyExpanded = feedback ? isFeedbackExpanded(feedback) : true;
-    state.feedbackToggle.set(filename, !currentlyExpanded);
+    state.feedbackToggle = new Map(state.feedbackToggle).set(filename, !currentlyExpanded);
     renderDetail();
     return;
   }
   const eventToggle = e.target.closest("[data-event-toggle]");
   if (eventToggle) {
     const seq = Number(eventToggle.getAttribute("data-event-toggle"));
-    state.eventToggle.set(seq, state.eventToggle.get(seq) !== true);
+    state.eventToggle = new Map(state.eventToggle).set(seq, state.eventToggle.get(seq) !== true);
     renderDetail();
     return;
   }
@@ -157,7 +159,9 @@ export async function onReportMark(filename, read) {
     await api("POST", `/sessions/${state.selected}/reports/${encodeURIComponent(filename)}/${verb}`, {});
     // Drop any explicit toggle so the new default (collapsed when read,
     // expanded when unread) takes effect on the next render.
-    state.reportToggle.delete(filename);
+    const nextToggle = new Map(state.reportToggle);
+    nextToggle.delete(filename);
+    state.reportToggle = nextToggle;
     await refreshDetail();
   } catch (e) {
     toast(`failed: ${e.message}`);
