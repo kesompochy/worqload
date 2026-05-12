@@ -51,12 +51,33 @@ export interface NumberedFile {
   path: string;
 }
 
+// Structured side data for a numbered file, kept in a `<base>.meta.json` sidecar
+// next to the `.md` (same spirit as the `.read-state.json` sidecar). Keeping it
+// out of the markdown body means the body stays clean for both the human's eyes
+// and the agent's `worqload feedback fetch`; callers that still want a textual
+// cue (e.g. the `Re:` line the agent reads) re-derive it from this.
+export interface NumberedFileMeta {
+  // The diff/file/report line a piece of feedback (or a report) is anchored to.
+  anchor?: { path: string; lineStart: number; lineEnd: number };
+}
+
+export function metaFilenameFor(mdFilename: string): string {
+  return mdFilename.replace(/\.md$/, ".meta.json");
+}
+
+function isEmptyMeta(meta: NumberedFileMeta): boolean {
+  return Object.values(meta).every(v => v === undefined);
+}
+
 export interface WriteNumberedFileOptions {
   // Directories that hold files previously archived out of `dir` (e.g. a
   // drained feedback "inbox" whose messages were moved to "read"). Their
   // filenames count toward the next number so the sequence stays monotonic
   // across the whole lifecycle instead of resetting once `dir` empties.
   archiveDirs?: string[];
+  // Structured side data written to a `<base>.meta.json` sidecar. Omitted (or
+  // empty) means no sidecar is created.
+  meta?: NumberedFileMeta;
 }
 
 export async function writeNumberedFile(
@@ -74,6 +95,9 @@ export async function writeNumberedFile(
     const filename = `${pad(seq)}-${sanitiseSlug(slug)}.md`;
     const path = join(dir, filename);
     await Bun.write(path, content);
+    if (options.meta && !isEmptyMeta(options.meta)) {
+      await Bun.write(join(dir, metaFilenameFor(filename)), JSON.stringify(options.meta, null, 2));
+    }
     return { filename, seq, path };
   });
 }
@@ -82,6 +106,18 @@ export interface ReadFile {
   filename: string;
   content: string;
   path: string;
+  meta?: NumberedFileMeta;
+}
+
+async function readMetaSidecar(dir: string, mdFilename: string): Promise<NumberedFileMeta | undefined> {
+  const file = Bun.file(join(dir, metaFilenameFor(mdFilename)));
+  if (!(await file.exists())) return undefined;
+  try {
+    const data = await file.json() as NumberedFileMeta;
+    return data && !isEmptyMeta(data) ? data : undefined;
+  } catch {
+    return undefined;  // corrupt sidecar: treat as absent
+  }
 }
 
 export async function listAllFiles(dir: string): Promise<ReadFile[]> {
@@ -97,7 +133,8 @@ export async function listAllFiles(dir: string): Promise<ReadFile[]> {
   for (const filename of files) {
     const path = join(dir, filename);
     const content = await Bun.file(path).text();
-    result.push({ filename, content, path });
+    const meta = await readMetaSidecar(dir, filename);
+    result.push(meta ? { filename, content, path, meta } : { filename, content, path });
   }
   return result;
 }
@@ -105,6 +142,18 @@ export async function listAllFiles(dir: string): Promise<ReadFile[]> {
 export async function moveFile(srcPath: string, destPath: string): Promise<void> {
   await mkdir(dirname(destPath), { recursive: true });
   await rename(srcPath, destPath);
+}
+
+// Moves a numbered file and, if present, its `.meta.json` sidecar from one
+// directory to another (keeping the filename). Used to archive a drained
+// feedback inbox into the "read" directory.
+export async function moveNumberedFile(srcDir: string, destDir: string, filename: string): Promise<void> {
+  await mkdir(destDir, { recursive: true });
+  await rename(join(srcDir, filename), join(destDir, filename));
+  const metaName = metaFilenameFor(filename);
+  if (await Bun.file(join(srcDir, metaName)).exists()) {
+    await rename(join(srcDir, metaName), join(destDir, metaName));
+  }
 }
 
 function readStatePath(dir: string): string {
