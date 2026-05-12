@@ -47,7 +47,7 @@ export function parseDiffFiles(text) {
 
 export function renderDiffHtml() {
   if (!state.diff || state.diff.trim() === "") {
-    return `<div class="diff-empty">No changes since session start yet.</div>`;
+    return `<div class="diff-empty">No changes on this branch yet.</div>`;
   }
   const files = parseDiffFiles(state.diff);
   const out = [];
