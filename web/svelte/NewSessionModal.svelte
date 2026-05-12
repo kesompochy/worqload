@@ -12,12 +12,14 @@
   let baseBranch = $state("");
   let branchName = $state("");
   let submitting = $state(false);
+  let errorMessage = $state("");
 
   export function open() {
     prompt = "";
     baseBranch = "";
     branchName = "";
     submitting = false;
+    errorMessage = "";
     visible = true;
   }
 
@@ -38,6 +40,7 @@
       return;
     }
     submitting = true;
+    errorMessage = "";
     try {
       const body = { prompt: trimmedPrompt };
       const trimmedBase = baseBranch.trim();
@@ -49,7 +52,7 @@
       await fetchSessions();
       await selectSession(meta.id);
     } catch (e) {
-      toast(`failed: ${e.message}`);
+      errorMessage = e.message;
     } finally {
       submitting = false;
     }
@@ -83,6 +86,9 @@
       <div class="row" style="margin-top:.7rem">
         <input bind:value={branchName} placeholder="branch name (default: auto-generated)" style="flex:1" />
       </div>
+      {#if errorMessage}
+        <p class="create-error">Error: {errorMessage}</p>
+      {/if}
       <div class="row" style="margin-top:.7rem">
         <span class="spacer"></span>
         <button onclick={close} disabled={submitting}>Cancel</button>
