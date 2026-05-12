@@ -1,11 +1,11 @@
 <script>
   // The detail pane's scroll body — everything between the header (DetailHeader)
   // and the action area (ActionBar) / composer (Composer): the pending-asking
-  // section, the active tab's content, and the "Feedback sent" list. Mounted into
-  // #detailBodyMount from main.ts. The Reports tab, the Feedback-sent list, the
-  // asking section, and the Diff tab (DiffView.svelte) are rendered natively
-  // here off the reactive `appState` (and DiffView / FilesView / EventsView do
-  // the same). Click handling for the diff, files, and events explorers
+  // section above the active tab's content. Mounted into #detailBodyMount from
+  // main.ts. The Reports tab, the Feedback tab (the "feedback sent" list), and
+  // the asking section are rendered natively here off the reactive `appState`
+  // (DiffView / FilesView / EventsView render the other tabs). Click handling
+  // for the diff, files, and events explorers
   // (collapse, gap expand, file open, copy-path, line anchoring, event
   // expand/collapse), for line anchors inside report markdown, and for the
   // asking buttons is delegated to onDetailBodyClick.
@@ -127,6 +127,23 @@
       <FilesView />
     {:else if appState.activeTab === "events"}
       <EventsView />
+    {:else if appState.activeTab === "feedback"}
+      {#if appState.feedbackHistory.length > 0}
+        {#each appState.feedbackHistory as f (f.filename)}
+          <article class="report" class:collapsed={!isFeedbackExpanded(f)} data-feedback-filename={f.filename}>
+            <div class="report-header" data-feedback-toggle={f.filename}>
+              <span class="report-chevron">▾</span>
+              <span class="report-filename">{f.filename}</span>
+              <span class="badge badge-{f.status === 'unread' ? 'waiting_human' : 'stopped'}">{f.status}</span>
+            </div>
+            <div class="report-body">
+              <div class="md">{@html renderMarkdown(f.content)}</div>
+            </div>
+          </article>
+        {/each}
+      {:else}
+        <div class="report-empty">No feedback sent yet. Type below to send the agent feedback.</div>
+      {/if}
     {:else if reportsNewestFirst.length > 0}
       {#each reportsNewestFirst as r (r.filename)}
         {@const expanded = isReportExpanded(r)}
@@ -144,24 +161,6 @@
       {/each}
     {:else}
       <div class="report-empty">No reports yet. The agent submits reports at progress checkpoints.</div>
-    {/if}
-
-    {#if appState.feedbackHistory.length > 0}
-      <section>
-        <h2>Feedback sent</h2>
-        {#each appState.feedbackHistory as f (f.filename)}
-          <article class="report" class:collapsed={!isFeedbackExpanded(f)} data-feedback-filename={f.filename}>
-            <div class="report-header" data-feedback-toggle={f.filename}>
-              <span class="report-chevron">▾</span>
-              <span class="report-filename">{f.filename}</span>
-              <span class="badge badge-{f.status === 'unread' ? 'waiting_human' : 'stopped'}">{f.status}</span>
-            </div>
-            <div class="report-body">
-              <div class="md">{@html renderMarkdown(f.content)}</div>
-            </div>
-          </article>
-        {/each}
-      </section>
     {/if}
   </div>
 {:else}

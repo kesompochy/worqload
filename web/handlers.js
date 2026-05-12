@@ -321,6 +321,7 @@ export async function onFeedback() {
     await api("POST", `/sessions/${state.selected}/feedback`, body);
     $("#feedbackInput").value = "";
     state.anchor = null;
+    state.activeTab = "feedback";  // show the message land in the feedback list
     toast("feedback queued");
     await refreshDetail();
   } catch (e) {
