@@ -1,22 +1,20 @@
 <script>
-  // The detail pane's action strip and the inline panel for a "gh action",
-  // mounted into #detailActionArea from main.ts. Sits above the scroll body
-  // (DetailBody.svelte) and the composer (Composer.svelte). The actions
-  // deliberately use an inline panel rather than a modal: the run log stays on screen alongside
-  // the rest of the session, and (because the server records each run as an
-  // action_invoked event) it survives a reload. The confirmation step is the
-  // explicit "Confirm & Run" button in the panel head — a short reach from the
-  // button that opened the panel; the panel is the gate, not a separate dialog.
+  // The inline panel that opens when a "gh action" button (in DetailHeader's
+  // title row) is pressed, mounted into #detailActionArea from main.ts. Sits
+  // above the scroll body (DetailBody.svelte) and the composer
+  // (Composer.svelte). The actions deliberately use an inline panel rather than
+  // a modal: the run log stays on screen alongside the rest of the session, and
+  // (because the server records each run as an action_invoked event) it
+  // survives a reload. The confirmation step is the explicit "Confirm & Run"
+  // button in the panel head — a short reach from the button that opened the
+  // panel; the panel is the gate, not a separate dialog.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
   import { formatRelative } from "../dom.js";
   import { clock } from "../clock.svelte.js";
-  import { onStopAndMarkRead, toggleActionPanel, runOpenAction } from "../handlers.js";
+  import { toggleActionPanel, runOpenAction } from "../handlers.js";
 
-  const isTerminal = $derived(
-    appState.detail?.meta.status === "stopped" || appState.detail?.meta.status === "crashed",
-  );
   const openAction = $derived(appState.actions.find(a => a.id === appState.openActionId) ?? null);
 
   // Newest run for the open action: the in-view cache (freshest, written by
@@ -46,22 +44,6 @@
 </script>
 
 {#if appState.selected && appState.detail}
-  {#if appState.actions.length > 0 || !isTerminal}
-    <div class="action-bar">
-      <span class="label">Actions</span>
-      <div class="buttons">
-        {#if !isTerminal}
-          <!-- A client-side composite (not a server "gh action"): mark every
-               report read, then stop — pointless once already stopped/crashed. -->
-          <button class="btn-action" title="Mark every report read, then stop the session" onclick={onStopAndMarkRead}>Stop &amp; mark all read</button>
-        {/if}
-        {#each appState.actions as a (a.id)}
-          <button class="btn-action" class:open={appState.openActionId === a.id} title={a.description || ""} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
-        {/each}
-      </div>
-    </div>
-  {/if}
-
   {#if openAction}
     {#key openAction.id}
       <div class="action-panel" bind:this={panelEl}>
