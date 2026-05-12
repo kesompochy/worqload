@@ -640,6 +640,25 @@ test("GET /sessions/:id/file flags binary files instead of returning their bytes
   expect(body.content).toBeUndefined();
 });
 
+test("GET /sessions/:id/search returns matching lines across worktree files; empty query yields no matches", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+  mkdirSync(join(wt, "src"), { recursive: true });
+  writeFileSync(join(wt, "src", "a.ts"), "const needle = 1;\nplain\n");
+  writeFileSync(join(wt, "README.md"), "no match here\n");
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/search?q=needle`).then(r => r.json());
+  expect(res.matches).toEqual([{ path: "src/a.ts", line: 1, text: "const needle = 1;" }]);
+  expect(res.truncated).toBe(false);
+
+  const empty = await fetch(`${baseUrl}/sessions/${sid}/search?q=`).then(r => r.json());
+  expect(empty.matches).toEqual([]);
+});
+
 test("GET /sessions/:id/asking returns pending escalations", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

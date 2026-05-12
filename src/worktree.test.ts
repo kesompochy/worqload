@@ -10,6 +10,7 @@ import {
   currentBranch,
   listWorktreeFiles,
   readWorktreeFile,
+  searchFileContents,
   gitDiff,
   resolveDiffBase,
 } from "./worktree";
@@ -236,6 +237,55 @@ describe("readWorktreeFile", () => {
     const result = await readWorktreeFile(repoDir, "big.txt");
     expect(result.kind).toBe("too-large");
     if (result.kind === "too-large") expect(result.size).toBe(3 * 1024 * 1024);
+  });
+});
+
+describe("searchFileContents", () => {
+  test("finds case-insensitive substring matches with path, 1-based line, and the matching line", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    mkdirSync(join(repoDir, "src"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "a.ts"), "const Needle = 1;\nother\nuse needle here\n");
+    writeFileSync(join(repoDir, "src", "b.ts"), "nothing\n");
+    writeFileSync(join(repoDir, "notes.md"), "a NEEDLE in markdown\n");
+
+    const { matches, truncated } = await searchFileContents(
+      repoDir,
+      ["src/a.ts", "src/b.ts", "notes.md"],
+      "needle",
+    );
+    expect(truncated).toBe(false);
+    expect(matches).toEqual([
+      { path: "src/a.ts", line: 1, text: "const Needle = 1;" },
+      { path: "src/a.ts", line: 3, text: "use needle here" },
+      { path: "notes.md", line: 1, text: "a NEEDLE in markdown" },
+    ]);
+  });
+
+  test("skips binary files", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, "bin.dat"), Buffer.concat([Buffer.from("needle"), Buffer.from([0x00, 0x01])]));
+    writeFileSync(join(repoDir, "text.txt"), "needle\n");
+    const { matches } = await searchFileContents(repoDir, ["bin.dat", "text.txt"], "needle");
+    expect(matches).toEqual([{ path: "text.txt", line: 1, text: "needle" }]);
+  });
+
+  test("returns no matches for an empty query", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, "f.txt"), "anything\n");
+    expect(await searchFileContents(repoDir, ["f.txt"], "")).toEqual({ matches: [], truncated: false });
+  });
+
+  test("caps the result count and reports truncation", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, "many.txt"), Array.from({ length: 250 }, () => "needle").join("\n") + "\n");
+    const { matches, truncated } = await searchFileContents(repoDir, ["many.txt"], "needle");
+    expect(matches.length).toBe(200);
+    expect(truncated).toBe(true);
+    expect(matches[0]).toEqual({ path: "many.txt", line: 1, text: "needle" });
   });
 });
 
