@@ -270,18 +270,18 @@ function renderBlock(block, ctx) {
 
 function renderHeading(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
-  return `<h${block.level}${attrs}>${renderInline(block.content)}${feedbackChip(block.startLine, block.endLine, ctx)}</h${block.level}>`;
+  return `<h${block.level}${attrs}>${renderInline(block.content)}${feedbackChips(block.startLine, block.endLine, ctx)}</h${block.level}>`;
 }
 
 function renderParagraph(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
-  return `<p${attrs}>${renderInline(block.content)}${feedbackChip(block.startLine, block.endLine, ctx)}</p>`;
+  return `<p${attrs}>${renderInline(block.content)}${feedbackChips(block.startLine, block.endLine, ctx)}</p>`;
 }
 
 function renderCode(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
   const langAttr = block.lang ? ` class="language-${escapeAttr(block.lang)}"` : "";
-  return `<pre${attrs}><code${langAttr}>${escapeHtml(block.content)}</code>${feedbackChip(block.startLine, block.endLine, ctx)}</pre>`;
+  return `<pre${attrs}><code${langAttr}>${escapeHtml(block.content)}</code>${feedbackChips(block.startLine, block.endLine, ctx)}</pre>`;
 }
 
 function renderHr(block, ctx) {
@@ -293,13 +293,13 @@ function renderBlockquote(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
   // We do not recurse into the quote body; rendering it as a single paragraph
   // keeps the renderer simple and covers the typical agent-report use.
-  return `<blockquote${attrs}><p>${renderInline(block.content)}</p>${feedbackChip(block.startLine, block.endLine, ctx)}</blockquote>`;
+  return `<blockquote${attrs}><p>${renderInline(block.content)}</p>${feedbackChips(block.startLine, block.endLine, ctx)}</blockquote>`;
 }
 
 function renderList(tag, block, ctx) {
   const items = block.items.map(item => {
     const attrs = anchorAttrs(item.startLine, item.endLine, ctx);
-    return `<li${attrs}>${renderInline(item.content)}${feedbackChip(item.startLine, item.endLine, ctx)}</li>`;
+    return `<li${attrs}>${renderInline(item.content)}${feedbackChips(item.startLine, item.endLine, ctx)}</li>`;
   }).join("");
   return `<${tag}>${items}</${tag}>`;
 }
@@ -366,9 +366,10 @@ function anchorAttrs(startLine, endLine, ctx) {
   const selected = isOverlap(startLine, endLine, ctx.currentAnchor, ctx.anchorPath)
     ? ` aria-current="true"`
     : "";
-  // The block gets `data-feedback-here` (the left stripe); the clickable chip is
-  // appended as a child by feedbackChip().
-  const feedbackAttr = feedbackAnchorFor(startLine, endLine, ctx) ? ` data-feedback-here` : "";
+  // `data-feedback-here` draws the left stripe; the chips (one per feedback) are
+  // appended as a child by feedbackChips() and shown only while the block is the
+  // current anchor (CSS keys off aria-current).
+  const feedbackAttr = feedbackAnchorsOverlapping(startLine, endLine, ctx).length > 0 ? ` data-feedback-here` : "";
   return ` data-anchor-path="${escapeAttr(ctx.anchorPath)}"`
        + ` data-anchor-line="${startLine}"`
        + ` data-anchor-line-end="${endLine}"`
@@ -376,19 +377,23 @@ function anchorAttrs(startLine, endLine, ctx) {
        + feedbackAttr;
 }
 
-function feedbackAnchorFor(startLine, endLine, ctx) {
-  return ctx.feedbackAnchors.find(a => startLine <= a.lineEnd && endLine >= a.lineStart) ?? null;
+function feedbackAnchorsOverlapping(startLine, endLine, ctx) {
+  return ctx.feedbackAnchors.filter(a => startLine <= a.lineEnd && endLine >= a.lineStart);
 }
 
-// A small floating chip linking the block to the sent feedback anchored over it
-// (newest, if several). Appended as the last child of the block so it floats at
-// its top-right; the same `data-goto-feedback` hook the report↔feedback reply
-// chips use carries the navigation.
-function feedbackChip(startLine, endLine, ctx) {
-  const f = feedbackAnchorFor(startLine, endLine, ctx);
-  if (!f) return "";
-  return `<button type="button" class="line-feedback-chip" data-goto-feedback="${escapeAttr(f.filename)}"`
-       + ` title="フィードバック ${escapeAttr(f.filename)} — クリックで表示">↳ ${escapeHtml(f.filename)}</button>`;
+// The set of "↳ <feedback-filename>" chips for the sent feedback anchored over a
+// block. Appended as the block's last child (a position:absolute strip that CSS
+// reveals just below the block when it is the current anchor) so it never sits
+// on top of the block's own text. Each chip carries the same `data-goto-feedback`
+// hook the report↔feedback reply chips use.
+function feedbackChips(startLine, endLine, ctx) {
+  const fs = feedbackAnchorsOverlapping(startLine, endLine, ctx);
+  if (fs.length === 0) return "";
+  const chips = fs.map(f =>
+    `<button type="button" class="line-feedback-chip" data-goto-feedback="${escapeAttr(f.filename)}"`
+    + ` title="フィードバック ${escapeAttr(f.filename)} — クリックで表示">↳ ${escapeHtml(f.filename)}</button>`,
+  ).join("");
+  return `<span class="line-feedback-chips">${chips}</span>`;
 }
 
 function isOverlap(startLine, endLine, anchor, anchorPath) {

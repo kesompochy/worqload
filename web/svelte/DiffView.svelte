@@ -8,7 +8,7 @@
   // expand, copy-path, line anchoring) — there are no local click handlers.
   // (`state` is imported as `appState`: a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
-  import { state as appState, isAnchored, feedbackAnchoredAt, DIFF_EXPAND_CHUNK } from "../state.svelte.js";
+  import { state as appState, isAnchored, feedbacksAnchoredAt, DIFF_EXPAND_CHUNK } from "../state.svelte.js";
   import { buildDiffModel } from "../diff-view.js";
   import { highlightCode } from "../syntax-highlight.js";
 
@@ -41,12 +41,12 @@
             {:else if seg.row.kind === "meta"}
               <div class="diff-line meta"><span class="ln"></span><span class="ln"></span><span class="body">{seg.row.body}</span></div>
             {:else}
-              {@const fbHere = seg.row.anchorable ? feedbackAnchoredAt(file.path, seg.row.newNo) : null}
-              <div class="diff-line {seg.row.kind}" class:selected={seg.row.anchorable && isAnchored(file.path, seg.row.newNo)} class:has-feedback={!!fbHere} data-anchor-line={seg.row.anchorable ? seg.row.newNo : undefined} data-anchor-path={seg.row.anchorable ? file.path : undefined}>
+              {@const fbHere = seg.row.anchorable ? feedbacksAnchoredAt(file.path, seg.row.newNo) : []}
+              <div class="diff-line {seg.row.kind}" class:selected={seg.row.anchorable && isAnchored(file.path, seg.row.newNo)} class:has-feedback={fbHere.length > 0} data-anchor-line={seg.row.anchorable ? seg.row.newNo : undefined} data-anchor-path={seg.row.anchorable ? file.path : undefined}>
                 <span class="ln">{seg.row.kind === "remove" ? seg.row.oldNo : ""}</span>
                 <span class="ln">{seg.row.kind === "remove" ? "" : seg.row.newNo}</span>
                 <span class="body">{@html highlightCode(seg.row.body, file.lang)}</span>
-                {#if fbHere}<button type="button" class="line-feedback-chip" title="フィードバック {fbHere} — クリックで表示" data-goto-feedback={fbHere}>↳ {fbHere}</button>{/if}
+                {#if fbHere.length > 0}<span class="line-feedback-chips">{#each fbHere as fn (fn)}<button type="button" class="line-feedback-chip" title="フィードバック {fn} — クリックで表示" data-goto-feedback={fn}>↳ {fn}</button>{/each}</span>{/if}
               </div>
             {/if}
           {/each}

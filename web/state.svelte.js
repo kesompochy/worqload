@@ -62,14 +62,12 @@ export function feedbackAnchorsForPath(path) {
   return state.feedbackHistory.filter(f => f.anchor && f.anchor.path === path);
 }
 
-// The filename of the most recent sent feedback whose anchor covers `lineNo` in
-// `path`, or null. Drives the "there is feedback here" marker on diff/file/report
-// lines; the marker links to that feedback.
-export function feedbackAnchoredAt(path, lineNo) {
-  const f = state.feedbackHistory.find(
-    f => f.anchor && f.anchor.path === path && lineNo >= f.anchor.lineStart && lineNo <= f.anchor.lineEnd,
-  );
-  return f ? f.filename : null;
+// Filenames of every sent feedback whose anchor covers `lineNo` in `path` (newest
+// first). Drives the per-line feedback chips on the diff/file/report views.
+export function feedbacksAnchoredAt(path, lineNo) {
+  return state.feedbackHistory
+    .filter(f => f.anchor && f.anchor.path === path && lineNo >= f.anchor.lineStart && lineNo <= f.anchor.lineEnd)
+    .map(f => f.filename);
 }
 
 export function isReportExpanded(report) {
