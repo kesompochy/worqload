@@ -226,3 +226,40 @@ async function gitMergeBase(worktreePath: string, ref: string): Promise<string |
   const sha = out.trim();
   return sha === "" ? null : sha;
 }
+
+// The worktree/git operations the web server depends on, gathered behind one
+// interface so tests can substitute an fs-only fake. The real binding lives in
+// `realWorktreeOps`; only the two things worqload genuinely couples to git for —
+// session worktrees and diffs — live here.
+export interface WorktreeOps {
+  createSessionWorktree(params: {
+    sessionId: string;
+    repoDir: string;
+    baseBranch: string;
+    branchName: string;
+    reportsDirAbsolute: string;
+  }): Promise<WorktreeInfo>;
+  removeWorktree(worktreePath: string, branchName?: string, repoDir?: string): Promise<void>;
+  resolveBaseCommit(baseBranch: string, repoDir: string): Promise<string>;
+  currentBranch(repoDir: string): Promise<string>;
+  gitDiff(worktreePath: string, target: string, contextLines?: number): Promise<string>;
+  gitDiffAgainstBaseBranch(
+    worktreePath: string,
+    baseBranch: string,
+    fallbackCommit: string,
+    contextLines?: number,
+  ): Promise<string>;
+  listWorktreeFiles(worktreePath: string): Promise<string[]>;
+  readWorktreeFile(worktreePath: string, relPath: string): Promise<WorktreeFileContent>;
+}
+
+export const realWorktreeOps: WorktreeOps = {
+  createSessionWorktree,
+  removeWorktree,
+  resolveBaseCommit,
+  currentBranch,
+  gitDiff,
+  gitDiffAgainstBaseBranch,
+  listWorktreeFiles,
+  readWorktreeFile,
+};

@@ -16,16 +16,7 @@ import {
 } from "./session";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
-import {
-  createSessionWorktree,
-  removeWorktree,
-  resolveBaseCommit,
-  currentBranch,
-  gitDiff,
-  gitDiffAgainstBaseBranch,
-  listWorktreeFiles,
-  readWorktreeFile,
-} from "./worktree";
+import { realWorktreeOps, type WorktreeOps } from "./worktree";
 import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState, markAllRead } from "./file-store";
 import { listActions, findAction } from "./actions";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
@@ -130,6 +121,7 @@ export interface ServerContext {
   spawnCommand: string[];
   branchNameGenerator: BranchNameGenerator;
   hostLauncher: HostLauncher;
+  worktreeOps: WorktreeOps;
   clients: Map<string, SessionAttachment>;
   baseUrlForAgent: string;
   wsClients: Set<ServerWebSocket<WsClientData>>;
@@ -144,6 +136,7 @@ export interface StartServerOptions {
   branchNameGenerator?: BranchNameGenerator;
   hostCommand?: string[];       // override how the (subprocess) host is launched
   hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
+  worktreeOps?: WorktreeOps;    // override the git/worktree layer (tests use a fake)
 }
 
 export interface ShutdownOptions {
@@ -383,6 +376,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand });
+  const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
 
   await mkdir(sessionsDir, { recursive: true });
 
@@ -439,6 +433,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     spawnCommand,
     branchNameGenerator,
     hostLauncher,
+    worktreeOps,
     clients: new Map(),
     port: server.port,
     baseUrlForAgent: `http://127.0.0.1:${server.port}`,
@@ -667,8 +662,8 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     return json({ error: "prompt is required" }, 400);
   }
 
-  const baseBranch = body.baseBranch?.trim() || (await currentBranch(ctx.repoDir));
-  const baseCommit = await resolveBaseCommit(baseBranch, ctx.repoDir);
+  const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
+  const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
 
   // worktreePath and branchName are populated after the id is assigned below
   // (we need the id to compute the worktree dir and the shortId fallback).
@@ -694,7 +689,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   const reportsDir = reportsDirFor(ctx, tentative.id);
   let worktreePath: string;
   try {
-    ({ worktreePath } = await createSessionWorktree({
+    ({ worktreePath } = await ctx.worktreeOps.createSessionWorktree({
       sessionId: tentative.id,
       repoDir: ctx.repoDir,
       baseBranch,
@@ -887,8 +882,8 @@ async function getDiff(req: Request, ctx: ServerContext, params: Record<string, 
     const base = url.searchParams.get("base") || "session-start";
     try {
       const diff = base === "base-branch"
-        ? await gitDiffAgainstBaseBranch(meta.worktreePath, meta.baseBranch, meta.baseCommit, FULL_FILE_CONTEXT_LINES)
-        : await gitDiff(meta.worktreePath, meta.baseCommit, FULL_FILE_CONTEXT_LINES);
+        ? await ctx.worktreeOps.gitDiffAgainstBaseBranch(meta.worktreePath, meta.baseBranch, meta.baseCommit, FULL_FILE_CONTEXT_LINES)
+        : await ctx.worktreeOps.gitDiff(meta.worktreePath, meta.baseCommit, FULL_FILE_CONTEXT_LINES);
       return new Response(diff, { headers: { "content-type": "text/plain; charset=utf-8" } });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -899,7 +894,7 @@ async function getDiff(req: Request, ctx: ServerContext, params: Record<string, 
 
 async function getFiles(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const paths = await listWorktreeFiles(meta.worktreePath);
+    const paths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
     return json({ paths });
   });
 }
@@ -908,7 +903,7 @@ async function getFile(req: Request, ctx: ServerContext, params: Record<string, 
   return withSession(ctx, params.id, async meta => {
     const relPath = new URL(req.url).searchParams.get("path");
     if (!relPath || relPath.trim() === "") return json({ error: "path query is required" }, 400);
-    const result = await readWorktreeFile(meta.worktreePath, relPath);
+    const result = await ctx.worktreeOps.readWorktreeFile(meta.worktreePath, relPath);
     switch (result.kind) {
       case "text": return json({ path: relPath, content: result.content });
       case "binary": return json({ path: relPath, binary: true });
@@ -959,7 +954,7 @@ async function postCancel(_req: Request, ctx: ServerContext, params: Record<stri
     if (meta.worktreePath) {
       try {
         const branchName = meta.branchName || `worqload/${meta.id.slice(0, 8)}`;
-        await removeWorktree(meta.worktreePath, branchName, ctx.repoDir);
+        await ctx.worktreeOps.removeWorktree(meta.worktreePath, branchName, ctx.repoDir);
       } catch {}
     }
     const updated = isTerminal(meta.status)

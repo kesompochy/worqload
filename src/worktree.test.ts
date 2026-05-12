@@ -10,6 +10,7 @@ import {
   currentBranch,
   listWorktreeFiles,
   readWorktreeFile,
+  gitDiff,
   gitDiffAgainstBaseBranch,
 } from "./worktree";
 
@@ -317,5 +318,39 @@ describe("gitDiffAgainstBaseBranch", () => {
 
     const diff = await gitDiffAgainstBaseBranch(worktreePath, "branch-that-does-not-exist", baseCommit);
     expect(diff).toContain("after.txt");
+  });
+});
+
+describe("gitDiff", () => {
+  test("with a large context value emits the whole file, not just lines around the change", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+
+    // 30-line file on the base branch; change one line deep in the middle in the
+    // worktree. `git diff -U3` would hide most of the file; a huge -U value
+    // means "all of it" — what the diff view wants so the human can expand
+    // context locally.
+    const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+    writeFileSync(join(repoDir, "many.txt"), lines.join("\n") + "\n");
+    git(["add", "many.txt"], repoDir);
+    git(["commit", "-m", "add many.txt"], repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+
+    const sessionId = crypto.randomUUID();
+    const { worktreePath } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      branchName: `s-${sessionId.slice(0, 8)}`,
+      reportsDirAbsolute: join(repoDir, ".worqload", "sessions", sessionId, "reports"),
+    });
+    const changed = [...lines];
+    changed[14] = "line 15 CHANGED";
+    writeFileSync(join(worktreePath, "many.txt"), changed.join("\n") + "\n");
+
+    const diff = await gitDiff(worktreePath, baseCommit, 1_000_000);
+    expect(diff).toContain("line 15 CHANGED");
+    expect(diff).toContain("line 1");
+    expect(diff).toContain("line 30");
   });
 });
