@@ -4,7 +4,14 @@ import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from 
 import { startServer } from "./web-server";
 import { agentEndpointPath, loadSessionMeta } from "./session";
 import { readEvents } from "./event-log";
-import { makeTmpDir, cleanupAll, trackCleanup } from "./test-helpers";
+import {
+  cleanupAll,
+  fakeWorktreeOps,
+  inProcessHostLauncher,
+  makeRepoFromTemplate,
+  makeTmpDir,
+  trackCleanup,
+} from "./test-helpers";
 
 afterEach(cleanupAll);
 
@@ -12,37 +19,56 @@ const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefi
 const TEST_BASE = "trunk";
 const MOCK = join(import.meta.dir, "__fixtures__", "mock-claude.ts");
 const CLI = join(import.meta.dir, "cli.ts");
-// Run the host as a child of the test process so we exercise the real
-// detached-spawn path. `bun <cli> session-host` is the same binding
-// `worqload session-host` would invoke after `bun link`.
+// `bun <cli> session-host` is the same binding `worqload session-host` invokes
+// after `bun link`. Only the tests that depend on a live host subprocess
+// (restart/reconnect, orphan detection) use this; everything else runs the host
+// in-process via `inProcessHostLauncher`.
 const HOST_COMMAND = ["bun", CLI, "session-host"];
 
 function git(args: string[], cwd: string) {
   return Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: cleanGitEnv });
 }
 
-function makeRepo(): string {
-  const dir = makeTmpDir("web-server-test");
-  git(["init"], dir);
-  git(["checkout", "-b", TEST_BASE], dir);
-  git(["config", "user.email", "t@t.com"], dir);
-  git(["config", "user.name", "t"], dir);
-  writeFileSync(join(dir, "README.md"), "# t\n");
-  writeFileSync(join(dir, ".gitignore"), ".worqload/\n.worqload-reports\n.worktrees/\n");
-  git(["add", "."], dir);
-  git(["commit", "-m", "init"], dir);
-  return dir;
+// A real git repo, needed only by the handful of tests that exercise the real
+// worktree/merge machinery (or a real host subprocess) end to end.
+function makeGitRepo(): string {
+  return makeRepoFromTemplate("web-server", (dir) => {
+    git(["init"], dir);
+    git(["checkout", "-b", TEST_BASE], dir);
+    git(["config", "user.email", "t@t.com"], dir);
+    git(["config", "user.name", "t"], dir);
+    writeFileSync(join(dir, "README.md"), "# t\n");
+    writeFileSync(join(dir, ".gitignore"), ".worqload/\n.worqload-reports\n.worktrees/\n");
+    git(["add", "."], dir);
+    git(["commit", "-m", "init"], dir);
+  });
 }
 
-async function bootServer(repoDir: string, mockMode: "init" | "echo" | "hang" = "hang") {
+// The default test server: an fs-only worktree layer and an in-process host, so
+// no `git` runs and no subprocesses are spawned. `repoDir` is just a directory.
+async function bootServer(repoDir: string) {
   const started = await startServer({
     port: 0,
     repoDir,
-    spawnCommand: ["bun", MOCK, mockMode],
     // Skip real claude branch-name generation so the test doesn't depend on
     // `claude` being on PATH; resolveBranchName falls back to <shortId>.
     branchNameGenerator: async () => null,
-    hostCommand: HOST_COMMAND,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
+}
+
+// Like `bootServer` but with the real git/worktree layer — for tests that drive
+// `worktree`/`actions` operations (diff, merge-to-base) through the HTTP layer
+// against an actual git repo.
+async function bootServerRealGit(repoDir: string) {
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -57,8 +83,8 @@ async function postJson(baseUrl: string, path: string, body: unknown): Promise<R
 }
 
 test("startServer auto-shifts to a free port when the requested port is in use", async () => {
-  const repoDir1 = makeRepo();
-  const repoDir2 = makeRepo();
+  const repoDir1 = makeTmpDir("repo");
+  const repoDir2 = makeTmpDir("repo");
 
   const first = await startServer({
     port: 0,
@@ -86,8 +112,8 @@ test("startServer auto-shifts to a free port when the requested port is in use",
 });
 
 test("GET /meta returns the repo directory and its basename", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const res = await fetch(`${baseUrl}/meta`);
   expect(res.status).toBe(200);
@@ -97,8 +123,8 @@ test("GET /meta returns the repo directory and its basename", async () => {
 });
 
 test("POST /sessions creates a session, worktree, meta.json", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const res = await postJson(baseUrl, "/sessions", {
     prompt: "do thing",
@@ -122,8 +148,8 @@ test("POST /sessions creates a session, worktree, meta.json", async () => {
 });
 
 test("POST /sessions accepts an explicit branchName", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const res = await postJson(baseUrl, "/sessions", {
     prompt: "do thing",
@@ -133,23 +159,18 @@ test("POST /sessions accepts an explicit branchName", async () => {
   expect(res.status).toBe(201);
   const body = await res.json();
   expect(body.meta.branchName).toBe("fix-login-bug");
-
-  // git knows about the branch under the requested name
-  const list = Bun.spawnSync(["git", "branch", "--list", "fix-login-bug"], {
-    cwd: repoDir,
-    env: cleanGitEnv,
-  });
-  expect(new TextDecoder().decode(list.stdout).trim()).toContain("fix-login-bug");
+  // That the branch is actually created under this name is `worktree`'s job and
+  // is covered by worktree.test.ts ("uses the supplied branch name verbatim").
 });
 
 test("POST /sessions uses generated branch name when no explicit one is given", async () => {
-  const repoDir = makeRepo();
+  const repoDir = makeTmpDir("repo");
   const started = await startServer({
     port: 0,
     repoDir,
-    spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => "auto-name",
-    hostCommand: HOST_COMMAND,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -164,8 +185,8 @@ test("POST /sessions uses generated branch name when no explicit one is given", 
 });
 
 test("POST /sessions returns 400 when branchName is invalid", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const res = await postJson(baseUrl, "/sessions", {
     prompt: "do thing",
@@ -176,8 +197,8 @@ test("POST /sessions returns 400 when branchName is invalid", async () => {
 });
 
 test("GET /sessions lists created sessions", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   await postJson(baseUrl, "/sessions", { prompt: "first", baseBranch: TEST_BASE });
   await postJson(baseUrl, "/sessions", { prompt: "second", baseBranch: TEST_BASE });
@@ -188,8 +209,8 @@ test("GET /sessions lists created sessions", async () => {
 });
 
 test("GET /sessions exposes unread report counts per session", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const a = await postJson(baseUrl, "/sessions", { prompt: "with reports", baseBranch: TEST_BASE }).then(r => r.json());
   const b = await postJson(baseUrl, "/sessions", { prompt: "no reports", baseBranch: TEST_BASE }).then(r => r.json());
@@ -208,8 +229,8 @@ test("GET /sessions exposes unread report counts per session", async () => {
 });
 
 test("POST /internal/sessions/:id/reports writes numbered report", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -229,8 +250,8 @@ test("POST /internal/sessions/:id/reports writes numbered report", async () => {
 });
 
 test("POST /internal/sessions/:id/escalations sets status to waiting_human", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -245,8 +266,8 @@ test("POST /internal/sessions/:id/escalations sets status to waiting_human", asy
 });
 
 test("feedback inbox round trip: POST writes, GET fetches and moves to read", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -272,8 +293,8 @@ test("feedback inbox round trip: POST writes, GET fetches and moves to read", as
 });
 
 test("feedback numbering stays monotonic after a fetch drains the inbox", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -290,14 +311,11 @@ test("feedback numbering stays monotonic after a fetch drains the inbox", async 
 });
 
 test("POST /sessions/:id/stop kills the host and sets status stopped", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-
-  // give the host a moment to be alive
-  await new Promise(r => setTimeout(r, 100));
 
   const stopped = await postJson(baseUrl, `/sessions/${sid}/stop`, {}).then(r => r.json());
   expect(stopped.meta.status).toBe("stopped");
@@ -309,8 +327,8 @@ test("POST /sessions/:id/stop kills the host and sets status stopped", async () 
 });
 
 test("escalation resolve moves asking file, writes feedback, returns to running", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -344,8 +362,8 @@ test("escalation resolve moves asking file, writes feedback, returns to running"
 });
 
 test("escalation resolve returns 404 for missing file", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -359,8 +377,8 @@ test("escalation resolve returns 404 for missing file", async () => {
 });
 
 test("escalation resolve keeps waiting_human when other escalations remain", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -375,8 +393,8 @@ test("escalation resolve keeps waiting_human when other escalations remain", asy
 });
 
 test("escalation numbering stays monotonic after a resolve archives the file", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -393,8 +411,8 @@ test("escalation numbering stays monotonic after a resolve archives the file", a
 });
 
 test("GET /sessions/:id/reports returns all reports with content", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -412,8 +430,8 @@ test("GET /sessions/:id/reports returns all reports with content", async () => {
 });
 
 test("POST /sessions/:id/reports/:filename/read marks a report as read", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -435,8 +453,8 @@ test("POST /sessions/:id/reports/:filename/read marks a report as read", async (
 });
 
 test("POST /sessions/:id/reports/:filename/unread reverts read state", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -454,8 +472,8 @@ test("POST /sessions/:id/reports/:filename/unread reverts read state", async () 
 });
 
 test("POST /sessions/:id/reports/read-all marks every report read and emits one event", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -483,8 +501,8 @@ test("POST /sessions/:id/reports/read-all marks every report read and emits one 
 });
 
 test("POST /sessions/:id/reports/read-all is a no-op (no event) when nothing is unread", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -498,8 +516,8 @@ test("POST /sessions/:id/reports/read-all is a no-op (no event) when nothing is 
 });
 
 test("POST /sessions/:id/reports/:filename/read returns 404 for missing report", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -508,106 +526,37 @@ test("POST /sessions/:id/reports/:filename/read returns 404 for missing report",
   expect(res.status).toBe(404);
 });
 
-test("GET /sessions/:id/diff returns git diff against session-start commit", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+// What `git diff` actually produces (full context, merge-base resolution, ...)
+// is `worktree`'s contract — see worktree.test.ts. Here we only check that the
+// /diff endpoint routes to the right worktreeOps call and passes its output
+// through; the fake echoes its target so the routing is observable.
+test("GET /sessions/:id/diff returns worktreeOps.gitDiff against the session-start commit", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-
-  const wt = created.meta.worktreePath;
-  // Modify the README in the worktree to produce a diff.
-  writeFileSync(join(wt, "README.md"), "# changed in session\n");
 
   const diffRes = await fetch(`${baseUrl}/sessions/${sid}/diff`);
+  expect(diffRes.status).toBe(200);
   expect(diffRes.headers.get("content-type")).toContain("text/plain");
   const diff = await diffRes.text();
-  expect(diff).toContain("README.md");
-  expect(diff).toContain("changed in session");
+  expect(diff).toContain("diff against");
+  expect(diff).toContain(created.meta.baseCommit);
 });
 
-test("GET /sessions/:id/diff returns full file context (unchanged lines included)", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+// What `resolveDiffBase` / `git diff` actually compute (merge-base when the
+// base branch advanced, full context, ...) is `worktree`'s contract — see
+// worktree.test.ts.
 
-  // Commit a 30-line file to the base branch, then change one line deep in the
-  // middle in the worktree. The default `git diff -U3` would hide lines 1-30
-  // except a few around the change; the endpoint must include all of them.
-  const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
-  writeFileSync(join(repoDir, "many.txt"), lines.join("\n") + "\n");
-  git(["add", "many.txt"], repoDir);
-  git(["commit", "-m", "add many.txt"], repoDir);
+test("GET /sessions/:id/files lists worktree files and hides the .worqload-reports symlink", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
   const wt = created.meta.worktreePath;
-
-  const changed = [...lines];
-  changed[14] = "line 15 CHANGED";
-  writeFileSync(join(wt, "many.txt"), changed.join("\n") + "\n");
-
-  const diff = await fetch(`${baseUrl}/sessions/${sid}/diff`).then(r => r.text());
-  expect(diff).toContain("line 15 CHANGED");
-  // Lines far from the change are present too because we requested full context.
-  expect(diff).toContain("line 1");
-  expect(diff).toContain("line 30");
-});
-
-test("GET /sessions/:id/diff shows the branch's own changes, not commits the base branch gained after the fork", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
-
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
-  const sid = created.meta.id;
-  const wt = created.meta.worktreePath;
-
-  // The session commits its own work on the branch.
-  writeFileSync(join(wt, "session-file.txt"), "session work\n");
-  git(["add", "session-file.txt"], wt);
-  git(["commit", "-m", "session change"], wt);
-
-  // Meanwhile the base branch moves on past the worktree's fork point — e.g.
-  // another session got merged in.
-  writeFileSync(join(repoDir, "other-session.txt"), "work from another session\n");
-  git(["add", "other-session.txt"], repoDir);
-  git(["commit", "-m", "merge another session"], repoDir);
-
-  const diff = await fetch(`${baseUrl}/sessions/${sid}/diff`).then(r => r.text());
-  expect(diff).toContain("session-file.txt");
-  expect(diff).not.toContain("other-session.txt");
-});
-
-test("GET /sessions/:id/diff drops base-branch commits absorbed via 'update branch'", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
-
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
-  const sid = created.meta.id;
-  const wt = created.meta.worktreePath;
-
-  writeFileSync(join(wt, "session-file.txt"), "session work\n");
-  git(["add", "session-file.txt"], wt);
-  git(["commit", "-m", "session change"], wt);
-
-  // The base branch moves on, then the human runs "update branch": the base
-  // branch gets merged into the session branch to pick up that work.
-  writeFileSync(join(repoDir, "other-session.txt"), "work from another session\n");
-  git(["add", "other-session.txt"], repoDir);
-  git(["commit", "-m", "merge another session"], repoDir);
-  git(["merge", "--no-edit", TEST_BASE], wt);
-
-  const diff = await fetch(`${baseUrl}/sessions/${sid}/diff`).then(r => r.text());
-  expect(diff).toContain("session-file.txt");
-  expect(diff).not.toContain("other-session.txt");
-});
-
-test("GET /sessions/:id/files lists worktree files including new untracked ones", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
-
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
-  const sid = created.meta.id;
-  const wt = created.meta.worktreePath;
+  writeFileSync(join(wt, "README.md"), "# r\n");
   mkdirSync(join(wt, "src"), { recursive: true });
   writeFileSync(join(wt, "src", "new.ts"), "export const x = 1;\n");
 
@@ -619,8 +568,8 @@ test("GET /sessions/:id/files lists worktree files including new untracked ones"
 });
 
 test("GET /sessions/:id/file returns text content of a worktree file", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -634,8 +583,8 @@ test("GET /sessions/:id/file returns text content of a worktree file", async () 
 });
 
 test("GET /sessions/:id/file rejects paths that escape the worktree", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -645,8 +594,8 @@ test("GET /sessions/:id/file rejects paths that escape the worktree", async () =
 });
 
 test("GET /sessions/:id/file returns 404 for a missing file and 400 without a path", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -656,8 +605,8 @@ test("GET /sessions/:id/file returns 404 for a missing file and 400 without a pa
 });
 
 test("GET /sessions/:id/file flags binary files instead of returning their bytes", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -669,8 +618,8 @@ test("GET /sessions/:id/file flags binary files instead of returning their bytes
 });
 
 test("GET /sessions/:id/asking returns pending escalations", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -683,8 +632,8 @@ test("GET /sessions/:id/asking returns pending escalations", async () => {
 });
 
 test("POST /sessions/:id/title sets, updates and clears the display title", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", {
     prompt: "あなたに長いお願いごとをしたいです、これはサイドバーで読みにくい",
@@ -714,8 +663,8 @@ test("POST /sessions/:id/title sets, updates and clears the display title", asyn
 });
 
 test("POST /sessions/:id/title rejects a non-string title and an unknown session", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   expect((await postJson(baseUrl, `/sessions/${created.meta.id}/title`, { title: 123 })).status).toBe(400);
@@ -724,12 +673,11 @@ test("POST /sessions/:id/title rejects a non-string title and an unknown session
 });
 
 test("POST /sessions/:id/archive hides terminal sessions from default list", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 80));
 
   // Cannot archive while running
   const tooEarly = await fetch(`${baseUrl}/sessions/${sid}/archive`, { method: "POST" });
@@ -747,8 +695,8 @@ test("POST /sessions/:id/archive hides terminal sessions from default list", asy
 });
 
 test("GET /sessions/:id/feedback merges inbox and read with status", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -770,7 +718,7 @@ test("GET /sessions/:id/feedback merges inbox and read with status", async () =>
 });
 
 test("startServer reconnects to a still-running host across a serve restart", async () => {
-  const repoDir = makeRepo();
+  const repoDir = makeGitRepo();
   const first = await startServer({
     port: 0,
     repoDir,
@@ -818,7 +766,7 @@ test("startServer reconnects to a still-running host across a serve restart", as
 });
 
 test("startServer marks a session crashed when its host is dead on boot", async () => {
-  const repoDir = makeRepo();
+  const repoDir = makeGitRepo();
   const first = await startServer({
     port: 0,
     repoDir,
@@ -851,14 +799,11 @@ test("startServer marks a session crashed when its host is dead on boot", async 
 });
 
 test("WS /sessions/:id/stream replays past events on subscribe and pushes live ones", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-
-  // Wait briefly so session_started has been written
-  await new Promise(r => setTimeout(r, 80));
 
   const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/sessions/${sid}/stream`);
   await new Promise<void>(resolve => ws.addEventListener("open", () => resolve(), { once: true }));
@@ -886,12 +831,11 @@ test("WS /sessions/:id/stream replays past events on subscribe and pushes live o
 });
 
 test("POST /sessions/:id/cancel removes worktree and marks stopped", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 100));
 
   const wt = created.meta.worktreePath;
   expect(existsSync(wt)).toBe(true);
@@ -904,12 +848,11 @@ test("POST /sessions/:id/cancel removes worktree and marks stopped", async () =>
 });
 
 test("POST /sessions/:id/resume respawns the host and returns the session to running", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 100));
 
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
   expect(ctx.clients.has(sid)).toBe(false);
@@ -928,12 +871,11 @@ test("POST /sessions/:id/resume respawns the host and returns the session to run
 });
 
 test("POST /sessions/:id/resume queues the optional prompt as feedback", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 100));
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
 
   await postJson(baseUrl, `/sessions/${sid}/resume`, { prompt: "now do the other thing" });
@@ -946,8 +888,8 @@ test("POST /sessions/:id/resume queues the optional prompt as feedback", async (
 });
 
 test("POST /sessions/:id/resume rejects a session that is still running", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -957,12 +899,11 @@ test("POST /sessions/:id/resume rejects a session that is still running", async 
 });
 
 test("POST /sessions/:id/resume rejects a cancelled session whose worktree is gone", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await new Promise(r => setTimeout(r, 100));
   await postJson(baseUrl, `/sessions/${sid}/cancel`, {});
   expect(existsSync(created.meta.worktreePath)).toBe(false);
 
@@ -971,8 +912,8 @@ test("POST /sessions/:id/resume rejects a cancelled session whose worktree is go
 });
 
 test("GET / serves the built HTML shell referencing the hashed /assets bundles", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const res = await fetch(`${baseUrl}/`);
   expect(res.status).toBe(200);
@@ -983,8 +924,8 @@ test("GET / serves the built HTML shell referencing the hashed /assets bundles",
 });
 
 test("the /assets bundles referenced by index.html are all reachable", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const html = await (await fetch(`${baseUrl}/`)).text();
   const refs = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1]);
@@ -996,16 +937,16 @@ test("the /assets bundles referenced by index.html are all reachable", async () 
 });
 
 test("GET /assets/<unknown> returns 404", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const res = await fetch(`${baseUrl}/assets/nope.js`);
   expect(res.status).toBe(404);
 });
 
 test("GET /actions exposes the built-in action registry", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const res = await fetch(`${baseUrl}/actions`).then(r => r.json());
   const ids = res.actions.map((a: { id: string }) => a.id);
@@ -1014,8 +955,8 @@ test("GET /actions exposes the built-in action registry", async () => {
 });
 
 test("POST /sessions/:id/actions/:actionId returns 404 for unknown action", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
 
@@ -1024,8 +965,8 @@ test("POST /sessions/:id/actions/:actionId returns 404 for unknown action", asyn
 });
 
 test("POST /sessions/:id/actions/merge-to-base merges when preconditions hold", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeGitRepo();
+  const { baseUrl } = await bootServerRealGit(repoDir);
   const created = await postJson(baseUrl, "/sessions", { prompt: "merge me", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
   const wt = created.meta.worktreePath;
@@ -1047,8 +988,8 @@ test("POST /sessions/:id/actions/merge-to-base merges when preconditions hold", 
 });
 
 test("POST /sessions/:id/actions/merge-to-base returns 422 when preconditions fail", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeGitRepo();
+  const { baseUrl } = await bootServerRealGit(repoDir);
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
 
@@ -1064,8 +1005,8 @@ test("POST /sessions/:id/actions/merge-to-base returns 422 when preconditions fa
 });
 
 test("invoking an action records an action_invoked event so the run log persists", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeGitRepo();
+  const { baseUrl, ctx } = await bootServerRealGit(repoDir);
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
 
@@ -1084,8 +1025,8 @@ test("invoking an action records an action_invoked event so the run log persists
 });
 
 test("command approval: request creates asking + sidecar, sets waiting_human, getAsking exposes the command", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -1111,8 +1052,8 @@ test("command approval: request creates asking + sidecar, sets waiting_human, ge
 });
 
 test("command approval: approve runs the command in the worktree and feeds back its output", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl, ctx } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -1148,8 +1089,8 @@ test("command approval: approve runs the command in the worktree and feeds back 
 });
 
 test("command approval: reject does not run the command and feeds back the rejection", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
@@ -1170,8 +1111,8 @@ test("command approval: reject does not run the command and feeds back the rejec
 });
 
 test("command approval: resolve without a decision is rejected", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;

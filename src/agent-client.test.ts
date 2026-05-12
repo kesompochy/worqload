@@ -1,42 +1,20 @@
 import { test, expect, afterEach } from "bun:test";
-import { join } from "path";
-import { writeFileSync, mkdirSync } from "fs";
 import { startServer } from "./web-server";
 import { submitReport, submitEscalation, requestCommandApproval, fetchFeedback } from "./agent-client";
-import { makeTmpDir, cleanupAll, trackCleanup } from "./test-helpers";
+import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 
 afterEach(cleanupAll);
 
-const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
 const TEST_BASE = "trunk";
-const MOCK = join(import.meta.dir, "__fixtures__", "mock-claude.ts");
-const CLI = join(import.meta.dir, "cli.ts");
-const HOST_COMMAND = ["bun", CLI, "session-host"];
-
-function git(args: string[], cwd: string) {
-  return Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: cleanGitEnv });
-}
-
-function makeRepo(): string {
-  const dir = makeTmpDir("agent-client-test");
-  git(["init"], dir);
-  git(["checkout", "-b", TEST_BASE], dir);
-  git(["config", "user.email", "t@t.com"], dir);
-  git(["config", "user.name", "t"], dir);
-  writeFileSync(join(dir, "README.md"), "# t\n");
-  git(["add", "."], dir);
-  git(["commit", "-m", "init"], dir);
-  return dir;
-}
 
 async function bootAndCreateSession(): Promise<{ endpoint: string; sessionId: string }> {
-  const repoDir = makeRepo();
+  const repoDir = makeTmpDir("repo");
   const started = await startServer({
     port: 0,
     repoDir,
-    spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => null,
-    hostCommand: HOST_COMMAND,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const endpoint = `http://127.0.0.1:${started.server.port}`;

@@ -15,17 +15,8 @@ import {
   type SessionStatus,
 } from "./session";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
-import { appendEvent, readEvents } from "./event-log";
-import {
-  createSessionWorktree,
-  removeWorktree,
-  resolveBaseCommit,
-  resolveDiffBase,
-  currentBranch,
-  gitDiff,
-  listWorktreeFiles,
-  readWorktreeFile,
-} from "./worktree";
+import { appendEvent, readEvents, type Event } from "./event-log";
+import { realWorktreeOps, type WorktreeOps } from "./worktree";
 import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState, markAllRead } from "./file-store";
 import { listActions, findAction } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
@@ -103,9 +94,24 @@ interface SessionAttachment {
   // PID of the host process (whether we spawned it or reconnected). Used at
   // shutdown when killHosts is requested.
   hostPid?: number;
-  // Defined only when this serve instance is the one that spawned the host.
+  // Defined only when this serve instance is the one that spawned the host
+  // (and that host runs as a real subprocess).
   hostProc?: Subprocess;
 }
+
+// Brings a session's host to life and returns a client for talking to it. The
+// production launcher spawns `worqload session-host` as a detached subprocess;
+// tests inject an in-process stand-in so the suite doesn't pay one (or two)
+// process spawns per session.
+export interface HostLaunchRequest {
+  meta: SessionMeta;
+  sessionsDir: string;
+  agentEndpoint: string;
+  resume: boolean;
+  onEvent: (event: Event) => void;
+  onDisconnect: () => void;
+}
+export type HostLauncher = (req: HostLaunchRequest) => Promise<{ client: HostClient; hostProc?: Subprocess }>;
 
 export interface ServerContext {
   port: number;
@@ -115,7 +121,8 @@ export interface ServerContext {
   worktreesDir: string;         // <repo>/.worktrees
   spawnCommand: string[];
   branchNameGenerator: BranchNameGenerator;
-  hostCommand: string[];
+  hostLauncher: HostLauncher;
+  worktreeOps: WorktreeOps;
   clients: Map<string, SessionAttachment>;
   baseUrlForAgent: string;
   wsClients: Set<ServerWebSocket<WsClientData>>;
@@ -128,7 +135,9 @@ export interface StartServerOptions {
   // Overrides the helper that turns a prompt into a short branch name.
   // Return null to skip generation; the caller then falls back to <shortId>.
   branchNameGenerator?: BranchNameGenerator;
-  hostCommand?: string[];       // override how the host process itself is launched
+  hostCommand?: string[];       // override how the (subprocess) host is launched
+  hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
+  worktreeOps?: WorktreeOps;    // override the git/worktree layer (tests use a fake)
 }
 
 export interface ShutdownOptions {
@@ -291,38 +300,47 @@ async function transitionStatus(
   return updated;
 }
 
-// Spawn a detached host and connect to it. The host (not serve) writes the
-// session_started / session_resumed event and the first user message. On
-// resume the prior claude conversation is continued (`--continue`) and the
-// host replays the existing event log to us, so we connect from seq 0 too.
+// Production host launcher: spawn `worqload session-host` (test override:
+// `bun src/cli.ts session-host`) as a detached child, connect over its unix
+// socket, and wait for it to finish replaying the event log (empty for a fresh
+// session). The host — not serve — writes the session_started / session_resumed
+// event and sends claude its first message. On resume claude's prior
+// conversation is continued (`--continue`), so we still connect from seq 0.
+function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: string[] }): HostLauncher {
+  return async ({ meta, sessionsDir, agentEndpoint, resume, onEvent, onDisconnect }) => {
+    const socketPath = hostSocketPathFor(meta.id);
+    const hostProc = spawnDetachedHost({
+      sessionId: meta.id,
+      sessionsDir,
+      socketPath,
+      agentEndpoint,
+      spawnCommand: resume ? [...config.spawnCommand, "--continue"] : config.spawnCommand,
+      hostCommand: config.hostCommand,
+      ...(resume && { resume: true }),
+    });
+    const client = await connectToHost({ socketPath, sinceSeq: 0, onEvent, onDisconnect });
+    await client.replayCompleted.catch(() => {});
+    return { client, hostProc };
+  };
+}
+
 async function spawnAndAttachHost(
   ctx: ServerContext,
   meta: SessionMeta,
   opts: { resume?: boolean } = {},
 ): Promise<HostClient> {
-  const socketPath = hostSocketPathFor(meta.id);
   await writeAgentEndpointFile(ctx, meta.id);
-  const hostProc = spawnDetachedHost({
-    sessionId: meta.id,
+  const { client, hostProc } = await ctx.hostLauncher({
+    meta,
     sessionsDir: ctx.sessionsDir,
-    socketPath,
     agentEndpoint: ctx.baseUrlForAgent,
-    spawnCommand: opts.resume ? [...ctx.spawnCommand, "--continue"] : ctx.spawnCommand,
-    hostCommand: ctx.hostCommand,
-    ...(opts.resume && { resume: true }),
-  });
-
-  const client = await connectToHost({
-    socketPath,
-    sinceSeq: 0,
+    resume: opts.resume ?? false,
     onEvent: (event) => broadcastEvent(ctx, meta.id, event),
     onDisconnect: () => {
       ctx.clients.delete(meta.id);
     },
   });
-  await client.replayCompleted.catch(() => {});
-
-  ctx.clients.set(meta.id, { client, hostProc, hostPid: hostProc.pid });
+  ctx.clients.set(meta.id, { client, hostProc, hostPid: hostProc?.pid });
   return client;
 }
 
@@ -358,6 +376,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand();
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
+  const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand });
+  const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
 
   await mkdir(sessionsDir, { recursive: true });
   // The frontend is a Vite build under web/dist/; produce it on first run so a
@@ -417,7 +437,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     worktreesDir,
     spawnCommand,
     branchNameGenerator,
-    hostCommand,
+    hostLauncher,
+    worktreeOps,
     clients: new Map(),
     port: server.port,
     baseUrlForAgent: `http://127.0.0.1:${server.port}`,
@@ -634,8 +655,8 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     return json({ error: "prompt is required" }, 400);
   }
 
-  const baseBranch = body.baseBranch?.trim() || (await currentBranch(ctx.repoDir));
-  const baseCommit = await resolveBaseCommit(baseBranch, ctx.repoDir);
+  const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
+  const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
 
   // worktreePath and branchName are populated after the id is assigned below
   // (we need the id to compute the worktree dir and the shortId fallback).
@@ -661,7 +682,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   const reportsDir = reportsDirFor(ctx, tentative.id);
   let worktreePath: string;
   try {
-    ({ worktreePath } = await createSessionWorktree({
+    ({ worktreePath } = await ctx.worktreeOps.createSessionWorktree({
       sessionId: tentative.id,
       repoDir: ctx.repoDir,
       baseBranch,
@@ -851,8 +872,8 @@ const FULL_FILE_CONTEXT_LINES = 1_000_000;
 async function getDiff(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     try {
-      const diffBase = await resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
-      const diff = await gitDiff(meta.worktreePath, diffBase, FULL_FILE_CONTEXT_LINES);
+      const diffBase = await ctx.worktreeOps.resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
+      const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase, FULL_FILE_CONTEXT_LINES);
       return new Response(diff, { headers: { "content-type": "text/plain; charset=utf-8" } });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -863,7 +884,7 @@ async function getDiff(_req: Request, ctx: ServerContext, params: Record<string,
 
 async function getFiles(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const paths = await listWorktreeFiles(meta.worktreePath);
+    const paths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
     return json({ paths });
   });
 }
@@ -872,7 +893,7 @@ async function getFile(req: Request, ctx: ServerContext, params: Record<string, 
   return withSession(ctx, params.id, async meta => {
     const relPath = new URL(req.url).searchParams.get("path");
     if (!relPath || relPath.trim() === "") return json({ error: "path query is required" }, 400);
-    const result = await readWorktreeFile(meta.worktreePath, relPath);
+    const result = await ctx.worktreeOps.readWorktreeFile(meta.worktreePath, relPath);
     switch (result.kind) {
       case "text": return json({ path: relPath, content: result.content });
       case "binary": return json({ path: relPath, binary: true });
@@ -923,7 +944,7 @@ async function postCancel(_req: Request, ctx: ServerContext, params: Record<stri
     if (meta.worktreePath) {
       try {
         const branchName = meta.branchName || `worqload/${meta.id.slice(0, 8)}`;
-        await removeWorktree(meta.worktreePath, branchName, ctx.repoDir);
+        await ctx.worktreeOps.removeWorktree(meta.worktreePath, branchName, ctx.repoDir);
       } catch {}
     }
     const updated = isTerminal(meta.status)

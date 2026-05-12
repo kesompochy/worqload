@@ -2,6 +2,7 @@ import { test, expect, describe, afterEach } from "bun:test";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { mkdirSync, existsSync, readlinkSync, lstatSync, writeFileSync, symlinkSync } from "fs";
+import { makeRepoFromTemplate } from "./test-helpers";
 import {
   createSessionWorktree,
   removeWorktree,
@@ -24,16 +25,15 @@ function git(args: string[], cwd: string) {
 const TEST_BASE_BRANCH = "trunk";
 
 function createTempGitRepo(): string {
-  const dir = join(tmpdir(), `worqload-wt-test-${crypto.randomUUID()}`);
-  mkdirSync(dir, { recursive: true });
-  git(["init"], dir);
-  git(["checkout", "-b", TEST_BASE_BRANCH], dir);
-  git(["config", "user.email", "test@test.com"], dir);
-  git(["config", "user.name", "Test"], dir);
-  writeFileSync(join(dir, "README.md"), "# test repo\n");
-  git(["add", "."], dir);
-  git(["commit", "-m", "initial"], dir);
-  return dir;
+  return makeRepoFromTemplate("worktree", (dir) => {
+    git(["init"], dir);
+    git(["checkout", "-b", TEST_BASE_BRANCH], dir);
+    git(["config", "user.email", "test@test.com"], dir);
+    git(["config", "user.name", "Test"], dir);
+    writeFileSync(join(dir, "README.md"), "# test repo\n");
+    git(["add", "."], dir);
+    git(["commit", "-m", "initial"], dir);
+  });
 }
 
 const cleanupDirs: string[] = [];
@@ -306,6 +306,31 @@ describe("gitDiff", () => {
     expect(diff).toContain("session-file.txt");
     expect(diff).not.toContain("other-session.txt");
   });
+
+  test("with a large context value emits the whole file, not just lines around the change", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+
+    // 30-line file on the base branch; change one line deep in the middle in the
+    // worktree. `git diff -U3` would hide most of the file; a huge -U value
+    // means "all of it" — what the diff view wants so the human can expand
+    // context locally.
+    const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+    writeFileSync(join(repoDir, "many.txt"), lines.join("\n") + "\n");
+    git(["add", "many.txt"], repoDir);
+    git(["commit", "-m", "add many.txt"], repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+
+    const worktreePath = await makeWorktree(repoDir);
+    const changed = [...lines];
+    changed[14] = "line 15 CHANGED";
+    writeFileSync(join(worktreePath, "many.txt"), changed.join("\n") + "\n");
+
+    const diff = await gitDiff(worktreePath, baseCommit, 1_000_000);
+    expect(diff).toContain("line 15 CHANGED");
+    expect(diff).toContain("line 1");
+    expect(diff).toContain("line 30");
+  });
 });
 
 describe("resolveDiffBase", () => {
@@ -381,3 +406,4 @@ describe("resolveDiffBase", () => {
     expect(await resolveDiffBase(worktreePath, TEST_BASE_BRANCH, baseCommit)).toBe(baseCommit);
   });
 });
+
