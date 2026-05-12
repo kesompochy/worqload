@@ -18,6 +18,7 @@ import {
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
+import { findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
 import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState, markAllRead } from "./file-store";
 import { listActions, findAction } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
@@ -468,6 +469,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
       }
     }
     ctx.clients.clear();
+    await shutdownAllLanguageServers();
     server.stop(true);
   }
 
@@ -520,6 +522,8 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/files", getFiles),
   defineRoute("GET",  "/sessions/:id/file", getFile),
   defineRoute("GET",  "/sessions/:id/search", getFileSearch),
+  defineRoute("GET",  "/sessions/:id/code-nav/definition", getCodeNavDefinition),
+  defineRoute("GET",  "/sessions/:id/code-nav/references", getCodeNavReferences),
   defineRoute("GET",  "/actions", getActions),
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
@@ -929,6 +933,44 @@ async function getFileSearch(req: Request, ctx: ServerContext, params: Record<st
     const paths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
     const { matches, truncated } = await searchFileContents(meta.worktreePath, paths, query);
     return json({ matches, truncated });
+  });
+}
+
+// Code navigation (the Files tab's "go to definition / find references"): resolve
+// the symbol at path:line:character via the language server registered for the
+// given languageId. `{ available: false }` means no language server is available
+// here (the frontend then falls back to its client-side heuristic); otherwise
+// `{ available: true, locations }` (locations may be empty). line/character are
+// 0-based, matching LSP.
+function getCodeNavDefinition(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return codeNavQuery(req, ctx, params, findDefinition);
+}
+
+function getCodeNavReferences(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return codeNavQuery(req, ctx, params, findReferences);
+}
+
+function codeNavQuery(
+  req: Request,
+  ctx: ServerContext,
+  params: Record<string, string>,
+  resolveLocations: typeof findDefinition,
+): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const url = new URL(req.url);
+    const relPath = (url.searchParams.get("path") ?? "").trim();
+    const language = (url.searchParams.get("language") ?? "").trim() || null;
+    const line = Number(url.searchParams.get("line"));
+    const character = Number(url.searchParams.get("character"));
+    if (
+      relPath === "" ||
+      !url.searchParams.has("line") || !Number.isInteger(line) || line < 0 ||
+      !url.searchParams.has("character") || !Number.isInteger(character) || character < 0
+    ) {
+      return json({ error: "path, line (>=0) and character (>=0) query params are required" }, 400);
+    }
+    const locations = await resolveLocations(meta.worktreePath, language, relPath, line, character);
+    return locations === null ? json({ available: false }) : json({ available: true, locations });
   });
 }
 
