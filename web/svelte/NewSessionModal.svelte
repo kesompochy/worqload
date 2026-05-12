@@ -80,21 +80,21 @@
         placeholder="What should the agent do?"
         rows="6"
       ></textarea>
-      <div class="row" style="margin-top:.7rem">
-        <input bind:value={baseBranch} placeholder="base branch (default: current HEAD)" style="flex:1" />
-      </div>
-      <div class="row" style="margin-top:.7rem">
-        <input bind:value={branchName} placeholder="branch name (default: auto-generated)" style="flex:1" />
-      </div>
       {#if errorMessage}
         <p class="create-error">Error: {errorMessage}</p>
       {/if}
       <div class="row" style="margin-top:.7rem">
         <span class="spacer"></span>
-        <button onclick={close} disabled={submitting}>Cancel</button>
         <button onclick={create} disabled={submitting}>
           {#if submitting}<span class="spinner"></span> Creating…{:else}Create{/if}
         </button>
+        <button onclick={close} disabled={submitting}>Cancel</button>
+      </div>
+      <div class="row" style="margin-top:.7rem">
+        <input bind:value={baseBranch} placeholder="base branch (default: current HEAD)" style="flex:1" />
+      </div>
+      <div class="row" style="margin-top:.7rem">
+        <input bind:value={branchName} placeholder="branch name (default: auto-generated)" style="flex:1" />
       </div>
     </div>
   </div>
