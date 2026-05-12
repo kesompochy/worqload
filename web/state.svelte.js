@@ -14,7 +14,7 @@ export const state = $state({
   feedbackHistory: [],
   ws: null,
   lastSeq: 0,
-  activeTab: "reports",  // "reports" | "diff" | "files" | "events"
+  activeTab: "reports",  // "reports" | "feedback" | "diff" | "files" | "events"
   tabScroll: new Map(),  // tab name -> remembered scroll position (see DetailBody.svelte), so switching back returns there
   diff: "",              // text/plain diff (full file context, -U<huge>) — the branch's changes since the session forked
   anchor: null,          // { path, lineStart, lineEnd } | null
@@ -33,6 +33,7 @@ export const state = $state({
   actionRunInFlight: false,  // true while the open action's run request is outstanding (disables the Run button)
   actionResults: new Map(),  // actionId -> last run result observed in this browser view
   renamingSessionId: null,   // session id whose sidebar title is being edited inline (null = none)
+  pendingScrollTo: null,     // { anchor: {path,lineStart,lineEnd} } | { article: {attr,value} } | null: a "go to" request DetailBody resolves (scroll + flash) after the next render
 });
 
 // Diff view: the server hands us full file context; we collapse unchanged
@@ -40,6 +41,14 @@ export const state = $state({
 export const DIFF_CONTEXT_LINES = 3;   // unchanged lines kept around each change
 export const DIFF_EXPAND_CHUNK = 20;   // unchanged lines revealed per ↑/↓ click
 export const DIFF_MIN_COLLAPSE = 4;    // shorter unchanged runs aren't worth a placeholder
+
+// "path:lineStart" or "path:lineStart-lineEnd" — the short label used on anchor
+// chips (composer, feedback list). Mirrors the `Re:` line minus the prefix.
+export function anchorLabel(anchor) {
+  if (!anchor) return "";
+  const end = anchor.lineEnd ?? anchor.lineStart;
+  return `${anchor.path}:${anchor.lineStart}${end > anchor.lineStart ? `-${end}` : ""}`;
+}
 
 export function isAnchored(path, lineNo) {
   if (!state.anchor || state.anchor.path !== path) return false;

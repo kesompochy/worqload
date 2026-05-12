@@ -1,18 +1,18 @@
 <script>
   // The detail pane's scroll body — everything between the header (DetailHeader)
   // and the action area (ActionBar) / composer (Composer): the pending-asking
-  // section, the active tab's content, and the "Feedback sent" list. Mounted into
-  // #detailBodyMount from main.ts. The Reports tab, the Feedback-sent list, the
-  // asking section, and the Diff tab (DiffView.svelte) are rendered natively
-  // here off the reactive `appState` (and DiffView / FilesView / EventsView do
-  // the same). Click handling for the diff, files, and events explorers
+  // section above the active tab's content. Mounted into #detailBodyMount from
+  // main.ts. The Reports tab, the Feedback tab (the "feedback sent" list), and
+  // the asking section are rendered natively here off the reactive `appState`
+  // (DiffView / FilesView / EventsView render the other tabs). Click handling
+  // for the diff, files, and events explorers
   // (collapse, gap expand, file open, copy-path, line anchoring, event
   // expand/collapse), for line anchors inside report markdown, and for the
   // asking buttons is delegated to onDetailBodyClick.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
-  import { state as appState, isReportExpanded, isFeedbackExpanded } from "../state.svelte.js";
+  import { state as appState, isReportExpanded, isFeedbackExpanded, anchorLabel } from "../state.svelte.js";
   import { renderMarkdown } from "../markdown.js";
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
@@ -90,6 +90,45 @@
       renderedTab = targetTab;
     });
   });
+
+  // "Go to" requests from anchor / reply-link chips: handlers.js switches to the
+  // right tab (and expands the report / un-collapses the diff file) and sets
+  // appState.pendingScrollTo to either { anchor: {path,lineStart,lineEnd} } (a
+  // diff/file/report line) or { article: {attr,value} } (a whole report/feedback
+  // card). Once the body has re-rendered with that content, bring the target
+  // into view and flash it. Best-effort: if the line is gone (diff moved on), we
+  // just leave the user on the switched-to tab.
+  function findAnchorElement(root, path, lineStart, lineEnd) {
+    let overlap = null;
+    for (const el of root.querySelectorAll(`[data-anchor-path="${CSS.escape(path)}"][data-anchor-line]`)) {
+      const start = Number(el.getAttribute("data-anchor-line"));
+      const endAttr = el.getAttribute("data-anchor-line-end");
+      const end = endAttr !== null ? Number(endAttr) : start;
+      if (start > lineEnd || end < lineStart) continue;  // no overlap with [lineStart, lineEnd]
+      if (start === lineStart) return el;                // exact row (diff / file line)
+      if (overlap === null) overlap = el;                // first block overlapping the range (report markdown)
+    }
+    return overlap;
+  }
+
+  function resolveScrollTarget(root, target) {
+    if (target.anchor) return findAnchorElement(root, target.anchor.path, target.anchor.lineStart, target.anchor.lineEnd);
+    if (target.article) return root.querySelector(`[${target.article.attr}="${CSS.escape(target.article.value)}"]`);
+    return null;
+  }
+
+  $effect(() => {
+    const target = appState.pendingScrollTo;
+    if (!target) return;
+    tick().then(() => {
+      appState.pendingScrollTo = null;
+      const el = bodyEl && resolveScrollTarget(bodyEl, target);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("anchor-flash");
+      setTimeout(() => el.classList.remove("anchor-flash"), 1600);
+    });
+  });
 </script>
 
 {#if appState.selected && appState.detail}
@@ -127,6 +166,30 @@
       <FilesView />
     {:else if appState.activeTab === "events"}
       <EventsView />
+    {:else if appState.activeTab === "feedback"}
+      {#if appState.feedbackHistory.length > 0}
+        {#each appState.feedbackHistory as f (f.filename)}
+          {@const replies = appState.reports.filter(rep => rep.replyTo === f.filename)}
+          <article class="report" class:collapsed={!isFeedbackExpanded(f)} data-feedback-filename={f.filename}>
+            <div class="report-header" data-feedback-toggle={f.filename}>
+              <span class="report-chevron">▾</span>
+              <span class="report-filename">{f.filename}</span>
+              {#if f.anchor}
+                <button class="report-anchor-chip" type="button" title="Re: {anchorLabel(f.anchor)} — クリックでアンカー先へ" data-goto-anchor-path={f.anchor.path} data-goto-anchor-line={f.anchor.lineStart} data-goto-anchor-line-end={f.anchor.lineEnd}>↳ {anchorLabel(f.anchor)}</button>
+              {/if}
+              <span class="badge badge-{f.status === 'unread' ? 'waiting_human' : 'stopped'}">{f.status}</span>
+            </div>
+            {#if replies.length > 0}
+              <div class="report-links"><span class="report-links-label">addressed by</span>{#each replies as rep (rep.filename)}<button class="report-anchor-chip" type="button" title="{rep.filename} — クリックでレポートへ" data-goto-report={rep.filename}>↳ {rep.filename}</button>{/each}</div>
+            {/if}
+            <div class="report-body">
+              <div class="md">{@html renderMarkdown(f.content)}</div>
+            </div>
+          </article>
+        {/each}
+      {:else}
+        <div class="report-empty">No feedback sent yet. Type below to send the agent feedback.</div>
+      {/if}
     {:else if reportsNewestFirst.length > 0}
       {#each reportsNewestFirst as r (r.filename)}
         {@const expanded = isReportExpanded(r)}
@@ -137,6 +200,9 @@
             <span class="report-filename">{r.filename}</span>
             <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
           </div>
+          {#if r.replyTo}
+            <div class="report-links"><span class="report-links-label">in reply to</span><button class="report-anchor-chip" type="button" title="Re: {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button></div>
+          {/if}
           <div class="report-body">
             <div class="md">{@html renderMarkdown(r.content, { anchorPath: `./.worqload-reports/${r.filename}`, anchor: appState.anchor })}</div>
           </div>
@@ -144,24 +210,6 @@
       {/each}
     {:else}
       <div class="report-empty">No reports yet. The agent submits reports at progress checkpoints.</div>
-    {/if}
-
-    {#if appState.feedbackHistory.length > 0}
-      <section>
-        <h2>Feedback sent</h2>
-        {#each appState.feedbackHistory as f (f.filename)}
-          <article class="report" class:collapsed={!isFeedbackExpanded(f)} data-feedback-filename={f.filename}>
-            <div class="report-header" data-feedback-toggle={f.filename}>
-              <span class="report-chevron">▾</span>
-              <span class="report-filename">{f.filename}</span>
-              <span class="badge badge-{f.status === 'unread' ? 'waiting_human' : 'stopped'}">{f.status}</span>
-            </div>
-            <div class="report-body">
-              <div class="md">{@html renderMarkdown(f.content)}</div>
-            </div>
-          </article>
-        {/each}
-      </section>
     {/if}
   </div>
 {:else}

@@ -35,6 +35,16 @@ export function requireFlag(args: string[], flag: string): string {
   return args[i + 1];
 }
 
+export function optionalFlag(args: string[], flag: string): string | undefined {
+  const i = args.indexOf(flag);
+  if (i === -1) return undefined;
+  if (!args[i + 1]) {
+    console.error(`${flag} <value> requires a value`);
+    process.exit(2);
+  }
+  return args[i + 1];
+}
+
 export function exitWithUsage(usage: string): never {
   console.error(`usage: ${usage}`);
   process.exit(2);
