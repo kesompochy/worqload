@@ -43,5 +43,9 @@ Usage:
 Agent-side (called by claude inside a session):
   worqload report submit --slug <slug>   Submit a report (body via stdin)
   worqload escalate submit --slug <slug> Submit an escalation (body via stdin)
+  worqload escalate command --command <cmd>
+                                         Ask the human to approve running a command (optional reason
+                                         via stdin); on approval the server runs it and feeds back
+                                         its stdout/stderr. Pauses your turn like an escalation.
   worqload feedback fetch                Drain pending feedback inbox`);
 }

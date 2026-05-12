@@ -53,6 +53,18 @@ export async function submitEscalation(
   );
 }
 
+export async function requestCommandApproval(
+  endpoint: string,
+  sessionId: string,
+  command: string,
+  reason: string,
+): Promise<SubmitResult> {
+  return postJson<SubmitResult>(
+    `${endpoint}/internal/sessions/${sessionId}/command-approvals`,
+    { command, ...(reason ? { reason } : {}) },
+  );
+}
+
 export async function fetchFeedback(
   endpoint: string,
   sessionId: string,

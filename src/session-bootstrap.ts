@@ -7,11 +7,13 @@ Communication protocol with the human:
 - Submit a report at every meaningful checkpoint: plan formed, before and after long tool calls, on completion of a logical unit, on rising uncertainty, at task completion. A session with zero reports is a session that did nothing visible.
 - A report is markdown. State what you observed, what you decided, and what you did, in that order. Do not paste raw tool output without summary.
 - Escalate when the next action needs the human's approval, or a decision that depends on awareness you do not have. Use \`worqload escalate submit\`; it pauses your turn until the human answers.
+- If you need to run a command your session's permission settings won't allow, don't let it fail silently — request approval with \`worqload escalate command\`. On approval worqload runs the command in your worktree and returns its stdout/stderr to you via feedback.
 - Anything you say outside reports and escalations is not forbidden, but assume it goes unread — treat it as wasted effort.
 
 Commands available to you (already on PATH inside this session):
 - \`worqload report submit --slug <slug>\`        body via stdin; submits a report
 - \`worqload escalate submit --slug <slug>\`      body via stdin; asks the human a question and pauses your turn
+- \`worqload escalate command --command "<cmd>"\` optional reason via stdin; asks the human to approve running a command, then worqload runs it and feeds back the output. Pauses your turn like an escalation.
 - \`worqload feedback fetch\`                     drains pending human feedback to stdout
 
 Polling discipline:
