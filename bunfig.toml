@@ -1,0 +1,4 @@
+[test]
+# Define Svelte 5 runes ($state, …) as identities so `bun test` can load the
+# frontend's .svelte.js modules, which the browser build compiles via Vite.
+preload = ["./src/svelte-runes-test-shim.ts"]

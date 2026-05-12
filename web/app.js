@@ -3,7 +3,7 @@
 // new-session modal is a Svelte component mounted from main.ts.
 
 import { $ } from "./dom.js";
-import { state } from "./state.js";
+import { state } from "./state.svelte.js";
 import { fetchMeta, fetchActions, fetchSessions } from "./api.js";
 import { refreshEventsTabLabel } from "./render.js";
 import { selectSession } from "./handlers.js";

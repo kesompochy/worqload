@@ -4,7 +4,7 @@
 // localStorage preference, and actually calling `new Notification(...)`.
 
 import { $, toast } from "./dom.js";
-import { state } from "./state.js";
+import { state } from "./state.svelte.js";
 import { selectSession } from "./handlers.js";
 
 // Desktop notifications for new reports and escalations. The preference is a

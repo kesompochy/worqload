@@ -17,7 +17,7 @@ mock.module("../web/api.js", () => ({
 }));
 
 const { selectSession, extractPullRequestUrl } = await import("../web/handlers.js");
-const { state } = await import("../web/state.js");
+const { state } = await import("../web/state.svelte.js");
 
 test("extractPullRequestUrl pulls the PR URL out of a create-pr run log", () => {
   const log = [

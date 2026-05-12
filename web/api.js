@@ -4,7 +4,7 @@
 
 import { notificationForEvent, notificationsFromSessionPoll, pendingNotificationCount } from "./notifications.js";
 import { notify, fireNotification } from "./notify.js";
-import { state } from "./state.js";
+import { state } from "./state.svelte.js";
 import { renderSessionList, renderDetail } from "./render.js";
 
 export async function api(method, path, body) {

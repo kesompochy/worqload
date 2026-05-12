@@ -5,7 +5,7 @@
 
 import { escapeHtml } from "./dom.js";
 import { highlightCode, languageForPath } from "./syntax-highlight.js";
-import { state, isAnchored, DIFF_CONTEXT_LINES, DIFF_EXPAND_CHUNK, DIFF_MIN_COLLAPSE } from "./state.js";
+import { state, isAnchored, DIFF_CONTEXT_LINES, DIFF_EXPAND_CHUNK, DIFF_MIN_COLLAPSE } from "./state.svelte.js";
 
 export function parseDiffFiles(text) {
   const files = [];

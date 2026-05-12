@@ -5,7 +5,7 @@
 
 import { escapeHtml, formatBytes } from "./dom.js";
 import { highlightCode, languageForPath } from "./syntax-highlight.js";
-import { state, isAnchored } from "./state.js";
+import { state, isAnchored } from "./state.svelte.js";
 
 export function renderFilesHtml() {
   const treeHtml = !state.filesLoaded

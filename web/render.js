@@ -5,7 +5,7 @@
 
 import { $, escapeHtml, formatRelative, bindEnterToSubmit, bindInlineEdit } from "./dom.js";
 import { renderMarkdown } from "./markdown.js";
-import { state, isReportExpanded, isFeedbackExpanded } from "./state.js";
+import { state, isReportExpanded, isFeedbackExpanded } from "./state.svelte.js";
 import { renderDiffHtml } from "./diff-view.js";
 import { renderFilesHtml } from "./files-view.js";
 import { renderEventsHtml } from "./events-view.js";

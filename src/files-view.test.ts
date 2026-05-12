@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { buildFileTree, renderFilesHtml } from "../web/files-view.js";
-import { state } from "../web/state.js";
+import { state } from "../web/state.svelte.js";
 
 test("buildFileTree groups flat paths into a directory tree", () => {
   const root = buildFileTree(["src/a.js", "src/b/c.js", "README.md"]);
