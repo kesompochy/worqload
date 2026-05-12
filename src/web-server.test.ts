@@ -1174,7 +1174,10 @@ test("command approval: approve runs the command in the worktree and feeds back 
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
   const resolvedEvent = events.find(e => e.kind === "escalation_resolved");
-  expect((resolvedEvent?.payload as { decision?: string })?.decision).toBe("approve");
+  const resolvedPayload = resolvedEvent?.payload as { decision?: string; exitCode?: number; stdout?: string };
+  expect(resolvedPayload?.decision).toBe("approve");
+  expect(resolvedPayload?.exitCode).toBe(0);
+  expect(resolvedPayload?.stdout).toContain("approved-ok");
 });
 
 test("command approval: reject does not run the command and feeds back the rejection", async () => {

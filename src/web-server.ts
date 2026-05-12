@@ -1060,7 +1060,13 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
         decision,
         command,
         ...(runResult
-          ? { exitCode: runResult.exitCode, signal: runResult.signal, timedOut: runResult.timedOut }
+          ? {
+              exitCode: runResult.exitCode,
+              signal: runResult.signal,
+              timedOut: runResult.timedOut,
+              stdout: runResult.stdout,
+              stderr: runResult.stderr,
+            }
           : {}),
       };
     } else {

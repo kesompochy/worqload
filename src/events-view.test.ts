@@ -138,3 +138,36 @@ test("describeEvent never throws on a missing or malformed payload", () => {
   expect(() => describeEvent({})).not.toThrow();
   expect(() => describeEvent(null)).not.toThrow();
 });
+
+test("describeEvent renders an approved command-approval resolve with its output", () => {
+  const payload = {
+    filename: "001-command-approval.md",
+    decision: "approve",
+    command: "git log --oneline -3",
+    exitCode: 0,
+    stdout: "abc one\ndef two\n",
+    stderr: "",
+  };
+  const d = describeEvent({ seq: 20, kind: "escalation_resolved", timestamp: "", payload });
+  expect(d.summary).toBe("✅ approved & ran: git log --oneline -3 (exit 0)");
+  expect(d.sections).toEqual([
+    { label: "command", body: "git log --oneline -3", format: "code" },
+    { label: "stdout", body: "abc one\ndef two\n", format: "code" },
+  ]);
+});
+
+test("describeEvent renders a rejected command-approval resolve", () => {
+  const payload = { filename: "001-command-approval.md", decision: "reject", command: "npm publish" };
+  const d = describeEvent({ seq: 21, kind: "escalation_resolved", timestamp: "", payload });
+  expect(d.summary).toBe("🚫 rejected: npm publish");
+});
+
+test("describeEvent shows the command in a command-approval request summary", () => {
+  const d = describeEvent({
+    seq: 22,
+    kind: "escalation_requested",
+    timestamp: "",
+    payload: { filename: "001-command-approval.md", command: "docker system prune -af" },
+  });
+  expect(d.summary).toBe("🙋 approval: $ docker system prune -af");
+});

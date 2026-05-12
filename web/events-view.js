@@ -78,8 +78,12 @@ export function describeEvent(event) {
     case "report_unread":
       return { summary: `↺ unread ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
     case "escalation_requested":
+      if (isNonEmptyString(payload?.command)) {
+        return { summary: `🙋 approval: $ ${firstLine(payload.command)}`, sections: [payloadSection(payload)] };
+      }
       return { summary: `🙋 ${payload?.filename ?? "needs input"}`, sections: [payloadSection(payload)] };
     case "escalation_resolved":
+      if (isNonEmptyString(payload?.decision)) return describeCommandApprovalResolved(payload);
       return { summary: `✅ resolved ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
     case "feedback_received":
       return { summary: `✉ ${payload?.filename ?? "feedback"}`, sections: [payloadSection(payload)] };
@@ -136,6 +140,26 @@ function describeActionInvoked(payload) {
   if (isNonEmptyString(payload?.message)) sections.push({ label: "message", body: payload.message, format: "text" });
   return {
     summary: `${payload?.ok ? "✓" : "✗"} ${label}${exit}`,
+    sections: sections.length > 0 ? sections : [payloadSection(payload)],
+  };
+}
+
+// A command-approval escalation resolves into either "approved & ran" (with the
+// command's exit code and captured output) or "rejected". Mirrors
+// describeActionInvoked so the events stream shows the same result the agent
+// received via its feedback inbox.
+function describeCommandApprovalResolved(payload) {
+  const approved = payload.decision === "approve";
+  const exit = Number.isFinite(payload?.exitCode)
+    ? ` (exit ${payload.exitCode})`
+    : payload?.timedOut ? " (timed out)" : payload?.signal ? ` (${payload.signal})` : "";
+  const cmd = isNonEmptyString(payload?.command) ? `: ${firstLine(payload.command)}` : "";
+  const sections = [];
+  if (isNonEmptyString(payload?.command)) sections.push({ label: "command", body: payload.command, format: "code" });
+  if (isNonEmptyString(payload?.stdout)) sections.push({ label: "stdout", body: payload.stdout, format: "code" });
+  if (isNonEmptyString(payload?.stderr)) sections.push({ label: "stderr", body: payload.stderr, format: "code" });
+  return {
+    summary: `${approved ? "✅ approved & ran" : "🚫 rejected"}${cmd}${approved ? exit : ""}`,
     sections: sections.length > 0 ? sections : [payloadSection(payload)],
   };
 }
