@@ -3,18 +3,19 @@
   // and the composer/action area (still built by render.js's renderDetail into
   // #detailActionArea / #detailComposer): the pending-asking section, the
   // active tab's content, and the "Feedback sent" list. Mounted into
-  // #detailBodyMount from main.ts. The Reports tab, the Feedback-sent list, and
-  // the asking section are rendered natively here off the reactive `appState`;
-  // the Diff / Files / Events tabs still come from the *-view modules as HTML
-  // strings via {@html} (those will be migrated next). Click handling for the
-  // {@html} tabs, for line anchors inside report markdown, and for the asking
-  // buttons is delegated to handlers.js's onDetailBodyClick.
+  // #detailBodyMount from main.ts. The Reports tab, the Feedback-sent list, the
+  // asking section, and the Diff tab (DiffView.svelte) are rendered natively
+  // here off the reactive `appState`; the Files / Events tabs still come from
+  // the *-view modules as HTML strings via {@html} (those will be migrated
+  // next). Click handling for the {@html} tabs, for the diff (file collapse,
+  // gap expand, copy-path, line anchoring), for line anchors inside report
+  // markdown, and for the asking buttons is delegated to onDetailBodyClick.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
   import { state as appState, isReportExpanded, isFeedbackExpanded } from "../state.svelte.js";
   import { renderMarkdown } from "../markdown.js";
-  import { renderDiffHtml } from "../diff-view.js";
+  import DiffView from "./DiffView.svelte";
   import { renderFilesHtml } from "../files-view.js";
   import { renderEventsHtml } from "../events-view.js";
   import { onDetailBodyClick } from "../handlers.js";
@@ -22,11 +23,12 @@
   // Reports are stored oldest-first; the pane shows newest-first.
   const reportsNewestFirst = $derived([...appState.reports].reverse());
 
-  // The {@html} tab bodies replace their whole subtree on every reactive
-  // change (a streamed event re-renders the Events list; an anchor click
-  // re-highlights the Diff lines), and the Reports list prepends a freshly
-  // arrived report above whatever the user is reading — both snap the scroll
-  // position. These mirror render.js's old captureDetailScroll/restoreDetailScroll:
+  // The {@html} tab bodies replace their whole subtree on every reactive change
+  // (a streamed event re-renders the Events list), the Reports list prepends a
+  // freshly arrived report above whatever the user is reading, and expanding a
+  // collapsed gap in the Diff inserts rows that may sit above the viewport —
+  // all snap the scroll position. These mirror render.js's old
+  // captureDetailScroll/restoreDetailScroll:
   // anchor to the topmost row still reaching into the viewport (rows carry stable
   // data-* ids) rather than reusing scrollTop, so prepended rows don't shift the
   // view; sitting exactly at the top is preserved as-is. When the active tab
@@ -124,7 +126,7 @@
     {/if}
 
     {#if appState.activeTab === "diff"}
-      {@html renderDiffHtml()}
+      <DiffView />
     {:else if appState.activeTab === "files"}
       {@html renderFilesHtml()}
     {:else if appState.activeTab === "events"}

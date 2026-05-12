@@ -112,8 +112,12 @@ export function onDetailBodyClick(e) {
   const toggle = e.target.closest("[data-diff-toggle]");
   if (toggle) {
     const path = toggle.getAttribute("data-diff-toggle");
-    if (state.collapsedFiles.has(path)) state.collapsedFiles.delete(path);
-    else state.collapsedFiles.add(path);
+    // Reassign rather than mutate in place: Svelte 5's $state doesn't proxy
+    // Sets, so DiffView only re-derives when the property itself is replaced.
+    const next = new Set(state.collapsedFiles);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    state.collapsedFiles = next;
     renderDetail();
     return;
   }
@@ -157,19 +161,24 @@ export async function onReportMark(filename, read) {
   }
 }
 
+// collapsedFiles / diffExpansions are reassigned wholesale rather than mutated
+// in place: Svelte 5's $state doesn't proxy Sets/Maps, so DiffView (and the
+// scroll-capture effect in DetailBody) only react when the property is replaced.
 export function onExpandAllDiffFiles() {
-  state.collapsedFiles.clear();
-  for (const file of parseDiffFiles(state.diff)) {
-    state.diffExpansions.set(file.path, [[1, Infinity]]);
-  }
+  state.collapsedFiles = new Set();
+  const expansions = new Map();
+  for (const file of parseDiffFiles(state.diff)) expansions.set(file.path, [[1, Infinity]]);
+  state.diffExpansions = expansions;
   renderDetail();
 }
 
 export function onCollapseAllDiffFiles() {
+  const collapsed = new Set();
   for (const el of document.querySelectorAll("[data-diff-path]")) {
     const path = el.getAttribute("data-diff-path");
-    if (path) state.collapsedFiles.add(path);
+    if (path) collapsed.add(path);
   }
+  state.collapsedFiles = collapsed;
   state.diffExpansions = new Map();
   renderDetail();
 }
@@ -181,7 +190,9 @@ export function expandDiffGap(path, from, to, dir) {
   else if (dir === "down") range = [from, Math.min(to, from + DIFF_EXPAND_CHUNK - 1)];
   else range = [from, to];
   const existing = state.diffExpansions.get(path) || [];
-  state.diffExpansions.set(path, mergeLineRanges([...existing, range]));
+  const next = new Map(state.diffExpansions);
+  next.set(path, mergeLineRanges([...existing, range]));
+  state.diffExpansions = next;
   renderDetail();
 }
 

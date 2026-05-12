@@ -1,11 +1,12 @@
-// Diff tab rendering. The server hands us a full-context unified diff; this
-// module parses it and renders it GitHub-style, collapsing unchanged stretches
-// behind expandable placeholders. Every add/context line carries the same
-// data-anchor-* attributes the Files tab uses, so anchored feedback works here.
+// Diff tab model. The server hands us a full-context unified diff; this module
+// parses it and builds the structure the Diff tab renders GitHub-style,
+// collapsing unchanged stretches behind expandable placeholders. Each
+// add/context line carries its new-file line number so anchored feedback works
+// here the same way it does on the Files tab. The rendering itself lives in
+// web/svelte/DiffView.svelte.
 
-import { escapeHtml } from "./dom.js";
-import { highlightCode, languageForPath } from "./syntax-highlight.js";
-import { state, isAnchored, DIFF_CONTEXT_LINES, DIFF_EXPAND_CHUNK, DIFF_MIN_COLLAPSE } from "./state.svelte.js";
+import { languageForPath } from "./syntax-highlight.js";
+import { DIFF_CONTEXT_LINES, DIFF_EXPAND_CHUNK, DIFF_MIN_COLLAPSE } from "./state.svelte.js";
 
 export function parseDiffFiles(text) {
   const files = [];
@@ -45,47 +46,41 @@ export function parseDiffFiles(text) {
   return files;
 }
 
-export function renderDiffHtml() {
-  if (!state.diff || state.diff.trim() === "") {
-    return `<div class="diff-empty">No changes on this branch yet.</div>`;
-  }
-  const files = parseDiffFiles(state.diff);
-  const out = [];
-  for (const file of files) {
-    const collapsed = state.collapsedFiles.has(file.path);
-    const escapedPath = escapeHtml(file.path);
-    const lang = languageForPath(file.path);
-    out.push(`<div class="diff-file${collapsed ? " collapsed" : ""}" data-diff-path="${escapedPath}">`);
-    out.push(`<div class="diff-file-header" data-diff-toggle="${escapedPath}"><span class="diff-chevron">▾</span><span>${escapedPath}</span><button type="button" class="copy-path-btn" data-copy-path="${escapedPath}" title="ファイル名をコピー">⧉</button><span class="diff-summary"><span class="add-count">+${file.adds}</span><span class="remove-count">−${file.removes}</span></span></div>`);
-    out.push(`<div class="diff-file-body">`);
-    const revealed = state.diffExpansions.get(file.path) || [];
-    for (const hunk of file.hunks) {
-      out.push(`<div class="diff-hunk">${escapeHtml(hunk.header)}</div>`);
-      const rows = hunkRows(hunk);
-      const visible = visibleRows(rows, revealed);
-      for (let i = 0; i < rows.length; ) {
-        if (visible[i]) { out.push(renderDiffLineRow(rows[i], file.path, escapedPath, lang)); i++; continue; }
-        let j = i;
-        while (j < rows.length && !visible[j]) j++;
-        out.push(renderDiffExpandRow(rows.slice(i, j), escapedPath, lang));
-        i = j;
-      }
-    }
-    out.push(`</div></div>`);
-  }
-  return out.join("");
+// Build the Diff tab's render model from the raw unified diff plus the user's
+// per-file collapse / expand state. Pure — DiffView.svelte derives off this.
+// Shape: { empty: true } | { empty: false, files: [{ path, adds, removes,
+// collapsed, lang, hunks: [{ header, segments: [...] }] }] }, where a segment
+// is either { type: "line", row: { kind, oldNo, newNo, body, anchorable } } or
+// { type: "gap", from, to, count, chunked } (a run of hidden unchanged lines
+// the user can click to expand; `chunked` runs offer ↑/↓ partial expansion).
+export function buildDiffModel(diffText, collapsedFiles, diffExpansions) {
+  if (!diffText || diffText.trim() === "") return { empty: true, files: [] };
+  const files = parseDiffFiles(diffText).map(file => {
+    const revealed = diffExpansions.get(file.path) || [];
+    return {
+      path: file.path,
+      adds: file.adds,
+      removes: file.removes,
+      collapsed: collapsedFiles.has(file.path),
+      lang: languageForPath(file.path),
+      hunks: file.hunks.map(hunk => ({ header: hunk.header, segments: hunkSegments(hunkRows(hunk), revealed) })),
+    };
+  });
+  return { empty: false, files };
 }
 
-// One diff line: { kind: "add"|"remove"|"context"|"meta", oldNo, newNo, body }.
-// "meta" carries non-line content such as "\ No newline at end of file".
+// One diff line: { kind: "add"|"remove"|"context"|"meta", oldNo, newNo, body,
+// anchorable }. "meta" carries non-line content such as
+// "\ No newline at end of file". `anchorable` marks the add/context lines the
+// diff lets you anchor feedback to (by their new-file line number).
 function hunkRows(hunk) {
   const rows = [];
   let oldNo = hunk.oldLine, newNo = hunk.newLine;
   for (const raw of hunk.lines) {
-    if (raw.startsWith("+")) { rows.push({ kind: "add", oldNo: null, newNo, body: raw.slice(1) }); newNo++; }
-    else if (raw.startsWith("-")) { rows.push({ kind: "remove", oldNo, newNo: null, body: raw.slice(1) }); oldNo++; }
-    else if (raw.startsWith(" ")) { rows.push({ kind: "context", oldNo, newNo, body: raw.slice(1) }); oldNo++; newNo++; }
-    else rows.push({ kind: "meta", oldNo: null, newNo: null, body: raw });
+    if (raw.startsWith("+")) { rows.push({ kind: "add", oldNo: null, newNo, body: raw.slice(1), anchorable: true }); newNo++; }
+    else if (raw.startsWith("-")) { rows.push({ kind: "remove", oldNo, newNo: null, body: raw.slice(1), anchorable: false }); oldNo++; }
+    else if (raw.startsWith(" ")) { rows.push({ kind: "context", oldNo, newNo, body: raw.slice(1), anchorable: true }); oldNo++; newNo++; }
+    else rows.push({ kind: "meta", oldNo: null, newNo: null, body: raw, anchorable: false });
   }
   return rows;
 }
@@ -114,34 +109,26 @@ function visibleRows(rows, revealed) {
   return visible;
 }
 
-function renderDiffLineRow(row, path, escapedPath, lang) {
-  if (row.kind === "meta") {
-    return `<div class="diff-line meta"><span class="ln"></span><span class="ln"></span><span class="body">${escapeHtml(row.body)}</span></div>`;
+// Turn a hunk's rows into the segments DiffView paints: visible rows pass
+// through one at a time; each maximal run of hidden rows becomes one "gap"
+// placeholder spanning its new-file line range. A hidden run with no
+// new-file-numbered line in it (a collapsed pure-deletion block) can't be
+// expanded, so those rows are shown instead.
+function hunkSegments(rows, revealed) {
+  const visible = visibleRows(rows, revealed);
+  const segments = [];
+  for (let i = 0; i < rows.length; ) {
+    if (visible[i]) { segments.push({ type: "line", row: rows[i] }); i++; continue; }
+    let j = i;
+    while (j < rows.length && !visible[j]) j++;
+    const hidden = rows.slice(i, j);
+    let from = null, to = null;
+    for (const row of hidden) { if (row.newNo == null) continue; if (from == null) from = row.newNo; to = row.newNo; }
+    if (from == null) for (const row of hidden) segments.push({ type: "line", row });
+    else segments.push({ type: "gap", from, to, count: to - from + 1, chunked: to - from + 1 > DIFF_EXPAND_CHUNK });
+    i = j;
   }
-  const oldCol = row.kind === "remove" ? row.oldNo : "";
-  const newCol = row.kind === "remove" ? "" : row.newNo;
-  const anchorable = row.kind === "add" || row.kind === "context";
-  const sel = anchorable && isAnchored(path, row.newNo) ? "selected" : "";
-  const dataAttrs = anchorable ? `data-anchor-line="${row.newNo}" data-anchor-path="${escapedPath}"` : "";
-  return `<div class="diff-line ${row.kind} ${sel}" ${dataAttrs}><span class="ln">${oldCol}</span><span class="ln">${newCol}</span><span class="body">${highlightCode(row.body, lang)}</span></div>`;
-}
-
-function renderDiffExpandRow(hiddenRows, escapedPath, lang) {
-  let from = null, to = null;
-  for (const row of hiddenRows) {
-    if (row.newNo == null) continue;
-    if (from == null) from = row.newNo;
-    to = row.newNo;
-  }
-  if (from == null) return hiddenRows.map(r => renderDiffLineRow(r, "", escapedPath, lang)).join("");
-  const count = to - from + 1;
-  const data = `data-expand-path="${escapedPath}" data-expand-from="${from}" data-expand-to="${to}"`;
-  const chunked = count > DIFF_EXPAND_CHUNK;
-  const down = chunked ? `<button type="button" class="diff-expand-btn" ${data} data-expand-dir="down" title="Expand ${DIFF_EXPAND_CHUNK} lines from above">↓</button>` : "";
-  const up = chunked ? `<button type="button" class="diff-expand-btn" ${data} data-expand-dir="up" title="Expand ${DIFF_EXPAND_CHUNK} lines from below">↑</button>` : "";
-  const label = `<span class="diff-expand-label">${count} unchanged line${count === 1 ? "" : "s"}${chunked ? " — click to expand all" : " — click to expand"}</span>`;
-  // The whole row falls back to data-expand-dir="all"; the ↑/↓ buttons override it.
-  return `<div class="diff-line diff-expand-row" ${data} data-expand-dir="all" role="button"><span class="ln">⋯</span><span class="ln"></span><span class="body">${down}${label}${up}</span></div>`;
+  return segments;
 }
 
 export function mergeLineRanges(ranges) {

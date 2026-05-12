@@ -1,6 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseDiffFiles, mergeLineRanges, renderDiffHtml } from "../web/diff-view.js";
-import { state } from "../web/state.svelte.js";
+import { parseDiffFiles, mergeLineRanges, buildDiffModel } from "../web/diff-view.js";
 
 test("parseDiffFiles splits a unified diff into files, hunks and counts", () => {
   const diff = [
@@ -61,18 +60,66 @@ test("mergeLineRanges does not mutate its input", () => {
   expect(input).toEqual([[1, 3], [2, 5]]);
 });
 
-test("renderDiffHtml puts a copy-path control in each file header", () => {
-  state.diff = [
-    "diff --git a/src/foo.ts b/src/foo.ts",
-    "index 0000001..0000002 100644",
-    "--- a/src/foo.ts",
-    "+++ b/src/foo.ts",
-    "@@ -1,1 +1,1 @@",
-    "-a",
-    "+b",
-  ].join("\n");
-  state.collapsedFiles = new Set();
-  state.diffExpansions = new Map();
-  const html = renderDiffHtml();
-  expect(html).toContain(`data-copy-path="src/foo.ts"`);
+test("buildDiffModel reports an empty diff", () => {
+  expect(buildDiffModel("", new Set(), new Map())).toEqual({ empty: true, files: [] });
+  expect(buildDiffModel("   \n", new Set(), new Map())).toEqual({ empty: true, files: [] });
+});
+
+// One change at the top of a long file: the lines around the change stay
+// visible, the unchanged tail collapses behind a single expandable gap, and the
+// file header carries the path the copy-path control / collapse toggle key on.
+const longDiff = [
+  "diff --git a/big.txt b/big.txt",
+  "index 0000001..0000002 100644",
+  "--- a/big.txt",
+  "+++ b/big.txt",
+  "@@ -1,12 +1,12 @@",
+  "-old",
+  "+new",
+  " l2",
+  " l3",
+  " l4",
+  " l5",
+  " l6",
+  " l7",
+  " l8",
+  " l9",
+  " l10",
+  " l11",
+  " l12",
+].join("\n");
+
+test("buildDiffModel collapses an unchanged stretch into one gap segment", () => {
+  const model = buildDiffModel(longDiff, new Set(), new Map());
+  expect(model.empty).toBe(false);
+  expect(model.files).toHaveLength(1);
+  const file = model.files[0];
+  expect(file.path).toBe("big.txt");
+  expect(file.collapsed).toBe(false);
+  expect(file.adds).toBe(1);
+  expect(file.removes).toBe(1);
+  expect(file.hunks).toHaveLength(1);
+
+  const segments = file.hunks[0].segments;
+  const lines = segments.filter(s => s.type === "line");
+  const gaps = segments.filter(s => s.type === "gap");
+  // -old, +new, and the 3 context lines kept around the change (DIFF_CONTEXT_LINES).
+  expect(lines).toHaveLength(5);
+  expect(gaps).toHaveLength(1);
+  expect(gaps[0]).toMatchObject({ from: 5, to: 12, count: 8, chunked: false });
+  expect(lines[0].row).toMatchObject({ kind: "remove", oldNo: 1, newNo: null, body: "old", anchorable: false });
+  expect(lines[1].row).toMatchObject({ kind: "add", oldNo: null, newNo: 1, body: "new", anchorable: true });
+  expect(lines[2].row).toMatchObject({ kind: "context", newNo: 2, anchorable: true });
+});
+
+test("buildDiffModel marks a file collapsed when its path is in collapsedFiles", () => {
+  const model = buildDiffModel(longDiff, new Set(["big.txt"]), new Map());
+  expect(model.files[0].collapsed).toBe(true);
+});
+
+test("buildDiffModel reveals lines covered by diffExpansions, removing the gap", () => {
+  const model = buildDiffModel(longDiff, new Set(), new Map([["big.txt", [[5, 12]]]]));
+  const segments = model.files[0].hunks[0].segments;
+  expect(segments.every(s => s.type === "line")).toBe(true);
+  expect(segments).toHaveLength(13); // -old, +new, l2..l12
 });
