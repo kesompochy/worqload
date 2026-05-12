@@ -710,6 +710,8 @@ test("GET /sessions/:id/feedback merges inbox and read with status", async () =>
 
   const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then(r => r.json());
   expect(history.messages).toHaveLength(3);
+  // newest (highest serial) first
+  expect(history.messages.map((m: { content: string }) => m.content)).toEqual(["third", "second", "first"]);
   // first two were drained (status read), third is unread
   const byContent = Object.fromEntries(history.messages.map((m: { content: string; status: string }) => [m.content, m.status]));
   expect(byContent["first"]).toBe("read");
