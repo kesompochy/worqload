@@ -8,21 +8,21 @@
 - 新規セッションモーダル → `web/svelte/NewSessionModal.svelte`（`main.ts` が `document.body` にマウント、`#btnNew` の click で `open()`）。
 - 共有ビュー状態を `web/state.svelte.js` に移し `$state(...)` でラップ（リアクティブ）。まだ vanilla の `api.js` / `handlers.js` がそのまま読み書きしている。
 - サイドバーのセッション一覧 → `web/svelte/SessionList.svelte`（`main.ts` が `#sessionList` にマウント）。`render.js` の `renderSessionList()` は no-op stub として残置（`api.js` / `handlers.js` が「セッション変わった」シグナルとして呼び続ける。`state` は既に更新済みなのでやることが無い）。
+- 詳細ペインの上部（ヘッダ + メタ行 + タブバー）→ `web/svelte/DetailHeader.svelte`（`main.ts` が `#detailHeader` にマウント）。`#detail` を `#detailHeader`（Svelte）+ `#detailMain`（`detail-main` クラス、`renderDetail()` の新しいターゲット）に分割。`renderDetail()` は `#detailHeader` には触れず `#detailMain`（asking / タブ本体 / Feedback sent / composer）だけを再構築する。タブクリックは Svelte から `switchTab()` を呼ぶ（`switchTab` はまだ diff/files の遅延ロード + `renderDetail()` を伴う — タブ本体が vanilla なので簡略化はできない）。Diff タブ時の Expand all / Collapse all ボタンも DetailHeader に移動。`refreshEventsTabLabel()` は残置（Svelte がレンダした `.tab-btn[data-tab="events"]` の `.tab-event-age` を 1秒ごとに DOM 直叩きで更新 — イベント本体が来ない間も相対時刻を進めるため。Events タブ Svelte 化時に `$effect` へ畳む）。
 
 ## 残り（おおむねこの順で、各々 1〜数コミット）
 
-`render.js` の `renderDetail()`（詳細ペイン全体を `#detail` に innerHTML で構築している巨大関数）を解体して Svelte 化する。サブ領域ごとに分けられる:
+`render.js` の `renderDetail()`（`#detailMain` を innerHTML で構築している関数）を解体して Svelte 化する。サブ領域ごとに分けられる:
 
-1. **詳細ヘッダ + メタ + タブバー**（`#detail` 上部、`detail-header` / `detail-meta` / `.tabs`）。`switchTab` は `state.activeTab` を変えるだけにできる。
-2. **Reports タブ** + **Feedback sent** セクション（`state.reports` / `state.feedbackHistory`、`isReportExpanded` / `isFeedbackExpanded`、`onReportMark` などのトグル）。
-3. **Diff タブ** — `web/diff-view.js` の `renderDiffHtml()` / `parseDiffFiles` / `mergeLineRanges` / `renderDiffHtml` を Svelte コンポーネント化。`src/diff-view.test.ts` が `renderDiffHtml` を文字列で検証しているので、コンポーネント化したらこのテストを書き直す（`parseDiffFiles` / `mergeLineRanges` は純粋関数なので残せる）。`onExpandAllDiffFiles` / `onCollapseAllDiffFiles` / `expandDiffGap` / 行クリックでアンカー（`onLineClick`）。
-4. **Files タブ** — `web/files-view.js` の `renderFilesHtml()` / `buildFileTree`。`src/files-view.test.ts` 同様。`selectFile`、ディレクトリ折りたたみ。
-5. **Events タブ** — `web/events-view.js` の `renderEventsHtml()` / `describeEvent`（`describeEvent` は純粋、`src/events-view.test.ts` で検証中なので残す）。`refreshEventsTabLabel`（1秒ごとに Events タブの「Ns ago」を更新）はコンポーネント内の `$effect` + `setInterval` か、`$derived` + 別の時刻 `$state` で置換できる。
-6. **action bar + action panel** — `web/actions-view.js` の `renderActionPanelHtml()`、`toggleActionPanel` / `runOpenAction` / `onResolveCommand`。
-7. **composer フォーム**（feedback / resume、`anchor-chip`、IME ガード付き Enter 送信）。`bindEnterToSubmit` / `onFeedback` / `onResume` / `clearAnchor`。
-8. **asking セクション**（保留中のエスカレ回答 UI、`onResolve`）。
-9. 上記が全部 Svelte 化できたら **`render.js` 全体を削除**し、`api.js` / `handlers.js` から `renderDetail` / `renderSessionList` の呼び出しを除去（`state` 更新だけにする）。`renderDetail` がやっていたスクロール位置の退避・復元のハックは、Svelte が DOM を破棄しない（keyed each、`{#if}` の安定性）ので大部分が不要になるはず。`captureDetailScroll` / `restoreDetailScroll` / `state.tabScroll` の必要性を再評価。
-10. `main.ts` を整理（最終的には `import "./app.js"` を解体し、`app.js` の初期 fetch / 30秒ポーリング / 1秒ティックを Svelte 側（ルートコンポーネントの `onMount` / `$effect`）へ移す）。`index.html` のシェルも最小化（`#detail` / `#sessionList` / `#toast` の素の div は最終的に Svelte ルートに置換可能）。
+1. **Reports タブ** + **Feedback sent** セクション（`state.reports` / `state.feedbackHistory`、`isReportExpanded` / `isFeedbackExpanded`、`onReportMark` などのトグル）。
+2. **Diff タブ** — `web/diff-view.js` の `renderDiffHtml()` / `parseDiffFiles` / `mergeLineRanges` / `renderDiffHtml` を Svelte コンポーネント化。`src/diff-view.test.ts` が `renderDiffHtml` を文字列で検証しているので、コンポーネント化したらこのテストを書き直す（`parseDiffFiles` / `mergeLineRanges` は純粋関数なので残せる）。`onExpandAllDiffFiles` / `onCollapseAllDiffFiles` / `expandDiffGap` / 行クリックでアンカー（`onLineClick`）。
+3. **Files タブ** — `web/files-view.js` の `renderFilesHtml()` / `buildFileTree`。`src/files-view.test.ts` 同様。`selectFile`、ディレクトリ折りたたみ。
+4. **Events タブ** — `web/events-view.js` の `renderEventsHtml()` / `describeEvent`（`describeEvent` は純粋、`src/events-view.test.ts` で検証中なので残す）。`refreshEventsTabLabel`（1秒ごとに Events タブの「Ns ago」を更新）はコンポーネント内の `$effect` + `setInterval` か、`$derived` + 別の時刻 `$state` で置換できる（その時 `render.js` から `refreshEventsTabLabel` を削除し、`app.js` の `setInterval(refreshEventsTabLabel, 1_000)` も外す）。
+5. **action bar + action panel** — `web/actions-view.js` の `renderActionPanelHtml()`、`toggleActionPanel` / `runOpenAction` / `onResolveCommand`。
+6. **composer フォーム**（feedback / resume、`anchor-chip`、IME ガード付き Enter 送信）。`bindEnterToSubmit` / `onFeedback` / `onResume` / `clearAnchor`。
+7. **asking セクション**（保留中のエスカレ回答 UI、`onResolve`）。
+8. 上記が全部 Svelte 化できたら **`render.js` 全体を削除**し、`api.js` / `handlers.js` から `renderDetail` / `renderSessionList` の呼び出しを除去（`state` 更新だけにする）。`renderDetail` がやっていたスクロール位置の退避・復元のハックは、Svelte が DOM を破棄しない（keyed each、`{#if}` の安定性）ので大部分が不要になるはず。`captureDetailScroll` / `restoreDetailScroll` / `state.tabScroll` の必要性を再評価。
+9. `main.ts` を整理（最終的には `import "./app.js"` を解体し、`app.js` の初期 fetch / 30秒ポーリング / 1秒ティックを Svelte 側（ルートコンポーネントの `onMount` / `$effect`）へ移す）。`index.html` のシェルも最小化（`#detailHeader` / `#detailMain` / `#sessionList` / `#toast` の素の div は最終的に Svelte ルートに置換可能）。
 
 ## 注意点 / 落とし穴
 
