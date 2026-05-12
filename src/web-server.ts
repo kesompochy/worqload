@@ -34,7 +34,7 @@ import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerato
 // without permission prompts regardless of which permission mode the rest of
 // the session uses.
 const WORQLOAD_PROTOCOL_ALLOW =
-  "Bash(worqload report submit:*) Bash(worqload escalate submit:*) " +
+  "Bash(worqload report submit:*) Bash(worqload escalate submit:*) Bash(worqload escalate command:*) " +
   "Bash(worqload feedback fetch) Bash(worqload feedback fetch:*)";
 
 // Tries to bind on the requested port and shifts upward on EADDRINUSE so a
@@ -148,6 +148,97 @@ function reportsDirFor(ctx: ServerContext, sessionId: string): string {
 
 function askingDirFor(ctx: ServerContext, sessionId: string): string {
   return join(ctx.sessionsDir, sessionId, "asking");
+}
+
+// A command-approval escalation is an ordinary `asking/<NNN>-<slug>.md` (for the
+// human-readable "REQUIRE APPROVAL" view) paired with this sidecar JSON holding
+// the exact command to run. The `.command.json` extension keeps it out of
+// `listAllFiles`, which only globs `.md`, so the rest of the escalation
+// machinery treats the pair as a single asking entry.
+function commandSidecarFilename(askingMdFilename: string): string {
+  return askingMdFilename.replace(/\.md$/, ".command.json");
+}
+
+interface CommandApproval {
+  command: string;
+  reason?: string;
+}
+
+function buildCommandApprovalMarkdown(command: string, reason: string): string {
+  const parts = [
+    "# REQUIRE APPROVAL",
+    "The agent is asking permission to run a command outside its allowlist.",
+  ];
+  if (reason !== "") parts.push(reason);
+  parts.push("```\n" + command + "\n```");
+  return parts.join("\n\n") + "\n";
+}
+
+const APPROVED_COMMAND_TIMEOUT_MS = 5 * 60_000;
+const APPROVED_COMMAND_OUTPUT_LIMIT = 50_000;
+
+function truncateOutput(text: string): string {
+  if (text.length <= APPROVED_COMMAND_OUTPUT_LIMIT) return text;
+  const dropped = text.length - APPROVED_COMMAND_OUTPUT_LIMIT;
+  return `${text.slice(0, APPROVED_COMMAND_OUTPUT_LIMIT)}\n[... ${dropped} more characters truncated]`;
+}
+
+interface ApprovedCommandResult {
+  exitCode: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+// Runs an approved command via `sh -c` in the session worktree (mirroring how
+// claude's Bash tool would have run it). Killed after a timeout so a hung
+// command can't wedge the resolve request.
+async function runApprovedCommand(command: string, cwd: string): Promise<ApprovedCommandResult> {
+  const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: "pipe", stderr: "pipe", env: process.env });
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; try { proc.kill("SIGKILL"); } catch {} }, APPROVED_COMMAND_TIMEOUT_MS);
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  const exitCode = await proc.exited;
+  clearTimeout(timer);
+  return {
+    exitCode: typeof exitCode === "number" ? exitCode : null,
+    signal: proc.signalCode ?? null,
+    stdout: truncateOutput(stdout),
+    stderr: truncateOutput(stderr),
+    timedOut,
+  };
+}
+
+function describeCommandExit(result: ApprovedCommandResult): string {
+  if (result.timedOut) return `killed (timed out after ${APPROVED_COMMAND_TIMEOUT_MS / 60_000}m)`;
+  if (result.signal) return `killed by ${result.signal}`;
+  return String(result.exitCode ?? "unknown");
+}
+
+function fencedBlock(text: string): string {
+  return "```\n" + (text === "" ? "(empty)" : text.replace(/\n$/, "")) + "\n```";
+}
+
+function formatApprovedCommandFeedback(escalationFilename: string, command: string, result: ApprovedCommandResult): string {
+  return [
+    `Re: command approval ${escalationFilename}`,
+    "The human approved this command. worqload ran it in your worktree; here is the result.",
+    `## Command\n\n${fencedBlock(command)}`,
+    `## Exit code\n\n${describeCommandExit(result)}`,
+    `## stdout\n\n${fencedBlock(result.stdout)}`,
+    `## stderr\n\n${fencedBlock(result.stderr)}`,
+  ].join("\n\n") + "\n";
+}
+
+function formatRejectedCommandFeedback(escalationFilename: string, command: string, reason: string): string {
+  const parts = [
+    `Re: command approval ${escalationFilename}`,
+    "The human rejected this command; it was not run. Do not retry it. Use a different approach, or escalate for guidance.",
+    `## Rejected command\n\n${fencedBlock(command)}`,
+  ];
+  if (reason !== "") parts.push(`## Reason given\n\n${reason}`);
+  return parts.join("\n\n") + "\n";
 }
 
 function feedbackInboxDirFor(ctx: ServerContext, sessionId: string): string {
@@ -405,6 +496,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
   defineRoute("POST", "/internal/sessions/:id/escalations", postInternalEscalations),
+  defineRoute("POST", "/internal/sessions/:id/command-approvals", postInternalCommandApprovals),
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
 ];
 
@@ -740,10 +832,21 @@ async function postReportUnread(_req: Request, ctx: ServerContext, params: Recor
 
 async function getAsking(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const asking = await listAllFiles(askingDirFor(ctx, meta.id));
-    return json({
-      asking: asking.map(a => ({ filename: a.filename, content: a.content })),
-    });
+    const dir = askingDirFor(ctx, meta.id);
+    const asking = await listAllFiles(dir);
+    const decorated = await Promise.all(asking.map(async a => {
+      const sidecar = Bun.file(join(dir, commandSidecarFilename(a.filename)));
+      if (await sidecar.exists()) {
+        try {
+          const parsed = (await sidecar.json()) as CommandApproval;
+          if (typeof parsed?.command === "string") {
+            return { filename: a.filename, content: a.content, command: parsed.command };
+          }
+        } catch { /* corrupt sidecar — fall back to a plain escalation entry */ }
+      }
+      return { filename: a.filename, content: a.content };
+    }));
+    return json({ asking: decorated });
   });
 }
 
@@ -911,37 +1014,74 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
 }
 
 interface ResolveBody {
-  content: string;
+  content?: string;
+  decision?: "approve" | "reject";
 }
 
 async function postEscalationResolve(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const body = (await req.json()) as ResolveBody;
-    if (!body || typeof body.content !== "string" || body.content.trim() === "") {
-      return json({ error: "content is required" }, 400);
-    }
-
     const askingDir = askingDirFor(ctx, meta.id);
     const askingFilePath = join(askingDir, params.filename);
     const askingFile = Bun.file(askingFilePath);
     if (!(await askingFile.exists())) {
       return json({ error: "escalation not found" }, 404);
     }
-    const question = await askingFile.text();
 
+    const body = (await req.json().catch(() => ({}))) as ResolveBody;
+    const sidecarPath = join(askingDir, commandSidecarFilename(params.filename));
+    const sidecarFile = Bun.file(sidecarPath);
+    const isCommandApproval = await sidecarFile.exists();
     const resolvedDir = join(askingDir, "resolved");
-    await moveFile(askingFilePath, join(resolvedDir, params.filename));
+
+    let feedbackContent: string;
+    let slug: string;
+    let resolvedPayload: Record<string, unknown>;
+    let runResult: ApprovedCommandResult | undefined;
+
+    if (isCommandApproval) {
+      const decision = body.decision;
+      if (decision !== "approve" && decision !== "reject") {
+        return json({ error: "decision must be 'approve' or 'reject'" }, 400);
+      }
+      let command = "";
+      try { command = ((await sidecarFile.json()) as CommandApproval).command ?? ""; } catch { /* corrupt sidecar */ }
+      await moveFile(askingFilePath, join(resolvedDir, params.filename));
+      await moveFile(sidecarPath, join(resolvedDir, commandSidecarFilename(params.filename)));
+      if (decision === "approve") {
+        runResult = await runApprovedCommand(command, meta.worktreePath);
+        feedbackContent = formatApprovedCommandFeedback(params.filename, command, runResult);
+      } else {
+        const reason = typeof body.content === "string" ? body.content.trim() : "";
+        feedbackContent = formatRejectedCommandFeedback(params.filename, command, reason);
+      }
+      slug = `command-${decision}`;
+      resolvedPayload = {
+        filename: params.filename,
+        decision,
+        command,
+        ...(runResult
+          ? { exitCode: runResult.exitCode, signal: runResult.signal, timedOut: runResult.timedOut }
+          : {}),
+      };
+    } else {
+      if (typeof body.content !== "string" || body.content.trim() === "") {
+        return json({ error: "content is required" }, 400);
+      }
+      const question = await askingFile.text();
+      await moveFile(askingFilePath, join(resolvedDir, params.filename));
+      feedbackContent =
+        `Re: escalation ${params.filename}\n\n## Question\n\n${question.trim()}\n\n## Answer\n\n${body.content}`;
+      slug = `answer-${params.filename.replace(/^\d+-/, "").replace(/\.md$/, "")}`;
+      resolvedPayload = { filename: params.filename };
+    }
 
     const inbox = feedbackInboxDirFor(ctx, meta.id);
-    const slug = `answer-${params.filename.replace(/^\d+-/, "").replace(/\.md$/, "")}`;
-    const feedbackContent =
-      `Re: escalation ${params.filename}\n\n## Question\n\n${question.trim()}\n\n## Answer\n\n${body.content}`;
     const file = await writeNumberedFile(inbox, slug, feedbackContent, {
       archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
     });
     await appendAndBroadcast(ctx, meta.id, {
       kind: "escalation_resolved",
-      payload: { filename: params.filename, answerFilename: file.filename },
+      payload: { ...resolvedPayload, answerFilename: file.filename },
     });
     await appendAndBroadcast(ctx, meta.id, {
       kind: "feedback_received",
@@ -960,7 +1100,17 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       att.client.send("[wake] check feedback inbox").catch(() => {});
     }
 
-    return json({ ok: true, answerFilename: file.filename, meta: updatedMeta });
+    return json({
+      ok: true,
+      answerFilename: file.filename,
+      ...(isCommandApproval
+        ? {
+            decision: body.decision,
+            ...(runResult ? { exitCode: runResult.exitCode, stdout: runResult.stdout, stderr: runResult.stderr } : {}),
+          }
+        : {}),
+      meta: updatedMeta,
+    });
   });
 }
 
@@ -1041,6 +1191,39 @@ async function postInternalEscalations(req: Request, ctx: ServerContext, params:
       await transitionStatus(ctx, meta, "waiting_human");
     }
     await appendAndBroadcast(ctx, meta.id, { kind: "escalation_requested", payload: { filename: file.filename } });
+    return json({ filename: file.filename, seq: file.seq });
+  });
+}
+
+interface CommandApprovalBody {
+  command: string;
+  reason?: string;
+}
+
+// The agent asks the human to approve running a command outside its allowlist
+// (`worqload escalate command`). Stored like an escalation — an `asking/*.md`
+// plus a `.command.json` sidecar — so it shows up in the same waiting_human
+// flow; the resolve endpoint then runs (or refuses) the command and feeds the
+// result back via the inbox.
+async function postInternalCommandApprovals(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json()) as CommandApprovalBody;
+    if (!body || typeof body.command !== "string" || body.command.trim() === "") {
+      return json({ error: "command is required" }, 400);
+    }
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    const dir = askingDirFor(ctx, meta.id);
+    const file = await writeNumberedFile(dir, "command-approval", buildCommandApprovalMarkdown(body.command, reason), {
+      archiveDirs: [join(dir, "resolved")],
+    });
+    await Bun.write(join(dir, commandSidecarFilename(file.filename)), JSON.stringify({ command: body.command, ...(reason ? { reason } : {}) }, null, 2));
+    if (!isTerminal(meta.status) && meta.status !== "waiting_human") {
+      await transitionStatus(ctx, meta, "waiting_human");
+    }
+    await appendAndBroadcast(ctx, meta.id, {
+      kind: "escalation_requested",
+      payload: { filename: file.filename, command: body.command },
+    });
     return json({ filename: file.filename, seq: file.seq });
   });
 }

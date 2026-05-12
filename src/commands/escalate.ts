@@ -1,13 +1,27 @@
-// agent-side CLI: `worqload escalate submit --slug <slug>` (body via stdin)
+// agent-side CLI:
+//   `worqload escalate submit --slug <slug>`        (question body via stdin)
+//   `worqload escalate command --command "<cmd>"`   (optional reason via stdin)
 
-import { submitEscalation } from "../agent-client";
+import { submitEscalation, requestCommandApproval } from "../agent-client";
 import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, exitWithUsage } from "./cli-helpers";
 
+const USAGE =
+  "worqload escalate submit --slug <slug>          (question body via stdin)\n" +
+  "       worqload escalate command --command <cmd>      (optional reason via stdin)";
+
 export async function escalate(args: string[]): Promise<void> {
-  if (args[0] !== "submit") {
-    exitWithUsage("worqload escalate submit --slug <slug>  (body via stdin)");
+  switch (args[0]) {
+    case "submit":
+      return escalateSubmit(args.slice(1));
+    case "command":
+      return escalateCommand(args.slice(1));
+    default:
+      exitWithUsage(USAGE);
   }
-  const slug = requireFlag(args.slice(1), "--slug");
+}
+
+async function escalateSubmit(args: string[]): Promise<void> {
+  const slug = requireFlag(args, "--slug");
   const content = await readAllStdin();
   if (content.trim() === "") {
     console.error("escalation body must be provided on stdin");
@@ -20,6 +34,24 @@ export async function escalate(args: string[]): Promise<void> {
     console.log(result.filename);
   } catch (err) {
     console.error(`escalate submit failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
+async function escalateCommand(args: string[]): Promise<void> {
+  const command = requireFlag(args, "--command");
+  if (command.trim() === "") {
+    console.error("--command must not be empty");
+    process.exit(2);
+  }
+  const reason = (await readAllStdin()).trim();
+  const sessionId = requireEnv("WORQLOAD_SESSION_ID");
+  const endpoint = resolveAgentEndpoint();
+  try {
+    const result = await requestCommandApproval(endpoint, sessionId, command, reason);
+    console.log(result.filename);
+  } catch (err) {
+    console.error(`escalate command failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
 }

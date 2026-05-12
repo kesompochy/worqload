@@ -2,7 +2,7 @@ import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { writeFileSync, mkdirSync } from "fs";
 import { startServer } from "./web-server";
-import { submitReport, submitEscalation, fetchFeedback } from "./agent-client";
+import { submitReport, submitEscalation, requestCommandApproval, fetchFeedback } from "./agent-client";
 import { makeTmpDir, cleanupAll, trackCleanup } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -64,6 +64,19 @@ test("submitEscalation flips status to waiting_human", async () => {
 
   const detail = await fetch(`${endpoint}/sessions/${sessionId}`).then(r => r.json());
   expect(detail.meta.status).toBe("waiting_human");
+});
+
+test("requestCommandApproval files a command-approval escalation", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+
+  const r = await requestCommandApproval(endpoint, sessionId, "npm publish", "release it");
+  expect(r.filename).toBe("001-command-approval.md");
+
+  const detail = await fetch(`${endpoint}/sessions/${sessionId}`).then(r => r.json());
+  expect(detail.meta.status).toBe("waiting_human");
+
+  const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
+  expect(asking.asking[0].command).toBe("npm publish");
 });
 
 test("fetchFeedback returns and drains the inbox", async () => {

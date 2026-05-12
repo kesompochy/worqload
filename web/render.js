@@ -22,6 +22,7 @@ import {
   onRenameCancel,
   onFeedback,
   onResolve,
+  onResolveCommand,
   onDetailBodyClick,
   onExpandAllDiffFiles,
   onCollapseAllDiffFiles,
@@ -186,18 +187,24 @@ export function renderDetail() {
   const m = state.detail.meta;
   const askingHtml = state.asking.length > 0
     ? `<section class="asking">
-         <div class="label">⚠ Question pending — answer below to resume</div>
-         ${state.asking.map(a => `
-           <article data-asking="${escapeHtml(a.filename)}" style="margin-top:.6rem">
-             <div class="filename">${escapeHtml(a.filename)}</div>
-             <div class="md">${renderMarkdown(a.content)}</div>
-             <textarea class="ask-answer" rows="3" placeholder="Your answer..." style="margin-top:.4rem"></textarea>
-             <div class="row" style="margin-top:.3rem">
-               <span class="spacer"></span>
-               <button class="ask-resolve">Answer</button>
-             </div>
-           </article>
-         `).join("")}
+         <div class="label">⚠ Waiting for you — respond below to resume</div>
+         ${state.asking.map(a => {
+           const body = `<div class="filename">${escapeHtml(a.filename)}</div>
+             <div class="md">${renderMarkdown(a.content)}</div>`;
+           const controls = typeof a.command === "string"
+             ? `<textarea class="ask-answer" rows="2" placeholder="Optional reason (sent to the agent if you reject)..." style="margin-top:.4rem"></textarea>
+                <div class="row" style="margin-top:.3rem">
+                  <span class="spacer"></span>
+                  <button class="ask-reject">Reject</button>
+                  <button class="ask-approve">Approve &amp; run</button>
+                </div>`
+             : `<textarea class="ask-answer" rows="3" placeholder="Your answer..." style="margin-top:.4rem"></textarea>
+                <div class="row" style="margin-top:.3rem">
+                  <span class="spacer"></span>
+                  <button class="ask-resolve">Answer</button>
+                </div>`;
+           return `<article data-asking="${escapeHtml(a.filename)}" style="margin-top:.6rem">${body}${controls}</article>`;
+         }).join("")}
        </section>`
     : "";
   const reportsHtml = state.reports.length > 0
@@ -358,7 +365,9 @@ export function renderDetail() {
   if (btnCollapseAll) btnCollapseAll.addEventListener("click", onCollapseAllDiffFiles);
   document.querySelectorAll("[data-asking]").forEach(el => {
     const filename = el.getAttribute("data-asking");
-    el.querySelector(".ask-resolve").addEventListener("click", () => onResolve(filename, el));
+    el.querySelector(".ask-resolve")?.addEventListener("click", () => onResolve(filename, el));
+    el.querySelector(".ask-approve")?.addEventListener("click", () => onResolveCommand(filename, "approve", el));
+    el.querySelector(".ask-reject")?.addEventListener("click", () => onResolveCommand(filename, "reject", el));
   });
   $("#detailBody").addEventListener("click", onDetailBodyClick);
   if (state.anchor) $("#anchorClear").addEventListener("click", clearAnchor);
