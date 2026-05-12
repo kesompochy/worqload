@@ -85,6 +85,33 @@ export async function resolveBaseCommit(
   return out.trim();
 }
 
+// The push URL of `origin`, or the first remote if there's no `origin`, or null
+// if the worktree has no remotes. Used only to build "open this on GitHub"
+// permalinks — no fetch, just a config read.
+export async function gitRemoteUrl(worktreePath: string): Promise<string | null> {
+  const url = await gitOutput(worktreePath, ["remote", "get-url", "origin"]);
+  if (url !== null) return url;
+  const remotes = await gitOutput(worktreePath, ["remote"]);
+  const first = remotes?.split("\n").map(r => r.trim()).find(r => r !== "");
+  if (!first) return null;
+  return gitOutput(worktreePath, ["remote", "get-url", first]);
+}
+
+export async function gitHeadSha(worktreePath: string): Promise<string | null> {
+  return gitOutput(worktreePath, ["rev-parse", "HEAD"]);
+}
+
+async function gitOutput(worktreePath: string, args: string[]): Promise<string | null> {
+  const proc = Bun.spawn(
+    ["git", ...args],
+    { stdout: "pipe", stderr: "pipe", cwd: worktreePath, env: cleanGitEnv() },
+  );
+  const out = await new Response(proc.stdout).text();
+  if ((await proc.exited) !== 0) return null;
+  const trimmed = out.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
 export async function currentBranch(repoDir: string): Promise<string> {
   const proc = Bun.spawn(
     ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -296,6 +323,8 @@ export interface WorktreeOps {
   gitDiff(worktreePath: string, target: string, contextLines?: number): Promise<string>;
   listWorktreeFiles(worktreePath: string): Promise<string[]>;
   readWorktreeFile(worktreePath: string, relPath: string): Promise<WorktreeFileContent>;
+  gitRemoteUrl(worktreePath: string): Promise<string | null>;
+  gitHeadSha(worktreePath: string): Promise<string | null>;
 }
 
 export const realWorktreeOps: WorktreeOps = {
@@ -307,4 +336,6 @@ export const realWorktreeOps: WorktreeOps = {
   gitDiff,
   listWorktreeFiles,
   readWorktreeFile,
+  gitRemoteUrl,
+  gitHeadSha,
 };

@@ -113,6 +113,8 @@ export function fakeWorktreeOps(): WorktreeOps {
     // Reading a single file is pure fs (path-escape checks, binary sniff, size
     // limit) with no git, so the production implementation is the fake too.
     readWorktreeFile: realWorktreeOps.readWorktreeFile,
+    async gitRemoteUrl() { return "git@github.com:owner/repo.git"; },
+    async gitHeadSha() { return "f".repeat(40); },
   };
 }
 

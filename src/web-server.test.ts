@@ -665,6 +665,38 @@ test("GET /sessions/:id/search returns matching lines across worktree files; emp
   expect(empty.matches).toEqual([]);
 });
 
+// How a git remote URL maps to a web URL is `permalink`'s contract — see
+// permalink.test.ts. Here we check the endpoint pulls the remote/HEAD from
+// worktreeOps and threads them through, including the branch the link needs.
+test("GET /sessions/:id/permalink returns a blob URL at HEAD for a file and line range", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const file = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=src/a.ts`).then(r => r.json());
+  expect(file.url).toBe(`https://github.com/owner/repo/blob/${"f".repeat(40)}/src/a.ts`);
+  expect(file.branch).toBe(created.meta.branchName);
+
+  const range = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=src/a.ts&lineStart=3&lineEnd=8`).then(r => r.json());
+  expect(range.url).toBe(`https://github.com/owner/repo/blob/${"f".repeat(40)}/src/a.ts#L3-L8`);
+
+  expect((await fetch(`${baseUrl}/sessions/${sid}/permalink`)).status).toBe(400);
+});
+
+test("GET /sessions/:id/permalink returns null with a reason when the worktree has no remote", async () => {
+  const repoDir = makeGitRepo();
+  const { baseUrl } = await bootServerRealGit(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=README.md`).then(r => r.json());
+  expect(res.url).toBeNull();
+  expect(res.reason).toBe("no-remote");
+});
+
 test("GET /sessions/:id/asking returns pending escalations", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
