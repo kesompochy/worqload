@@ -220,6 +220,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1.2rem; width: min(520px, 90vw); }
 .modal h2 { margin: 0 0 .8rem 0; font-size: 1rem; }
+.create-error { margin: .7rem 0 0 0; padding: .5rem .7rem; border: 1px solid rgba(248,81,73,.5); border-radius: 4px; background: rgba(248,81,73,.1); color: var(--crashed); font-size: 13px; white-space: pre-wrap; word-break: break-word; }
 .hidden { display: none !important; }
 .spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: -.15em; }
 @keyframes spin { to { transform: rotate(360deg); } }
