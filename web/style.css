@@ -223,15 +223,17 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
   background: rgba(210,153,34,.5);
   animation: anchor-flash 1s ease-out forwards;
 }
-/* "There is sent feedback anchored to this line/block": a left stripe everywhere,
-   plus a clickable 💬 on diff/file lines that jumps to that feedback. */
-.diff-line.has-feedback, .file-line.has-feedback { position: relative; }
-.diff-line.has-feedback, .file-line.has-feedback, .md [data-feedback-here] { box-shadow: inset 2px 0 0 #bc8cff; }
-.diff-line.has-feedback .body, .file-line.has-feedback .body { padding-right: 1.8rem; }
-.line-feedback-mark { position: absolute; right: .35rem; top: 0; border: none; background: transparent; cursor: pointer; font-size: 10px; line-height: 1.5; padding: 0 .15rem; opacity: .8; }
-.line-feedback-mark:hover { opacity: 1; }
-.md [data-feedback-here] { position: relative; }
-.md [data-feedback-here]::after { content: "💬"; position: absolute; right: -.55rem; top: 0; font-size: 10px; opacity: .7; pointer-events: none; }
+/* "There is sent feedback anchored to this line/block": a left stripe on the
+   line/block, plus a small floating chip (like the report↔feedback reply chips)
+   at its top-right that jumps to that feedback. */
+.diff-line.has-feedback, .file-line.has-feedback, .md [data-feedback-here] { box-shadow: inset 2px 0 0 #bc8cff; position: relative; }
+.line-feedback-chip {
+  position: absolute; right: .35rem; top: 0; z-index: 2;
+  background: rgba(188,140,255,.2); border: 1px solid rgba(188,140,255,.5); color: #c9aaff;
+  padding: 0 .35rem; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.6;
+  cursor: pointer; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.line-feedback-chip:hover { background: rgba(188,140,255,.34); border-color: rgba(188,140,255,.75); }
 .event-row { border-bottom: 1px solid var(--border); font-family: ui-monospace, monospace; font-size: 12px; }
 .event-line { display: grid; grid-template-columns: 1ch 5ch 12rem 6rem 1fr; gap: .5rem; padding: .3rem .5rem; align-items: baseline; cursor: pointer; user-select: none; }
 .event-line:hover { background: var(--panel); }
