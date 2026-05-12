@@ -46,6 +46,10 @@
   }
 
   function onRenameKeydown(event, sessionId) {
+    // The card wrapper turns Space/Enter into "select session", which clears
+    // renamingSessionId and tears down this input. Keep the keystrokes here so
+    // typing a space edits the alias instead of confirming the rename.
+    event.stopPropagation();
     if (renameComposing || event.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
       event.preventDefault();
