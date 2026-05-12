@@ -12,9 +12,10 @@ mock.module("../web/api.js", () => ({
   refreshDiff: async () => {},
   ensureFilesLoaded: async () => {},
   selectFile: async () => {},
+  searchFiles: async () => ({ matches: [], truncated: false }),
   openWs() {},
 }));
-const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport } = await import("../web/handlers.js");
+const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
@@ -65,6 +66,32 @@ test("clicking a report header toggles its expansion with a fresh Map (so Svelte
   // second click collapses again.
   onDetailBodyClick(reportToggleClick("001-plan.md"));
   expect(isReportExpanded(state.reports[0])).toBe(false);
+});
+
+function identTokenClick(symbol: string, path: string, line: number) {
+  const lineEl = { getAttribute: (a: string) => (a === "data-anchor-path" ? path : a === "data-anchor-line" ? String(line) : null) };
+  const token = {
+    textContent: symbol,
+    getBoundingClientRect: () => ({ top: 0, bottom: 10, left: 0 }),
+    closest: (sel: string) => (sel === "[data-anchor-line]" ? lineEl : null),
+  };
+  return { target: { closest: (sel: string) => (sel === ".tok-ident" ? token : sel === ".file-content-body" ? {} : null) } };
+}
+
+test("clicking a symbol token in the Files content pane opens the code-nav popover with its declarations", () => {
+  state.fileContent = { path: "lib/app.js", content: "function greet(name) {}\ngreet('x');\n" };
+  state.selectedFilePath = "lib/app.js";
+  state.codeNav = null;
+
+  onDetailBodyClick(identTokenClick("greet", "lib/app.js", 2));
+
+  expect(state.codeNav?.symbol).toBe("greet");
+  expect(state.codeNav?.path).toBe("lib/app.js");
+  expect(state.codeNav?.declarations).toEqual([{ line: 1, column: "function ".length }]);
+  expect(state.codeNav?.referencesStatus).toBe("loading");
+
+  closeCodeNav();
+  expect(state.codeNav).toBeNull();
 });
 
 test("command-result feedback is expanded only until the agent consumes it", () => {

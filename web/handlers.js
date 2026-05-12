@@ -6,6 +6,8 @@
 import { $, toast } from "./dom.js";
 import { state, isReportExpanded, isFeedbackExpanded, DIFF_EXPAND_CHUNK } from "./state.svelte.js";
 import { parseDiffFiles, mergeLineRanges } from "./diff-view.js";
+import { languageForPath } from "./syntax-highlight.js";
+import { isIdentifierName, findDeclarations, findReferences } from "./code-nav.js";
 import {
   api,
   fetchSessions,
@@ -14,6 +16,7 @@ import {
   refreshDiff,
   ensureFilesLoaded,
   selectFile,
+  searchFiles,
   openWs,
 } from "./api.js";
 
@@ -39,6 +42,7 @@ export async function selectSession(id) {
   state.fileTreeCollapsed = new Set();
   state.selectedFilePath = null;
   state.fileContent = null;
+  state.codeNav = null;
   state.openActionId = null;
   state.actionRunInFlight = false;
   state.actionResults = new Map();
@@ -144,7 +148,68 @@ export function onDetailBodyClick(e) {
     selectFile(fileOpen.getAttribute("data-file-open"));
     return;
   }
+  // A symbol token in the Files-tab content pane (highlighter wraps plain
+  // identifiers in .tok-ident there) — open the code-navigation popover instead
+  // of anchoring the line. Anchoring still works by clicking the line number.
+  const identToken = e.target.closest(".tok-ident");
+  if (identToken && e.target.closest(".file-content-body")) {
+    openCodeNav(identToken);
+    return;
+  }
   onLineClick(e);
+}
+
+// Code navigation (Files tab): clicking a symbol token opens a popover offering
+// its declaration site(s) in the open file (heuristic, per-language — see
+// code-nav.js) and its uses across the worktree (the existing full-text search,
+// narrowed to whole-word matches). The latter is fetched lazily; a counter
+// guards against a slower fetch landing after the popover was closed or moved
+// to another symbol.
+let codeNavRequestSeq = 0;
+
+export async function openCodeNav(tokenEl) {
+  const symbol = tokenEl.textContent ?? "";
+  if (!isIdentifierName(symbol)) return;
+  const lineEl = tokenEl.closest("[data-anchor-line]");
+  const path = lineEl?.getAttribute("data-anchor-path") || state.selectedFilePath;
+  if (!path) return;
+  const fc = state.fileContent;
+  const sourceText = fc && !fc.loading && !fc.error && !fc.binary && !fc.tooLarge ? (fc.content ?? "") : "";
+  const language = languageForPath(path);
+  const rect = tokenEl.getBoundingClientRect();
+  const seq = ++codeNavRequestSeq;
+  state.codeNav = {
+    symbol,
+    path,
+    language,
+    rect: { top: rect.top, bottom: rect.bottom, left: rect.left },
+    declarations: findDeclarations(sourceText, language, symbol),
+    references: null,
+    referencesStatus: "loading",
+  };
+  const { matches } = await searchFiles(symbol);
+  if (seq !== codeNavRequestSeq || !state.codeNav) return;
+  state.codeNav = { ...state.codeNav, references: findReferences(matches ?? [], language, symbol), referencesStatus: "done" };
+}
+
+export function closeCodeNav() {
+  state.codeNav = null;
+}
+
+// Jump the Files tab to a path:line — the action behind a code-nav popover
+// entry. Opens the file if it isn't the one shown, anchors the line (so it's
+// highlighted and feedback sent now refers to it), and scrolls it into view.
+export async function revealFileLocation(path, line) {
+  if (!path || !Number.isFinite(line)) return;
+  if (state.activeTab !== "files") await switchTab("files");
+  if (path !== state.selectedFilePath) await selectFile(path);
+  state.anchor = { path, lineStart: line, lineEnd: line };
+  state.codeNav = null;
+  if (typeof requestAnimationFrame !== "function") return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const el = document.querySelector(`.file-line[data-anchor-line="${line}"][data-anchor-path="${CSS.escape(path)}"]`);
+    if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }));
 }
 
 export async function onReportMark(filename, read) {
