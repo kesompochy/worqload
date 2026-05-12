@@ -1,11 +1,7 @@
 import { test, expect, mock } from "bun:test";
 
-// selectSession reaches into the DOM (render) and the network (api); stub both
-// so the per-session state reset can be asserted in isolation.
-mock.module("../web/render.js", () => ({
-  renderSessionList() {},
-  renderDetail() {},
-}));
+// selectSession reaches into the network (api); stub it so the per-session
+// state reset can be asserted in isolation.
 mock.module("../web/api.js", () => ({
   api: async () => ({}),
   fetchSessions: async () => {},

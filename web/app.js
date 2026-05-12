@@ -23,7 +23,5 @@ if (state.sessions.length > 0) await selectSession(state.sessions[0].id);
 
 // Refresh the sidebar every 30s so unread-report badges and relative
 // timestamps reflect activity in non-selected sessions (the WebSocket only
-// streams the currently-selected session). The detail view is only
-// re-rendered in response to events to avoid disturbing the feedback
-// textarea while the user is typing.
+// streams the currently-selected session).
 setInterval(() => fetchSessions(), 30_000);

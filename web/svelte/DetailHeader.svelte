@@ -2,9 +2,9 @@
   // The detail pane's top strip: title + status badge, the metadata line, and
   // the tab bar. Mounted into #detailHeader from main.ts; renders nothing until
   // a session with loaded detail is selected. The action bar / action panels
-  // (#detailActionArea) and the feedback/resume composer (#detailComposer) are
-  // still rebuilt by render.js's renderDetail(); everything else below is
-  // DetailBody.svelte. The Events tab's "· Ns ago" label reads the reactive
+  // (#detailActionArea) are ActionBar.svelte, the scroll body (#detailBodyMount)
+  // is DetailBody.svelte, and the feedback/resume composer (#detailComposer) is
+  // Composer.svelte. The Events tab's "· Ns ago" label reads the reactive
   // `clock` so it counts up between streamed events.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
