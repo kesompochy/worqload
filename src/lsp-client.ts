@@ -5,6 +5,8 @@
 // the "language server extensions" (see code-nav.ts) plug into; one server is
 // launched per worktree and torn down when idle.
 
+import { readFileSync } from "node:fs";
+
 export interface LspPosition {
   line: number; // 0-based
   character: number; // 0-based
@@ -124,6 +126,10 @@ export class LspClient {
   private readonly parser = createRpcMessageParser();
   private initialized: Promise<void> | null = null;
   private closed = false;
+  // Documents we've told the server about, and the version we last synced. The
+  // worktree is live (a claude session may be editing it), so before each query
+  // we re-send the file's current content rather than trust an earlier snapshot.
+  private readonly documentVersions = new Map<string, number>();
 
   constructor(proc: LspServerProcess, rootPath: string) {
     this.proc = proc;
@@ -208,8 +214,34 @@ export class LspClient {
     return this.initialized;
   }
 
+  // tsserver-style servers won't answer for a document they haven't been told
+  // about, so open it (or, if already open, push its current content as a change)
+  // before querying. If the file can't be read we skip this and hope the server
+  // falls back to disk.
+  private syncDocument(absPath: string): void {
+    let text: string;
+    try {
+      text = readFileSync(absPath, "utf8");
+    } catch {
+      return;
+    }
+    const uri = this.fileUri(absPath);
+    const previousVersion = this.documentVersions.get(absPath);
+    if (previousVersion === undefined) {
+      this.documentVersions.set(absPath, 1);
+      this.notify("textDocument/didOpen", {
+        textDocument: { uri, languageId: languageIdForPath(absPath), version: 1, text },
+      });
+    } else {
+      const version = previousVersion + 1;
+      this.documentVersions.set(absPath, version);
+      this.notify("textDocument/didChange", { textDocument: { uri, version }, contentChanges: [{ text }] });
+    }
+  }
+
   async definition(absPath: string, position: LspPosition): Promise<LspLocation[]> {
     await this.ensureInitialized();
+    this.syncDocument(absPath);
     const result = await this.request("textDocument/definition", {
       textDocument: { uri: this.fileUri(absPath) },
       position,
@@ -219,6 +251,7 @@ export class LspClient {
 
   async references(absPath: string, position: LspPosition): Promise<LspLocation[]> {
     await this.ensureInitialized();
+    this.syncDocument(absPath);
     const result = await this.request("textDocument/references", {
       textDocument: { uri: this.fileUri(absPath) },
       position,
@@ -238,6 +271,24 @@ export class LspClient {
     this.proc.kill();
     this.handleExit();
   }
+}
+
+// LSP `languageId` for a path's extension. Only the JS/TS family (the one the
+// built-in extension drives) and Go are mapped meaningfully; anything else gets
+// "plaintext", which is harmless for servers that key off the file extension.
+const LANGUAGE_ID_BY_EXTENSION: Record<string, string> = {
+  ts: "typescript", mts: "typescript", cts: "typescript",
+  tsx: "typescriptreact",
+  js: "javascript", mjs: "javascript", cjs: "javascript",
+  jsx: "javascriptreact",
+  go: "go",
+};
+
+function languageIdForPath(absPath: string): string {
+  const base = absPath.slice(absPath.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+  return LANGUAGE_ID_BY_EXTENSION[ext] ?? "plaintext";
 }
 
 // `textDocument/definition` may answer with a single Location, a Location[], or

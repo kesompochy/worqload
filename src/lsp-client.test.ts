@@ -1,4 +1,7 @@
 import { test, expect } from "bun:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   encodeRpcMessage,
   createRpcMessageParser,
@@ -177,6 +180,31 @@ test("references sends includeDeclaration and flattens the Location[] result", a
     ],
   }));
   expect((await p).map(l => l.uri)).toEqual(["file:///r/a.ts", "file:///r/b.ts"]);
+});
+
+test("definition opens the queried document (didOpen with its content) before asking", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "worqload-lsp-"));
+  const filePath = join(dir, "a.ts");
+  writeFileSync(filePath, "export const v = 1;\n");
+  try {
+    const fp = makeFakeProcess();
+    const client = new LspClient(fp.proc, dir);
+    const p = client.definition(filePath, { line: 0, character: 13 });
+    await completeHandshake(fp);
+    const sent = sentMessages(fp.stdinWrites);
+    const didOpen = sent.find(m => m.method === "textDocument/didOpen");
+    expect(didOpen.params.textDocument).toEqual({
+      uri: `file://${filePath}`,
+      languageId: "typescript",
+      version: 1,
+      text: "export const v = 1;\n",
+    });
+    const defReq = sent.find(m => m.method === "textDocument/definition");
+    fp.pushStdout(encodeRpcMessage({ jsonrpc: "2.0", id: defReq.id, result: null }));
+    expect(await p).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a pending request rejects when the language server exits", async () => {
