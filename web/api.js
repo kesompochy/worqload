@@ -39,7 +39,7 @@ export function updateLoadAverage() {
   const { unreadReports, unresolvedEscalations, total } = workLoad(state.sessions);
   el.textContent = `⚖ ${total}`;
   el.classList.toggle("idle", total === 0);
-  el.title = `労働の load average: 未読レポート ${unreadReports} + 未解決エスカレ ${unresolvedEscalations}`;
+  el.title = `未読レポート ${unreadReports} + 未解決エスカレ ${unresolvedEscalations}`;
 }
 
 export async function fetchActions() {
