@@ -106,9 +106,8 @@
             {#if typeof a.command === "string"}
               <textarea class="ask-answer" rows="2" placeholder="Optional reason (sent to the agent if you reject)..." style="margin-top:.4rem"></textarea>
               <div class="row" style="margin-top:.3rem">
-                <span class="spacer"></span>
                 <button class="ask-reject">Reject</button>
-                <button class="ask-approve">Approve &amp; run</button>
+                <button class="ask-approve">Approve &amp; Run</button>
               </div>
             {:else}
               <textarea class="ask-answer" rows="3" placeholder="Your answer..." style="margin-top:.4rem"></textarea>
