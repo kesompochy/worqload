@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { escapeHtml, formatBytes, formatRelative } from "../web/dom.js";
+import { escapeHtml, formatBytes, formatRelative, eventAgeIsStale } from "../web/dom.js";
 
 test("escapeHtml escapes the five HTML-significant characters", () => {
   expect(escapeHtml(`<a href="x" data-y='z'>&</a>`)).toBe(
@@ -40,4 +40,18 @@ test("formatRelative returns empty for missing timestamp", () => {
   expect(formatRelative(null)).toBe("");
   expect(formatRelative(undefined)).toBe("");
   expect(formatRelative("")).toBe("");
+});
+
+test("eventAgeIsStale flips once the timestamp is at least a minute old", () => {
+  const now = Date.now();
+  expect(eventAgeIsStale(new Date(now - 5_000).toISOString(), now)).toBe(false);
+  expect(eventAgeIsStale(new Date(now - 59_999).toISOString(), now)).toBe(false);
+  expect(eventAgeIsStale(new Date(now - 60_000).toISOString(), now)).toBe(true);
+  expect(eventAgeIsStale(new Date(now - 5 * 60_000).toISOString(), now)).toBe(true);
+});
+
+test("eventAgeIsStale is false for missing timestamp", () => {
+  expect(eventAgeIsStale(null, Date.now())).toBe(false);
+  expect(eventAgeIsStale(undefined, Date.now())).toBe(false);
+  expect(eventAgeIsStale("", Date.now())).toBe(false);
 });

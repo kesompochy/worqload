@@ -46,6 +46,17 @@ export function formatRelative(iso, now = Date.now()) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+// The Events tab-bar age label ("· Ns ago", the time since the newest streamed
+// event) goes "stale" once that gap reaches a minute, so a session that has
+// fallen quiet draws the eye. 60s is also where formatRelative stops counting
+// in seconds, so the highlight lines up with the label switching to "Nm ago".
+export const STALE_EVENT_AGE_MS = 60_000;
+
+export function eventAgeIsStale(iso, now = Date.now()) {
+  if (!iso) return false;
+  return now - new Date(iso).getTime() >= STALE_EVENT_AGE_MS;
+}
+
 export function formatBytes(n) {
   if (n == null || !Number.isFinite(n)) return "";
   if (n < 1024) return `${n} B`;
