@@ -85,7 +85,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
       const event = await appendEvent(opts.sessionId, partial, opts.sessionsDir);
       sendToActive({ type: "event", event });
     } catch {
-      // session dir gone (cancelled / cleanup): drop the event
+      // session dir gone (cleanup): drop the event
     }
   };
 

@@ -1,5 +1,5 @@
 // Every user-initiated action: switching sessions, clicking in the detail
-// pane, the composer (feedback / resume), session lifecycle (stop / cancel /
+// pane, the composer (feedback / resume), session lifecycle (stop / resume /
 // archive), gh actions, the new-session modal. Each handler mutates `state`
 // and/or calls the data layer; the Svelte components re-render reactively.
 
@@ -345,18 +345,6 @@ export async function onStopAndMarkRead() {
     await refreshDetail();
     await fetchSessions();
     toast("session stopped · all reports marked read");
-  } catch (e) {
-    toast(`failed: ${e.message}`);
-  }
-}
-
-export async function onCancel(id = state.selected) {
-  if (!id) return;
-  if (!confirm("Cancel this session? The worktree will be REMOVED.")) return;
-  try {
-    await api("POST", `/sessions/${id}/cancel`, {});
-    if (id === state.selected) await refreshDetail();
-    await fetchSessions();
   } catch (e) {
     toast(`failed: ${e.message}`);
   }
