@@ -18,7 +18,7 @@
 
   const tabs = [
     { id: "reports", label: "Reports" },
-    { id: "feedback", label: "Feedback" },
+    { id: "feedback", label: "Feedbacks" },
     { id: "diff", label: "Diff" },
     { id: "files", label: "Files" },
     { id: "events", label: "Events" },
