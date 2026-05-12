@@ -18,6 +18,7 @@ import {
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
+import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
@@ -526,6 +527,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/files", getFiles),
   defineRoute("GET",  "/sessions/:id/file", getFile),
   defineRoute("GET",  "/sessions/:id/search", getFileSearch),
+  defineRoute("GET",  "/sessions/:id/permalink", getPermalink),
   defineRoute("GET",  "/actions", getActions),
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
@@ -925,6 +927,45 @@ async function getFile(req: Request, ctx: ServerContext, params: Record<string, 
       case "denied": return json({ error: "path outside worktree" }, 403);
     }
   });
+}
+
+// A GitHub-style "permalink" to a worktree file (and optional line range): the
+// blob URL of `path` at the worktree's current HEAD on the repo's `origin`
+// remote. HEAD may not be pushed yet, so the link only resolves once the branch
+// is — the response carries `branch` so the UI can say so. Returns
+// `{ url: null, reason }` when there's no remote, the remote isn't a
+// GitHub-shaped host, or HEAD can't be resolved; the UI then offers no link.
+async function getPermalink(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const query = new URL(req.url).searchParams;
+    const relPath = query.get("path");
+    if (!relPath || relPath.trim() === "") return json({ error: "path query is required" }, 400);
+    if (relPath.startsWith("/") || relPath.split("/").includes("..")) return json({ error: "path outside worktree" }, 400);
+    const lineStart = parsePositiveIntParam(query.get("lineStart"));
+    const lineEnd = parsePositiveIntParam(query.get("lineEnd"));
+
+    const remoteUrl = await ctx.worktreeOps.gitRemoteUrl(meta.worktreePath);
+    if (!remoteUrl) return json({ url: null, reason: "no-remote" });
+    const repo = parseGitRemoteUrl(remoteUrl);
+    if (!repo) return json({ url: null, reason: "unsupported-host" });
+    const sha = await ctx.worktreeOps.gitHeadSha(meta.worktreePath);
+    if (!sha) return json({ url: null, reason: "no-commit" });
+
+    const url = buildBlobPermalink({
+      webBaseUrl: repo.webBaseUrl,
+      ref: sha,
+      path: relPath,
+      lineStart: lineStart ?? undefined,
+      lineEnd: lineEnd ?? undefined,
+    });
+    return json({ url, ref: sha, branch: meta.branchName });
+  });
+}
+
+function parsePositiveIntParam(raw: string | null): number | null {
+  if (raw === null) return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : null;
 }
 
 // Full-text search across the session worktree's files (the Files tab's Ctrl+F):
