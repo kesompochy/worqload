@@ -577,6 +577,30 @@ test("GET /sessions/:id/diff shows the branch's own changes, not commits the bas
   expect(diff).not.toContain("other-session.txt");
 });
 
+test("GET /sessions/:id/diff drops base-branch commits absorbed via 'update branch'", async () => {
+  const repoDir = makeRepo();
+  const { baseUrl } = await bootServer(repoDir, "hang");
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+
+  writeFileSync(join(wt, "session-file.txt"), "session work\n");
+  git(["add", "session-file.txt"], wt);
+  git(["commit", "-m", "session change"], wt);
+
+  // The base branch moves on, then the human runs "update branch": the base
+  // branch gets merged into the session branch to pick up that work.
+  writeFileSync(join(repoDir, "other-session.txt"), "work from another session\n");
+  git(["add", "other-session.txt"], repoDir);
+  git(["commit", "-m", "merge another session"], repoDir);
+  git(["merge", "--no-edit", TEST_BASE], wt);
+
+  const diff = await fetch(`${baseUrl}/sessions/${sid}/diff`).then(r => r.text());
+  expect(diff).toContain("session-file.txt");
+  expect(diff).not.toContain("other-session.txt");
+});
+
 test("GET /sessions/:id/files lists worktree files including new untracked ones", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");

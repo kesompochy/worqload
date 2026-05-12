@@ -217,7 +217,7 @@ type EventKind =
 | `POST` | `/sessions/:id/stop` | Stop |
 | `POST` | `/sessions/:id/cancel` | Cancel |
 | `POST` | `/sessions/:id/resume` | Resume (`{ prompt? }`) |
-| `GET` | `/sessions/:id/diff` | diff 取得 (セッション開始時の base commit との差分。リモートにも base ブランチの現在地にも依存しない) |
+| `GET` | `/sessions/:id/diff` | diff 取得 (ブランチに積まれた変更。基準はセッション開始時の base commit、ただし "update branch" で base ブランチを取り込んだ場合はその地点まで前進。リモートには依存しない) |
 | `GET` | `/sessions/:id/files` | worktree のファイル一覧 (tracked + 未追跡、gitignore 除外) |
 | `GET` | `/sessions/:id/file?path=<relpath>` | worktree 内ファイル本文 (worktree 外パスは拒否、binary / サイズ超過はフラグのみ) |
 | `GET` | `/sessions/:id/reports` | report 一覧 |

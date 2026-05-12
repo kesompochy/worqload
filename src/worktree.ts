@@ -171,6 +171,49 @@ export async function readWorktreeFile(
   return { kind: "text", content: new TextDecoder().decode(bytes) };
 }
 
+// The Diff View shows the changes stacked on this branch — what a reviewer of
+// this branch alone would see. The naive base is `baseCommit`, the base
+// branch's tip recorded when the session forked. But once the human runs
+// "update branch" (merges the base branch into this branch to pick up other
+// sessions' work), `git diff <baseCommit>` also lists everything the base
+// branch gained in the meantime. So we move the base forward to the merge-base
+// of HEAD and the *current* base branch whenever that sits past `baseCommit`:
+// after such a merge that merge-base is the absorbed tip, which drops the
+// absorbed commits out of the diff. We never consult a remote-tracking ref —
+// worqload leaves merge/push to the human, and a stale `origin/<base>` would
+// only drag noise back in. If the base branch is gone or trails `baseCommit`
+// (the local checkout never fetched), `baseCommit` stands.
+export async function resolveDiffBase(
+  worktreePath: string,
+  baseBranch: string,
+  baseCommit: string,
+): Promise<string> {
+  const mergeBase = await gitMergeBase(worktreePath, baseBranch, "HEAD");
+  if (mergeBase && mergeBase !== baseCommit && await isAncestor(worktreePath, baseCommit, mergeBase)) {
+    return mergeBase;
+  }
+  return baseCommit;
+}
+
+async function gitMergeBase(worktreePath: string, a: string, b: string): Promise<string | null> {
+  const proc = Bun.spawn(
+    ["git", "merge-base", a, b],
+    { stdout: "pipe", stderr: "pipe", cwd: worktreePath, env: cleanGitEnv() },
+  );
+  const out = await new Response(proc.stdout).text();
+  if ((await proc.exited) !== 0) return null;
+  const sha = out.trim();
+  return sha === "" ? null : sha;
+}
+
+async function isAncestor(worktreePath: string, ancestor: string, descendant: string): Promise<boolean> {
+  const proc = Bun.spawn(
+    ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+    { stdout: "pipe", stderr: "pipe", cwd: worktreePath, env: cleanGitEnv() },
+  );
+  return (await proc.exited) === 0;
+}
+
 export async function gitDiff(
   worktreePath: string,
   target: string,
