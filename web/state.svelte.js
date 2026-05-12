@@ -25,7 +25,7 @@ export const state = $state({
   fileTreeCollapsed: new Set(),  // directory paths collapsed in the Files tab
   selectedFilePath: null,        // path of the file open in the content pane
   fileContent: null,     // { path, content } | { path, binary } | { path, tooLarge, size } | { path, error } | { path, loading: true }
-  codeNav: null,         // Files-tab code navigation popover: { symbol, path, language, rect:{top,bottom,left}, declarations:[{line,column}], references:[{path,line,text}]|null, referencesStatus:"loading"|"done" } | null
+  codeNav: null,         // Files-tab code navigation popover: { symbol, path, rect:{top,bottom,left}, definitions:[{path,line,column?,text?}]|null, definitionsStatus:"loading"|"done", references:[{path,line,column?,text?}]|null, referencesStatus:"loading"|"done" } | null
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked

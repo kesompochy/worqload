@@ -152,6 +152,22 @@ export async function searchFiles(query) {
   }
 }
 
+// Code navigation for the Files tab: resolve a symbol's definition / references
+// via the server (which uses a language server when one is available). `kind` is
+// "definition" or "references"; line/character are 0-based (LSP). Returns
+// `{ available: true, locations }` or `{ available: false }` (so the caller can
+// fall back to the client-side heuristic) — never throws.
+export async function fetchCodeNavLocations(kind, path, language, line, character) {
+  if (!state.selected || !path) return { available: false };
+  const params = new URLSearchParams({ path, line: String(line), character: String(character) });
+  if (language) params.set("language", language);
+  try {
+    return await api("GET", `/sessions/${state.selected}/code-nav/${kind}?${params}`);
+  } catch {
+    return { available: false };
+  }
+}
+
 export async function refreshDiff() {
   if (!state.selected) return;
   let next = "";

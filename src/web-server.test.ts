@@ -659,6 +659,22 @@ test("GET /sessions/:id/search returns matching lines across worktree files; emp
   expect(empty.matches).toEqual([]);
 });
 
+test("GET /sessions/:id/code-nav/definition reports unavailable for a language with no server, and 400 on bad params", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  writeFileSync(join(created.meta.worktreePath, "notes.rb"), "def thing; end\n");
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/code-nav/definition?path=notes.rb&language=ruby&line=0&character=4`);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ available: false });
+
+  expect((await fetch(`${baseUrl}/sessions/${sid}/code-nav/references?path=notes.rb&language=ruby`)).status).toBe(400);
+  expect((await fetch(`${baseUrl}/sessions/${sid}/code-nav/definition?line=0&character=0`)).status).toBe(400);
+});
+
 test("GET /sessions/:id/asking returns pending escalations", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

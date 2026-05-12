@@ -7,7 +7,7 @@ import { $, toast } from "./dom.js";
 import { state, isReportExpanded, isFeedbackExpanded, DIFF_EXPAND_CHUNK } from "./state.svelte.js";
 import { parseDiffFiles, mergeLineRanges } from "./diff-view.js";
 import { languageForPath } from "./syntax-highlight.js";
-import { isIdentifierName, findDeclarations, findReferences } from "./code-nav.js";
+import { isIdentifierName, resolveDefinitions, resolveReferences } from "./code-nav.js";
 import {
   api,
   fetchSessions,
@@ -16,7 +16,6 @@ import {
   refreshDiff,
   ensureFilesLoaded,
   selectFile,
-  searchFiles,
   openWs,
 } from "./api.js";
 
@@ -159,37 +158,64 @@ export function onDetailBodyClick(e) {
   onLineClick(e);
 }
 
-// Code navigation (Files tab): clicking a symbol token opens a popover offering
-// its declaration site(s) in the open file (heuristic, per-language — see
-// code-nav.js) and its uses across the worktree (the existing full-text search,
-// narrowed to whole-word matches). The latter is fetched lazily; a counter
-// guards against a slower fetch landing after the popover was closed or moved
-// to another symbol.
+// Code navigation (Files tab): clicking a symbol token opens a popover with the
+// symbol's definition(s) and uses, resolved through the providers in code-nav.js
+// (the language server when one is available, the per-line heuristic otherwise).
+// Definitions and references resolve independently and asynchronously; a counter
+// discards an answer that lands after the popover was closed or moved to another
+// symbol.
 let codeNavRequestSeq = 0;
 
-export async function openCodeNav(tokenEl) {
+// The 0-based character offset of `tokenEl` within its line's rendered text.
+// The highlighter emits a flat run of text nodes and one-level spans into
+// `.body`, so summing the textContent length of the siblings before the token
+// gives its column.
+function columnOf(tokenEl, bodyEl) {
+  let column = 0;
+  for (const node of bodyEl.childNodes) {
+    if (node === tokenEl || (node.contains && node.contains(tokenEl))) return column;
+    column += (node.textContent ?? "").length;
+  }
+  return column;
+}
+
+export function openCodeNav(tokenEl) {
   const symbol = tokenEl.textContent ?? "";
   if (!isIdentifierName(symbol)) return;
   const lineEl = tokenEl.closest("[data-anchor-line]");
-  const path = lineEl?.getAttribute("data-anchor-path") || state.selectedFilePath;
-  if (!path) return;
+  if (!lineEl) return;
+  const path = lineEl.getAttribute("data-anchor-path") || state.selectedFilePath;
+  const line = Number(lineEl.getAttribute("data-anchor-line"));
+  if (!path || !Number.isFinite(line)) return;
+  const bodyEl = tokenEl.closest(".body");
   const fc = state.fileContent;
   const sourceText = fc && !fc.loading && !fc.error && !fc.binary && !fc.tooLarge ? (fc.content ?? "") : "";
-  const language = languageForPath(path);
+  const ctx = {
+    sessionId: state.selected,
+    path,
+    language: languageForPath(path),
+    sourceText,
+    line,
+    column: bodyEl ? columnOf(tokenEl, bodyEl) : 0,
+    symbol,
+  };
   const rect = tokenEl.getBoundingClientRect();
   const seq = ++codeNavRequestSeq;
   state.codeNav = {
     symbol,
     path,
-    language,
     rect: { top: rect.top, bottom: rect.bottom, left: rect.left },
-    declarations: findDeclarations(sourceText, language, symbol),
+    definitions: null,
+    definitionsStatus: "loading",
     references: null,
     referencesStatus: "loading",
   };
-  const { matches } = await searchFiles(symbol);
-  if (seq !== codeNavRequestSeq || !state.codeNav) return;
-  state.codeNav = { ...state.codeNav, references: findReferences(matches ?? [], language, symbol), referencesStatus: "done" };
+  const apply = patch => {
+    if (seq !== codeNavRequestSeq || !state.codeNav) return;
+    state.codeNav = { ...state.codeNav, ...patch };
+  };
+  resolveDefinitions(ctx).then(locations => apply({ definitions: locations ?? [], definitionsStatus: "done" }));
+  resolveReferences(ctx).then(locations => apply({ references: locations ?? [], referencesStatus: "done" }));
 }
 
 export function closeCodeNav() {

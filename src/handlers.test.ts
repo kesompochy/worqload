@@ -13,6 +13,7 @@ mock.module("../web/api.js", () => ({
   ensureFilesLoaded: async () => {},
   selectFile: async () => {},
   searchFiles: async () => ({ matches: [], truncated: false }),
+  fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
 const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav } = await import("../web/handlers.js");
@@ -78,17 +79,25 @@ function identTokenClick(symbol: string, path: string, line: number) {
   return { target: { closest: (sel: string) => (sel === ".tok-ident" ? token : sel === ".file-content-body" ? {} : null) } };
 }
 
-test("clicking a symbol token in the Files content pane opens the code-nav popover with its declarations", () => {
+test("clicking a symbol token in the Files content pane opens the code-nav popover, then resolves it via the heuristic fallback", async () => {
+  state.selected = null; // no session selected → the server provider declines, heuristic answers
   state.fileContent = { path: "lib/app.js", content: "function greet(name) {}\ngreet('x');\n" };
   state.selectedFilePath = "lib/app.js";
   state.codeNav = null;
 
   onDetailBodyClick(identTokenClick("greet", "lib/app.js", 2));
-
   expect(state.codeNav?.symbol).toBe("greet");
   expect(state.codeNav?.path).toBe("lib/app.js");
-  expect(state.codeNav?.declarations).toEqual([{ line: 1, column: "function ".length }]);
+  expect(state.codeNav?.definitionsStatus).toBe("loading");
   expect(state.codeNav?.referencesStatus).toBe("loading");
+
+  await new Promise(r => setTimeout(r, 5));
+  expect(state.codeNav?.definitionsStatus).toBe("done");
+  expect(state.codeNav?.definitions).toEqual([
+    { path: "lib/app.js", line: 1, column: "function ".length, text: "function greet(name) {}" },
+  ]);
+  expect(state.codeNav?.referencesStatus).toBe("done");
+  expect(state.codeNav?.references).toEqual([]);
 
   closeCodeNav();
   expect(state.codeNav).toBeNull();

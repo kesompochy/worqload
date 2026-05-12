@@ -47,38 +47,27 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="code-nav-popover" style={popoverStyle} onclick={(e) => e.stopPropagation()}>
     <div class="code-nav-symbol">{nav.symbol}</div>
+    {@render section("定義", nav.definitions, nav.definitionsStatus)}
+    {@render section("使用箇所", nav.references, nav.referencesStatus)}
+  </div>
 
+  {#snippet section(title, locations, status)}
     <div class="code-nav-section">
-      <div class="code-nav-section-title">定義（このファイル内）</div>
-      {#if nav.declarations.length === 0}
-        <div class="code-nav-empty">見つかりません</div>
-      {:else}
-        {#each nav.declarations as d (d.line + ":" + d.column)}
-          <button type="button" class="code-nav-item" onclick={() => revealFileLocation(nav.path, d.line)}>
-            <span class="code-nav-loc">{nav.path}<span class="code-nav-lineno">:{d.line}</span></span>
-          </button>
-        {/each}
-      {/if}
-    </div>
-
-    <div class="code-nav-section">
-      <div class="code-nav-section-title">
-        使用箇所{#if nav.referencesStatus === "done"} ({nav.references.length}){/if}
-      </div>
-      {#if nav.referencesStatus === "loading"}
-        <div class="code-nav-empty"><span class="spinner"></span> 検索中…</div>
-      {:else if nav.references.length === 0}
+      <div class="code-nav-section-title">{title}{#if status === "done"} ({locations.length}){/if}</div>
+      {#if status === "loading"}
+        <div class="code-nav-empty"><span class="spinner"></span> 解決中…</div>
+      {:else if locations.length === 0}
         <div class="code-nav-empty">見つかりません</div>
       {:else}
         <div class="code-nav-refs">
-          {#each nav.references as r (r.path + ":" + r.line)}
-            <button type="button" class="code-nav-item" onclick={() => revealFileLocation(r.path, r.line)}>
-              <span class="code-nav-loc">{r.path}<span class="code-nav-lineno">:{r.line}</span></span>
-              <span class="code-nav-text">{r.text}</span>
+          {#each locations as loc, i (loc.path + ":" + loc.line + ":" + i)}
+            <button type="button" class="code-nav-item" onclick={() => revealFileLocation(loc.path, loc.line)}>
+              <span class="code-nav-loc">{loc.path}<span class="code-nav-lineno">:{loc.line}</span></span>
+              {#if loc.text}<span class="code-nav-text">{loc.text}</span>{/if}
             </button>
           {/each}
         </div>
       {/if}
     </div>
-  </div>
+  {/snippet}
 {/if}
