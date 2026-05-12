@@ -93,8 +93,8 @@ export function fakeWorktreeOps(): WorktreeOps {
     },
     async resolveBaseCommit() { return "0".repeat(40); },
     async currentBranch() { return "trunk"; },
+    async resolveDiffBase(_worktreePath, _baseBranch, baseCommit) { return baseCommit; },
     async gitDiff(_worktreePath, target) { return `--- diff against ${target} ---\n`; },
-    async gitDiffAgainstBaseBranch(_worktreePath, baseBranch) { return `--- diff against base ${baseBranch} ---\n`; },
     async listWorktreeFiles(worktreePath) {
       if (!existsSync(worktreePath)) return [];
       const found: string[] = [];

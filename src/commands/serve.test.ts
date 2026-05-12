@@ -1,5 +1,17 @@
 import { expect, test } from "bun:test";
-import { planWatchRespawn, WATCH_RESPAWN_MARKER } from "./serve";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { planWatchRespawn, preferredWatchPort, recordWatchPort, WATCH_RESPAWN_MARKER } from "./serve";
+
+function withTmpDir<T>(fn: (dir: string) => T): T {
+  const dir = mkdtempSync(join(tmpdir(), "serve-port-sentinel-"));
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 test("planWatchRespawn returns null when --watch is absent", () => {
   const plan = planWatchRespawn(["3500"], {
@@ -41,4 +53,41 @@ test("planWatchRespawn places --watch only once even if the user supplied it twi
   const watchCount = plan.command.filter((a) => a === "--watch").length;
   expect(watchCount).toBe(1);
   expect(plan.command).toContain("--no-open");
+});
+
+test("preferredWatchPort returns null when there is no sentinel path", () => {
+  expect(preferredWatchPort(undefined, null)).toBeNull();
+});
+
+test("preferredWatchPort returns null when the user gave an explicit port", () => {
+  withTmpDir((dir) => {
+    const sentinel = join(dir, "watch.port");
+    writeFileSync(sentinel, "4000");
+    expect(preferredWatchPort(sentinel, 3500)).toBeNull();
+    expect(preferredWatchPort(sentinel, 0)).toBeNull();
+  });
+});
+
+test("preferredWatchPort returns null when the sentinel file is missing or garbage", () => {
+  withTmpDir((dir) => {
+    expect(preferredWatchPort(join(dir, "absent.port"), null)).toBeNull();
+    const garbage = join(dir, "garbage.port");
+    writeFileSync(garbage, "not-a-port");
+    expect(preferredWatchPort(garbage, null)).toBeNull();
+    const outOfRange = join(dir, "range.port");
+    writeFileSync(outOfRange, "99999");
+    expect(preferredWatchPort(outOfRange, null)).toBeNull();
+  });
+});
+
+test("preferredWatchPort reads the port a previous boot recorded", () => {
+  withTmpDir((dir) => {
+    const sentinel = join(dir, "watch.port");
+    recordWatchPort(sentinel, 3461);
+    expect(preferredWatchPort(sentinel, null)).toBe(3461);
+  });
+});
+
+test("recordWatchPort is a no-op without a sentinel path", () => {
+  expect(() => recordWatchPort(undefined, 3456)).not.toThrow();
 });

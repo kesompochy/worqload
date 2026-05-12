@@ -1,20 +1,15 @@
-// Entry point: wire the top-level DOM, run the initial fetches, then keep the
-// sidebar fresh on a timer. Everything else lives in the imported modules.
+// Wires the top-level DOM, runs the initial fetches, then keeps the sidebar
+// fresh on a timer. Everything else lives in the imported modules; the
+// new-session modal is a Svelte component mounted from main.ts.
 
 import { $ } from "./dom.js";
 import { state } from "./state.js";
 import { fetchMeta, fetchActions, fetchSessions } from "./api.js";
 import { refreshEventsTabLabel } from "./render.js";
-import { selectSession, openModal, closeModal, createSession } from "./handlers.js";
+import { selectSession } from "./handlers.js";
 import { syncNotifyButton, onNotifyClick } from "./notify.js";
 
-$("#btnNew").addEventListener("click", openModal);
 $("#btnNotify").addEventListener("click", onNotifyClick);
-$("#modalCancel").addEventListener("click", closeModal);
-$("#modalCreate").addEventListener("click", createSession);
-$("#modalPrompt").addEventListener("keydown", e => {
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); createSession(); }
-});
 syncNotifyButton();
 
 await fetchMeta();

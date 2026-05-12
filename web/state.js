@@ -12,8 +12,7 @@ export const state = {
   lastSeq: 0,
   activeTab: "reports",  // "reports" | "diff" | "files" | "events"
   tabScroll: new Map(),  // tab name -> remembered scroll position (see render.js), so switching back returns there
-  diff: "",              // text/plain diff (full file context, -U<huge>)
-  diffBase: "base-branch",  // "base-branch" (PR-style: branch's own changes vs the base branch) | "session-start" (everything since the worktree was created)
+  diff: "",              // text/plain diff (full file context, -U<huge>) — the branch's changes since the session forked
   anchor: null,          // { path, lineStart, lineEnd } | null
   collapsedFiles: new Set(),  // paths of diff files the user collapsed
   diffExpansions: new Map(),  // path -> [[from,to], ...] new-line ranges the user expanded into

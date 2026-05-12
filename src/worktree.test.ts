@@ -11,7 +11,7 @@ import {
   listWorktreeFiles,
   readWorktreeFile,
   gitDiff,
-  gitDiffAgainstBaseBranch,
+  resolveDiffBase,
 } from "./worktree";
 
 const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
@@ -257,7 +257,7 @@ describe("resolveBaseCommit / currentBranch", () => {
   });
 });
 
-describe("gitDiffAgainstBaseBranch", () => {
+describe("gitDiff", () => {
   async function makeWorktree(repoDir: string): Promise<string> {
     const sessionId = crypto.randomUUID();
     const { worktreePath } = await createSessionWorktree({
@@ -270,58 +270,43 @@ describe("gitDiffAgainstBaseBranch", () => {
     return worktreePath;
   }
 
-  test("diffs against the merge-base, so commits the base branch gained after the fork don't appear", async () => {
+  test("against the session-start commit, shows the branch's committed and uncommitted changes", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
     const worktreePath = await makeWorktree(repoDir);
     const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
 
-    // The session's own work on the branch.
+    writeFileSync(join(worktreePath, "committed.txt"), "committed work\n");
+    git(["add", "committed.txt"], worktreePath);
+    git(["commit", "-m", "session change"], worktreePath);
+    writeFileSync(join(worktreePath, "README.md"), "# uncommitted edit\n");
+
+    const diff = await gitDiff(worktreePath, baseCommit);
+    expect(diff).toContain("committed.txt");
+    expect(diff).toContain("committed work");
+    expect(diff).toContain("uncommitted edit");
+  });
+
+  test("commits the base branch gained after the fork don't appear (the recorded base commit is fixed)", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const worktreePath = await makeWorktree(repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+
     writeFileSync(join(worktreePath, "session-file.txt"), "session work\n");
     git(["add", "session-file.txt"], worktreePath);
     git(["commit", "-m", "session change"], worktreePath);
 
-    // Meanwhile the base branch advances past the fork point.
-    writeFileSync(join(repoDir, "upstream-file.txt"), "upstream work\n");
-    git(["add", "upstream-file.txt"], repoDir);
-    git(["commit", "-m", "upstream change"], repoDir);
+    // The base branch advances past the fork point — e.g. another session merged in.
+    writeFileSync(join(repoDir, "other-session.txt"), "work from another session\n");
+    git(["add", "other-session.txt"], repoDir);
+    git(["commit", "-m", "merge another session"], repoDir);
 
-    const diff = await gitDiffAgainstBaseBranch(worktreePath, TEST_BASE_BRANCH, baseCommit);
+    const diff = await gitDiff(worktreePath, baseCommit);
     expect(diff).toContain("session-file.txt");
-    expect(diff).toContain("session work");
-    // A plain `git diff <baseBranch>` would render the base-branch commit as a
-    // deletion; diffing against the merge-base leaves it out.
-    expect(diff).not.toContain("upstream-file.txt");
+    expect(diff).not.toContain("other-session.txt");
   });
 
-  test("includes uncommitted worktree changes (parity with the session-start view)", async () => {
-    const repoDir = createTempGitRepo();
-    cleanupDirs.push(repoDir);
-    const worktreePath = await makeWorktree(repoDir);
-    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
-
-    writeFileSync(join(worktreePath, "README.md"), "# uncommitted edit\n");
-
-    const diff = await gitDiffAgainstBaseBranch(worktreePath, TEST_BASE_BRANCH, baseCommit);
-    expect(diff).toContain("uncommitted edit");
-  });
-
-  test("falls back to the given commit when neither the base branch nor its upstream resolves", async () => {
-    const repoDir = createTempGitRepo();
-    cleanupDirs.push(repoDir);
-    const worktreePath = await makeWorktree(repoDir);
-    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
-
-    writeFileSync(join(worktreePath, "after.txt"), "later\n");
-    git(["add", "after.txt"], worktreePath);
-    git(["commit", "-m", "after"], worktreePath);
-
-    const diff = await gitDiffAgainstBaseBranch(worktreePath, "branch-that-does-not-exist", baseCommit);
-    expect(diff).toContain("after.txt");
-  });
-});
-
-describe("gitDiff", () => {
   test("with a large context value emits the whole file, not just lines around the change", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
@@ -336,14 +321,7 @@ describe("gitDiff", () => {
     git(["commit", "-m", "add many.txt"], repoDir);
     const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
 
-    const sessionId = crypto.randomUUID();
-    const { worktreePath } = await createSessionWorktree({
-      sessionId,
-      repoDir,
-      baseBranch: TEST_BASE_BRANCH,
-      branchName: `s-${sessionId.slice(0, 8)}`,
-      reportsDirAbsolute: join(repoDir, ".worqload", "sessions", sessionId, "reports"),
-    });
+    const worktreePath = await makeWorktree(repoDir);
     const changed = [...lines];
     changed[14] = "line 15 CHANGED";
     writeFileSync(join(worktreePath, "many.txt"), changed.join("\n") + "\n");
@@ -354,3 +332,78 @@ describe("gitDiff", () => {
     expect(diff).toContain("line 30");
   });
 });
+
+describe("resolveDiffBase", () => {
+  async function makeWorktree(repoDir: string): Promise<string> {
+    const sessionId = crypto.randomUUID();
+    const { worktreePath } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      branchName: `s-${sessionId.slice(0, 8)}`,
+      reportsDirAbsolute: join(repoDir, ".worqload", "sessions", sessionId, "reports"),
+    });
+    return worktreePath;
+  }
+
+  function revParse(ref: string, cwd: string): string {
+    return new TextDecoder().decode(git(["rev-parse", ref], cwd).stdout).trim();
+  }
+
+  test("returns the recorded base commit when nothing has moved", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const worktreePath = await makeWorktree(repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+
+    expect(await resolveDiffBase(worktreePath, TEST_BASE_BRANCH, baseCommit)).toBe(baseCommit);
+  });
+
+  test("ignores base-branch commits that haven't been merged into the branch", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const worktreePath = await makeWorktree(repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+
+    writeFileSync(join(repoDir, "other.txt"), "other\n");
+    git(["add", "other.txt"], repoDir);
+    git(["commit", "-m", "base branch advances"], repoDir);
+
+    expect(await resolveDiffBase(worktreePath, TEST_BASE_BRANCH, baseCommit)).toBe(baseCommit);
+  });
+
+  test("moves forward to the absorbed tip after the base branch is merged in (update branch)", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const worktreePath = await makeWorktree(repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+
+    writeFileSync(join(worktreePath, "session.txt"), "session\n");
+    git(["add", "session.txt"], worktreePath);
+    git(["commit", "-m", "session change"], worktreePath);
+
+    writeFileSync(join(repoDir, "other.txt"), "other\n");
+    git(["add", "other.txt"], repoDir);
+    git(["commit", "-m", "base branch advances"], repoDir);
+    const advancedTip = revParse(TEST_BASE_BRANCH, repoDir);
+
+    git(["merge", "--no-edit", TEST_BASE_BRANCH], worktreePath);
+
+    expect(await resolveDiffBase(worktreePath, TEST_BASE_BRANCH, baseCommit)).toBe(advancedTip);
+  });
+
+  test("keeps the recorded base commit when the base branch trails it", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    // Fork the worktree from an advanced trunk, then rewind trunk behind that point.
+    writeFileSync(join(repoDir, "ahead.txt"), "ahead\n");
+    git(["add", "ahead.txt"], repoDir);
+    git(["commit", "-m", "trunk moves ahead"], repoDir);
+    const worktreePath = await makeWorktree(repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+    git(["reset", "--hard", "HEAD~1"], repoDir);
+
+    expect(await resolveDiffBase(worktreePath, TEST_BASE_BRANCH, baseCommit)).toBe(baseCommit);
+  });
+});
+

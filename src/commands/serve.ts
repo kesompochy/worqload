@@ -1,6 +1,7 @@
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { watchWebFrontend } from "../web-build";
 import { startServer } from "../web-server";
 
 // Set on the re-spawned child so it knows the outer `worqload serve --watch`
@@ -12,6 +13,37 @@ export const WATCH_RESPAWN_MARKER = "WORQLOAD_WATCH_RESPAWNED";
 // once across reload cycles: the first child to boot creates the file; later
 // reloads see it and skip. The outer process removes it on exit.
 const WATCH_OPEN_SENTINEL_ENV = "WORQLOAD_WATCH_OPEN_SENTINEL";
+
+// Path passed down to the re-spawned child holding the port this watch session
+// settled on. Each boot writes the port it bound; the next reload reads it and
+// re-requests that port instead of falling back to the default. Without this a
+// reload always retries from 3456 and "migrates" the server onto whatever lower
+// port has since freed up — stealing the port a browser tab is pinned to from
+// another worqload server. The outer process removes the file on exit.
+const WATCH_PORT_SENTINEL_ENV = "WORQLOAD_WATCH_PORT_SENTINEL";
+
+// Reads the port a previous boot of this watch session recorded. Returns null
+// when there is no sentinel, the user gave an explicit port (their choice wins),
+// or the file is unreadable / not a valid port.
+export function preferredWatchPort(sentinelPath: string | undefined, explicitPort: number | null): number | null {
+  if (explicitPort !== null) return null;
+  if (!sentinelPath) return null;
+  try {
+    const port = Number(readFileSync(sentinelPath, "utf8").trim());
+    return Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+export function recordWatchPort(sentinelPath: string | undefined, port: number): void {
+  if (!sentinelPath) return;
+  try {
+    writeFileSync(sentinelPath, String(port));
+  } catch {
+    /* best-effort: a missed write just means the next reload falls back */
+  }
+}
 
 export interface WatchRespawnPlan {
   command: string[];
@@ -41,13 +73,19 @@ export function planWatchRespawn(args: string[], options: WatchRespawnOptions): 
   };
 }
 
-async function respawnUnderWatch(plan: WatchRespawnPlan, openSentinel: string | null): Promise<never> {
+async function respawnUnderWatch(
+  plan: WatchRespawnPlan,
+  openSentinel: string | null,
+  portSentinel: string,
+): Promise<never> {
   console.log(`watch mode: respawning under \`${plan.command.slice(0, 3).join(" ")} ...\``);
   const env = { ...plan.env };
   if (openSentinel) {
     env[WATCH_OPEN_SENTINEL_ENV] = openSentinel;
     try { unlinkSync(openSentinel); } catch { /* not present */ }
   }
+  env[WATCH_PORT_SENTINEL_ENV] = portSentinel;
+  try { unlinkSync(portSentinel); } catch { /* not present */ }
   const child = Bun.spawn(plan.command, {
     env,
     stdin: "inherit",
@@ -58,6 +96,7 @@ async function respawnUnderWatch(plan: WatchRespawnPlan, openSentinel: string | 
   if (openSentinel) {
     try { unlinkSync(openSentinel); } catch { /* already gone */ }
   }
+  try { unlinkSync(portSentinel); } catch { /* already gone */ }
   process.exit(exitCode ?? 0);
 }
 
@@ -69,11 +108,15 @@ export async function serve(args: string[]): Promise<void> {
   const positional = effectiveArgs.filter((a) => !a.startsWith("--"));
   const noOpen = flags.has("--no-open");
 
-  const requestedPort = positional[0] ? Number(positional[0]) : 3456;
-  if (Number.isNaN(requestedPort)) {
+  const explicitPort = positional[0] ? Number(positional[0]) : null;
+  if (explicitPort !== null && Number.isNaN(explicitPort)) {
     console.error(`invalid port: ${positional[0]}`);
     process.exit(2);
   }
+  // Under --watch the re-spawned child receives WORQLOAD_WATCH_PORT_SENTINEL and
+  // prefers the port the previous boot recorded over the default.
+  const portSentinel = process.env[WATCH_PORT_SENTINEL_ENV];
+  const requestedPort = explicitPort ?? preferredWatchPort(portSentinel, explicitPort) ?? 3456;
 
   const plan = planWatchRespawn(args, {
     execPath: process.execPath,
@@ -87,7 +130,18 @@ export async function serve(args: string[]): Promise<void> {
     // PID-scoped so a sentinel left behind by a crashed outer never blocks a
     // future watch session.
     const openSentinel = noOpen ? null : join(tmpdir(), `worqload-watch-${process.pid}.open`);
-    await respawnUnderWatch(plan, openSentinel);
+    const portSentinelPath = join(tmpdir(), `worqload-watch-${process.pid}.port`);
+    // Rebuild web/dist/ on frontend changes. This watcher lives in the outer
+    // process, which stays up across the inner server's `bun --watch` reloads
+    // (those only react to the server's TS import graph, not web/). The browser
+    // still needs a manual reload to pick up a rebuild.
+    try {
+      await watchWebFrontend();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`watch mode: frontend build watcher did not start (${message}); run \`bun run web:watch\` separately`);
+    }
+    await respawnUnderWatch(plan, openSentinel, portSentinelPath);
     return;
   }
 
@@ -111,6 +165,9 @@ export async function serve(args: string[]): Promise<void> {
   if (requestedPort !== 0 && ctx.port !== requestedPort) {
     console.log(`port ${requestedPort} was in use; using ${ctx.port} instead`);
   }
+  // Remember the port this boot settled on so the next --watch reload re-requests
+  // it instead of migrating back onto the default.
+  recordWatchPort(portSentinel, ctx.port);
   console.log(`worqload server listening on ${ctx.baseUrlForAgent}`);
   console.log(`repo: ${ctx.repoDir}`);
   console.log(`sessions: ${ctx.sessionsDir}`);
