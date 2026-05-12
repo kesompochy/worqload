@@ -24,7 +24,7 @@
     const lines = (fc.content ?? "").split("\n");
     // A trailing newline yields a final empty element; drop it so there's no phantom last line.
     if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
-    return lines.map((line, i) => ({ no: i + 1, html: highlightCode(line, lang) }));
+    return lines.map((line, i) => ({ no: i + 1, html: highlightCode(line, lang, { wrapIdentifiers: true }) }));
   });
   const fileContentMeta = $derived.by(() => {
     const fc = appState.fileContent;

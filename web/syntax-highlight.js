@@ -70,12 +70,17 @@ export function languageForPath(path) {
   return extensionToLanguage[name.slice(dot + 1).toLowerCase()] ?? null;
 }
 
-export function highlightCode(code, language) {
+// `options.wrapIdentifiers` (used by the Files viewer for code navigation) asks
+// the highlighter to wrap each plain identifier in `<span class="tok-ident">`
+// so a click can be tied to a token; the bundled generic highlighter honours
+// it, externally registered highlighters that ignore the second argument behave
+// exactly as before.
+export function highlightCode(code, language, options) {
   const text = String(code ?? "");
   const highlight = language ? highlighters.get(language) : null;
   if (!highlight) return escapeHtml(text);
   try {
-    return highlight(text);
+    return highlight(text, options);
   } catch {
     return escapeHtml(text);
   }
@@ -103,7 +108,7 @@ const NUMBER_RE = /^(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|\d[\d_]*\.?\d
 //   strings                   - quote characters; backslash escapes the next char
 //   keywords                  - Set of reserved words to mark as keywords
 function makeGenericHighlighter(config) {
-  return function highlight(code) {
+  return function highlight(code, options) {
     const text = String(code ?? "");
     const n = text.length;
     const out = [];
@@ -160,7 +165,12 @@ function makeGenericHighlighter(config) {
         let j = i + 1;
         while (j < n && IDENTIFIER_PART.test(text[j])) j++;
         if (config.keywords.has(text.slice(i, j))) emit("keyword", j);
-        else i = j; // a plain identifier stays part of the surrounding plain run
+        else if (options?.wrapIdentifiers) {
+          flushPlainTo(i);
+          out.push(`<span class="tok-ident">${escapeHtml(text.slice(i, j))}</span>`);
+          i = j;
+          plainStart = i;
+        } else i = j; // a plain identifier stays part of the surrounding plain run
         continue;
       }
 

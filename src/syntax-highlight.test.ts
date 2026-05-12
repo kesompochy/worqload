@@ -106,6 +106,28 @@ test("default highlighter colours JSON literals and numbers", () => {
   expect(out).toContain('<span class="hl-keyword">true</span>');
 });
 
+test("wrapIdentifiers wraps plain identifiers (not keywords/strings/numbers) in tok-ident spans", () => {
+  const out = highlightCode("const x = foo(bar);", "javascript", { wrapIdentifiers: true });
+  expect(out).toContain('<span class="hl-keyword">const</span>');
+  expect(out).toContain('<span class="tok-ident">x</span>');
+  expect(out).toContain('<span class="tok-ident">foo</span>');
+  expect(out).toContain('<span class="tok-ident">bar</span>');
+  // keywords stay keywords, not idents
+  expect(out).not.toContain('<span class="tok-ident">const</span>');
+});
+
+test("wrapIdentifiers leaves identifiers inside strings and comments alone", () => {
+  expect(highlightCode('s = "foo bar";', "javascript", { wrapIdentifiers: true }))
+    .toBe('<span class="tok-ident">s</span> = <span class="hl-string">"foo bar"</span>;');
+  expect(highlightCode("// foo bar", "javascript", { wrapIdentifiers: true }))
+    .toBe('<span class="hl-comment">// foo bar</span>');
+});
+
+test("wrapIdentifiers defaults off — output is unchanged without the option", () => {
+  expect(highlightCode("a < b && c", "javascript")).toBe("a &lt; b &amp;&amp; c");
+  expect(highlightCode("a < b && c", "javascript", {})).toBe("a &lt; b &amp;&amp; c");
+});
+
 test("default highlighter colours markup tag names and escapes the angle brackets", () => {
   const out = highlightCode('<div class="x">text</div>', "html");
   expect(out).toContain('<span class="hl-keyword">div</span>');

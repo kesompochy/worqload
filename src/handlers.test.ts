@@ -12,9 +12,11 @@ mock.module("../web/api.js", () => ({
   refreshDiff: async () => {},
   ensureFilesLoaded: async () => {},
   selectFile: async () => {},
+  searchFiles: async () => ({ matches: [], truncated: false }),
+  fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, gotoAnchorTarget, gotoArticle } = await import("../web/handlers.js");
+const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
@@ -73,6 +75,40 @@ test("clicking a report header toggles its expansion with a fresh Map (so Svelte
   // second click collapses again.
   onDetailBodyClick(reportToggleClick("001-plan.md"));
   expect(isReportExpanded(state.reports[0])).toBe(false);
+});
+
+function identTokenClick(symbol: string, path: string, line: number) {
+  const lineEl = { getAttribute: (a: string) => (a === "data-anchor-path" ? path : a === "data-anchor-line" ? String(line) : null) };
+  const token = {
+    textContent: symbol,
+    getBoundingClientRect: () => ({ top: 0, bottom: 10, left: 0 }),
+    closest: (sel: string) => (sel === "[data-anchor-line]" ? lineEl : null),
+  };
+  return { target: { closest: (sel: string) => (sel === ".tok-ident" ? token : sel === ".file-content-body" ? {} : null) } };
+}
+
+test("clicking a symbol token in the Files content pane opens the code-nav popover, then resolves it via the heuristic fallback", async () => {
+  state.selected = null; // no session selected → the server provider declines, heuristic answers
+  state.fileContent = { path: "lib/app.js", content: "function greet(name) {}\ngreet('x');\n" };
+  state.selectedFilePath = "lib/app.js";
+  state.codeNav = null;
+
+  onDetailBodyClick(identTokenClick("greet", "lib/app.js", 2));
+  expect(state.codeNav?.symbol).toBe("greet");
+  expect(state.codeNav?.path).toBe("lib/app.js");
+  expect(state.codeNav?.definitionsStatus).toBe("loading");
+  expect(state.codeNav?.referencesStatus).toBe("loading");
+
+  await new Promise(r => setTimeout(r, 5));
+  expect(state.codeNav?.definitionsStatus).toBe("done");
+  expect(state.codeNav?.definitions).toEqual([
+    { path: "lib/app.js", line: 1, column: "function ".length, text: "function greet(name) {}" },
+  ]);
+  expect(state.codeNav?.referencesStatus).toBe("done");
+  expect(state.codeNav?.references).toEqual([]);
+
+  closeCodeNav();
+  expect(state.codeNav).toBeNull();
 });
 
 test("command-result feedback is expanded only until the agent consumes it", () => {
