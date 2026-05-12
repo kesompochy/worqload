@@ -1,8 +1,9 @@
 // Single source of truth for the worqload frontend's in-browser view state,
 // plus the small pure queries that derive display flags from it. `$state`
-// makes mutations reactive for the Svelte components; the still-vanilla
-// modules read and write it exactly as before. (`bun test` loads this module
-// without the Svelte compiler — see src/svelte-runes-test-shim.ts.)
+// makes mutations reactive for the Svelte components; the data layer (api.js)
+// and the action handlers (handlers.js) mutate it, the components re-render.
+// (`bun test` loads this module without the Svelte compiler — see
+// src/svelte-runes-test-shim.ts.)
 
 export const state = $state({
   sessions: [],
@@ -14,7 +15,7 @@ export const state = $state({
   ws: null,
   lastSeq: 0,
   activeTab: "reports",  // "reports" | "diff" | "files" | "events"
-  tabScroll: new Map(),  // tab name -> remembered scroll position (see render.js), so switching back returns there
+  tabScroll: new Map(),  // tab name -> remembered scroll position (see DetailBody.svelte), so switching back returns there
   diff: "",              // text/plain diff (full file context, -U<huge>) — the branch's changes since the session forked
   anchor: null,          // { path, lineStart, lineEnd } | null
   collapsedFiles: new Set(),  // paths of diff files the user collapsed

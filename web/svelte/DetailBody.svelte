@@ -1,8 +1,7 @@
 <script>
   // The detail pane's scroll body — everything between the header (DetailHeader)
-  // and the composer/action area (still built by render.js's renderDetail into
-  // #detailActionArea / #detailComposer): the pending-asking section, the
-  // active tab's content, and the "Feedback sent" list. Mounted into
+  // and the action area (ActionBar) / composer (Composer): the pending-asking
+  // section, the active tab's content, and the "Feedback sent" list. Mounted into
   // #detailBodyMount from main.ts. The Reports tab, the Feedback-sent list, the
   // asking section, and the Diff tab (DiffView.svelte) are rendered natively
   // here off the reactive `appState` (and DiffView / FilesView / EventsView do
@@ -26,8 +25,7 @@
   // A streamed event prepends an Events row, the Reports list prepends a
   // freshly arrived report above whatever the user is reading, and expanding a
   // collapsed gap in the Diff inserts rows that may sit above the viewport —
-  // all snap the scroll position. These mirror render.js's old
-  // captureDetailScroll/restoreDetailScroll:
+  // all snap the scroll position. To keep the view steady:
   // anchor to the topmost row still reaching into the viewport (rows carry stable
   // data-* ids) rather than reusing scrollTop, so prepended rows don't shift the
   // view; sitting exactly at the top is preserved as-is. When the active tab

@@ -505,7 +505,6 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions", getSessions),
   defineRoute("GET",  "/sessions/:id", getSessionDetail),
   defineRoute("POST", "/sessions/:id/stop", postStop),
-  defineRoute("POST", "/sessions/:id/cancel", postCancel),
   defineRoute("POST", "/sessions/:id/resume", postResume),
   defineRoute("POST", "/sessions/:id/archive", postArchive),
   defineRoute("POST", "/sessions/:id/title", postTitle),
@@ -748,7 +747,7 @@ async function postSessionsOrder(req: Request, ctx: ServerContext): Promise<Resp
 async function postArchive(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     if (!isTerminal(meta.status)) {
-      return json({ error: "stop or cancel the session before archiving" }, 400);
+      return json({ error: "stop the session before archiving" }, 400);
     }
     if (meta.archivedAt) return json({ meta });
     const updated: SessionMeta = { ...meta, archivedAt: new Date().toISOString() };
@@ -946,30 +945,6 @@ async function postStop(_req: Request, ctx: ServerContext, params: Record<string
   });
 }
 
-async function postCancel(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
-  return withSession(ctx, params.id, async meta => {
-    const att = ctx.clients.get(meta.id);
-    if (att) {
-      await att.client.kill("SIGKILL");
-      await att.client.exited.catch(() => {});
-    } else if (meta.hostPid !== undefined && isPidAlive(meta.hostPid)) {
-      try { process.kill(meta.hostPid, "SIGKILL"); } catch {}
-    }
-    ctx.clients.delete(meta.id);
-    if (meta.worktreePath) {
-      try {
-        const branchName = meta.branchName || `worqload/${meta.id.slice(0, 8)}`;
-        await ctx.worktreeOps.removeWorktree(meta.worktreePath, branchName, ctx.repoDir);
-      } catch {}
-    }
-    const updated = isTerminal(meta.status)
-      ? meta
-      : await transitionStatus(ctx, meta, "stopped");
-    await appendAndBroadcast(ctx, meta.id, { kind: "session_stopped", payload: { reason: "cancel" } });
-    return json({ meta: updated });
-  });
-}
-
 interface ResumeBody {
   prompt?: string;
 }
@@ -984,7 +959,7 @@ async function postResume(req: Request, ctx: ServerContext, params: Record<strin
       return json({ error: "session is not stopped; nothing to resume" }, 400);
     }
     if (!meta.worktreePath || !existsSync(meta.worktreePath)) {
-      return json({ error: "session worktree no longer exists (it was cancelled); cannot resume" }, 400);
+      return json({ error: "session worktree no longer exists; cannot resume" }, 400);
     }
     const body = (await req.json().catch(() => ({}))) as ResumeBody;
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";

@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
-import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "fs";
+import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { startServer } from "./web-server";
 import { agentEndpointPath, loadSessionMeta } from "./session";
 import { readEvents } from "./event-log";
@@ -706,7 +706,7 @@ test("POST /sessions/:id/archive hides terminal sessions from default list", asy
   const tooEarly = await fetch(`${baseUrl}/sessions/${sid}/archive`, { method: "POST" });
   expect(tooEarly.status).toBe(400);
 
-  await postJson(baseUrl, `/sessions/${sid}/cancel`, {});
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
   const archived = await postJson(baseUrl, `/sessions/${sid}/archive`, {}).then(r => r.json());
   expect(archived.meta.archivedAt).toBeDefined();
 
@@ -855,21 +855,13 @@ test("WS /sessions/:id/stream replays past events on subscribe and pushes live o
   await new Promise(r => setTimeout(r, 30));
 });
 
-test("POST /sessions/:id/cancel removes worktree and marks stopped", async () => {
+test("POST /sessions/:id/cancel no longer exists", async () => {
   const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir);
+  const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
-  const sid = created.meta.id;
-
-  const wt = created.meta.worktreePath;
-  expect(existsSync(wt)).toBe(true);
-
-  await postJson(baseUrl, `/sessions/${sid}/cancel`, {});
-
-  expect(existsSync(wt)).toBe(false);
-  const meta = await loadSessionMeta(sid, ctx.sessionsDir);
-  expect(meta?.status).toBe("stopped");
+  const res = await postJson(baseUrl, `/sessions/${created.meta.id}/cancel`, {});
+  expect(res.status).toBe(404);
 });
 
 test("POST /sessions/:id/resume respawns the host and returns the session to running", async () => {
@@ -923,14 +915,14 @@ test("POST /sessions/:id/resume rejects a session that is still running", async 
   expect(res.status).toBe(400);
 });
 
-test("POST /sessions/:id/resume rejects a cancelled session whose worktree is gone", async () => {
+test("POST /sessions/:id/resume rejects a session whose worktree is gone", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
   const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/cancel`, {});
-  expect(existsSync(created.meta.worktreePath)).toBe(false);
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+  rmSync(created.meta.worktreePath, { recursive: true, force: true });
 
   const res = await postJson(baseUrl, `/sessions/${sid}/resume`, {});
   expect(res.status).toBe(400);
