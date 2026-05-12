@@ -1,5 +1,10 @@
 // Vite entry for the worqload frontend. Pulls in the stylesheet and the
-// existing vanilla app; Svelte components are mounted from here as the UI is
-// migrated piece by piece.
+// existing vanilla app, then mounts the Svelte components that have been
+// migrated so far.
 import "./style.css";
 import "./app.js";
+import { mount } from "svelte";
+import NewSessionModal from "./svelte/NewSessionModal.svelte";
+
+const newSessionModal = mount(NewSessionModal, { target: document.body });
+document.getElementById("btnNew")?.addEventListener("click", () => newSessionModal.open());
