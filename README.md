@@ -11,7 +11,7 @@ Everything exchanged between human and agent — reports, escalations, feedback,
 ```sh
 bun install
 bun test
-bun run dev          # `worqload serve` を --watch で起動
+bun run dev          # `worqload serve` under --watch
 ```
 
-CLI のサブコマンドは `worqload`（引数なし）で一覧表示される。
+Run `worqload` with no arguments to list the CLI subcommands.
