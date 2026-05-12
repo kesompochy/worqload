@@ -5,7 +5,7 @@
 
 import { $, toast } from "./dom.js";
 import { state } from "./state.svelte.js";
-import { selectSession } from "./handlers.js";
+import { selectSession, revealReport } from "./handlers.js";
 
 // Desktop notifications for new reports and escalations. The preference is a
 // localStorage flag; notifications fire only when it's on AND the browser has
@@ -27,7 +27,12 @@ export function fireNotification({ title, body, tag, sessionId }) {
   try { n = new Notification(title, { body, tag }); } catch { return; }
   n.onclick = () => {
     window.focus();
-    if (sessionId && sessionId !== state.selected) selectSession(sessionId);
+    // Report notifications land you on the Reports tab with that report opened;
+    // the tag — worqload:report:<sessionId>[:<filename>] (see notifications.js) —
+    // is the only handle on which report. Everything else just shows the session.
+    const reportTag = /^worqload:report:[^:]+(?::(.+))?$/.exec(tag || "");
+    if (reportTag) revealReport(sessionId, reportTag[1] || null);
+    else if (sessionId && sessionId !== state.selected) selectSession(sessionId);
     n.close();
   };
 }
