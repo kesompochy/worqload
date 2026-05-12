@@ -211,14 +211,27 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .anchor-chip button { background: transparent; border: none; color: var(--accent); padding: 0 .2rem; cursor: pointer; font-size: 14px; line-height: 1; }
 .report-anchor-chip { background: rgba(88,166,255,.12); border: 1px solid rgba(88,166,255,.35); color: var(--accent); padding: .05rem .4rem; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 11px; cursor: pointer; max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-anchor-chip:hover { background: rgba(88,166,255,.24); border-color: rgba(88,166,255,.55); }
-.report-links { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; padding: .3rem .8rem; border-top: 1px solid var(--border); }
-.report-links-label { color: var(--text-dim); font-size: 11px; }
-@keyframes anchor-flash {
-  0%, 100% { background: transparent; }
-  15% { background: rgba(210,153,34,.45); }
-  50% { background: rgba(210,153,34,.28); }
+/* The "you've arrived here" flash: a translucent wash laid over the target as an
+   ::after overlay that fades out, so the element's own background (a green add
+   line, a blue selected block, …) is never touched — no snap-back when the class
+   is removed. Removal is driven by `animationend` (see DetailBody.svelte), not a
+   timer, so it can't cut the fade short. */
+@keyframes anchor-flash { from { opacity: 1; } to { opacity: 0; } }
+.anchor-flash { position: relative; }
+.anchor-flash::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: 3px; z-index: 1;
+  background: rgba(210,153,34,.5);
+  animation: anchor-flash 1s ease-out forwards;
 }
-.anchor-flash { animation: anchor-flash 1.6s ease; border-radius: 3px; }
+/* "There is sent feedback anchored to this line/block": a left stripe everywhere,
+   plus a clickable 💬 on diff/file lines that jumps to that feedback. */
+.diff-line.has-feedback, .file-line.has-feedback { position: relative; }
+.diff-line.has-feedback, .file-line.has-feedback, .md [data-feedback-here] { box-shadow: inset 2px 0 0 #bc8cff; }
+.diff-line.has-feedback .body, .file-line.has-feedback .body { padding-right: 1.8rem; }
+.line-feedback-mark { position: absolute; right: .35rem; top: 0; border: none; background: transparent; cursor: pointer; font-size: 10px; line-height: 1.5; padding: 0 .15rem; opacity: .8; }
+.line-feedback-mark:hover { opacity: 1; }
+.md [data-feedback-here] { position: relative; }
+.md [data-feedback-here]::after { content: "💬"; position: absolute; right: -.55rem; top: 0; font-size: 10px; opacity: .7; pointer-events: none; }
 .event-row { border-bottom: 1px solid var(--border); font-family: ui-monospace, monospace; font-size: 12px; }
 .event-line { display: grid; grid-template-columns: 1ch 5ch 12rem 6rem 1fr; gap: .5rem; padding: .3rem .5rem; align-items: baseline; cursor: pointer; user-select: none; }
 .event-line:hover { background: var(--panel); }
