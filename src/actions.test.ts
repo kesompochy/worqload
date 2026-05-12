@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { createPrAction, findAction, listActions, mergeToBaseAction } from "./actions";
 import type { SessionMeta } from "./session";
-import { cleanupAll, makeTmpDir } from "./test-helpers";
+import { cleanupAll, makeRepoFromTemplate } from "./test-helpers";
 import { createSessionWorktree } from "./worktree";
 
 afterEach(cleanupAll);
@@ -25,17 +25,17 @@ function worktreeStatus(cwd: string): string {
 // added the `.worqload-reports` line — the dirty-check must still cope.
 function makeRepo(opts: { gitignoreWorqloadReports?: boolean } = {}): string {
   const { gitignoreWorqloadReports = true } = opts;
-  const dir = makeTmpDir("actions-test");
-  git(["init"], dir);
-  git(["checkout", "-b", TEST_BASE], dir);
-  git(["config", "user.email", "t@t.com"], dir);
-  git(["config", "user.name", "t"], dir);
-  writeFileSync(join(dir, "README.md"), "# t\n");
-  const ignored = [".worqload/", ".worktrees/", ...(gitignoreWorqloadReports ? [".worqload-reports"] : [])];
-  writeFileSync(join(dir, ".gitignore"), `${ignored.join("\n")}\n`);
-  git(["add", "."], dir);
-  git(["commit", "-m", "init"], dir);
-  return dir;
+  return makeRepoFromTemplate(`actions-${gitignoreWorqloadReports}`, (dir) => {
+    git(["init"], dir);
+    git(["checkout", "-b", TEST_BASE], dir);
+    git(["config", "user.email", "t@t.com"], dir);
+    git(["config", "user.name", "t"], dir);
+    writeFileSync(join(dir, "README.md"), "# t\n");
+    const ignored = [".worqload/", ".worktrees/", ...(gitignoreWorqloadReports ? [".worqload-reports"] : [])];
+    writeFileSync(join(dir, ".gitignore"), `${ignored.join("\n")}\n`);
+    git(["add", "."], dir);
+    git(["commit", "-m", "init"], dir);
+  });
 }
 
 async function makeSessionWorktree(repoDir: string, sessionId: string): Promise<SessionMeta> {

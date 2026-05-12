@@ -2,6 +2,7 @@ import { test, expect, describe, afterEach } from "bun:test";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { mkdirSync, existsSync, readlinkSync, lstatSync, writeFileSync, symlinkSync } from "fs";
+import { makeRepoFromTemplate } from "./test-helpers";
 import {
   createSessionWorktree,
   removeWorktree,
@@ -23,16 +24,15 @@ function git(args: string[], cwd: string) {
 const TEST_BASE_BRANCH = "trunk";
 
 function createTempGitRepo(): string {
-  const dir = join(tmpdir(), `worqload-wt-test-${crypto.randomUUID()}`);
-  mkdirSync(dir, { recursive: true });
-  git(["init"], dir);
-  git(["checkout", "-b", TEST_BASE_BRANCH], dir);
-  git(["config", "user.email", "test@test.com"], dir);
-  git(["config", "user.name", "Test"], dir);
-  writeFileSync(join(dir, "README.md"), "# test repo\n");
-  git(["add", "."], dir);
-  git(["commit", "-m", "initial"], dir);
-  return dir;
+  return makeRepoFromTemplate("worktree", (dir) => {
+    git(["init"], dir);
+    git(["checkout", "-b", TEST_BASE_BRANCH], dir);
+    git(["config", "user.email", "test@test.com"], dir);
+    git(["config", "user.name", "Test"], dir);
+    writeFileSync(join(dir, "README.md"), "# test repo\n");
+    git(["add", "."], dir);
+    git(["commit", "-m", "initial"], dir);
+  });
 }
 
 const cleanupDirs: string[] = [];

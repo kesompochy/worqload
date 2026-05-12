@@ -3,7 +3,7 @@ import { join } from "path";
 import { writeFileSync, mkdirSync } from "fs";
 import { startServer } from "./web-server";
 import { submitReport, submitEscalation, requestCommandApproval, fetchFeedback } from "./agent-client";
-import { makeTmpDir, cleanupAll, trackCleanup } from "./test-helpers";
+import { makeRepoFromTemplate, cleanupAll, trackCleanup } from "./test-helpers";
 
 afterEach(cleanupAll);
 
@@ -18,15 +18,15 @@ function git(args: string[], cwd: string) {
 }
 
 function makeRepo(): string {
-  const dir = makeTmpDir("agent-client-test");
-  git(["init"], dir);
-  git(["checkout", "-b", TEST_BASE], dir);
-  git(["config", "user.email", "t@t.com"], dir);
-  git(["config", "user.name", "t"], dir);
-  writeFileSync(join(dir, "README.md"), "# t\n");
-  git(["add", "."], dir);
-  git(["commit", "-m", "init"], dir);
-  return dir;
+  return makeRepoFromTemplate("agent-client", (dir) => {
+    git(["init"], dir);
+    git(["checkout", "-b", TEST_BASE], dir);
+    git(["config", "user.email", "t@t.com"], dir);
+    git(["config", "user.name", "t"], dir);
+    writeFileSync(join(dir, "README.md"), "# t\n");
+    git(["add", "."], dir);
+    git(["commit", "-m", "init"], dir);
+  });
 }
 
 async function bootAndCreateSession(): Promise<{ endpoint: string; sessionId: string }> {

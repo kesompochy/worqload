@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from 
 import { startServer } from "./web-server";
 import { agentEndpointPath, loadSessionMeta } from "./session";
 import { readEvents } from "./event-log";
-import { makeTmpDir, cleanupAll, trackCleanup } from "./test-helpers";
+import { makeRepoFromTemplate, cleanupAll, trackCleanup } from "./test-helpers";
 
 afterEach(cleanupAll);
 
@@ -22,16 +22,16 @@ function git(args: string[], cwd: string) {
 }
 
 function makeRepo(): string {
-  const dir = makeTmpDir("web-server-test");
-  git(["init"], dir);
-  git(["checkout", "-b", TEST_BASE], dir);
-  git(["config", "user.email", "t@t.com"], dir);
-  git(["config", "user.name", "t"], dir);
-  writeFileSync(join(dir, "README.md"), "# t\n");
-  writeFileSync(join(dir, ".gitignore"), ".worqload/\n.worqload-reports\n.worktrees/\n");
-  git(["add", "."], dir);
-  git(["commit", "-m", "init"], dir);
-  return dir;
+  return makeRepoFromTemplate("web-server", (dir) => {
+    git(["init"], dir);
+    git(["checkout", "-b", TEST_BASE], dir);
+    git(["config", "user.email", "t@t.com"], dir);
+    git(["config", "user.name", "t"], dir);
+    writeFileSync(join(dir, "README.md"), "# t\n");
+    writeFileSync(join(dir, ".gitignore"), ".worqload/\n.worqload-reports\n.worktrees/\n");
+    git(["add", "."], dir);
+    git(["commit", "-m", "init"], dir);
+  });
 }
 
 async function bootServer(repoDir: string, mockMode: "init" | "echo" | "hang" = "hang") {

@@ -1,5 +1,5 @@
 import type { Subprocess } from "bun";
-import { mkdtempSync, rmSync } from "fs";
+import { cpSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -13,6 +13,26 @@ const cleanups: Array<() => Promise<void>> = [];
 export function makeTmpDir(label: string): string {
   const dir = mkdtempSync(join(tmpdir(), `worqload-${label}-`));
   tmpDirs.push(dir);
+  return dir;
+}
+
+// Building a git repo from scratch is ~6 `git` process spawns (~200ms on
+// macOS); tests create dozens. Build each distinct layout once into a template
+// that survives the suite, then hand out copies (a directory tree copy is an
+// order of magnitude cheaper than re-running git). Template dirs are not
+// tracked for per-test cleanup on purpose — they must outlive afterEach — and
+// are small enough to leave for the OS tmp reaper.
+const repoTemplates = new Map<string, string>();
+
+export function makeRepoFromTemplate(key: string, build: (dir: string) => void): string {
+  let template = repoTemplates.get(key);
+  if (!template) {
+    template = mkdtempSync(join(tmpdir(), "worqload-repo-template-"));
+    build(template);
+    repoTemplates.set(key, template);
+  }
+  const dir = makeTmpDir("repo");
+  cpSync(template, dir, { recursive: true });
   return dir;
 }
 
