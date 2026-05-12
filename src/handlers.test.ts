@@ -3,9 +3,10 @@ import { test, expect, mock } from "bun:test";
 // selectSession reaches into the network (api); stub it so the per-session
 // state reset can be asserted in isolation.
 const reorderSessionsCalls: string[][] = [];
+let fetchSessionsCalls = 0;
 mock.module("../web/api.js", () => ({
   api: async () => ({}),
-  fetchSessions: async () => {},
+  fetchSessions: async () => { fetchSessionsCalls++; },
   reorderSessions: async (ids: string[]) => { reorderSessionsCalls.push(ids); },
   refreshDetail: async () => {},
   refreshDiff: async () => {},
@@ -13,7 +14,7 @@ mock.module("../web/api.js", () => ({
   selectFile: async () => {},
   openWs() {},
 }));
-const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions } = await import("../web/handlers.js");
+const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark } = await import("../web/handlers.js");
 const { state, isReportExpanded } = await import("../web/state.svelte.js");
 
 // onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
@@ -64,6 +65,18 @@ test("clicking a report header toggles its expansion with a fresh Map (so Svelte
   // second click collapses again.
   onDetailBodyClick(reportToggleClick("001-plan.md"));
   expect(isReportExpanded(state.reports[0])).toBe(false);
+});
+
+test("onReportMark refreshes the session list so the sidebar unread badge updates immediately", async () => {
+  // The badge count comes from GET /sessions; without this fetch it would only
+  // catch up on the next 30s poll (or whenever the report_read websocket event
+  // round-trips back).
+  state.selected = "session-a";
+  fetchSessionsCalls = 0;
+
+  await onReportMark("001-plan.md", true);
+
+  expect(fetchSessionsCalls).toBe(1);
 });
 
 test("runOpenAction records the run on a fresh actionResults Map (so ActionBar re-renders)", async () => {

@@ -158,6 +158,10 @@ export async function onReportMark(filename, read) {
     nextToggle.delete(filename);
     state.reportToggle = nextToggle;
     await refreshDetail();
+    // The sidebar's unread badge is derived from GET /sessions, not from the
+    // detail pane — refresh it too so it tracks the mark without waiting for
+    // the report_read websocket round-trip (or the 30s poll).
+    await fetchSessions();
   } catch (e) {
     toast(`failed: ${e.message}`);
   }
