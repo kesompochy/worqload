@@ -5,12 +5,11 @@
   // active tab's content, and the "Feedback sent" list. Mounted into
   // #detailBodyMount from main.ts. The Reports tab, the Feedback-sent list, the
   // asking section, and the Diff tab (DiffView.svelte) are rendered natively
-  // here off the reactive `appState` (and DiffView / FilesView do the same);
-  // the Events tab still comes from events-view.js as an HTML string via
-  // {@html} (migrated next). Click handling for the {@html} tab, for the diff
-  // and files explorers (collapse, gap expand, file open, copy-path, line
-  // anchoring), for line anchors inside report markdown, and for the asking
-  // buttons is delegated to onDetailBodyClick.
+  // here off the reactive `appState` (and DiffView / FilesView / EventsView do
+  // the same). Click handling for the diff, files, and events explorers
+  // (collapse, gap expand, file open, copy-path, line anchoring, event
+  // expand/collapse), for line anchors inside report markdown, and for the
+  // asking buttons is delegated to onDetailBodyClick.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
@@ -18,14 +17,13 @@
   import { renderMarkdown } from "../markdown.js";
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
-  import { renderEventsHtml } from "../events-view.js";
+  import EventsView from "./EventsView.svelte";
   import { onDetailBodyClick } from "../handlers.js";
 
   // Reports are stored oldest-first; the pane shows newest-first.
   const reportsNewestFirst = $derived([...appState.reports].reverse());
 
-  // The {@html} tab bodies replace their whole subtree on every reactive change
-  // (a streamed event re-renders the Events list), the Reports list prepends a
+  // A streamed event prepends an Events row, the Reports list prepends a
   // freshly arrived report above whatever the user is reading, and expanding a
   // collapsed gap in the Diff inserts rows that may sit above the viewport —
   // all snap the scroll position. These mirror render.js's old
@@ -131,7 +129,7 @@
     {:else if appState.activeTab === "files"}
       <FilesView />
     {:else if appState.activeTab === "events"}
-      {@html renderEventsHtml()}
+      <EventsView />
     {:else if reportsNewestFirst.length > 0}
       {#each reportsNewestFirst as r (r.filename)}
         {@const expanded = isReportExpanded(r)}

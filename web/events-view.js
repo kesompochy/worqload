@@ -1,13 +1,10 @@
-// Events tab rendering. Each event is a single line by default; clicking it
-// toggles a panel that re-presents the raw NDJSON payload in a form a human can
-// read — assistant turns as markdown, tool calls as name + arguments, tool
-// results / stderr as code, lifecycle and report/feedback events as a short
-// sentence. For kinds we don't special-case (and as a fallback when extraction
-// fails) the panel falls back to the pretty-printed payload.
-
-import { escapeHtml, formatRelative } from "./dom.js";
-import { renderMarkdown } from "./markdown.js";
-import { state, isEventExpanded } from "./state.svelte.js";
+// Turns one raw NDJSON event into what the Events tab shows for it: a one-line
+// summary for the collapsed row, and the sections of the expand panel — an
+// assistant turn as markdown, tool calls as name + arguments, tool results /
+// stderr as code, lifecycle and report/feedback events as a short sentence. For
+// kinds we don't special-case (and as a fallback when extraction fails) the
+// panel falls back to the pretty-printed payload. This module is pure; the
+// painting lives in web/svelte/EventsView.svelte.
 
 // ---- pure: event -> { summary, sections } -------------------------------
 //
@@ -248,38 +245,4 @@ function prettyJson(value) {
   } catch {
     return String(value);
   }
-}
-
-// ---- impure: build the Events tab HTML from state -----------------------
-
-export function renderEventsHtml() {
-  const events = state.detail?.events ?? [];
-  if (events.length === 0) {
-    return `<div class="diff-empty">No events yet.</div>`;
-  }
-  return events.slice().reverse().map(renderEventRow).join("");
-}
-
-function renderEventRow(event) {
-  const { summary, sections } = describeEvent(event);
-  const expanded = isEventExpanded(event);
-  return `
-    <div class="event-row${expanded ? " expanded" : ""}" data-event-seq="${escapeHtml(event.seq)}">
-      <div class="event-line" data-event-toggle="${escapeHtml(event.seq)}">
-        <span class="event-chevron">▾</span>
-        <span class="event-seq">${escapeHtml(event.seq)}</span>
-        <span class="event-kind">${escapeHtml(event.kind)}</span>
-        <span class="event-ts">${formatRelative(event.timestamp)}</span>
-        <span class="event-summary">${escapeHtml(summary)}</span>
-      </div>
-      <div class="event-detail">${sections.map(renderEventSection).join("")}</div>
-    </div>
-  `;
-}
-
-function renderEventSection({ label, body, format }) {
-  const head = `<div class="event-section-label">${escapeHtml(label)}</div>`;
-  if (format === "markdown") return `${head}<div class="md">${renderMarkdown(String(body ?? ""))}</div>`;
-  if (format === "text") return `${head}<div class="event-section-text">${escapeHtml(body)}</div>`;
-  return `${head}<pre class="event-section-code">${escapeHtml(body)}</pre>`;
 }

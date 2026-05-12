@@ -7,7 +7,7 @@
 // DetailHeader.svelte; the sidebar is SessionList.svelte. All three re-render
 // reactively off `state`.
 
-import { $, escapeHtml, formatRelative, bindEnterToSubmit } from "./dom.js";
+import { $, escapeHtml, bindEnterToSubmit } from "./dom.js";
 import { state } from "./state.svelte.js";
 import { renderActionPanelHtml } from "./actions-view.js";
 import {
@@ -109,28 +109,5 @@ export function renderDetail() {
   for (const [name, value] of Object.entries(preservedActionParams)) {
     const el = document.getElementById(`actionParam-${name}`);
     if (el) el.value = value;
-  }
-}
-
-// Age the Events tab's "· Ns ago" relative timestamp in place every second.
-// The tab bar lives in DetailHeader.svelte, which re-renders the count and
-// timestamp reactively when a new event streams into state.detail.events — but
-// between events the relative label still needs to tick, and nothing changes a
-// reactive dep for that, so this pokes the rendered nodes directly. (Folds into
-// an $effect / time-tick $state once the Events tab itself is Svelte-migrated.)
-export function refreshEventsTabLabel() {
-  const btn = document.querySelector('.tab-btn[data-tab="events"]');
-  if (!btn) return;
-  const events = state.detail?.events ?? [];
-  const countEl = btn.querySelector(".tab-count");
-  const ageEl = btn.querySelector(".tab-event-age");
-  if (countEl) countEl.textContent = `(${events.length})`;
-  if (ageEl) {
-    if (events.length > 0) {
-      ageEl.textContent = `· ${formatRelative(events[events.length - 1].timestamp)}`;
-      ageEl.style.display = "";
-    } else {
-      ageEl.style.display = "none";
-    }
   }
 }

@@ -1,14 +1,16 @@
 <script>
   // The detail pane's top strip: title + status badge, the metadata line, and
   // the tab bar. Mounted into #detailHeader from main.ts; renders nothing until
-  // a session with loaded detail is selected. Everything below it (#detailMain:
-  // asking section, tab content, feedback form, action panels) is still rebuilt
-  // by render.js's renderDetail(). The Events tab's "· Ns ago" label is still
-  // ticked in place by render.js's refreshEventsTabLabel() via DOM query.
+  // a session with loaded detail is selected. The action bar / action panels
+  // (#detailActionArea) and the feedback/resume composer (#detailComposer) are
+  // still rebuilt by render.js's renderDetail(); everything else below is
+  // DetailBody.svelte. The Events tab's "· Ns ago" label reads the reactive
+  // `clock` so it counts up between streamed events.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
   import { formatRelative } from "../dom.js";
+  import { clock } from "../clock.svelte.js";
   import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles } from "../handlers.js";
 
   const tabs = [
@@ -35,7 +37,7 @@
   </div>
   <div class="tabs">
     {#each tabs as tab}
-      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp)}` : ""}</span>{/if}</button>
+      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span>{/if}</button>
     {/each}
     {#if appState.activeTab === "diff"}
       <span class="diff-base-toggle">

@@ -4,10 +4,13 @@
 
 import { $ } from "./dom.js";
 import { state } from "./state.svelte.js";
+import { startClock } from "./clock.svelte.js";
 import { fetchMeta, fetchActions, fetchSessions } from "./api.js";
-import { refreshEventsTabLabel } from "./render.js";
 import { selectSession } from "./handlers.js";
 import { syncNotifyButton, onNotifyClick } from "./notify.js";
+
+// Drives the reactive `clock` the detail pane's relative timestamps read.
+startClock();
 
 $("#btnNotify").addEventListener("click", onNotifyClick);
 syncNotifyButton();
@@ -24,6 +27,3 @@ if (state.sessions.length > 0) await selectSession(state.sessions[0].id);
 // re-rendered in response to events to avoid disturbing the feedback
 // textarea while the user is typing.
 setInterval(() => fetchSessions(), 30_000);
-// Tick the Events tab's last-update age every second so the user can see the
-// session is alive without waiting for the next streamed event.
-setInterval(refreshEventsTabLabel, 1_000);
