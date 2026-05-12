@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import {
   headlineFromMarkdown,
+  workLoad,
   notificationForEvent,
   notificationsFromSessionPoll,
   pendingNotificationCount,
@@ -141,4 +142,19 @@ test("pendingNotificationCount is zero for no sessions or quiet sessions", () =>
   expect(pendingNotificationCount([])).toBe(0);
   expect(pendingNotificationCount(undefined)).toBe(0);
   expect(pendingNotificationCount([{ id: "a", status: "running", unreadReportCount: 0 }])).toBe(0);
+});
+
+test("workLoad breaks the load down into unread reports and unresolved escalations", () => {
+  const sessions = [
+    { id: "a", status: "running", unreadReportCount: 2 },
+    { id: "b", status: "waiting_human", unreadReportCount: 0 },
+    { id: "c", status: "waiting_human", unreadReportCount: 1 },
+    { id: "d", status: "stopped", unreadReportCount: 0 },
+  ];
+  expect(workLoad(sessions)).toEqual({ unreadReports: 3, unresolvedEscalations: 2, total: 5 });
+});
+
+test("workLoad is all zeros for no sessions or quiet sessions", () => {
+  expect(workLoad([])).toEqual({ unreadReports: 0, unresolvedEscalations: 0, total: 0 });
+  expect(workLoad(undefined)).toEqual({ unreadReports: 0, unresolvedEscalations: 0, total: 0 });
 });
