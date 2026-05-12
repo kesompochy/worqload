@@ -1,12 +1,10 @@
 # worqload
 
-A browser UI for observing and intervening in parallel `claude` sessions.
+A browser UI for observing and steering parallel `claude` sessions.
 
-worqload narrows the human's role down to Orient alone, and then raises the density of that work — the load average of the human's labor — by keeping many sessions in flight at once. Each agent runs Observe / Decide / Act on its own and escalates the moment something needs human judgment; the human moves between sessions answering those escalations and steering, and does nothing a machine could have done.
+It narrows the human's role to Orient alone and raises its load average by running many sessions at once: each agent handles Observe / Decide / Act in its own worktree and pulls feedback when ready, while the human watches and replies asynchronously. One task = one session = one child `claude` process.
 
-One task = one session = one child `claude` process; the three concepts line up 1:1:1. Communication is asynchronous and pull-based: the agent submits reports and escalations on its own cadence and fetches feedback when it is ready, instead of the runtime pushing messages into its stdin.
-
-Everything exchanged between human and agent — reports, escalations, feedback, the event log — is plain files (Markdown / NDJSON) on disk; worqload is a thin HTTP/WebSocket layer over them. Feedback can be anchored to a line range, and the same primitive (file path + line range) addresses both source code and the agent's own reports. worqload is tightly coupled to the git worktree and the diff view only — merge, commit, and branch lifecycle are out of scope and remain the human's responsibility.
+Reports, escalations, feedback, and the event log are all plain files on disk — worqload is a thin HTTP/WebSocket layer over them. Feedback can be anchored to a line range of either source code or a report. Merge, commit, and branch lifecycle stay out of scope.
 
 ## Development
 
