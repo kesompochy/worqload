@@ -3,7 +3,7 @@
 // on every change and re-attaches its event listeners; the tab-specific HTML
 // comes from the *-view modules, the click/submit handlers from handlers.js.
 
-import { $, escapeHtml, formatRelative, bindEnterToSubmit, bindInlineEdit } from "./dom.js";
+import { $, escapeHtml, formatRelative, bindEnterToSubmit } from "./dom.js";
 import { renderMarkdown } from "./markdown.js";
 import { state, isReportExpanded, isFeedbackExpanded } from "./state.svelte.js";
 import { renderDiffHtml } from "./diff-view.js";
@@ -11,15 +11,8 @@ import { renderFilesHtml } from "./files-view.js";
 import { renderEventsHtml } from "./events-view.js";
 import { renderActionPanelHtml } from "./actions-view.js";
 import {
-  selectSession,
-  onStop,
   onStopAndMarkRead,
-  onArchive,
-  onCancel,
   onResume,
-  onRenameStart,
-  onRenameCommit,
-  onRenameCancel,
   onFeedback,
   onResolve,
   onResolveCommand,
@@ -32,89 +25,11 @@ import {
   clearAnchor,
 } from "./handlers.js";
 
-export function renderSessionList() {
-  const root = $("#sessionList");
-  // The 30s poll and live events both rebuild this list; if the user is in the
-  // middle of an inline rename, carry the in-progress text (and focus) across.
-  const prevRenameInput = root.querySelector(".session-rename-input");
-  const renamePreserved = prevRenameInput ? prevRenameInput.value : null;
-  const renameWasFocused = prevRenameInput !== null && document.activeElement === prevRenameInput;
-  if (state.sessions.length === 0) {
-    root.innerHTML = `<div style="padding:1rem; color:var(--text-dim)">No sessions yet.</div>`;
-    return;
-  }
-  root.innerHTML = "";
-  for (const s of state.sessions) {
-    const card = document.createElement("div");
-    const isActive = s.id === state.selected;
-    card.className = "session-card" + (isActive ? " active" : "");
-    const isTerminal = s.status === "stopped" || s.status === "crashed";
-    // The inline rename input only renders on the active card; guard on isActive
-    // too so a stale renamingSessionId never sprouts an input on some other card.
-    const isRenaming = isActive && s.id === state.renamingSessionId;
-    const unread = Number(s.unreadReportCount) || 0;
-    const badgeText = unread > 99 ? "99+" : String(unread);
-    const badgeHtml = unread > 0
-      ? `<span class="unread-badge" aria-label="${unread} unread report${unread === 1 ? "" : "s"}" title="${unread} unread report${unread === 1 ? "" : "s"}">${badgeText}</span>`
-      : "";
-    const statusBadge = `<span class="badge badge-${s.status}">${s.status.replace("_", " ")}</span>`;
-    const titleHtml = isRenaming
-      ? `<p class="title">${statusBadge}</p>
-         <input class="session-rename-input" type="text" maxlength="120" placeholder="alias（空欄でプロンプト先頭）" value="${escapeHtml(s.title || "")}">`
-      : `<p class="title">${statusBadge}${escapeHtml(s.title || s.prompt.slice(0, 80))}</p>`;
-    // Action buttons sit on every card and are revealed on hover (CSS); the
-    // active card keeps them visible always. Rename is offered only on the
-    // active card because its in-place input renders there only.
-    const actionsHtml = `<div class="session-card-actions">
-           ${isActive && !isRenaming ? `<button class="btn-card-rename">Rename</button>` : ""}
-           ${isTerminal
-             ? `<button class="btn-card-resume">Resume</button>`
-             : `<button class="btn-card-stop">Stop</button>`}
-           <button class="btn-card-archive" ${isTerminal ? "" : "disabled"}>Archive</button>
-           <button class="btn-card-cancel danger" ${isTerminal ? "disabled" : ""}>Cancel</button>
-         </div>`;
-    card.innerHTML = `
-      <div class="session-card-main">
-        ${titleHtml}
-        <div class="meta">${escapeHtml(s.baseBranch)} · ${formatRelative(s.createdAt)}</div>
-        ${actionsHtml}
-      </div>
-      ${badgeHtml}
-    `;
-    card.addEventListener("click", () => selectSession(s.id));
-    const renameBtn = card.querySelector(".btn-card-rename");
-    const resumeBtn = card.querySelector(".btn-card-resume");
-    const stopBtn = card.querySelector(".btn-card-stop");
-    const archiveBtn = card.querySelector(".btn-card-archive");
-    const cancelBtn = card.querySelector(".btn-card-cancel");
-    renameBtn?.addEventListener("click", e => { e.stopPropagation(); onRenameStart(s.id); });
-    resumeBtn?.addEventListener("click", e => { e.stopPropagation(); onResume(s.id); });
-    stopBtn?.addEventListener("click", e => { e.stopPropagation(); onStop(s.id); });
-    archiveBtn?.addEventListener("click", e => { e.stopPropagation(); onArchive(s.id); });
-    cancelBtn?.addEventListener("click", e => { e.stopPropagation(); onCancel(s.id); });
-    if (isRenaming) {
-      const input = card.querySelector(".session-rename-input");
-      input.addEventListener("click", e => e.stopPropagation());
-      input.addEventListener("blur", () => onRenameCommit(s.id, input.value));
-      bindInlineEdit(input, {
-        onCommit: () => onRenameCommit(s.id, input.value),
-        onCancel: onRenameCancel,
-      });
-    }
-    root.appendChild(card);
-  }
-  const renameInput = root.querySelector(".session-rename-input");
-  if (renameInput) {
-    if (renamePreserved !== null) renameInput.value = renamePreserved;
-    if (renameWasFocused || renamePreserved === null) {
-      renameInput.focus();
-      // Fresh start (no carried text) → select all so typing replaces the old
-      // alias; a mid-edit re-render → leave the caret at the end.
-      if (renamePreserved === null) renameInput.select();
-      else renameInput.setSelectionRange(renameInput.value.length, renameInput.value.length);
-    }
-  }
-}
+// The sidebar is now SessionList.svelte (mounted from main.ts), which re-renders
+// itself off the reactive `state`. This stays exported because api.js and
+// handlers.js still call it as their "the session list changed" signal — those
+// mutations already update `state`, so there is nothing left to do here.
+export function renderSessionList() {}
 
 // renderDetail rebuilds the whole detail pane, replacing #detailBody (the
 // scroll container) and every row inside it — so the browser's native scroll
