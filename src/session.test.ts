@@ -6,6 +6,7 @@ import {
   saveSessionMeta,
   loadSessionMeta,
   listSessionMetas,
+  reorderSessions,
 } from "./session";
 import type { SessionStatus } from "./session";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
@@ -130,6 +131,49 @@ test("listSessionMetas returns all sessions sorted by createdAt desc", async () 
   // newest first
   expect(list[0].createdAt >= list[1].createdAt).toBe(true);
   expect(list[1].createdAt >= list[2].createdAt).toBe(true);
+});
+
+test("reorderSessions stamps sortOrder and listSessionMetas honours it", async () => {
+  const dir = tmpDir();
+  const a = createSession(baseParams);
+  await new Promise(r => setTimeout(r, 10));
+  const b = createSession(baseParams);
+  await new Promise(r => setTimeout(r, 10));
+  const c = createSession(baseParams);
+  await saveSessionMeta(a, dir);
+  await saveSessionMeta(b, dir);
+  await saveSessionMeta(c, dir);
+
+  // default: newest first
+  expect((await listSessionMetas(dir)).map(m => m.id)).toEqual([c.id, b.id, a.id]);
+
+  await reorderSessions([a.id, c.id, b.id], dir);
+  expect((await loadSessionMeta(a.id, dir))?.sortOrder).toBe(0);
+  expect((await listSessionMetas(dir)).map(m => m.id)).toEqual([a.id, c.id, b.id]);
+});
+
+test("listSessionMetas floats a session without sortOrder above reordered ones", async () => {
+  const dir = tmpDir();
+  const a = createSession(baseParams);
+  await new Promise(r => setTimeout(r, 10));
+  const b = createSession(baseParams);
+  await saveSessionMeta(a, dir);
+  await saveSessionMeta(b, dir);
+  await reorderSessions([a.id, b.id], dir);
+
+  await new Promise(r => setTimeout(r, 10));
+  const fresh = createSession(baseParams);
+  await saveSessionMeta(fresh, dir);
+
+  expect((await listSessionMetas(dir)).map(m => m.id)).toEqual([fresh.id, a.id, b.id]);
+});
+
+test("reorderSessions skips ids with no session on disk", async () => {
+  const dir = tmpDir();
+  const a = createSession(baseParams);
+  await saveSessionMeta(a, dir);
+  await reorderSessions(["ghost", a.id], dir);
+  expect((await loadSessionMeta(a.id, dir))?.sortOrder).toBe(1);
 });
 
 test("saveSessionMeta updates an existing session", async () => {

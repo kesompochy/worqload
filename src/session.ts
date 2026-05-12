@@ -16,6 +16,10 @@ export interface SessionMeta {
   createdAt: string;
   endedAt?: string;
   archivedAt?: string;
+  // Position in the sidebar after the human drag-reorders the list. Sessions
+  // without it (never reordered, or created since the last reorder) sort to the
+  // top by recency; sessions with it sort below by ascending value.
+  sortOrder?: number;
 }
 
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
@@ -105,5 +109,28 @@ export async function listSessionMetas(
     const meta = await loadSessionMeta(id, sessionsDir);
     if (meta) metas.push(meta);
   }
-  return metas.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return metas.sort(compareSessionOrder);
+}
+
+// Sidebar order: a session the human placed explicitly (sortOrder set) sits
+// where they put it; one without — including any created after the last
+// reorder — floats to the top by recency, so new work stays visible.
+function compareSessionOrder(a: SessionMeta, b: SessionMeta): number {
+  const ao = a.sortOrder;
+  const bo = b.sortOrder;
+  if (ao !== undefined && bo !== undefined) return ao - bo;
+  if (ao === undefined && bo === undefined) return b.createdAt.localeCompare(a.createdAt);
+  return ao === undefined ? -1 : 1;
+}
+
+// Persist the human's drag-reordered sidebar order by stamping each session's
+// meta with its index in `orderedIds`. Ids with no session on disk are skipped.
+export async function reorderSessions(
+  orderedIds: string[],
+  sessionsDir: string = DEFAULT_SESSIONS_DIR,
+): Promise<void> {
+  for (let index = 0; index < orderedIds.length; index++) {
+    const meta = await loadSessionMeta(orderedIds[index], sessionsDir);
+    if (meta) await saveSessionMeta({ ...meta, sortOrder: index }, sessionsDir);
+  }
 }

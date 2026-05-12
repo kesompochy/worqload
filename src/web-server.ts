@@ -9,6 +9,7 @@ import {
   saveSessionMeta,
   loadSessionMeta,
   listSessionMetas,
+  reorderSessions,
   isTerminal,
   validateTransition,
   type SessionMeta,
@@ -500,6 +501,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/assets/:filename", getAsset),
   defineRoute("GET",  "/meta", getMeta),
   defineRoute("POST", "/sessions", postSessions),
+  defineRoute("POST", "/sessions/order", postSessionsOrder),
   defineRoute("GET",  "/sessions", getSessions),
   defineRoute("GET",  "/sessions/:id", getSessionDetail),
   defineRoute("POST", "/sessions/:id/stop", postStop),
@@ -728,6 +730,19 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
     return { ...meta, unreadReportCount };
   }));
   return json({ sessions: decorated });
+}
+
+interface SessionsOrderBody {
+  ids?: unknown;
+}
+
+async function postSessionsOrder(req: Request, ctx: ServerContext): Promise<Response> {
+  const body = (await req.json().catch(() => ({}))) as SessionsOrderBody;
+  if (!Array.isArray(body.ids) || !body.ids.every(id => typeof id === "string")) {
+    return json({ error: "ids must be an array of session ids" }, 400);
+  }
+  await reorderSessions(body.ids as string[], ctx.sessionsDir);
+  return json({ ok: true });
 }
 
 async function postArchive(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
