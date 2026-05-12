@@ -7,6 +7,7 @@ import { mount } from "svelte";
 import NewSessionModal from "./svelte/NewSessionModal.svelte";
 import SessionList from "./svelte/SessionList.svelte";
 import DetailHeader from "./svelte/DetailHeader.svelte";
+import ActionBar from "./svelte/ActionBar.svelte";
 import DetailBody from "./svelte/DetailBody.svelte";
 
 const newSessionModal = mount(NewSessionModal, { target: document.body });
@@ -17,6 +18,9 @@ if (sessionListTarget) mount(SessionList, { target: sessionListTarget });
 
 const detailHeaderTarget = document.getElementById("detailHeader");
 if (detailHeaderTarget) mount(DetailHeader, { target: detailHeaderTarget });
+
+const detailActionAreaTarget = document.getElementById("detailActionArea");
+if (detailActionAreaTarget) mount(ActionBar, { target: detailActionAreaTarget });
 
 const detailBodyTarget = document.getElementById("detailBodyMount");
 if (detailBodyTarget) mount(DetailBody, { target: detailBodyTarget });

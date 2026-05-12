@@ -29,6 +29,7 @@ export const state = $state({
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked
   actions: [],           // [{ id, label, description?, confirmMessage?, params? }]
   openActionId: null,    // id of the action whose inline panel is open (null = closed)
+  actionRunInFlight: false,  // true while the open action's run request is outstanding (disables the Run button)
   actionResults: new Map(),  // actionId -> last run result observed in this browser view
   renamingSessionId: null,   // session id whose sidebar title is being edited inline (null = none)
 });
