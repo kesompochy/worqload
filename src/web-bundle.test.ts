@@ -1,15 +1,11 @@
 import { test, expect } from "bun:test";
-import { join } from "node:path";
+import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 
 // The browser can't be exercised here, so this is the safety net for the
-// frontend module split: bundling web/app.js resolves the whole import graph
-// and parses every module, catching missing exports / typos / broken paths.
-test("web/app.js bundles cleanly", async () => {
-  const result = await Bun.build({
-    entrypoints: [join(import.meta.dir, "..", "web", "app.js")],
-    target: "browser",
-    format: "esm",
-  });
-  expect(result.logs.filter((l) => l.level === "error")).toEqual([]);
-  expect(result.success).toBe(true);
+// frontend: running the real Vite production build resolves the whole module
+// graph (vanilla modules + Svelte components), so missing exports / typos /
+// broken paths / Svelte compile errors all surface as a build failure.
+test("the Vite production build of web/ succeeds", async () => {
+  await buildWebFrontend();
+  expect(webFrontendBuilt()).toBe(true);
 });

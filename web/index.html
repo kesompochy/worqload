@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8" />
 <title>worqload</title>
-<link rel="stylesheet" href="/assets/style.css" />
 </head>
 <body>
 <div class="layout">
@@ -25,29 +24,8 @@
   </main>
 </div>
 
-<div id="modal" class="modal-bg hidden">
-  <div class="modal">
-    <h2>New session</h2>
-    <p style="margin:.2em 0 .6em; color:var(--text-dim); font-size:12px">
-      The prompt becomes the first user message in a fresh claude session.
-    </p>
-    <textarea id="modalPrompt" placeholder="What should the agent do?" rows="6"></textarea>
-    <div class="row" style="margin-top:.7rem">
-      <input id="modalBranch" placeholder="base branch (default: current HEAD)" style="flex:1">
-    </div>
-    <div class="row" style="margin-top:.7rem">
-      <input id="modalBranchName" placeholder="branch name (default: auto-generated)" style="flex:1">
-    </div>
-    <div class="row" style="margin-top:.7rem">
-      <span class="spacer"></span>
-      <button id="modalCancel">Cancel</button>
-      <button id="modalCreate">Create</button>
-    </div>
-  </div>
-</div>
-
 <div id="toast" class="toast hidden"></div>
 
-<script type="module" src="/assets/app.js"></script>
+<script type="module" src="/main.ts"></script>
 </body>
 </html>

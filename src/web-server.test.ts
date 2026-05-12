@@ -947,60 +947,7 @@ test("POST /sessions/:id/resume rejects a cancelled session whose worktree is go
   expect(res.status).toBe(400);
 });
 
-test("GET /assets/markdown.js serves the renderer module", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
-
-  const res = await fetch(`${baseUrl}/assets/markdown.js`);
-  expect(res.status).toBe(200);
-  expect(res.headers.get("content-type")).toContain("javascript");
-  const body = await res.text();
-  expect(body).toContain("export function renderMarkdown");
-});
-
-test("GET /assets/syntax-highlight.js serves the highlighter module", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
-
-  const res = await fetch(`${baseUrl}/assets/syntax-highlight.js`);
-  expect(res.status).toBe(200);
-  expect(res.headers.get("content-type")).toContain("javascript");
-  const body = await res.text();
-  expect(body).toContain("export function highlightCode");
-});
-
-test("GET /assets/style.css serves the stylesheet", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
-
-  const res = await fetch(`${baseUrl}/assets/style.css`);
-  expect(res.status).toBe(200);
-  expect(res.headers.get("content-type")).toContain("text/css");
-  const body = await res.text();
-  expect(body).toContain(".layout");
-});
-
-test("GET /assets/app.js serves the frontend entry module", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
-
-  const res = await fetch(`${baseUrl}/assets/app.js`);
-  expect(res.status).toBe(200);
-  expect(res.headers.get("content-type")).toContain("javascript");
-});
-
-test("GET /assets/notifications.js serves the notifications helper module", async () => {
-  const repoDir = makeRepo();
-  const { baseUrl } = await bootServer(repoDir, "hang");
-
-  const res = await fetch(`${baseUrl}/assets/notifications.js`);
-  expect(res.status).toBe(200);
-  expect(res.headers.get("content-type")).toContain("javascript");
-  const body = await res.text();
-  expect(body).toContain("export function notificationForEvent");
-});
-
-test("GET / serves the HTML shell linking the stylesheet and entry module", async () => {
+test("GET / serves the built HTML shell referencing the hashed /assets bundles", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
 
@@ -1008,24 +955,21 @@ test("GET / serves the HTML shell linking the stylesheet and entry module", asyn
   expect(res.status).toBe(200);
   expect(res.headers.get("content-type")).toContain("text/html");
   const body = await res.text();
-  expect(body).toContain(`href="/assets/style.css"`);
-  expect(body).toContain(`src="/assets/app.js"`);
+  expect(body).toMatch(/<script[^>]+src="\/assets\/[^"]+\.js"/);
+  expect(body).toMatch(/<link[^>]+href="\/assets\/[^"]+\.css"/);
 });
 
-test("every web/ frontend asset is reachable under /assets", async () => {
+test("the /assets bundles referenced by index.html are all reachable", async () => {
   const repoDir = makeRepo();
   const { baseUrl } = await bootServer(repoDir, "hang");
 
-  // The /assets whitelist is hand-maintained; this guards against adding a
-  // module file under web/ but forgetting to list it (the browser would 404).
-  const webDir = join(import.meta.dir, "..", "web");
-  const assetFiles = readdirSync(webDir).filter((f) => f.endsWith(".js") || f.endsWith(".css"));
-  expect(assetFiles.length).toBeGreaterThan(0);
-  const statuses: Record<string, number> = {};
-  for (const f of assetFiles) {
-    statuses[f] = (await fetch(`${baseUrl}/assets/${f}`)).status;
-  }
-  expect(statuses).toEqual(Object.fromEntries(assetFiles.map((f) => [f, 200])));
+  const html = await (await fetch(`${baseUrl}/`)).text();
+  const refs = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1]);
+  expect(refs.length).toBeGreaterThan(0);
+  const statuses = Object.fromEntries(
+    await Promise.all(refs.map(async (ref) => [ref, (await fetch(`${baseUrl}${ref}`)).status] as const)),
+  );
+  expect(statuses).toEqual(Object.fromEntries(refs.map((ref) => [ref, 200])));
 });
 
 test("GET /assets/<unknown> returns 404", async () => {

@@ -385,16 +385,6 @@ export async function onRenameCommit(id, rawValue) {
   }
 }
 
-export function openModal() {
-  $("#modal").classList.remove("hidden");
-  $("#modalPrompt").value = "";
-  $("#modalBranch").value = "";
-  $("#modalBranchName").value = "";
-  $("#modalPrompt").focus();
-}
-
-export function closeModal() { $("#modal").classList.add("hidden"); }
-
 export function toggleActionPanel(actionId) {
   if (!actionId) return;
   state.openActionId = state.openActionId === actionId ? null : actionId;
@@ -459,30 +449,3 @@ export async function runOpenAction() {
   }
 }
 
-export async function createSession() {
-  const createBtn = $("#modalCreate");
-  if (createBtn.disabled) return;
-  const prompt = $("#modalPrompt").value.trim();
-  if (prompt === "") { toast("prompt is required"); return; }
-  const baseBranch = $("#modalBranch").value.trim();
-  const branchName = $("#modalBranchName").value.trim();
-  const cancelBtn = $("#modalCancel");
-  createBtn.disabled = true;
-  cancelBtn.disabled = true;
-  createBtn.innerHTML = `<span class="spinner"></span> Creating…`;
-  try {
-    const body = { prompt };
-    if (baseBranch) body.baseBranch = baseBranch;
-    if (branchName) body.branchName = branchName;
-    const { meta } = await api("POST", "/sessions", body);
-    closeModal();
-    await fetchSessions();
-    await selectSession(meta.id);
-  } catch (e) {
-    toast(`failed: ${e.message}`);
-  } finally {
-    createBtn.disabled = false;
-    cancelBtn.disabled = false;
-    createBtn.textContent = "Create";
-  }
-}

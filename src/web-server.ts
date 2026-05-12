@@ -28,6 +28,7 @@ import {
 } from "./worktree";
 import { writeNumberedFile, listAllFiles, moveFile, readReadState, setReadState, markAllRead } from "./file-store";
 import { listActions, findAction } from "./actions";
+import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 
 // worqload protocol commands are part of the system contract; they must run
@@ -359,6 +360,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
 
   await mkdir(sessionsDir, { recursive: true });
+  // The frontend is a Vite build under web/dist/; produce it on first run so a
+  // fresh checkout (or a forgotten `bun run web:build`) still serves a working
+  // UI. Editing the frontend afterwards needs a rebuild (`bun run web:build`).
+  if (!webFrontendBuilt()) await buildWebFrontend();
 
   // ctx is assigned right after Bun.serve returns; the fetch handler
   // captures the binding and only reads it when a request arrives, by which
@@ -500,8 +505,9 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
 ];
 
-const WEB_DIR = join(import.meta.dir, "..", "web");
-const INDEX_HTML_PATH = join(WEB_DIR, "index.html");
+const WEB_DIST_DIR = join(import.meta.dir, "..", "web", "dist");
+const INDEX_HTML_PATH = join(WEB_DIST_DIR, "index.html");
+const ASSETS_DIR = join(WEB_DIST_DIR, "assets");
 
 async function getIndex(): Promise<Response> {
   return new Response(Bun.file(INDEX_HTML_PATH), {
@@ -509,48 +515,35 @@ async function getIndex(): Promise<Response> {
   });
 }
 
-// Explicit whitelist of files served from /assets/:filename. We avoid shipping
-// the whole web/ directory because directory traversal protection is easier to
-// reason about with a closed list of basenames.
-const ASSET_FILENAMES = [
-  "style.css",
-  "app.js",
-  "dom.js",
-  "state.js",
-  "api.js",
-  "render.js",
-  "handlers.js",
-  "notify.js",
-  "diff-view.js",
-  "files-view.js",
-  "events-view.js",
-  "actions-view.js",
-  "markdown.js",
-  "syntax-highlight.js",
-  "notifications.js",
-] as const;
-
 const ASSET_CONTENT_TYPES: Record<string, string> = {
-  ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
+  ".png": "image/png",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
 };
-
-const ASSETS = new Map<string, { path: string; contentType: string }>(
-  ASSET_FILENAMES.map((name) => [
-    name,
-    { path: join(WEB_DIR, name), contentType: ASSET_CONTENT_TYPES[extname(name)] ?? "application/octet-stream" },
-  ]),
-);
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
   return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir) });
 }
 
+// Vite emits content-hashed bundles under web/dist/assets/. Serving any basename
+// from that directory is safe — the route pattern already excludes slashes, and
+// the charset check below rejects anything that could be a traversal segment —
+// and a name with no matching file just 404s.
 async function getAsset(_req: Request, _ctx: ServerContext, params: Record<string, string>): Promise<Response> {
-  const entry = ASSETS.get(params.filename);
-  if (!entry) return new Response("not found", { status: 404 });
-  return new Response(Bun.file(entry.path), {
-    headers: { "content-type": entry.contentType },
+  const { filename } = params;
+  if (!/^[A-Za-z0-9._-]+$/.test(filename) || filename.includes("..")) {
+    return new Response("not found", { status: 404 });
+  }
+  const file = Bun.file(join(ASSETS_DIR, filename));
+  if (!(await file.exists())) return new Response("not found", { status: 404 });
+  return new Response(file, {
+    headers: { "content-type": ASSET_CONTENT_TYPES[extname(filename)] ?? "application/octet-stream" },
   });
 }
 
