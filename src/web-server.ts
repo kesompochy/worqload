@@ -773,7 +773,7 @@ async function getFeedbackHistory(_req: Request, ctx: ServerContext, params: Rec
       ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const })),
       ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const })),
     ];
-    all.sort((a, b) => a.filename.localeCompare(b.filename));
+    all.sort((a, b) => b.filename.localeCompare(a.filename));
     return json({ messages: all });
   });
 }
