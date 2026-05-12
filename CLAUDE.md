@@ -1,6 +1,6 @@
 # worqload
 
-並走する claude セッションをブラウザから観測・介入する基盤。設計の詳細は `DESIGN.md` を参照。
+A browser UI for observing and steering parallel `claude` sessions.
 
 ## Development
 
@@ -10,13 +10,13 @@ bun run dev                # vite build → serve with --watch
 bun run web:build          # build the browser frontend (web/ → web/dist/)
 bun run web:watch          # rebuild the frontend on change (run alongside `worqload serve`)
 worqload <command>         # CLI (built from src/cli.ts)
-worqload serve --watch     # bun link 経由でホットリロード起動 (セッションは detached host 側に残るので restart で死なない)
+worqload serve --watch     # hot-reload run via `bun link` (sessions live in detached host processes, so a restart doesn't kill them)
 ```
 
-フロントエンドは `web/` の Vite プロジェクト（素の ES モジュール + Svelte コンポーネント）。サーバは `web/dist/` を配信する。`worqload serve` は `web/dist/` が無ければ初回に自動ビルドするが、編集後の再ビルドはしないので `bun run web:watch` を併走させる。
+The frontend is a Vite project under `web/` (plain ES modules + Svelte components). The server serves `web/dist/`. `worqload serve` builds it on first run if `web/dist/` is missing, but does not rebuild on edit, so run `bun run web:watch` alongside it.
 
 ## Conventions
 
-- TDD: 実装より先にテストを書く。
-- 変更は小さな単位で。1 タスク = 1 commit-sized unit。
-- worqload セッションが書く report は日本語。
+- TDD: write the test before the implementation.
+- Keep changes small. One task = one commit-sized unit.
+- Reports written by worqload sessions are in Japanese.

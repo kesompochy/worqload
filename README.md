@@ -1,21 +1,15 @@
 # worqload
 
-並走する claude セッションをブラウザから観測・介入する基盤。設計は [DESIGN.md](./DESIGN.md) を参照。
+A browser UI for observing and steering parallel `claude` sessions.
+
+It narrows the human's role to Orient alone and raises its load average by running many sessions at once: the agents handle Observe / Decide / Act, the human watches and replies asynchronously. worqload stops at showing the diff — merge, commit, and branch lifecycle stay with the human.
 
 ## Development
 
 ```sh
 bun install
 bun test
-bun run dev          # `worqload serve` を --watch で起動
+bun run dev          # `worqload serve` under --watch
 ```
 
-## CLI
-
-```sh
-worqload serve [port]                    # HTTP/WS server (default: 3456)
-worqload init [path]                     # .worqload/ を初期化
-worqload report submit --slug <slug>     # agent: report を提出 (本文は stdin)
-worqload escalate submit --slug <slug>   # agent: 質問を提出 (本文は stdin)
-worqload feedback fetch                  # agent: 未読 feedback を取得
-```
+Run `worqload` with no arguments to list the CLI subcommands.
