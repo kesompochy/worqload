@@ -1,10 +1,33 @@
-// Turns one raw NDJSON event into what the Events tab shows for it: a one-line
-// summary for the collapsed row, and the sections of the expand panel — an
-// assistant turn as markdown, tool calls as name + arguments, tool results /
-// stderr as code, lifecycle and report/feedback events as a short sentence. For
-// kinds we don't special-case (and as a fallback when extraction fails) the
-// panel falls back to the pretty-printed payload. This module is pure; the
-// painting lives in web/svelte/EventsView.svelte.
+// The Events domain: classifying and describing the session's NDJSON event
+// stream. `isAgentWorkEvent` decides what belongs to the Events tab at all —
+// the agent actually running — versus the agent↔human communication layer
+// (reports, feedback, escalations, human-triggered actions), which has the
+// Reports / Feedbacks tabs and is not shown here. `describeEvent` turns one
+// event into what the tab shows for it: a one-line summary for the collapsed
+// row and the sections of the expand panel — an assistant turn as markdown,
+// tool calls as name + arguments, tool results / stderr as code. For kinds we
+// don't special-case (and as a fallback when extraction fails) the panel falls
+// back to the pretty-printed payload. This module is pure; the painting lives
+// in web/svelte/EventsView.svelte. The server also imports `isAgentWorkEvent`
+// to compute each session's "last agent activity" timestamp for the sidebar.
+
+// The event kinds that are the agent doing work — its run and the steps within
+// it. Everything else (`report_*`, `escalation_*`, `feedback_*`,
+// `action_invoked`) is bookkeeping or human↔agent messaging, not work.
+export const AGENT_WORK_EVENT_KINDS = new Set([
+  "session_started",
+  "session_resumed",
+  "claude_assistant_message",
+  "claude_tool_use",
+  "claude_tool_result",
+  "claude_system",
+  "session_stopped",
+  "session_crashed",
+]);
+
+export function isAgentWorkEvent(event) {
+  return AGENT_WORK_EVENT_KINDS.has(event?.kind);
+}
 
 // ---- pure: event -> { summary, sections } -------------------------------
 //

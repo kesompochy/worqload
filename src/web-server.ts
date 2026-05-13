@@ -27,6 +27,7 @@ import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
 import { listActions, findAction } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
+import { isAgentWorkEvent } from "../web/events-view.js";
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -774,9 +775,17 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
   const filtered = includeArchived ? sessions : sessions.filter(s => !s.archivedAt);
   const decorated = await Promise.all(filtered.map(async meta => {
     const dir = reportsDirFor(ctx, meta.id);
-    const [reports, readSet] = await Promise.all([listAllFiles(dir), readReadState(dir)]);
+    const [reports, readSet, events] = await Promise.all([
+      listAllFiles(dir),
+      readReadState(dir),
+      readEvents(meta.id, 1, ctx.sessionsDir),
+    ]);
     const unreadReportCount = reports.reduce((n, r) => n + (readSet.has(r.filename) ? 0 : 1), 0);
-    return { ...meta, unreadReportCount };
+    // The sidebar's liveness signal: when the agent last did something — its run
+    // or a step within it, not a report/feedback/escalation. Undefined until the
+    // session has produced one.
+    const lastAgentEventAt = events.filter(isAgentWorkEvent).at(-1)?.timestamp;
+    return { ...meta, unreadReportCount, lastAgentEventAt };
   }));
   return json({ sessions: decorated });
 }

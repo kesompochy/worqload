@@ -7,11 +7,13 @@
   // detail is selected. The scroll body (#detailBodyMount) is DetailBody.svelte
   // and the feedback/resume composer (#detailComposer) is Composer.svelte. The
   // Events tab's "· Ns ago" label reads the reactive `clock` so it counts up
-  // between streamed events.
+  // between streamed events. Its count and age cover only agent-work events —
+  // reports/feedback/escalations live in their own tabs (see events-view.js).
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
   import { formatRelative, eventAgeIsStale } from "../dom.js";
+  import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
   import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, onStopAndMarkRead, toggleActionPanel } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
@@ -37,7 +39,7 @@
 
 {#if appState.selected && appState.detail}
   {@const m = appState.detail.meta}
-  {@const events = appState.detail.events ?? []}
+  {@const events = (appState.detail.events ?? []).filter(isAgentWorkEvent)}
   {@const lastEvent = events.length > 0 ? events[events.length - 1] : null}
   <div class="detail-header">
     <div class="title"><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
