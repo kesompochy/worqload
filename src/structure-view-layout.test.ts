@@ -39,32 +39,23 @@ test("edgeLabelText / edgeLabelWidth: side-effect imports get no label; long lis
   expect(edgeLabelWidth("greet")).toBeGreaterThan(0);
 });
 
-test("buildStructureModel widens the sibling gap to fit symbol labels and writes them onto edges", () => {
-  // Two siblings (a, b) in the same layer both import c — labels sit in the
-  // vertical channel between rows, so the sibling gap widens to keep them
-  // from crowding on x.
-  const withLabels = buildStructureModel({
-    graph: { nodes: ["a.js", "b.js", "c.js"], edges: [
-      { from: "a.js", to: "c.js", symbols: ["aLongSymbolName", "another"] },
-      { from: "b.js", to: "c.js", symbols: ["aLongSymbolName", "another"] },
-    ] },
+test("buildStructureModel writes a symbol-list label and width onto each edge that carries names", () => {
+  const model = buildStructureModel({
+    graph: { nodes: ["a.js", "b.js"], edges: [{ from: "a.js", to: "b.js", symbols: ["aLongSymbolName", "another"] }] },
     cycles: [],
     changedFiles: [],
   });
-  const withoutLabels = buildStructureModel({
-    graph: { nodes: ["a.js", "b.js", "c.js"], edges: [
-      { from: "a.js", to: "c.js", symbols: [] },
-      { from: "b.js", to: "c.js", symbols: [] },
-    ] },
-    cycles: [],
-    changedFiles: [],
-  });
-  const siblingPitch = m => m.nodes.find(n => n.path === "b.js").x - m.nodes.find(n => n.path === "a.js").x;
-  expect(siblingPitch(withLabels)).toBeGreaterThan(siblingPitch(withoutLabels));
-  const edge = withLabels.edges[0];
+  const edge = model.edges[0];
   expect(edge.label).toBe(edgeLabelText(edge.symbols));
   expect(edge.label.length).toBeGreaterThan(0);
   expect(edge.labelWidth).toBeGreaterThan(0);
+  // Side-effect-only imports get no label.
+  const sideEffect = buildStructureModel({
+    graph: { nodes: ["a.js", "b.js"], edges: [{ from: "a.js", to: "b.js", symbols: [] }] },
+    cycles: [],
+    changedFiles: [],
+  });
+  expect(sideEffect.edges[0].label).toBe("");
 });
 
 test("buildStructureModel expands nodes / edges in `expandedNodes` / `expandedEdges` and reflows around them", () => {

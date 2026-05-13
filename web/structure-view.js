@@ -14,25 +14,25 @@
 // No DOM, no Svelte — StructureView.svelte renders the result. (`bun test` reads
 // this module without the Svelte compiler, but it uses no runes.)
 
-export const NODE_WIDTH = 200;
+export const NODE_WIDTH = 184;
 export const NODE_HEIGHT = 40;
-const PADDING = 28;
+const PADDING = 24;
 // Layer gap (vertical clearance between dependency layers) must fit an edge
 // label pill plus breathing room. Sibling gap (horizontal clearance between
-// nodes in the same layer) is widened to fit the widest label, so labels
-// sitting in the vertical channel between rows don't crowd each other on x.
+// nodes in the same layer) stays compact — labels that would crowd on x get
+// pushed apart by deoverlapLabels, so we don't pre-emptively widen the gap.
 const LAYER_GAP_MIN = 96;
-const SIBLING_GAP_MIN = 48;
+const SIBLING_GAP = 24;
 const LABEL_HEIGHT = 18;
-const LABEL_MARGIN = 14;
+const LABEL_MARGIN = 12;
 const LABEL_MAX_CHARS = 22;
 // Conservative width-per-glyph and box padding for both node text (12px) and
 // label text (11px): we can't measure rendered text without a DOM, so we err
 // wide so a string always fits inside its pill.
 const LABEL_CHAR_WIDTH = 7.4;
-const LABEL_PADDING = 18;
+const LABEL_PADDING = 16;
 const NODE_CHAR_WIDTH = 7.8;
-const NODE_PADDING = 22;
+const NODE_PADDING = 16;
 
 function baseName(path) {
   const slash = path.lastIndexOf("/");
@@ -170,11 +170,9 @@ export function buildStructureModel(payload, opts = {}) {
     labelTextByEdge.set(key, text);
     labelWidthByEdge.set(key, edgeLabelWidth(text));
   }
-  const widestLabel = Math.max(0, ...labelWidthByEdge.values());
-  // Sibling gap widens to the widest edge label so labels sitting in the
-  // vertical channel between rows can fit between sibling columns without
-  // crowding.
-  const siblingGap = Math.max(SIBLING_GAP_MIN, widestLabel + 2 * LABEL_MARGIN);
+  // Sibling gap is a small constant — labels that would crowd on x get pushed
+  // apart by deoverlapLabels instead of pre-emptively widening the gap.
+  const siblingGap = SIBLING_GAP;
   // Layer gap only needs to clear one label pill height — labels are short
   // vertically.
   const layerGap = Math.max(LAYER_GAP_MIN, LABEL_HEIGHT + 2 * LABEL_MARGIN);
