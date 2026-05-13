@@ -861,12 +861,12 @@ export async function onStop(id = state.selected) {
 // The "wrap up this session" gesture: clear every unread-report badge, then
 // stop the session — the two steps the human was otherwise doing by hand
 // (mark each report read, then Stop in the sidebar).
-export async function onStopAndMarkRead() {
-  if (!state.selected) return;
+export async function onStopAndMarkRead(id = state.selected) {
+  if (!id) return;
   try {
-    await api("POST", `/sessions/${state.selected}/reports/read-all`, {});
-    await api("POST", `/sessions/${state.selected}/stop`, {});
-    await refreshDetail();
+    await api("POST", `/sessions/${id}/reports/read-all`, {});
+    await api("POST", `/sessions/${id}/stop`, {});
+    if (id === state.selected) await refreshDetail();
     await fetchSessions();
     toast("session stopped · all reports marked read");
   } catch (e) {
