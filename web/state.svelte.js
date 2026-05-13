@@ -31,9 +31,10 @@ export const state = $state({
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked
-  actions: [],           // [{ id, label, description?, confirmMessage?, params? }]
+  actions: [],           // [{ id, label, description?, confirmMessage?, direct?, params? }]
   openActionId: null,    // id of the action whose inline panel is open (null = closed)
-  actionRunInFlight: false,  // true while the open action's run request is outstanding (disables the Run button)
+  actionRunInFlight: false,  // true while any action's run request is outstanding (disables the Run / direct-action buttons)
+  runningActionId: null,     // id of the action currently running (drives the per-button spinner on direct actions)
   actionResults: new Map(),  // actionId -> last run result observed in this browser view
   renamingSessionId: null,   // session id whose sidebar title is being edited inline (null = none)
   pendingScrollTo: null,     // { anchor: {path,lineStart,lineEnd} } | { article: {attr,value} } | null: a "go to" request DetailBody resolves (scroll + flash) after the next render

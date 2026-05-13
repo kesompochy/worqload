@@ -15,7 +15,7 @@
   import { formatRelative, eventAgeIsStale } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, onStopAndMarkRead, toggleActionPanel } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, onStopAndMarkRead, toggleActionPanel, runDirectAction } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
   const tabs = [
@@ -52,7 +52,13 @@
           <button class="btn-action" title="Mark every report read, then stop the session" onclick={onStopAndMarkRead}>Stop &amp; mark all read</button>
         {/if}
         {#each appState.actions as a (a.id)}
-          <button class="btn-action" class:open={appState.openActionId === a.id} title={a.description || ""} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
+          {#if a.direct}
+            <button class="btn-action" disabled={appState.actionRunInFlight} title={a.description || ""} onclick={() => runDirectAction(a.id)}>
+              {#if appState.runningActionId === a.id}<span class="spinner"></span> {a.label}…{:else}{a.label}{/if}
+            </button>
+          {:else}
+            <button class="btn-action" class:open={appState.openActionId === a.id} title={a.description || ""} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
+          {/if}
         {/each}
       </div>
     {/if}
