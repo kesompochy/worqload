@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import {
+  parseImports,
   parseImportSpecifiers,
   resolveImportTarget,
   buildImportGraph,
@@ -36,6 +37,25 @@ test("parseImportSpecifiers returns nothing for non-JS languages", () => {
   expect(parseImportSpecifiers(`import "fmt"`, "go")).toEqual([]);
 });
 
+test("parseImports reports the names pulled from each module", () => {
+  const cases: Array<[string, { specifier: string; names: string[] }[]]> = [
+    [`import { a, b as c } from "./m";`, [{ specifier: "./m", names: ["a", "b"] }]],
+    [`import def from "./m";`, [{ specifier: "./m", names: ["default"] }]],
+    [`import def, { a } from "./m";`, [{ specifier: "./m", names: ["a", "default"] }]],
+    [`import * as ns from "./m";`, [{ specifier: "./m", names: ["*"] }]],
+    [`import type { T } from "./m";`, [{ specifier: "./m", names: ["T"] }]],
+    [`import "./side-effect";`, [{ specifier: "./side-effect", names: [] }]],
+    [`export { a, b } from "./m";`, [{ specifier: "./m", names: ["a", "b"] }]],
+    [`export * from "./m";`, [{ specifier: "./m", names: ["*"] }]],
+    [`const m = require("./legacy");`, [{ specifier: "./legacy", names: ["*"] }]],
+    [`const m = await import("./lazy");`, [{ specifier: "./lazy", names: ["*"] }]],
+    [`import {\n  one,\n  two,\n} from "./multi";`, [{ specifier: "./multi", names: ["one", "two"] }]],
+  ];
+  for (const [src, expected] of cases) {
+    expect(parseImports(src, "typescript")).toEqual(expected);
+  }
+});
+
 test("resolveImportTarget resolves relative specifiers against the importing file's directory", () => {
   const files = new Set(["web/app.js", "web/lib/util.js", "web/lib/index.js", "src/core.ts"]);
   expect(resolveImportTarget("web/app.js", "./lib/util.js", files)).toBe("web/lib/util.js");
@@ -67,8 +87,8 @@ test("buildImportGraph wires resolvable relative imports and ignores external on
   const graph = buildImportGraph(files, () => "javascript");
   expect(graph.nodes).toEqual(["web/app.js", "web/greet.js", "web/util/punctuate.js"]);
   expect(graph.edges.sort((a, b) => `${a.from}${a.to}`.localeCompare(`${b.from}${b.to}`))).toEqual([
-    { from: "web/app.js", to: "web/greet.js" },
-    { from: "web/greet.js", to: "web/util/punctuate.js" },
+    { from: "web/app.js", to: "web/greet.js", symbols: ["greet"] },
+    { from: "web/greet.js", to: "web/util/punctuate.js", symbols: ["punctuate"] },
   ]);
 });
 
@@ -78,7 +98,7 @@ test("buildImportGraph deduplicates repeated edges and skips self-imports", () =
     ["b.js", ``],
   ]);
   const graph = buildImportGraph(files, () => "javascript");
-  expect(graph.edges).toEqual([{ from: "a.js", to: "b.js" }]);
+  expect(graph.edges).toEqual([{ from: "a.js", to: "b.js", symbols: ["x"] }]);
 });
 
 test("buildImportGraph treats non-JS files as nodes with no out-edges", () => {

@@ -331,3 +331,12 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-node.cycle rect { stroke: var(--crashed); }
 .structure-node text { fill: var(--text); font-size: 12px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 .structure-node.changed text { fill: var(--text); font-weight: 600; }
+.structure-details { margin-top: .7rem; font-size: 12.5px; }
+.structure-details summary { cursor: pointer; color: var(--text-dim); user-select: none; }
+.structure-details ul { list-style: none; margin: .5rem 0 0 0; padding: 0; }
+.structure-details li { display: flex; align-items: baseline; gap: .4rem; padding: .15rem 0; flex-wrap: wrap; }
+.structure-detail-file { background: transparent; border: none; padding: 0; color: var(--accent); font-family: ui-monospace, monospace; font-size: 12px; cursor: pointer; }
+.structure-detail-file:hover { text-decoration: underline; }
+.structure-detail-file.changed { font-weight: 600; }
+.structure-detail-arrow { color: var(--text-dim); }
+.structure-detail-symbols { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 12px; }

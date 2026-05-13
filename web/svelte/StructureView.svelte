@@ -14,6 +14,22 @@
   const data = $derived(appState.structure);
   const model = $derived(data && data.graph ? buildStructureModel(data) : null);
 
+  // The names a→b depends on, as a short label. Empty means the only import is a
+  // bare side-effect `import "…"`.
+  function symbolsLabel(symbols) {
+    if (!symbols || symbols.length === 0) return "(副作用 import のみ)";
+    return `{ ${symbols.join(", ")} }`;
+  }
+  function edgeTitle(edge) {
+    return `${edge.from} → ${edge.to}\n${symbolsLabel(edge.symbols)}`;
+  }
+  // Edges sorted for the "依存の詳細" list: by importing file, then imported file.
+  const edgeDetails = $derived(
+    model && model.hasGraph
+      ? [...model.edges].sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to))
+      : [],
+  );
+
   // A short cubic between two box-edge anchor points. Forward edges (left→right,
   // following the import) curve gently; a back/same-layer edge bows up and out
   // so it reads as "closes a loop" rather than running straight through columns.
@@ -61,7 +77,7 @@
             class:cycle={edge.inCycle}
             d={edgePath(edge)}
             marker-end={edge.inCycle ? "url(#structure-arrow-cycle)" : "url(#structure-arrow)"}
-          />
+          ><title>{edgeTitle(edge)}</title></path>
         {/each}
         {#each model.nodes as node (node.path)}
           <g
@@ -78,5 +94,18 @@
         {/each}
       </svg>
     </div>
+    <details class="structure-details">
+      <summary>依存の詳細 ({edgeDetails.length})</summary>
+      <ul>
+        {#each edgeDetails as edge}
+          <li>
+            <button type="button" class="structure-detail-file" class:changed={model.nodes.find(n => n.path === edge.from)?.changed} data-structure-open={edge.from}>{edge.from}</button>
+            <span class="structure-detail-arrow">→</span>
+            <button type="button" class="structure-detail-file" class:changed={model.nodes.find(n => n.path === edge.to)?.changed} data-structure-open={edge.to}>{edge.to}</button>
+            <span class="structure-detail-symbols">{symbolsLabel(edge.symbols)}</span>
+          </li>
+        {/each}
+      </ul>
+    </details>
   {/if}
 </div>

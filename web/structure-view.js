@@ -101,12 +101,13 @@ export function buildStructureModel(payload) {
     });
   }
 
-  const layoutEdges = edges.map(({ from, to }) => {
+  const layoutEdges = edges.map(({ from, to, symbols }) => {
     const a = placed.get(from);
     const b = placed.get(to);
     const forward = (layerOf.get(to) ?? 0) > (layerOf.get(from) ?? 0);
     return {
       from, to,
+      symbols: symbols ?? [],
       x1: forward ? a.x + a.width : a.x,
       y1: a.y + a.height / 2,
       x2: forward ? b.x : b.x + b.width,
