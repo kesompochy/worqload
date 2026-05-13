@@ -75,8 +75,10 @@ test("registry exposes built-in actions and supports lookup", () => {
   const list = listActions();
   expect(list.find((a) => a.id === "merge-to-base")).toBeDefined();
   expect(list.find((a) => a.id === "create-pr")).toBeDefined();
-  expect(list.find((a) => a.id === "preview")).toBeDefined();
-  expect(list.find((a) => a.id === "stop-preview")).toBeDefined();
+  expect(list.find((a) => a.id === "preview")?.direct).toBe(true);
+  expect(list.find((a) => a.id === "stop-preview")?.direct).toBe(true);
+  // panel actions stay non-direct
+  expect(list.find((a) => a.id === "merge-to-base")?.direct).toBeUndefined();
   // descriptors must not include the run function or the availableFor predicate
   for (const d of list) {
     expect((d as { run?: unknown }).run).toBeUndefined();

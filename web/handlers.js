@@ -49,6 +49,7 @@ export async function selectSession(id) {
   state.structureLoaded = false;
   state.openActionId = null;
   state.actionRunInFlight = false;
+  state.runningActionId = null;
   state.actionResults = new Map();
   state.pendingScrollTo = null;
   state.feedbackPinAt = null;
@@ -745,19 +746,13 @@ export function extractPreviewUrl(stdout) {
   return match ? match[1] : null;
 }
 
-export async function runOpenAction() {
-  const action = state.actions.find(a => a.id === state.openActionId);
-  if (!action || !state.selected) return;
-  const params = {};
-  for (const p of action.params || []) {
-    const el = document.getElementById(`actionParam-${p.name}`);
-    if (el) params[p.name] = el.value;
-  }
-  // actionResults is reassigned wholesale rather than mutated: Svelte 5's
-  // $state doesn't proxy Maps, so ActionBar only re-renders the run output
-  // when the property itself is replaced. The in-flight flag drives the Run
-  // button's disabled/spinner state the same way.
+// POSTs an action invocation, records its result, and surfaces it (toast, and
+// for create-pr / preview opens the resulting URL). Shared by the inline panel
+// (runOpenAction) and the direct header buttons (runDirectAction).
+async function runAction(action, params) {
+  if (!state.selected) return;
   state.actionRunInFlight = true;
+  state.runningActionId = action.id;
   try {
     const res = await fetch(`/sessions/${state.selected}/actions/${encodeURIComponent(action.id)}`, {
       method: "POST",
@@ -765,6 +760,9 @@ export async function runOpenAction() {
       body: JSON.stringify({ params }),
     });
     const data = await res.json().catch(() => ({}));
+    // actionResults is reassigned wholesale rather than mutated: Svelte 5's
+    // $state doesn't proxy Maps, so ActionBar only re-renders the run output
+    // when the property itself is replaced.
     state.actionResults = new Map(state.actionResults).set(action.id, {
       ok: !!data.ok,
       exitCode: data.exitCode ?? null,
@@ -790,20 +788,42 @@ export async function runOpenAction() {
       if (url) {
         // The preview server is up; open it. A popup blocker may swallow this
         // (it fires after the fetch, not directly on the click) — the URL also
-        // shows in the run output below.
+        // shows in the run output / Events.
         window.open(url, "_blank", "noopener");
         toast(`Preview running: ${url}`);
       } else {
         toast(`${action.label}: started`);
       }
+    } else if (data.ok) {
+      toast(data.message || `${action.label}: success`);
     } else {
-      toast(data.ok ? `${action.label}: success` : `${action.label}: failed`);
+      toast(`${action.label}: ${data.message || "failed"}`);
     }
   } catch (e) {
     state.actionResults = new Map(state.actionResults).set(action.id, { ok: false, exitCode: null, stdout: "", stderr: "", message: e.message, ranAt: new Date().toISOString() });
     toast(`failed: ${e.message}`);
   } finally {
     state.actionRunInFlight = false;
+    state.runningActionId = null;
   }
+}
+
+export async function runOpenAction() {
+  const action = state.actions.find(a => a.id === state.openActionId);
+  if (!action || !state.selected) return;
+  const params = {};
+  for (const p of action.params || []) {
+    const el = document.getElementById(`actionParam-${p.name}`);
+    if (el) params[p.name] = el.value;
+  }
+  await runAction(action, params);
+}
+
+// A "direct" action's header button: run it immediately, no panel. Ignored
+// while another action is in flight.
+export async function runDirectAction(actionId) {
+  if (state.actionRunInFlight) return;
+  const action = state.actions.find(a => a.id === actionId);
+  if (action) await runAction(action, {});
 }
 

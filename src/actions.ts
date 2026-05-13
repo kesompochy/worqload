@@ -37,6 +37,11 @@ export interface Action {
   label: string;
   description?: string;
   confirmMessage?: string;
+  // Direct actions run on a single button click — no inline panel, no
+  // "Confirm & Run" step. Only for parameterless, cheap, reversible actions
+  // (preview / stop-preview); their result surfaces as a toast and an
+  // action_invoked event rather than in a panel.
+  direct?: boolean;
   params?: ActionParamSpec[];
   // When present, the action is offered for a session only if this returns
   // true (e.g. preview is only meaningful when the session's worktree is a
@@ -50,6 +55,7 @@ export interface ActionDescriptor {
   label: string;
   description?: string;
   confirmMessage?: string;
+  direct?: boolean;
   params?: ActionParamSpec[];
 }
 
@@ -337,6 +343,7 @@ export const previewAction: Action = {
   label: "Preview",
   description:
     "Start a worqload server running this session's branch against a throwaway repo under ~/.worqload-preview/<id> (recreated each run). It keeps running until you press \"Stop preview\"; `bun install` runs in the worktree first if it has no node_modules.",
+  direct: true,
   availableFor: ({ meta }) => isWorqloadCheckout(meta.worktreePath),
   async run({ meta }) {
     const worktree = meta.worktreePath;
@@ -392,6 +399,7 @@ export const stopPreviewAction: Action = {
   id: "stop-preview",
   label: "Stop preview",
   description: "Stop the preview server started for this session.",
+  direct: true,
   availableFor: ({ meta }) => isWorqloadCheckout(meta.worktreePath),
   async run({ meta }) {
     const { pidPath } = previewPaths(meta);
