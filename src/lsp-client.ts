@@ -12,9 +12,57 @@ export interface LspPosition {
   character: number; // 0-based
 }
 
+export interface LspRange {
+  start: LspPosition;
+  end: LspPosition;
+}
+
 export interface LspLocation {
   uri: string;
-  range: { start: LspPosition; end: LspPosition };
+  range: LspRange;
+}
+
+// LSP symbol kinds we care about for call graphs (the LSP spec assigns
+// integers; the unused ones aren't enumerated here).
+export const LSP_SYMBOL_KIND_FUNCTION = 12;
+export const LSP_SYMBOL_KIND_METHOD = 6;
+export const LSP_SYMBOL_KIND_CONSTRUCTOR = 9;
+export const CALLABLE_SYMBOL_KINDS = new Set([
+  LSP_SYMBOL_KIND_FUNCTION,
+  LSP_SYMBOL_KIND_METHOD,
+  LSP_SYMBOL_KIND_CONSTRUCTOR,
+]);
+
+// Flat document-symbol summary (DocumentSymbol[] / SymbolInformation[] both
+// normalised to this shape — children of a hierarchical DocumentSymbol are
+// flattened in).
+export interface LspDocumentSymbol {
+  name: string;
+  kind: number;
+  range: LspRange;
+  selectionRange: LspRange;
+}
+
+// An entry the LSP's call-hierarchy machinery hands back; we pass these
+// straight back into `incomingCalls` / `outgoingCalls`.
+export interface CallHierarchyItem {
+  name: string;
+  kind: number;
+  uri: string;
+  range: LspRange;
+  selectionRange: LspRange;
+  detail?: string;
+  data?: unknown;
+}
+
+export interface CallHierarchyIncomingCall {
+  from: CallHierarchyItem;
+  fromRanges: LspRange[];
+}
+
+export interface CallHierarchyOutgoingCall {
+  to: CallHierarchyItem;
+  fromRanges: LspRange[];
 }
 
 // ---- JSON-RPC framing (pure, so it can be unit-tested without a real process) ----
@@ -205,6 +253,8 @@ export class LspClient {
             textDocument: {
               definition: { linkSupport: true },
               references: {},
+              documentSymbol: { hierarchicalDocumentSymbolSupport: true },
+              callHierarchy: { dynamicRegistration: false },
             },
           },
         });
@@ -260,6 +310,44 @@ export class LspClient {
     return normalizeLocations(result);
   }
 
+  // List a file's top-level symbols. Flattens a hierarchical DocumentSymbol
+  // result (children become siblings) so callers don't need to recurse;
+  // SymbolInformation results (older servers) come through too via the URI on
+  // each `location`.
+  async documentSymbol(absPath: string): Promise<LspDocumentSymbol[]> {
+    await this.ensureInitialized();
+    this.syncDocument(absPath);
+    const result = await this.request("textDocument/documentSymbol", {
+      textDocument: { uri: this.fileUri(absPath) },
+    });
+    return normalizeDocumentSymbols(result);
+  }
+
+  // Anchor for a call-hierarchy query. The position points inside a symbol's
+  // name; the server replies with the canonical CallHierarchyItem(s) it knows
+  // about, which we then feed into `incomingCalls` / `outgoingCalls`.
+  async prepareCallHierarchy(absPath: string, position: LspPosition): Promise<CallHierarchyItem[]> {
+    await this.ensureInitialized();
+    this.syncDocument(absPath);
+    const result = await this.request("textDocument/prepareCallHierarchy", {
+      textDocument: { uri: this.fileUri(absPath) },
+      position,
+    });
+    return Array.isArray(result) ? (result as CallHierarchyItem[]) : [];
+  }
+
+  async incomingCalls(item: CallHierarchyItem): Promise<CallHierarchyIncomingCall[]> {
+    await this.ensureInitialized();
+    const result = await this.request("callHierarchy/incomingCalls", { item });
+    return Array.isArray(result) ? (result as CallHierarchyIncomingCall[]) : [];
+  }
+
+  async outgoingCalls(item: CallHierarchyItem): Promise<CallHierarchyOutgoingCall[]> {
+    await this.ensureInitialized();
+    const result = await this.request("callHierarchy/outgoingCalls", { item });
+    return Array.isArray(result) ? (result as CallHierarchyOutgoingCall[]) : [];
+  }
+
   async shutdown(): Promise<void> {
     if (this.closed) return;
     try {
@@ -304,5 +392,31 @@ function normalizeLocations(result: unknown): LspLocation[] {
     const range = o.range ?? o.targetRange;
     if (typeof uri === "string" && range && range.start) out.push({ uri, range });
   }
+  return out;
+}
+
+// `textDocument/documentSymbol` may answer with DocumentSymbol[] (hierarchical,
+// `children` nested) or SymbolInformation[] (flat, with a `location`). Flatten
+// both to LspDocumentSymbol[].
+function normalizeDocumentSymbols(result: unknown): LspDocumentSymbol[] {
+  if (!Array.isArray(result)) return [];
+  const out: LspDocumentSymbol[] = [];
+  const walk = (item: unknown): void => {
+    const o = item as {
+      name?: string;
+      kind?: number;
+      range?: LspRange;
+      selectionRange?: LspRange;
+      location?: { range?: LspRange };
+      children?: unknown[];
+    };
+    const range = o.range ?? o.location?.range;
+    const selectionRange = o.selectionRange ?? range;
+    if (typeof o.name === "string" && typeof o.kind === "number" && range && range.start && selectionRange) {
+      out.push({ name: o.name, kind: o.kind, range, selectionRange });
+    }
+    if (Array.isArray(o.children)) for (const child of o.children) walk(child);
+  };
+  for (const item of result) walk(item);
   return out;
 }
