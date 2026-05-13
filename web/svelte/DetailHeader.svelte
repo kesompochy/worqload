@@ -36,6 +36,14 @@
   const isTerminal = $derived(
     appState.detail?.meta.status === "stopped" || appState.detail?.meta.status === "crashed",
   );
+
+  // Visual IA: cluster the action buttons by `group`. The first action after
+  // the "Stop & mark all read" client button always starts a new group; after
+  // that, a separator is rendered whenever the group key changes.
+  function groupBoundary(actions, index, hadStopButton) {
+    if (index === 0) return hadStopButton;
+    return (actions[index - 1].group || actions[index - 1].id) !== (actions[index].group || actions[index].id);
+  }
 </script>
 
 {#if appState.selected && appState.detail}
@@ -51,7 +59,10 @@
                report read, then stop — pointless once already stopped/crashed. -->
           <button class="btn-action" title="Mark every report read, then stop the session" onclick={onStopAndMarkRead}>Stop &amp; mark all read</button>
         {/if}
-        {#each appState.actions as a (a.id)}
+        {#each appState.actions as a, i (a.id)}
+          {#if groupBoundary(appState.actions, i, !isTerminal)}
+            <span class="action-group-sep" aria-hidden="true"></span>
+          {/if}
           {#if a.direct}
             <button class="btn-action" disabled={appState.actionRunInFlight} title={a.description || ""} onclick={() => runDirectAction(a.id)}>
               {#if appState.runningActionId === a.id}<span class="spinner"></span> {a.label}…{:else}{a.label}{/if}
