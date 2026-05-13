@@ -188,14 +188,24 @@
       onkeydown={(e) => selectOnEnter(e, session.id)}
     >
       {#if archivedView}
-        <input
-          type="checkbox"
-          class="session-card-select"
-          checked={selected}
-          aria-label="Select session for bulk delete"
+        <!-- The label fills the card's left column so clicking anywhere in
+             that strip toggles the checkbox; the only thing in that column is
+             the checkbox, so a stray click there reads as "I meant to check
+             this". stopPropagation on the label keeps the card-level onclick
+             (= "select this session") out of it. -->
+        <label
+          class="session-card-select-area"
           onclick={(e) => e.stopPropagation()}
-          onchange={() => onToggleArchivedSelection(session.id)}
-        />
+          onkeydown={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            class="session-card-select"
+            checked={selected}
+            aria-label="Select session for bulk delete"
+            onchange={() => onToggleArchivedSelection(session.id)}
+          />
+        </label>
       {/if}
       <div class="session-card-main">
         {#if renaming}
