@@ -237,18 +237,20 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
   animation: anchor-flash 1s ease-out forwards;
 }
 /* "There is sent feedback anchored here": a left stripe on the line/block at all
-   times, plus an always-visible 💬 pin in the right margin. Hovering the pin
-   opens the floating preview popover (FeedbackPreviewPopover.svelte) with the
-   feedback bodies and the reports replying to them. */
+   times, plus an always-visible 💬 pin pinned to that same left edge (in the
+   line-number gutter for diff/file lines, in the card's left margin for report
+   markdown — i.e. next to the cursor, not way out at the right edge). Hovering
+   the pin opens the floating preview popover (FeedbackPreviewPopover.svelte)
+   with the feedback bodies and the reports replying to them. */
 .diff-line.has-feedback, .file-line.has-feedback, .md [data-feedback-here] { box-shadow: inset 2px 0 0 #bc8cff; position: relative; }
 .feedback-anchor-pin {
-  position: absolute; top: 50%; right: .2rem; transform: translateY(-50%); z-index: 3;
-  display: inline-flex; align-items: center; gap: .1rem;
-  background: #251f33; border: 1px solid #7c5fb8; border-radius: 999px;
-  padding: 0 .25rem; line-height: 1.5; font-size: 10px; cursor: pointer;
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%); z-index: 3;
+  display: inline-flex; align-items: center; gap: .05rem;
+  background: #251f33; border: 1px solid #7c5fb8; border-radius: 4px;
+  padding: 0 .2rem; line-height: 1.5; font-size: 9px; cursor: pointer;
 }
 .feedback-anchor-pin:hover { background: #322a44; border-color: #9a7ad0; }
-.md [data-feedback-here] > .feedback-anchor-pin { top: .15rem; transform: none; }
+.md [data-feedback-here] > .feedback-anchor-pin { left: -.5rem; top: .1rem; transform: none; }
 .feedback-anchor-count { color: #d6c4ff; font-family: ui-monospace, monospace; font-weight: 600; }
 
 /* The anchored-feedback preview popover. Mirrors .code-nav-popover's float. */
