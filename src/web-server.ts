@@ -106,6 +106,11 @@ interface SessionAttachment {
   // Defined only when this serve instance is the one that spawned the host
   // (and that host runs as a real subprocess).
   hostProc?: Subprocess;
+  // The wake watchdog runs at most one timer per attachment. A new wake on
+  // the same attachment clears the previous timer (giving claude its full
+  // window again); attachment replacement leaves the old timer to fire and
+  // bail out via the identity check in runWakeWatchdog.
+  watchdogTimer?: ReturnType<typeof setTimeout>;
 }
 
 // Brings a session's host to life and returns a client for talking to it. The
@@ -373,51 +378,60 @@ function appendHostLog(
 // worst-case waiting time short.
 const DEFAULT_WAKE_WATCHDOG_MS = 90_000;
 
-// Fire-and-forget watchdog: after the configured silence window, if no
-// claude_* event has been observed since the wake, tear the host down and
-// re-spawn it in resume mode. The queued feedback file survives the restart
-// because it lives on disk in the feedback inbox, so `--continue` + the
-// resume kickoff drains it on the way back up.
-function scheduleWakeWatchdog(ctx: ServerContext, sessionId: string): void {
+// One pending watchdog per attachment. A new wake on the same attachment
+// resets the deadline; an attachment replacement leaves the prior timer
+// pending, but runWakeWatchdog's identity check makes it a no-op.
+function scheduleWakeWatchdog(ctx: ServerContext, sessionId: string, att: SessionAttachment): void {
   if (ctx.wakeWatchdogMs <= 0) return;
+  if (att.watchdogTimer) clearTimeout(att.watchdogTimer);
   const wakeAt = Date.now();
-  const timer = setTimeout(() => { void runWakeWatchdog(ctx, sessionId, wakeAt); }, ctx.wakeWatchdogMs);
+  const timer = setTimeout(() => { void runWakeWatchdog(ctx, sessionId, wakeAt, att); }, ctx.wakeWatchdogMs);
   // The watchdog is purely advisory; it must never keep the event loop alive
   // past the rest of the server.
   if (typeof (timer as { unref?: () => void }).unref === "function") {
     (timer as { unref: () => void }).unref();
   }
+  att.watchdogTimer = timer;
 }
 
-async function runWakeWatchdog(ctx: ServerContext, sessionId: string, wakeAt: number): Promise<void> {
+async function runWakeWatchdog(
+  ctx: ServerContext,
+  sessionId: string,
+  wakeAt: number,
+  expectedAtt: SessionAttachment,
+): Promise<void> {
   const lastActivity = ctx.lastClaudeActivityAt.get(sessionId) ?? 0;
   if (lastActivity >= wakeAt) return; // claude responded in time
   const meta = await loadSessionMeta(sessionId, ctx.sessionsDir);
   if (!meta || isTerminal(meta.status)) return; // session has moved on
-  // The user (or another path) may have manually resumed since the wake; only
-  // act when this attachment is still the one we sent the wake to.
-  const att = ctx.clients.get(sessionId);
-  if (!att) return;
+  // Identity check: the attachment that received the wake must still be the
+  // current one. If the user manually resumed (or a previous watchdog already
+  // respawned), ctx.clients now holds a different attachment and this fire is
+  // stale.
+  const currentAtt = ctx.clients.get(sessionId);
+  if (currentAtt !== expectedAtt) return;
   const silenceMs = Date.now() - wakeAt;
-  appendHostLog(ctx, sessionId, "watchdog_auto_resume", { silenceMs, hostPid: att.hostPid });
+  appendHostLog(ctx, sessionId, "watchdog_auto_resume", { silenceMs, hostPid: expectedAtt.hostPid });
   await appendAndBroadcast(ctx, sessionId, {
     kind: "session_auto_resumed",
     payload: { reason: "wake_unanswered", silenceMs },
   });
   try {
-    await att.client.kill("SIGTERM");
+    await expectedAtt.client.kill("SIGTERM");
     await Promise.race([
-      att.client.exited,
+      expectedAtt.client.exited,
       new Promise((r) => setTimeout(r, 500)),
     ]);
-    if (ctx.clients.has(sessionId)) {
-      await att.client.kill("SIGKILL");
-      await att.client.exited.catch(() => {});
+    if (ctx.clients.get(sessionId) === expectedAtt) {
+      await expectedAtt.client.kill("SIGKILL");
+      await expectedAtt.client.exited.catch(() => {});
     }
   } catch {
     // host already gone; fall through to respawn
   }
-  ctx.clients.delete(sessionId);
+  if (ctx.clients.get(sessionId) === expectedAtt) {
+    ctx.clients.delete(sessionId);
+  }
   const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = meta;
   const resumed: SessionMeta = { ...rest, status: "running" };
   await saveSessionMeta(resumed, ctx.sessionsDir);
@@ -1333,7 +1347,7 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     });
     if (att) {
       att.client.send("[wake] check feedback inbox").catch(() => {});
-      scheduleWakeWatchdog(ctx, meta.id);
+      scheduleWakeWatchdog(ctx, meta.id, att);
     }
 
     return json({ filename: file.filename, seq: file.seq });
@@ -1438,7 +1452,7 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
     });
     if (att) {
       att.client.send("[wake] check feedback inbox").catch(() => {});
-      scheduleWakeWatchdog(ctx, meta.id);
+      scheduleWakeWatchdog(ctx, meta.id, att);
     }
 
     return json({

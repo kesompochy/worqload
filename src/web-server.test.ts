@@ -421,6 +421,81 @@ test("wake watchdog stays quiet when claude responds before the threshold", asyn
   expect(events.some((e) => e.kind === "session_auto_resumed")).toBe(false);
 });
 
+test("a second wake on the same attachment resets the watchdog deadline", async () => {
+  const repoDir = makeTmpDir("repo");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    wakeWatchdogMs: 150,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  // First wake.
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "first", slug: "a" });
+  // Before the 150ms threshold elapses, send a second wake.
+  await new Promise((r) => setTimeout(r, 80));
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "second", slug: "b" });
+  // 100ms total — past the first deadline, but the second wake reset the timer.
+  await new Promise((r) => setTimeout(r, 100));
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.some((e) => e.kind === "session_auto_resumed")).toBe(false);
+
+  // Now wait past the second deadline; the watchdog should fire from the
+  // second wake's clock.
+  await new Promise((r) => setTimeout(r, 150));
+  const after = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(after.some((e) => e.kind === "session_auto_resumed")).toBe(true);
+});
+
+test("a stale watchdog from a replaced attachment is a no-op", async () => {
+  const repoDir = makeTmpDir("repo");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    wakeWatchdogMs: 80,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  // Send a wake (watchdog A scheduled for +80ms).
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "first", slug: "a" });
+
+  // Before the watchdog can fire, simulate someone replacing the attachment
+  // out from under it (e.g. user manually resumed, or another watchdog ran).
+  const fresh: typeof ctx.clients extends Map<string, infer V> ? V : never = {
+    client: {
+      async send() {},
+      async kill() {},
+      async close() {},
+      replayCompleted: Promise.resolve({ lastSeq: 0 }),
+      exited: new Promise<number | null>(() => {}),
+    },
+    hostPid: 99999,
+  };
+  ctx.clients.set(sid, fresh);
+
+  // Let the original watchdog fire; it should bail because att !== expectedAtt.
+  await new Promise((r) => setTimeout(r, 200));
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.some((e) => e.kind === "session_auto_resumed")).toBe(false);
+});
+
 test("wake watchdog disabled with wakeWatchdogMs=0 leaves a silent session alone", async () => {
   const repoDir = makeTmpDir("repo");
   const started = await startServer({
