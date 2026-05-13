@@ -29,8 +29,21 @@
   // node under the cursor or focus; `hoveredEdgeKey` is an edge label being
   // hovered on its own (a label-only hover expands just that label, while a
   // node hover expands the node, its neighbours, and the edges between).
+  // `pendingPointerAnchor` carries the cursor's canvas-relative screen position
+  // captured on `mouseenter`, so the upcoming auto-zoom can anchor the hovered
+  // node's centre right at the pointer.
   let hoveredPath = $state(null);
   let hoveredEdgeKey = $state(null);
+  let pendingPointerAnchor = null;
+  function onNodeEnter(event, path) {
+    if (canvasEl && event && typeof event.clientX === "number") {
+      const r = canvasEl.getBoundingClientRect();
+      pendingPointerAnchor = { x: event.clientX - r.left, y: event.clientY - r.top };
+    } else {
+      pendingPointerAnchor = null;
+    }
+    hoveredPath = path;
+  }
 
   // The set of paths and edge-keys related to the hovered node. Derived from
   // the raw payload — not from `model` — so it doesn't depend on the model that
@@ -227,19 +240,26 @@
         const oldN = baseModel?.nodes.find(n => n.path === hoveredPath);
         const newN = model?.nodes.find(n => n.path === hoveredPath);
         if (!oldN || !newN) {
+          pendingPointerAnchor = null;
           lastHoverActive = active;
           return;
         }
-        // Anchor the node's top-left (= the <g>'s transform point) so the rect
-        // can resize underneath without dragging the anchor with it.
-        const anchorScreen = { x: oldN.x * z0 - sx0, y: oldN.y * z0 - sy0 };
-        const targetZoom = anchorAwareZoom(newN, anchorScreen) ?? z0;
+        // Anchor the node's *centre* at the pointer. Both halves of the centre
+        // (the <g> transform and the rect width) transition linearly via CSS,
+        // so the centre's rendered position interpolates linearly too — match
+        // it in JS frame for frame and the centre stays under the cursor.
+        const oldCentre = { x: oldN.x + oldN.width / 2, y: oldN.y + oldN.height / 2 };
+        const newCentre = { x: newN.x + newN.width / 2, y: newN.y + newN.height / 2 };
+        const anchorScreen = pendingPointerAnchor
+          ?? { x: oldCentre.x * z0 - sx0, y: oldCentre.y * z0 - sy0 };
+        pendingPointerAnchor = null;
+        const targetZoom = anchorAwareZoom(newCentre, anchorScreen) ?? z0;
         // Only capture the pre-hover view if we don't already have one stashed:
         // back-to-back hover → un-hover → hover before the return tween finishes
         // would otherwise overwrite the original with a mid-return value, and
         // the next un-hover would restore *that* — making each cycle smaller.
         if (savedView == null) savedView = { zoom: z0, scrollX: sx0, scrollY: sy0 };
-        tweenViewAnchored(targetZoom, { x: oldN.x, y: oldN.y }, { x: newN.x, y: newN.y }, anchorScreen);
+        tweenViewAnchored(targetZoom, oldCentre, newCentre, anchorScreen);
       } else if (!active && lastHoverActive) {
         if (savedView) {
           const target = savedView;
@@ -343,9 +363,9 @@
             role="button"
             tabindex="0"
             aria-label={`${node.path} — open in Files`}
-            onmouseenter={() => (hoveredPath = node.path)}
+            onmouseenter={e => onNodeEnter(e, node.path)}
             onmouseleave={() => (hoveredPath = null)}
-            onfocus={() => (hoveredPath = node.path)}
+            onfocus={() => onNodeEnter(null, node.path)}
             onblur={() => (hoveredPath = null)}
             onkeydown={e => onNodeKeydown(e, node.path)}
           >
