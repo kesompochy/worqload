@@ -20,6 +20,10 @@ export interface SessionMeta {
   // without it (never reordered, or created since the last reorder) sort to the
   // top by recency; sessions with it sort below by ascending value.
   sortOrder?: number;
+  // Marks a curated example session (the preview repo seeds three of them).
+  // The server skips the reconcile-on-boot step for these so a running mock
+  // doesn't get auto-flipped to crashed for lacking a real host process.
+  mock?: boolean;
 }
 
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {

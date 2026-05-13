@@ -1,0 +1,5 @@
+# A preview repo's runtime state: the sessions it hosts and the worktrees
+# they spin up. The seed mock sessions land in .worqload/sessions/ at seed
+# time but are not part of the preview repo's tracked content.
+.worqload
+.worktrees/

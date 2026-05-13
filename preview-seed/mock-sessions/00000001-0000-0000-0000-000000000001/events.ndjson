@@ -1,0 +1,4 @@
+{"seq":1,"kind":"session_started","timestamp":"2026-05-12T08:30:00.000Z","payload":{"prompt":"サイドバーの状態バッジに色を足してほしい。Running は緑、Stopped はグレー、Crashed は赤、というように。"}}
+{"seq":2,"kind":"claude_assistant_message","timestamp":"2026-05-12T08:30:12.000Z","payload":{"text":"色の対応を整理し、CSS変数を新設して各バッジに割り当てます。"}}
+{"seq":3,"kind":"report_submitted","timestamp":"2026-05-12T08:31:45.000Z","payload":{"filename":"001-mock-progress.md"}}
+{"seq":4,"kind":"claude_tool_use","timestamp":"2026-05-12T08:32:10.000Z","payload":{"name":"Edit","input":{"file_path":"web/style.css"}}}

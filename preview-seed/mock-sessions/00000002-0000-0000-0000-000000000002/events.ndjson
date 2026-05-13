@@ -1,0 +1,5 @@
+{"seq":1,"kind":"session_started","timestamp":"2026-05-11T14:00:00.000Z","payload":{"prompt":"README の Development セクションに preview の使い方を一文足してほしい。"}}
+{"seq":2,"kind":"claude_assistant_message","timestamp":"2026-05-11T14:00:08.000Z","payload":{"text":"README.md を読み、Development セクションに `bun run preview` の一行を追加します。"}}
+{"seq":3,"kind":"claude_tool_use","timestamp":"2026-05-11T14:00:35.000Z","payload":{"name":"Edit","input":{"file_path":"README.md"}}}
+{"seq":4,"kind":"report_submitted","timestamp":"2026-05-11T14:08:30.000Z","payload":{"filename":"001-readme-updated.md"}}
+{"seq":5,"kind":"session_stopped","timestamp":"2026-05-11T14:08:42.000Z","payload":{"reason":"user_stop"}}
