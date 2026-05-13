@@ -81,7 +81,6 @@
     class="feedback-anchor-pin"
     bind:this={pinEl}
     style={pinStyle}
-    title={count > 1 ? `${count}件のフィードバック — ホバーで内容表示` : `フィードバック ${pin.filenames[0]} — ホバーで内容表示`}
     onmouseenter={openPopover}
     onmouseleave={scheduleFeedbackPinHide}
     onclick={openPopover}
