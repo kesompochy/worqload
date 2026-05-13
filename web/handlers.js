@@ -783,6 +783,26 @@ export async function onArchive(id = state.selected) {
   }
 }
 
+// Reverse of onArchive — used by the "Unarchive" button on archived cards.
+// Drops the bulk-delete checkbox state for this id (the card is about to leave
+// the archived feed) and refreshes both lists so the session reappears in the
+// active sidebar.
+export async function onUnarchive(id = state.selected) {
+  if (!id) return;
+  try {
+    await api("POST", `/sessions/${id}/unarchive`, {});
+    if (state.archivedSelection.has(id)) {
+      const nextSel = new Set(state.archivedSelection);
+      nextSel.delete(id);
+      state.archivedSelection = nextSel;
+    }
+    await fetchArchivedSessions();
+    await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 // Disable every button in the asking article (and show "Sending…" on the one
 // the human clicked) while its resolve request is in flight, so a second click
 // can't fire a duplicate POST. On success refreshDetail tears the article down;
@@ -885,12 +905,12 @@ export async function onStop(id = state.selected) {
 // The "wrap up this session" gesture: clear every unread-report badge, then
 // stop the session — the two steps the human was otherwise doing by hand
 // (mark each report read, then Stop in the sidebar).
-export async function onStopAndMarkRead() {
-  if (!state.selected) return;
+export async function onStopAndMarkRead(id = state.selected) {
+  if (!id) return;
   try {
-    await api("POST", `/sessions/${state.selected}/reports/read-all`, {});
-    await api("POST", `/sessions/${state.selected}/stop`, {});
-    await refreshDetail();
+    await api("POST", `/sessions/${id}/reports/read-all`, {});
+    await api("POST", `/sessions/${id}/stop`, {});
+    if (id === state.selected) await refreshDetail();
     await fetchSessions();
     toast("session stopped · all reports marked read");
   } catch (e) {

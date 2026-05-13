@@ -21,7 +21,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -786,4 +786,36 @@ test("onArchive bails without sending a second request when the human cancels th
     (globalThis as unknown as { window: unknown }).window = savedWindow;
   }
   expect(urls).toEqual(["/sessions/sess-1/archive"]);
+});
+
+test("onUnarchive POSTs to /sessions/:id/unarchive, reloads the archived feed, and refreshes the active list", async () => {
+  state.sidebarTab = "archived";
+  state.archivedSessions = [{ id: "arc-7", title: "restore me" }];
+  state.archivedSelection = new Set(["arc-7"]);
+  state.selected = null;
+  apiCalls.length = 0;
+  fetchArchivedSessionsCalls = 0;
+  fetchSessionsCalls = 0;
+
+  await onUnarchive("arc-7");
+
+  expect(apiCalls).toEqual([{ method: "POST", path: "/sessions/arc-7/unarchive", body: {} }]);
+  expect(fetchArchivedSessionsCalls).toBe(1);
+  expect(fetchSessionsCalls).toBe(1);
+  // The unarchived id drops out of the bulk-delete selection — its card is
+  // about to vanish from the archived feed.
+  expect(state.archivedSelection.has("arc-7")).toBe(false);
+});
+
+test("onUnarchive bails when called with no id", async () => {
+  state.selected = null;
+  apiCalls.length = 0;
+  fetchArchivedSessionsCalls = 0;
+  fetchSessionsCalls = 0;
+
+  await onUnarchive();
+
+  expect(apiCalls).toEqual([]);
+  expect(fetchArchivedSessionsCalls).toBe(0);
+  expect(fetchSessionsCalls).toBe(0);
 });
