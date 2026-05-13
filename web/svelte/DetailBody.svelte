@@ -17,7 +17,20 @@
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
   import EventsView from "./EventsView.svelte";
-  import { onDetailBodyClick } from "../handlers.js";
+  import { onDetailBodyClick, onResolve } from "../handlers.js";
+
+  // Tracked across the answer textarea's keydowns so a confirming Enter mid-IME
+  // composition doesn't also submit (same guard as Composer.svelte).
+  let composing = $state(false);
+
+  function onAnswerKeydown(event) {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    if (composing || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    const article = event.target.closest("[data-asking]");
+    if (!article) return;
+    onResolve(article.getAttribute("data-asking"), article, article.querySelector(".ask-resolve"));
+  }
 
   // Reports are stored oldest-first; the pane shows newest-first.
   const reportsNewestFirst = $derived([...appState.reports].reverse());
@@ -158,7 +171,7 @@
                 <button class="ask-approve">Approve &amp; Run</button>
               </div>
             {:else}
-              <textarea class="ask-answer" rows="3" placeholder="Your answer..." style="margin-top:.4rem"></textarea>
+              <textarea class="ask-answer" rows="3" placeholder="Your answer... (Enter で送信 / Shift+Enter で改行)" style="margin-top:.4rem" oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)} onkeydown={onAnswerKeydown}></textarea>
               <div class="row" style="margin-top:.3rem">
                 <span class="spacer"></span>
                 <button class="ask-resolve">Answer</button>
