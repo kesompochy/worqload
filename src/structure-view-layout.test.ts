@@ -1,7 +1,7 @@
 // Layout for the Structure tab's graph. Lives under src/ so `bun test` picks it
 // up (the module under test is web/structure-view.js, a plain ES module).
 import { test, expect } from "bun:test";
-import { buildStructureModel, NODE_WIDTH } from "../web/structure-view.js";
+import { buildStructureModel, edgeLabelText, edgeLabelWidth, NODE_WIDTH } from "../web/structure-view.js";
 
 test("buildStructureModel reports no graph for an empty payload", () => {
   const model = buildStructureModel({ graph: { nodes: [], edges: [] }, cycles: [], changedFiles: [] });
@@ -19,14 +19,61 @@ test("buildStructureModel lays files out left→right following the import arrow
   const byPath = Object.fromEntries(model.nodes.map(n => [n.path, n]));
   expect(byPath["a.js"].x).toBeLessThan(byPath["b.js"].x);
   expect(byPath["b.js"].x).toBeLessThan(byPath["c.js"].x);
-  expect(byPath["c.js"].x).toBe(byPath["a.js"].x + 2 * (NODE_WIDTH + 78));
+  const columnPitch = byPath["b.js"].x - byPath["a.js"].x;
+  expect(columnPitch).toBeGreaterThan(NODE_WIDTH); // a column gap separates the boxes
+  expect(byPath["c.js"].x).toBe(byPath["a.js"].x + 2 * columnPitch);
   expect(byPath["b.js"].changed).toBe(true);
   expect(byPath["a.js"].changed).toBe(false);
   expect(model.edges.every(e => e.forward)).toBe(true);
   // Each edge carries a label anchor point at the midpoint of its run.
   const ab = model.edges.find(e => e.from === "a.js" && e.to === "b.js");
   expect(ab.labelX).toBe((ab.x1 + ab.x2) / 2);
-  expect(ab.labelY).toBe((ab.y1 + ab.y2) / 2 - 6);
+});
+
+test("edgeLabelText / edgeLabelWidth: side-effect imports get no label; long lists are clipped", () => {
+  expect(edgeLabelText([])).toBe("");
+  expect(edgeLabelWidth("")).toBe(0);
+  expect(edgeLabelText(["greet", "punctuate"])).toBe("greet, punctuate");
+  expect(edgeLabelText(["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"]).endsWith("…")).toBe(true);
+  expect(edgeLabelWidth("greet")).toBeGreaterThan(0);
+});
+
+test("buildStructureModel widens the column gap to fit symbol labels and writes them onto edges", () => {
+  const withLabels = buildStructureModel({
+    graph: { nodes: ["a.js", "b.js"], edges: [{ from: "a.js", to: "b.js", symbols: ["aLongSymbolName", "another"] }] },
+    cycles: [],
+    changedFiles: [],
+  });
+  const withoutLabels = buildStructureModel({
+    graph: { nodes: ["a.js", "b.js"], edges: [{ from: "a.js", to: "b.js", symbols: [] }] },
+    cycles: [],
+    changedFiles: [],
+  });
+  const pitch = m => m.nodes.find(n => n.path === "b.js").x - m.nodes.find(n => n.path === "a.js").x;
+  expect(pitch(withLabels)).toBeGreaterThan(pitch(withoutLabels));
+  const edge = withLabels.edges[0];
+  expect(edge.label).toBe(edgeLabelText(edge.symbols));
+  expect(edge.label.length).toBeGreaterThan(0);
+  expect(edge.labelWidth).toBeGreaterThan(0);
+});
+
+test("buildStructureModel pushes apart labels that share a vertical channel", () => {
+  // b.js and c.js (same layer, two rows) both import d.js — their edge labels
+  // sit at the same midpoint-x and must not overlap.
+  const model = buildStructureModel({
+    graph: {
+      nodes: ["b.js", "c.js", "d.js"],
+      edges: [
+        { from: "b.js", to: "d.js", symbols: ["fromB"] },
+        { from: "c.js", to: "d.js", symbols: ["fromC"] },
+      ],
+    },
+    cycles: [],
+    changedFiles: [],
+  });
+  const [e1, e2] = [...model.edges].sort((x, y) => x.labelY - y.labelY);
+  expect(e1.labelX).toBe(e2.labelX);
+  expect(e2.labelY - e1.labelY).toBeGreaterThanOrEqual(16); // at least one label-height of clearance
 });
 
 test("buildStructureModel uses the file's basename as the node label", () => {

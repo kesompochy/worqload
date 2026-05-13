@@ -315,8 +315,13 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-view { font-size: 13px; }
 .structure-message { color: var(--text-dim); padding: .5rem .2rem; max-width: 48em; line-height: 1.6; }
 .structure-message.structure-error { color: var(--crashed); }
+.structure-toolbar { display: flex; gap: 1rem; margin-bottom: .5rem; font-size: 12px; color: var(--text-dim); }
+.structure-toolbar label { display: flex; align-items: center; gap: .3rem; cursor: pointer; user-select: none; }
+.structure-toolbar input { width: auto; }
 .structure-canvas { overflow: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
 .structure-canvas svg { display: block; }
+.structure-edge, .structure-edge-label, .structure-node { transition: opacity .12s ease; }
+.structure-edge.dim, .structure-edge-label.dim, .structure-node.dim { opacity: .15; }
 .structure-edge { fill: none; stroke: var(--border); stroke-width: 1.4px; }
 .structure-edge.cycle { stroke: var(--crashed); stroke-width: 1.8px; stroke-dasharray: 5 3; }
 #structure-arrow path { fill: var(--text-dim); }
@@ -324,8 +329,10 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-edge-label rect { fill: var(--bg); stroke: var(--border); stroke-width: .8px; opacity: .92; }
 .structure-edge-label text { fill: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; }
 .structure-node { cursor: pointer; }
+.structure-node:focus { outline: none; }
 .structure-node rect { fill: var(--panel-2); stroke: var(--border); stroke-width: 1px; }
-.structure-node:hover rect { stroke: var(--accent); }
+.structure-node:hover rect, .structure-node:focus rect { stroke: var(--accent); }
+.structure-canvas.structure-focusing .structure-node:not(.dim) rect { stroke: var(--accent); }
 .structure-node.changed rect { fill: rgba(88,166,255,.16); stroke: var(--accent); stroke-width: 1.6px; }
 .structure-node.cycle rect { stroke: var(--crashed); }
 .structure-node text { fill: var(--text); font-size: 12px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
