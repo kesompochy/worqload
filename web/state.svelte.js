@@ -20,6 +20,7 @@ export const state = $state({
   anchor: null,          // { path, lineStart, lineEnd } | null
   collapsedFiles: new Set(),  // paths of diff files the user collapsed
   diffExpansions: new Map(),  // path -> [[from,to], ...] new-line ranges the user expanded into
+  diffTreeCollapsed: new Set(),  // directory paths collapsed in the Diff tab's left tree
   files: [],             // worktree-relative paths for the Files tab
   filesLoaded: false,
   fileTreeCollapsed: new Set(),  // directory paths collapsed in the Files tab

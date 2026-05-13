@@ -36,6 +36,7 @@ export async function selectSession(id) {
   state.anchor = null;
   state.collapsedFiles = new Set();
   state.diffExpansions = new Map();
+  state.diffTreeCollapsed = new Set();
   state.reportToggle = new Map();
   state.feedbackToggle = new Map();
   state.eventToggle = new Map();
@@ -170,6 +171,26 @@ export function onDetailBodyClick(e) {
       Number(expandBtn.getAttribute("data-expand-to")),
       expandBtn.getAttribute("data-expand-dir"),
     );
+    return;
+  }
+  const diffDirToggle = e.target.closest("[data-diff-dir-toggle]");
+  if (diffDirToggle) {
+    const path = diffDirToggle.getAttribute("data-diff-dir-toggle");
+    const next = new Set(state.diffTreeCollapsed);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    state.diffTreeCollapsed = next;
+    return;
+  }
+  const diffFileJump = e.target.closest("[data-diff-file-jump]");
+  if (diffFileJump) {
+    const path = diffFileJump.getAttribute("data-diff-file-jump");
+    if (state.collapsedFiles.has(path)) {
+      const next = new Set(state.collapsedFiles);
+      next.delete(path);
+      state.collapsedFiles = next;
+    }
+    state.pendingScrollTo = { article: { attr: "data-diff-path", value: path } };
     return;
   }
   const dirToggle = e.target.closest("[data-dir-toggle]");
