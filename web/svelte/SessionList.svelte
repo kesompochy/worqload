@@ -193,6 +193,7 @@
              the checkbox, so a stray click there reads as "I meant to check
              this". stopPropagation on the label keeps the card-level onclick
              (= "select this session") out of it. -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <label
           class="session-card-select-area"
           onclick={(e) => e.stopPropagation()}
