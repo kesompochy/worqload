@@ -138,7 +138,7 @@
       appState.pendingScrollTo = null;
       const el = bodyEl && resolveScrollTarget(bodyEl, target);
       if (!el) return;
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.scrollIntoView({ block: "center", behavior: target.instant ? "auto" : "smooth" });
       el.classList.add("anchor-flash");
       // Drop the class when the ::after fade ends (not on a timer that could
       // clip it); the timeout is a fallback for when the animation is suppressed

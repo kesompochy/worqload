@@ -273,14 +273,16 @@ test("clicking a directory row in the Diff tree toggles its collapse with a fres
   expect(state.diffTreeCollapsed.has("src")).toBe(false);
 });
 
-test("clicking a file row in the Diff tree un-collapses the diff-file and queues a scroll to it", () => {
+test("clicking a file row in the Diff tree un-collapses the diff-file and queues an instant scroll to it", () => {
   state.collapsedFiles = new Set(["src/foo.ts"]);
   state.pendingScrollTo = null;
 
   onDetailBodyClick(diffFileJumpClick("src/foo.ts"));
 
   expect(state.collapsedFiles.has("src/foo.ts")).toBe(false);
-  expect(state.pendingScrollTo).toEqual({ article: { attr: "data-diff-path", value: "src/foo.ts" } });
+  // `instant: true` makes DetailBody scroll with behavior: "auto" instead of
+  // "smooth" — a deliberate file pick doesn't need the orienting animation.
+  expect(state.pendingScrollTo).toEqual({ article: { attr: "data-diff-path", value: "src/foo.ts" }, instant: true });
 });
 
 test("selectSession resets the Diff tab's directory collapse state", async () => {
