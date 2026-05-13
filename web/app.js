@@ -5,7 +5,7 @@
 import { $ } from "./dom.js";
 import { state } from "./state.svelte.js";
 import { startClock } from "./clock.svelte.js";
-import { fetchMeta, fetchActions, fetchSessions } from "./api.js";
+import { fetchMeta, fetchSessions } from "./api.js";
 import { selectSession } from "./handlers.js";
 import { syncNotifyButton, onNotifyClick } from "./notify.js";
 
@@ -16,7 +16,6 @@ $("#btnNotify").addEventListener("click", onNotifyClick);
 syncNotifyButton();
 
 await fetchMeta();
-await fetchActions();
 await fetchSessions();
 // auto-select first session if any
 if (state.sessions.length > 0) await selectSession(state.sessions[0].id);

@@ -7,6 +7,7 @@ let fetchSessionsCalls = 0;
 mock.module("../web/api.js", () => ({
   api: async () => ({}),
   fetchSessions: async () => { fetchSessionsCalls++; },
+  fetchActions: async () => {},
   reorderSessions: async (ids: string[]) => { reorderSessionsCalls.push(ids); },
   refreshDetail: async () => {},
   refreshDiff: async () => {},

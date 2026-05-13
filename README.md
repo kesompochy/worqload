@@ -10,6 +10,7 @@ It narrows the human's role to Orient alone and raises its load average by runni
 bun install
 bun test
 bun run dev          # `worqload serve` under --watch
+bun run preview      # try this checkout's UI against a throwaway ~/.worqload-preview repo (use from a worktree before merging)
 ```
 
 Run `worqload` with no arguments to list the CLI subcommands.

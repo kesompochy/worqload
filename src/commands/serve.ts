@@ -191,7 +191,7 @@ export async function serve(args: string[]): Promise<void> {
   await new Promise(() => {});
 }
 
-function openInBrowser(url: string): void {
+export function openInBrowser(url: string): void {
   const cmd =
     process.platform === "darwin"
       ? ["open", url]
