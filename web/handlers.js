@@ -190,7 +190,9 @@ export function onDetailBodyClick(e) {
       next.delete(path);
       state.collapsedFiles = next;
     }
-    state.pendingScrollTo = { article: { attr: "data-diff-path", value: path } };
+    // The user explicitly picked this file, so they don't need the smooth scroll
+    // to orient themselves to the new position — jump straight there.
+    state.pendingScrollTo = { article: { attr: "data-diff-path", value: path }, instant: true };
     return;
   }
   const dirToggle = e.target.closest("[data-dir-toggle]");
