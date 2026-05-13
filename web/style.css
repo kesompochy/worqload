@@ -254,7 +254,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 
 /* The anchored-feedback preview popover. Mirrors .code-nav-popover's float. */
 .feedback-preview-popover {
-  position: fixed; z-index: 61; width: 380px; max-width: 92vw; max-height: 64vh;
+  position: fixed; z-index: 61; width: 380px; max-width: 92vw; max-height: 38vh;
   overflow-y: auto; overscroll-behavior: contain;
   background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
   box-shadow: 0 6px 24px rgba(0,0,0,.4); padding: .5rem; font-size: 12.5px;
