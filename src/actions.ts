@@ -335,9 +335,8 @@ function tailFile(path: string, maxChars = 4000): string {
 export const previewAction: Action = {
   id: "preview",
   label: "Preview",
-  description: "Start a worqload server running this session's branch against a throwaway scratch repo.",
-  confirmMessage:
-    "Start a preview server from this session's worktree. It serves a throwaway repo under ~/.worqload-preview/<id> (recreated each time) and the per-session host runs this branch's code. The server keeps running until you press \"Stop preview\". `bun install` runs in the worktree first if it has no node_modules, and web/dist is rebuilt from this branch.",
+  description:
+    "Start a worqload server running this session's branch against a throwaway repo under ~/.worqload-preview/<id> (recreated each run). It keeps running until you press \"Stop preview\"; `bun install` runs in the worktree first if it has no node_modules.",
   availableFor: ({ meta }) => isWorqloadCheckout(meta.worktreePath),
   async run({ meta }) {
     const worktree = meta.worktreePath;
