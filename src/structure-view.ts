@@ -13,16 +13,25 @@ import {
   type SourceLanguage,
 } from "./import-graph";
 
-// Extensions whose files participate in the import graph. Limited to the JS/TS
-// family (the scope import-graph.ts can parse) plus `.svelte`, whose <script>
-// blocks use the same import syntax. Everything else in the worktree is left out
-// — it would only add isolated nodes.
+// Extensions whose files participate in the import graph: the JS/TS family
+// (which import-graph.ts parses with the same regex), `.svelte` (whose <script>
+// blocks use the same syntax), and Go (parsed separately, package-level).
+// Everything else in the worktree is left out — it would only add isolated nodes.
 const EXTENSION_LANGUAGE: Record<string, SourceLanguage> = {
   js: "javascript", mjs: "javascript", cjs: "javascript", svelte: "javascript",
   jsx: "jsx",
   ts: "typescript", mts: "typescript", cts: "typescript",
   tsx: "tsx",
+  go: "go",
 };
+
+// Pull the `module` identifier out of a go.mod's text. Without it, Go imports
+// can't be resolved to worktree files (a `"github.com/org/repo/pkg/foo"` import
+// is meaningless unless we know the module is e.g. `github.com/org/repo`).
+export function extractGoModuleName(goModText: string): string | null {
+  const match = /^\s*module\s+(\S+)/m.exec(goModText);
+  return match ? match[1] : null;
+}
 
 function extensionOf(path: string): string {
   const base = path.slice(path.lastIndexOf("/") + 1);
@@ -83,7 +92,11 @@ export async function buildStructureView(args: {
     const text = await args.readSource(path);
     if (text !== null) filesByPath.set(path, text);
   }
-  const fullGraph = buildImportGraph(filesByPath, structureLanguageOf);
+  // Read go.mod (if present) once so Go imports resolve to worktree files;
+  // never errors if the file isn't there — non-Go projects just pass null through.
+  const goModText = args.allPaths.includes("go.mod") ? await args.readSource("go.mod") : null;
+  const goModule = goModText ? extractGoModuleName(goModText) : null;
+  const fullGraph = buildImportGraph(filesByPath, structureLanguageOf, { goModule });
 
   const roots = args.changedPaths.filter(p => filesByPath.has(p));
   const hops = args.hops ?? DEFAULT_NEIGHBORHOOD_HOPS;

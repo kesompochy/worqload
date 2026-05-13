@@ -4,6 +4,7 @@ import {
   structureLanguageOf,
   isStructureSourcePath,
   buildStructureView,
+  extractGoModuleName,
 } from "./structure-view";
 
 test("structureLanguageOf maps source extensions to import-parseable languages", () => {
@@ -11,10 +12,41 @@ test("structureLanguageOf maps source extensions to import-parseable languages",
   expect(structureLanguageOf("web/svelte/Foo.svelte")).toBe("javascript");
   expect(structureLanguageOf("src/core.ts")).toBe("typescript");
   expect(structureLanguageOf("src/App.tsx")).toBe("tsx");
+  expect(structureLanguageOf("cmd/app/main.go")).toBe("go");
   expect(structureLanguageOf("README.md")).toBeNull();
   expect(structureLanguageOf("Makefile")).toBeNull();
   expect(isStructureSourcePath("a.ts")).toBe(true);
+  expect(isStructureSourcePath("a.go")).toBe(true);
   expect(isStructureSourcePath("a.py")).toBe(false);
+});
+
+test("extractGoModuleName reads the module path from go.mod's first line", () => {
+  expect(extractGoModuleName(`module github.com/me/repo\n\ngo 1.22\n`)).toBe("github.com/me/repo");
+  expect(extractGoModuleName(`\n   module  example.com/x  \n`)).toBe("example.com/x");
+  expect(extractGoModuleName(`go 1.22\n`)).toBeNull();
+});
+
+test("buildStructureView resolves Go imports against go.mod when present", async () => {
+  const goMod = "module github.com/me/repo\n\ngo 1.22\n";
+  const sources: Record<string, string> = {
+    "go.mod": goMod,
+    "cmd/app/main.go": `package main\n\nimport "github.com/me/repo/pkg/util"\n`,
+    "pkg/util/util.go": `package util`,
+    "pkg/util/extra.go": `package util`,
+    "pkg/other/o.go": `package other`,
+  };
+  const view = await buildStructureView({
+    allPaths: Object.keys(sources),
+    changedPaths: ["cmd/app/main.go"],
+    readSource: async p => sources[p] ?? null,
+    hops: 1,
+  });
+  expect(view.changedFiles).toEqual(["cmd/app/main.go"]);
+  expect(view.graph.nodes.sort()).toEqual(["cmd/app/main.go", "pkg/util/extra.go", "pkg/util/util.go"]);
+  expect(view.graph.edges.map(e => `${e.from}->${e.to}`).sort()).toEqual([
+    "cmd/app/main.go->pkg/util/extra.go",
+    "cmd/app/main.go->pkg/util/util.go",
+  ]);
 });
 
 test("parseChangedFilePaths reads paths from git diff headers, including both sides of a rename", () => {

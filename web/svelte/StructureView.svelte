@@ -147,7 +147,7 @@
         <button type="button" class="structure-zoom-btn" onclick={() => setStructureFocus(null)}>Focus 解除</button>
       {:else}
         この変更について図示できる import 依存関係がありません。
-        （グラフ化の対象は JavaScript / TypeScript / Svelte ファイルのみ。変更ファイルが孤立しているか、import グラフ未対応の言語です。）
+        （グラフ化の対象は JavaScript / TypeScript / Svelte / Go ファイル。変更ファイルが孤立しているか、import グラフ未対応の言語です。Go は worktree 直下に go.mod が無いと import を解決できません。）
       {/if}
     </div>
   {:else}

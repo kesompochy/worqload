@@ -19,7 +19,8 @@ export type SourceLanguage = "javascript" | "typescript" | "jsx" | "tsx" | (stri
 const JS_FAMILY = new Set(["javascript", "typescript", "jsx", "tsx"]);
 
 export function isImportParseableLanguage(language: SourceLanguage): boolean {
-  return typeof language === "string" && JS_FAMILY.has(language);
+  if (typeof language !== "string") return false;
+  return language === "go" || JS_FAMILY.has(language);
 }
 
 // One import-like statement: the module specifier, plus the names pulled from
@@ -62,7 +63,13 @@ function namesFromImportClause(clause: string): string[] {
 }
 
 export function parseImports(sourceText: string, language: SourceLanguage): ParsedImport[] {
-  if (!isImportParseableLanguage(language) || typeof sourceText !== "string") return [];
+  if (typeof sourceText !== "string") return [];
+  if (language === "go") return parseGoImports(sourceText);
+  if (!isImportParseableLanguage(language)) return [];
+  return parseJsImports(sourceText);
+}
+
+function parseJsImports(sourceText: string): ParsedImport[] {
   const imports: ParsedImport[] = [];
   for (const match of sourceText.matchAll(FROM_IMPORT)) {
     imports.push({ specifier: match[2], names: namesFromImportClause(match[1]) });
@@ -72,6 +79,26 @@ export function parseImports(sourceText: string, language: SourceLanguage): Pars
   }
   for (const match of sourceText.matchAll(CALL_IMPORT)) {
     imports.push({ specifier: match[1], names: ["*"] });
+  }
+  return imports;
+}
+
+// Go has two import forms: a single `import "spec"` (optionally preceded by an
+// alias or `_`), and a block `import ( ... )` listing one specifier per line.
+// We don't track import names — Go uses package-qualified references, not the
+// "import { x, y }" style — so `names` is left empty.
+const GO_IMPORT_BLOCK = /\bimport\s*\(([\s\S]*?)\)/g;
+const GO_IMPORT_SPEC = /"([^"]+)"/g;
+const GO_IMPORT_SINGLE = /\bimport\s+(?:(?:_|[A-Za-z_]\w*|\.)\s+)?"([^"]+)"/g;
+function parseGoImports(sourceText: string): ParsedImport[] {
+  const imports: ParsedImport[] = [];
+  for (const block of sourceText.matchAll(GO_IMPORT_BLOCK)) {
+    for (const spec of block[1].matchAll(GO_IMPORT_SPEC)) {
+      imports.push({ specifier: spec[1], names: [] });
+    }
+  }
+  for (const match of sourceText.matchAll(GO_IMPORT_SINGLE)) {
+    imports.push({ specifier: match[1], names: [] });
   }
   return imports;
 }
@@ -141,6 +168,31 @@ export function resolveImportTarget(
   return null;
 }
 
+// Go imports are package-level: `import "github.com/org/repo/pkg/foo"` points at
+// a *directory* of .go files, not a single file. We map it to every .go file
+// directly inside that directory (no subdirectories — those are different
+// packages). Returns `[]` when the import path isn't under the worktree's
+// module path, when no go.mod was found (`modulePath` is null), or when the
+// target directory has no .go files in `knownFiles`.
+export function resolveGoImportTargets(
+  specifier: string,
+  modulePath: string | null,
+  knownFiles: ReadonlySet<string>,
+): string[] {
+  if (!modulePath) return [];
+  if (specifier !== modulePath && !specifier.startsWith(modulePath + "/")) return [];
+  const dir = specifier === modulePath ? "" : specifier.slice(modulePath.length + 1);
+  const prefix = dir === "" ? "" : dir + "/";
+  const results: string[] = [];
+  for (const file of knownFiles) {
+    if (!file.endsWith(".go")) continue;
+    if (prefix && !file.startsWith(prefix)) continue;
+    if (file.slice(prefix.length).includes("/")) continue; // subdir = different package
+    results.push(file);
+  }
+  return results.sort();
+}
+
 // ---- graph ----
 
 export interface ImportEdge {
@@ -157,30 +209,43 @@ export interface ImportGraph {
   edges: ImportEdge[]; // deduplicated (one per from->to pair); never self-referential
 }
 
+// Optional knobs for `buildImportGraph`. `goModule` is the `module` line from
+// the worktree's go.mod (e.g. `github.com/user/repo`); without it Go imports
+// can't be resolved to worktree files.
+export interface BuildImportGraphOptions {
+  goModule?: string | null;
+}
+
 // Build the dependency graph over `filesByPath` (worktree-relative path →
-// source text). `languageOf` decides which files are parsed for imports; files
-// whose language isn't in the JS/TS family contribute a node but no out-edges.
-// Edges to files outside `filesByPath` are dropped, so the graph is closed.
+// source text). `languageOf` decides how each file is parsed for imports; files
+// whose language isn't supported contribute a node but no out-edges. Edges to
+// files outside `filesByPath` are dropped, so the graph is closed.
 export function buildImportGraph(
   filesByPath: ReadonlyMap<string, string>,
   languageOf: (path: string) => SourceLanguage,
+  options: BuildImportGraphOptions = {},
 ): ImportGraph {
   const nodes = [...filesByPath.keys()].sort();
   const knownFiles = new Set(nodes);
   const symbolsByEdge = new Map<string, Set<string>>();
   const edgeOrder: { from: string; to: string }[] = [];
   for (const from of nodes) {
-    for (const parsed of parseImports(filesByPath.get(from) ?? "", languageOf(from))) {
-      const to = resolveImportTarget(from, parsed.specifier, knownFiles);
-      if (!to || to === from) continue;
-      const key = `${from} ${to}`;
-      let symbols = symbolsByEdge.get(key);
-      if (!symbols) {
-        symbols = new Set<string>();
-        symbolsByEdge.set(key, symbols);
-        edgeOrder.push({ from, to });
+    const language = languageOf(from);
+    for (const parsed of parseImports(filesByPath.get(from) ?? "", language)) {
+      const targets = language === "go"
+        ? resolveGoImportTargets(parsed.specifier, options.goModule ?? null, knownFiles)
+        : (() => { const t = resolveImportTarget(from, parsed.specifier, knownFiles); return t ? [t] : []; })();
+      for (const to of targets) {
+        if (to === from) continue;
+        const key = `${from} ${to}`;
+        let symbols = symbolsByEdge.get(key);
+        if (!symbols) {
+          symbols = new Set<string>();
+          symbolsByEdge.set(key, symbols);
+          edgeOrder.push({ from, to });
+        }
+        for (const name of parsed.names) symbols.add(name);
       }
-      for (const name of parsed.names) symbols.add(name);
     }
   }
   const edges: ImportEdge[] = edgeOrder.map(({ from, to }) => ({
