@@ -306,9 +306,15 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
   font-size: 12px; line-height: 1.45;
   box-shadow: 0 6px 22px rgba(0,0,0,.5);
 }
-.anchored-composer .anchor-chip { margin-bottom: .4rem; font-size: 11px; padding: .1rem .45rem; }
 .anchored-composer .row { width: 100%; }
 .anchored-composer button[type="submit"] { font-size: 11.5px; padding: .25rem .6rem; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+/* The permalink-copy mini button. Icon-only, sits flush at the start of the
+   row so it doesn't compete with the submit button on the right. */
+.anchored-composer-permalink {
+  font-size: 12px; padding: .15rem .4rem; line-height: 1;
+  background: transparent; border-color: var(--border); color: var(--text-dim);
+}
+.anchored-composer-permalink:hover { color: var(--text); background: var(--panel-2); }
 .row { display: flex; gap: .5rem; align-items: center; }
 .spacer { flex: 1; }
 .danger { color: var(--crashed); border-color: rgba(248,81,73,.5); }
