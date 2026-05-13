@@ -152,14 +152,15 @@ export const syncBaseFromRemoteAction: Action = {
   label: "Sync base from remote",
   description: "Pull the latest commits for the base branch from origin into the main repo's local base branch.",
   confirmMessage:
-    "Fetch origin and fast-forward the local base branch to match it.\n\nIf the main repo has the base branch checked out it must be clean. If it isn't checked out (you're on some other branch), the local ref is updated directly. Non-fast-forward updates are refused.",
+    "Fetch origin and fast-forward the local base branch to match it.\n\nNon-fast-forward updates are refused. Uncommitted changes in the main repo are allowed when they don't overlap the incoming changes — git's own fast-forward decides.",
   group: "sync-base",
+  // We deliberately do NOT pre-check `isWorktreeDirty` here: `git pull --ff-only`
+  // already lets unrelated dirty files through and refuses cleanly when the
+  // incoming update would clobber them. A blanket pre-check turned away routine
+  // syncs whenever the main repo had any in-progress local work.
   async run({ meta, repoDir }) {
     const repoBranch = await gitCurrentBranch(repoDir);
     if (repoBranch === meta.baseBranch) {
-      if (await isWorktreeDirty(repoDir)) {
-        return fail("main repo has uncommitted changes; commit or stash them before syncing the base branch");
-      }
       return runCommand(["git", "pull", "--ff-only", "origin", meta.baseBranch], repoDir);
     }
     return runCommand(["git", "fetch", "origin", `${meta.baseBranch}:${meta.baseBranch}`], repoDir);

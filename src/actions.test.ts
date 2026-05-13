@@ -334,17 +334,23 @@ test("sync-base-from-remote updates the local base branch when main repo is on a
   expect(git(["show", `${TEST_BASE}:from-origin.txt`], repoDir).exitCode).toBe(0);
 });
 
-test("sync-base-from-remote refuses when main repo on base has uncommitted changes", async () => {
+test("sync-base-from-remote fast-forwards even when the main repo has unrelated uncommitted changes", async () => {
   const repoDir = makeRepo();
   const sessionId = crypto.randomUUID();
   const meta = await makeSessionWorktree(repoDir, sessionId);
-  attachOriginWithPeer(repoDir);
+  const peer = attachOriginWithPeer(repoDir);
 
-  writeFileSync(join(repoDir, "scratch.txt"), "dirty\n");
+  // Uncommitted scratch work in the main repo that touches no file origin will
+  // bring in — git's own fast-forward can handle this and we must not pre-empt it.
+  writeFileSync(join(repoDir, "scratch.txt"), "in-progress local work\n");
+
+  advanceOriginBase(peer, "from-origin.txt", "shipped on origin\n", "advance base on origin");
 
   const res = await syncBaseFromRemoteAction.run({ meta, repoDir }, {});
-  expect(res.ok).toBe(false);
-  expect(res.message?.toLowerCase()).toMatch(/uncommitted|dirty/);
+  expect(res.ok).toBe(true);
+  expect(git(["show", `${TEST_BASE}:from-origin.txt`], repoDir).exitCode).toBe(0);
+  // The scratch work is still sitting uncommitted in the worktree.
+  expect(worktreeStatus(repoDir)).toContain("scratch.txt");
 });
 
 test("sync-base-from-remote surfaces the git error when no origin remote is configured", async () => {
