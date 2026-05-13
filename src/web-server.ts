@@ -24,7 +24,7 @@ import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadSt
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
-import { listActions, findAction } from "./actions";
+import { listActions, listAvailableActions, findAction } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 
@@ -533,6 +533,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/code-nav/references", getCodeNavReferences),
   defineRoute("GET",  "/sessions/:id/permalink", getPermalink),
   defineRoute("GET",  "/actions", getActions),
+  defineRoute("GET",  "/sessions/:id/actions", getSessionActions),
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
   defineRoute("POST", "/internal/sessions/:id/escalations", postInternalEscalations),
@@ -1223,6 +1224,10 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
 
 async function getActions(): Promise<Response> {
   return json({ actions: listActions() });
+}
+
+async function getSessionActions(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => json({ actions: listAvailableActions({ meta, repoDir: ctx.repoDir }) }));
 }
 
 interface ActionInvokeBody {

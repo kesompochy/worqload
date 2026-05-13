@@ -7,7 +7,7 @@
 // point is to exercise this checkout's code, so the per-session host is pointed
 // back at this repo's src/cli.ts (production serve uses the `worqload` on PATH).
 
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { cp, mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -81,6 +81,21 @@ export async function preview(args: string[]): Promise<void> {
   const { ctx } = await startServer({ port: requestedPort, repoDir, hostCommand });
   if (ctx.port !== requestedPort) {
     console.log(`port ${requestedPort} was in use; using ${ctx.port} instead`);
+  }
+
+  // Record this server's pid so `worqload`'s Preview/Stop-preview actions (and a
+  // human) can find and stop it; startServer has already created .worqload/.
+  const pidPath = join(repoDir, ".worqload", "preview.pid");
+  writeFileSync(pidPath, String(process.pid));
+  const removePidFile = () => {
+    try { unlinkSync(pidPath); } catch { /* already gone */ }
+  };
+  process.on("exit", removePidFile);
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.on(signal, () => {
+      removePidFile();
+      process.exit(0);
+    });
   }
   console.log(`worqload preview listening on ${ctx.baseUrlForAgent}`);
   console.log(`preview repo: ${ctx.repoDir}`);

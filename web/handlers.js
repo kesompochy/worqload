@@ -11,6 +11,7 @@ import { isIdentifierName, resolveDefinitions, resolveReferences } from "./code-
 import {
   api,
   fetchSessions,
+  fetchActions,
   reorderSessions,
   refreshDetail,
   refreshDiff,
@@ -42,12 +43,14 @@ export async function selectSession(id) {
   state.selectedFilePath = null;
   state.fileContent = null;
   state.codeNav = null;
+  state.actions = [];
   state.openActionId = null;
   state.actionRunInFlight = false;
   state.actionResults = new Map();
   state.pendingScrollTo = null;
   if (!id) return;
   await refreshDetail();
+  await fetchActions(id);
   openWs(id);
 }
 
@@ -669,6 +672,11 @@ export function extractPullRequestUrl(stdout) {
   return matches ? matches[matches.length - 1] : null;
 }
 
+export function extractPreviewUrl(stdout) {
+  const match = stdout.match(/listening on (https?:\/\/\S+)/);
+  return match ? match[1] : null;
+}
+
 export async function runOpenAction() {
   const action = state.actions.find(a => a.id === state.openActionId);
   if (!action || !state.selected) return;
@@ -708,6 +716,17 @@ export async function runOpenAction() {
         toast(`PR created: ${url}`);
       } else {
         toast(`${action.label}: success`);
+      }
+    } else if (data.ok && action.id === "preview") {
+      const url = extractPreviewUrl(data.stdout ?? "");
+      if (url) {
+        // The preview server is up; open it. A popup blocker may swallow this
+        // (it fires after the fetch, not directly on the click) — the URL also
+        // shows in the run output below.
+        window.open(url, "_blank", "noopener");
+        toast(`Preview running: ${url}`);
+      } else {
+        toast(`${action.label}: started`);
       }
     } else {
       toast(data.ok ? `${action.label}: success` : `${action.label}: failed`);

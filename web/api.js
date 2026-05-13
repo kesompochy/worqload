@@ -47,9 +47,15 @@ export async function reorderSessions(orderedIds) {
   await api("POST", "/sessions/order", { ids: orderedIds });
 }
 
-export async function fetchActions() {
+// Actions are per-session: which ones apply (e.g. Preview) depends on the
+// session's worktree, so they're fetched on selection rather than once globally.
+export async function fetchActions(sessionId) {
+  if (!sessionId) {
+    state.actions = [];
+    return;
+  }
   try {
-    const { actions } = await api("GET", "/actions");
+    const { actions } = await api("GET", `/sessions/${sessionId}/actions`);
     state.actions = actions;
   } catch {
     state.actions = [];

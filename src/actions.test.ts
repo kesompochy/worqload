@@ -1,9 +1,18 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import { createPrAction, findAction, listActions, mergeToBaseAction } from "./actions";
+import {
+  createPrAction,
+  findAction,
+  listActions,
+  mergeToBaseAction,
+  parsePreviewListeningUrl,
+  previewAction,
+  previewPortForSession,
+  stopPreviewAction,
+} from "./actions";
 import type { SessionMeta } from "./session";
-import { cleanupAll, makeRepoFromTemplate } from "./test-helpers";
+import { cleanupAll, makeRepoFromTemplate, makeTmpDir } from "./test-helpers";
 import { createSessionWorktree } from "./worktree";
 
 afterEach(cleanupAll);
@@ -66,12 +75,70 @@ test("registry exposes built-in actions and supports lookup", () => {
   const list = listActions();
   expect(list.find((a) => a.id === "merge-to-base")).toBeDefined();
   expect(list.find((a) => a.id === "create-pr")).toBeDefined();
-  // descriptors must not include the run function
+  expect(list.find((a) => a.id === "preview")).toBeDefined();
+  expect(list.find((a) => a.id === "stop-preview")).toBeDefined();
+  // descriptors must not include the run function or the availableFor predicate
   for (const d of list) {
     expect((d as { run?: unknown }).run).toBeUndefined();
+    expect((d as { availableFor?: unknown }).availableFor).toBeUndefined();
   }
   expect(findAction("merge-to-base")?.id).toBe("merge-to-base");
   expect(findAction("nonexistent")).toBeUndefined();
+});
+
+test("previewPortForSession is stable, in range, and varies by session", () => {
+  const a = previewPortForSession("11111111-2222-3333-4444-555555555555");
+  const b = previewPortForSession("11111111-2222-3333-4444-555555555555");
+  const c = previewPortForSession("99999999-8888-7777-6666-555555555555");
+  expect(a).toBe(b);
+  expect(a).toBeGreaterThanOrEqual(3500);
+  expect(a).toBeLessThan(3700);
+  expect(a).not.toBe(c);
+});
+
+test("parsePreviewListeningUrl pulls the URL out of the server's startup log", () => {
+  expect(parsePreviewListeningUrl("worqload preview listening on http://127.0.0.1:3517\npreview repo: /x\n")).toBe(
+    "http://127.0.0.1:3517",
+  );
+  expect(parsePreviewListeningUrl("building...\n")).toBeNull();
+});
+
+function metaWithWorktree(worktreePath: string): SessionMeta {
+  return {
+    id: crypto.randomUUID(),
+    prompt: "p",
+    title: "p",
+    baseBranch: "main",
+    baseCommit: "x",
+    worktreePath,
+    branchName: "b",
+    status: "running",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+test("preview / stop-preview are offered only for worqload checkouts", () => {
+  const plain = makeTmpDir("actions-plain-worktree");
+  expect(previewAction.availableFor?.({ meta: metaWithWorktree(plain), repoDir: plain })).toBe(false);
+  expect(stopPreviewAction.availableFor?.({ meta: metaWithWorktree(plain), repoDir: plain })).toBe(false);
+
+  const worqload = makeTmpDir("actions-worqload-worktree");
+  mkdirSync(join(worqload, "src", "commands"), { recursive: true });
+  writeFileSync(join(worqload, "src", "commands", "preview.ts"), "");
+  mkdirSync(join(worqload, "preview-seed"), { recursive: true });
+  expect(previewAction.availableFor?.({ meta: metaWithWorktree(worqload), repoDir: worqload })).toBe(true);
+  expect(stopPreviewAction.availableFor?.({ meta: metaWithWorktree(worqload), repoDir: worqload })).toBe(true);
+});
+
+test("stop-preview reports cleanly when no preview is running for the session", async () => {
+  process.env.WORQLOAD_PREVIEW_DIR = makeTmpDir("actions-preview-root");
+  try {
+    const res = await stopPreviewAction.run({ meta: metaWithWorktree("/irrelevant"), repoDir: "/irrelevant" }, {});
+    expect(res.ok).toBe(true);
+    expect(res.message).toContain("no preview server");
+  } finally {
+    delete process.env.WORQLOAD_PREVIEW_DIR;
+  }
 });
 
 test("merge-to-base merges the session branch when preconditions are satisfied", async () => {
