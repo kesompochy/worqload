@@ -4,7 +4,7 @@
 // and/or calls the data layer; the Svelte components re-render reactively.
 
 import { $, toast } from "./dom.js";
-import { state, isReportExpanded, isFeedbackExpanded, DIFF_EXPAND_CHUNK } from "./state.svelte.js";
+import { state, isReportExpanded, isFeedbackExpanded, feedbackPreviewEntries, DIFF_EXPAND_CHUNK } from "./state.svelte.js";
 import { parseDiffFiles, mergeLineRanges } from "./diff-view.js";
 import { languageForPath } from "./syntax-highlight.js";
 import { isIdentifierName, resolveDefinitions, resolveReferences } from "./code-nav.js";
@@ -49,6 +49,7 @@ export async function selectSession(id) {
   state.actionRunInFlight = false;
   state.actionResults = new Map();
   state.pendingScrollTo = null;
+  state.feedbackPreview = null;
   if (!id) return;
   await refreshDetail();
   openWs(id);
@@ -60,6 +61,10 @@ export function onDetailBodyClick(e) {
   // which re-renders the pane and detaches the <a> before navigation, so the
   // new tab never opens.
   if (e.target.closest("a")) return;
+  // An anchored-feedback pin: open (or keep open) its preview popover rather
+  // than letting the click fall through to anchoring the underlying line.
+  const previewPin = e.target.closest("[data-feedback-preview]");
+  if (previewPin) { openFeedbackPreview(previewPin); return; }
   // A feedback anchor chip: jump to the diff/file/report line it points at.
   // Sits before the data-feedback-toggle branch because the chip lives inside
   // the feedback header (which carries that attribute).
@@ -259,6 +264,54 @@ export function openCodeNav(tokenEl) {
 
 export function closeCodeNav() {
   state.codeNav = null;
+}
+
+// --- anchored-feedback preview popover -------------------------------------
+// An anchored-feedback pin (`[data-feedback-preview]`, rendered on diff/file
+// lines and report-markdown blocks) opens a floating popover on hover that
+// shows the feedback bodies and the reports written in reply. The popover lives
+// on document.body (FeedbackPreviewPopover.svelte); the close is debounced so
+// the cursor can travel from the pin to the popover without it flickering shut.
+let feedbackPreviewCloseTimer = null;
+
+export function openFeedbackPreview(pinEl) {
+  if (!pinEl) return;
+  cancelFeedbackPreviewClose();
+  const names = (pinEl.getAttribute("data-feedback-preview") || "").split(",").filter(Boolean);
+  const entries = feedbackPreviewEntries(names);
+  if (entries.length === 0) return;
+  const r = pinEl.getBoundingClientRect();
+  state.feedbackPreview = { entries, rect: { top: r.top, bottom: r.bottom, left: r.left, right: r.right } };
+}
+
+export function cancelFeedbackPreviewClose() {
+  if (feedbackPreviewCloseTimer) { clearTimeout(feedbackPreviewCloseTimer); feedbackPreviewCloseTimer = null; }
+}
+
+export function scheduleFeedbackPreviewClose() {
+  cancelFeedbackPreviewClose();
+  feedbackPreviewCloseTimer = setTimeout(() => { state.feedbackPreview = null; feedbackPreviewCloseTimer = null; }, 150);
+}
+
+export function closeFeedbackPreview() {
+  cancelFeedbackPreviewClose();
+  state.feedbackPreview = null;
+}
+
+// Hover delegation for the detail body: entering a pin opens the popover,
+// leaving one toward anything that is neither the pin nor the popover starts
+// the debounced close.
+export function onDetailBodyPointerOver(e) {
+  const pin = e.target.closest?.("[data-feedback-preview]");
+  if (pin) { openFeedbackPreview(pin); return; }
+}
+
+export function onDetailBodyPointerOut(e) {
+  const pin = e.target.closest?.("[data-feedback-preview]");
+  if (!pin) return;
+  const to = e.relatedTarget;
+  if (to && (pin.contains(to) || to.closest?.("[data-feedback-preview], .feedback-preview-popover"))) return;
+  scheduleFeedbackPreviewClose();
 }
 
 // Jump the Files tab to a path:line — the action behind a code-nav popover
@@ -569,7 +622,9 @@ export async function onFeedback() {
     await api("POST", `/sessions/${state.selected}/feedback`, body);
     $("#feedbackInput").value = "";
     state.anchor = null;
-    state.activeTab = "feedback";  // show the message land in the feedback list
+    // Stay on whatever tab the human was reading (often the diff/file/report the
+    // anchor points at): the sent feedback now shows at its anchor and in the
+    // Feedbacks tab, so yanking the view away to the list is just disruptive.
     toast("feedback queued");
     await refreshDetail();
   } catch (e) {

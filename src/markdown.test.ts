@@ -153,17 +153,17 @@ test("aria-current ignores anchor on a different path", () => {
   expect(html).not.toContain("aria-current");
 });
 
-test("a feedback anchor stripes the overlapping block and appends a goto chip", () => {
+test("a feedback anchor stripes the overlapping block and appends a preview pin", () => {
   const html = renderMarkdown("# Title\n\nbody line\n", {
     anchorPath: "./r.md",
     feedbackAnchors: [{ lineStart: 3, lineEnd: 3, filename: "004-feedback.md" }],
   });
   // Heading is line 1 (no overlap); paragraph is line 3 (overlap).
   expect(html).not.toMatch(/<h1 [^>]*data-feedback-here/);
-  expect(html).toMatch(/<p [^>]*data-feedback-here[^>]*>body line<span class="line-feedback-chips"><button [^>]*data-goto-feedback="004-feedback.md"[^>]*>↳ 004-feedback.md<\/button><\/span><\/p>/);
+  expect(html).toMatch(/<p [^>]*data-feedback-here[^>]*>body line<button type="button" class="feedback-anchor-pin" data-feedback-preview="004-feedback.md"[^>]*>.*<\/button><\/p>/);
 });
 
-test("every feedback anchored to a block gets its own chip", () => {
+test("a block anchored by several feedbacks lists them all on its pin", () => {
   const html = renderMarkdown("body line\n", {
     anchorPath: "./r.md",
     feedbackAnchors: [
@@ -171,12 +171,11 @@ test("every feedback anchored to a block gets its own chip", () => {
       { lineStart: 1, lineEnd: 2, filename: "004-anchored.md" },
     ],
   });
-  expect(html).toContain(`data-goto-feedback="005-anchored.md"`);
-  expect(html).toContain(`data-goto-feedback="004-anchored.md"`);
+  expect(html).toContain(`data-feedback-preview="005-anchored.md,004-anchored.md"`);
 });
 
 test("no feedback marker when no feedback anchors are passed", () => {
   const html = renderMarkdown("body\n", { anchorPath: "./r.md" });
   expect(html).not.toContain("data-feedback-here");
-  expect(html).not.toContain("line-feedback-chip");
+  expect(html).not.toContain("feedback-anchor-pin");
 });
