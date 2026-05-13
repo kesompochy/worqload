@@ -1,0 +1,4 @@
+{"seq":1,"kind":"session_started","timestamp":"2026-05-10T22:15:00.000Z","payload":{"prompt":"Files タブで `bun.lock` を開いたら描画が止まる、を直したい。"}}
+{"seq":2,"kind":"claude_assistant_message","timestamp":"2026-05-10T22:15:30.000Z","payload":{"text":"まず再現条件を見ます。"}}
+{"seq":3,"kind":"claude_tool_use","timestamp":"2026-05-10T22:16:00.000Z","payload":{"name":"Read","input":{"file_path":"bun.lock"}}}
+{"seq":4,"kind":"session_crashed","timestamp":"2026-05-10T22:19:11.000Z","payload":{"reason":"out_of_memory"}}

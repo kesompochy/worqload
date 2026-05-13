@@ -1,0 +1,13 @@
+{
+  "id": "00000001-0000-0000-0000-000000000001",
+  "title": "Running なモックセッション",
+  "prompt": "サイドバーの状態バッジに色を足してほしい。Running は緑、Stopped はグレー、Crashed は赤、というように。",
+  "baseBranch": "main",
+  "baseCommit": "0000000",
+  "worktreePath": "__REPO_DIR__",
+  "branchName": "mock/running-example",
+  "status": "running",
+  "createdAt": "2026-05-12T08:30:00.000Z",
+  "sortOrder": 0,
+  "mock": true
+}

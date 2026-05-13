@@ -643,6 +643,9 @@ async function reconcileNonTerminalSessions(ctx: ServerContext): Promise<void> {
   const all = await listSessionMetas(ctx.sessionsDir);
   for (const meta of all) {
     if (isTerminal(meta.status)) continue;
+    // Seed sessions in a preview repo have no real host; don't auto-flip them
+    // to crashed for failing the host-alive check.
+    if (meta.mock) continue;
     const hostAlive = meta.hostPid !== undefined && isPidAlive(meta.hostPid);
     if (hostAlive) {
       const client = await reconnectToHost(ctx, meta);

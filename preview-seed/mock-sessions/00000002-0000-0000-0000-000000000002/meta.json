@@ -1,0 +1,14 @@
+{
+  "id": "00000002-0000-0000-0000-000000000002",
+  "title": "Stopped なモックセッション",
+  "prompt": "README の Development セクションに preview の使い方を一文足してほしい。",
+  "baseBranch": "main",
+  "baseCommit": "0000000",
+  "worktreePath": "__REPO_DIR__",
+  "branchName": "mock/stopped-example",
+  "status": "stopped",
+  "createdAt": "2026-05-11T14:00:00.000Z",
+  "endedAt": "2026-05-11T14:08:42.000Z",
+  "sortOrder": 1,
+  "mock": true
+}

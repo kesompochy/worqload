@@ -1,0 +1,14 @@
+{
+  "id": "00000003-0000-0000-0000-000000000003",
+  "title": "Crashed なモックセッション",
+  "prompt": "Files タブで `bun.lock` を開いたら描画が止まる、を直したい。",
+  "baseBranch": "main",
+  "baseCommit": "0000000",
+  "worktreePath": "__REPO_DIR__",
+  "branchName": "mock/crashed-example",
+  "status": "crashed",
+  "createdAt": "2026-05-10T22:15:00.000Z",
+  "endedAt": "2026-05-10T22:19:11.000Z",
+  "sortOrder": 2,
+  "mock": true
+}

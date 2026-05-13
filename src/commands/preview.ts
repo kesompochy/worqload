@@ -8,7 +8,7 @@
 // back at this repo's src/cli.ts (production serve uses the `worqload` on PATH).
 
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { buildWebFrontend, webFrontendBuilt } from "../web-build";
@@ -19,6 +19,10 @@ import { openInBrowser } from "./serve";
 const repoRoot = join(import.meta.dir, "..", "..");
 // Seed contents for a fresh preview repo, curated in the worqload repo itself.
 const seedDir = join(repoRoot, "preview-seed");
+// Curated example sessions that land in <previewRepo>/.worqload/sessions/ —
+// not part of the preview repo's committed tree, so they're excluded from the
+// initial `cp` and installed separately after the seed commit.
+const mockSessionsSrc = join(seedDir, "mock-sessions");
 
 export function previewRepoDir(env: Record<string, string | undefined>): string {
   const override = env.WORQLOAD_PREVIEW_REPO?.trim();
@@ -52,13 +56,49 @@ async function ensurePreviewRepo(repoDir: string, opts: { reset: boolean }): Pro
     return;
   }
   await mkdir(repoDir, { recursive: true });
-  if (existsSync(seedDir)) await cp(seedDir, repoDir, { recursive: true });
+  if (existsSync(seedDir)) {
+    await cp(seedDir, repoDir, {
+      recursive: true,
+      // mock-sessions/ is staging for the .worqload/ sessions layout, not the
+      // preview repo's tracked content; install it separately after the commit.
+      filter: (src) => src !== mockSessionsSrc,
+    });
+  }
   await run("git", ["init", "-q", "-b", "main"], repoDir);
   await run("git", ["add", "-A"], repoDir);
   // --no-verify: a throwaway local repo should not be subject to the user's
   // global commit hooks (e.g. branch-protection hooks that block commits to
   // main/master).
   await run("git", ["commit", "--no-verify", "-q", "-m", "seed preview repo"], repoDir);
+  await installMockSessions(repoDir);
+}
+
+// Copies preview-seed/mock-sessions/<id>/ into <repoDir>/.worqload/sessions/<id>/,
+// substituting __REPO_DIR__ in meta.json with the actual preview repo path so
+// the mock session's worktreePath resolves on this machine. Skips silently when
+// the staging directory is absent.
+async function installMockSessions(repoDir: string): Promise<void> {
+  if (!existsSync(mockSessionsSrc)) return;
+  const targetRoot = join(repoDir, ".worqload", "sessions");
+  await mkdir(targetRoot, { recursive: true });
+  await copyMockTree(mockSessionsSrc, targetRoot, repoDir);
+}
+
+async function copyMockTree(src: string, dest: string, repoDir: string): Promise<void> {
+  for (const name of await readdir(src)) {
+    const s = join(src, name);
+    const d = join(dest, name);
+    const st = await stat(s);
+    if (st.isDirectory()) {
+      await mkdir(d, { recursive: true });
+      await copyMockTree(s, d, repoDir);
+    } else if (name === "meta.json") {
+      const raw = await Bun.file(s).text();
+      await Bun.write(d, raw.replaceAll("__REPO_DIR__", repoDir));
+    } else {
+      await cp(s, d);
+    }
+  }
 }
 
 export async function preview(args: string[]): Promise<void> {
