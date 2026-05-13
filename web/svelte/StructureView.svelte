@@ -61,10 +61,16 @@
   // An edge label expands to its full untruncated text — overriding the
   // pre-computed `edge.label` — when the human's cursor is on it, or when the
   // edge connects to whichever node is hovered/focused (the highlighted set).
+  // Nodes get the parallel treatment: a highlighted node's basename swaps to
+  // its full path, with the rect widened so the text stays inside the pill.
   let hoveredEdgeKey = $state(null);
   const isExpanded = edge =>
     hoveredEdgeKey === edgeKey(edge) || (related != null && related.keys.has(edgeKey(edge)));
   const fullSymbols = symbols => symbols.join(", ");
+  const isNodeExpanded = path => related != null && related.paths.has(path);
+  // Same conservative monospace-width estimate the edge labels use (12px node
+  // font here vs 11px label font; the slightly wider number leaves margin).
+  const nodeFullWidth = path => Math.max(184, path.length * 7.8 + 16);
 
   // Zoom for the whole canvas, applied as a scale on the rendered SVG size; the
   // viewBox stays at the model's native dimensions so the SVG scales crisply.
@@ -176,11 +182,15 @@
           {/each}
         {/if}
         {#each model.nodes as node (node.path)}
+          {@const expanded = isNodeExpanded(node.path)}
+          {@const w = expanded ? nodeFullWidth(node.path) : node.width}
+          {@const xOffset = (node.width - w) / 2}
           <g
             class="structure-node"
             class:changed={node.changed}
             class:cycle={node.inCycle}
             class:dim={nodeDimmed(node.path)}
+            class:expanded
             data-structure-open={node.path}
             transform="translate({node.x},{node.y})"
             role="button"
@@ -192,9 +202,8 @@
             onblur={() => (hoveredPath = null)}
             onkeydown={e => onNodeKeydown(e, node.path)}
           >
-            <title>{node.path}</title>
-            <rect width={node.width} height={node.height} rx="5" />
-            <text x={node.width / 2} y={node.height / 2}>{node.label}</text>
+            <rect x={xOffset} width={w} height={node.height} rx="5" />
+            <text x={node.width / 2} y={node.height / 2}>{expanded ? node.path : node.label}</text>
           </g>
         {/each}
       </svg>

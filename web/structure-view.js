@@ -19,8 +19,12 @@ const ROW_GAP = 20;
 const LABEL_HEIGHT = 16;
 const LABEL_MARGIN = 8;
 const LABEL_MAX_CHARS = 22;
-const LABEL_CHAR_WIDTH = 6.4; // ~width of a monospace glyph at 11px (no DOM to measure with)
-const LABEL_PADDING = 8;
+// Conservative width-per-glyph at 11px monospace and box padding: we can't
+// measure rendered text without a DOM, so we err wide so a label always fits
+// inside its pill (the alternative — text overflowing the rect — is the bug
+// these constants exist to prevent).
+const LABEL_CHAR_WIDTH = 7.4;
+const LABEL_PADDING = 14;
 
 function baseName(path) {
   const slash = path.lastIndexOf("/");

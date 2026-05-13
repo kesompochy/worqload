@@ -340,6 +340,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-canvas.structure-focusing .structure-node:not(.dim) rect { stroke: var(--accent); }
 .structure-node.changed rect { fill: rgba(88,166,255,.16); stroke: var(--accent); stroke-width: 1.6px; }
 .structure-node.cycle rect { stroke: var(--crashed); }
+.structure-node.expanded rect { stroke: var(--accent); }
 .structure-node text { fill: var(--text); font-size: 12px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 .structure-node.changed text { fill: var(--text); font-weight: 600; }
 .structure-details { margin-top: .7rem; font-size: 12.5px; }
