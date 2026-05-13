@@ -132,20 +132,31 @@
       : [],
   );
 
-  // Manual zoom: the toolbar buttons scale the rendered SVG (the viewBox stays
-  // at the model's native size so it scales crisply). The canvas has
-  // `overflow: auto`, so panning a zoomed-in graph is just scrolling.
-  let zoom = $state(1);
+  // Zoom: by default we fit the model to the canvas. Once the user hits
+  // +/−/% (manualZoom !== null) we honour their choice for the current
+  // layout; a layout change (focus push/pop, mode toggle) flips back to
+  // auto-fit. The toolbar's "Fit" button also returns to auto-fit, so a
+  // subsequent canvas resize re-fits.
+  let manualZoom = $state(null);
   let canvasW = $state(0);
   let canvasH = $state(0);
   const MIN_ZOOM = 0.1;
   const MAX_ZOOM = 4;
   const clampZoom = z => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
-  function zoomBy(factor) { zoom = clampZoom(zoom * factor); }
-  function fitZoom() {
-    if (!model || !model.hasGraph || canvasW < 20 || canvasH < 20) return;
-    zoom = clampZoom(Math.min((canvasW - 12) / model.width, (canvasH - 12) / model.height));
-  }
+  const fitZoomValue = $derived.by(() => {
+    if (!model || !model.hasGraph || canvasW < 20 || canvasH < 20) return 1;
+    return clampZoom(Math.min((canvasW - 12) / model.width, (canvasH - 12) / model.height));
+  });
+  const zoom = $derived(manualZoom ?? fitZoomValue);
+  // A new layout (focus pushed/popped, file/function mode flipped, structure
+  // reloaded) resets us to auto-fit.
+  const layoutKey = $derived(`${appState.structureMode}|${focusStack.join("/")}|${model ? `${model.width}x${model.height}` : ""}`);
+  $effect(() => {
+    layoutKey;
+    manualZoom = null;
+  });
+  function zoomBy(factor) { manualZoom = clampZoom(zoom * factor); }
+  function fitZoom() { manualZoom = null; }
 
   // A short cubic between two box-edge anchor points. Forward edges (top→bottom,
   // following the import) curve gently; a back/same-layer edge bows out to the
@@ -209,7 +220,7 @@
         <button type="button" class="structure-zoom-btn" title="Zoom out" aria-label="Zoom out" onclick={() => zoomBy(1 / 1.25)}>−</button>
         <button type="button" class="structure-zoom-btn" title="Fit to canvas" onclick={fitZoom}>Fit</button>
         <button type="button" class="structure-zoom-btn" title="Zoom in" aria-label="Zoom in" onclick={() => zoomBy(1.25)}>＋</button>
-        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="Reset zoom" onclick={() => (zoom = 1)}>{Math.round(zoom * 100)}%</button>
+        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="Reset zoom to 100%" onclick={() => (manualZoom = 1)}>{Math.round(zoom * 100)}%</button>
       </span>
     </div>
     <div class="structure-canvas" class:structure-focusing={related != null} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>

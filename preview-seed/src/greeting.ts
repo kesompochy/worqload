@@ -1,3 +1,5 @@
+import { capitalize } from "./formatting";
+
 export function greet(name: string): string {
-  return `Hello, ${name}!`;
+  return `Hello, ${capitalize(name)}!`;
 }

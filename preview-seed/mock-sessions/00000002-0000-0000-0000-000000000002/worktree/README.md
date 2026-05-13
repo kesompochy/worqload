@@ -20,5 +20,6 @@ bun src/main.ts
 Output:
 
 ```
-Hello, worqload!
+[log] Hello, Worqload!
+[log] Hello worqload, hello wo… (8 words)
 ```
