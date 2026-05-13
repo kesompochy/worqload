@@ -1,11 +1,12 @@
 import type { Server, ServerWebSocket, Subprocess } from "bun";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import {
   agentEndpointPath,
   createSession,
+  hostLogPath,
   saveSessionMeta,
   loadSessionMeta,
   listSessionMetas,
@@ -317,6 +318,7 @@ async function transitionStatus(
 function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: string[] }): HostLauncher {
   return async ({ meta, sessionsDir, agentEndpoint, resume, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
+    const logFile = hostLogPath(sessionsDir, meta.id);
     const hostProc = spawnDetachedHost({
       sessionId: meta.id,
       sessionsDir,
@@ -324,12 +326,31 @@ function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: st
       agentEndpoint,
       spawnCommand: resume ? [...config.spawnCommand, "--continue"] : config.spawnCommand,
       hostCommand: config.hostCommand,
+      logFile,
       ...(resume && { resume: true }),
     });
     const client = await connectToHost({ socketPath, sinceSeq: 0, onEvent, onDisconnect });
     await client.replayCompleted.catch(() => {});
     return { client, hostProc };
   };
+}
+
+// Both runHost (host process) and serve append diagnostic entries to the same
+// per-session host.log to make the wake path debuggable post-hoc. Failures
+// here must not bubble up — diagnostic logging is best-effort.
+function appendHostLog(
+  ctx: ServerContext,
+  sessionId: string,
+  event: string,
+  fields: Record<string, unknown> = {},
+): void {
+  const path = hostLogPath(ctx.sessionsDir, sessionId);
+  const line = JSON.stringify({ ts: new Date().toISOString(), source: "serve", event, ...fields }) + "\n";
+  try {
+    appendFileSync(path, line);
+  } catch {
+    // session dir may have been cleaned up; ignore
+  }
 }
 
 async function spawnAndAttachHost(
@@ -1223,8 +1244,16 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     const file = await writeNumberedFile(inbox, slug, body.content, writeOpts);
     await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
 
-    // Wake the host's claude child if idle (fire-and-forget)
+    // Wake the host's claude child if idle (fire-and-forget). The log entry
+    // pairs with host-side stdin_write events so a "wake never reached claude"
+    // failure can be triaged from a single file post-hoc.
     const att = ctx.clients.get(meta.id);
+    appendHostLog(ctx, meta.id, "wake_sent", {
+      filename: file.filename,
+      seq: file.seq,
+      hasClient: att !== undefined,
+      status: meta.status,
+    });
     if (att) {
       att.client.send("[wake] check feedback inbox").catch(() => {});
     }
@@ -1322,6 +1351,13 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
     }
 
     const att = ctx.clients.get(meta.id);
+    appendHostLog(ctx, meta.id, "wake_sent", {
+      filename: file.filename,
+      seq: file.seq,
+      hasClient: att !== undefined,
+      status: updatedMeta.status,
+      reason: "escalation_resolved",
+    });
     if (att) {
       att.client.send("[wake] check feedback inbox").catch(() => {});
     }

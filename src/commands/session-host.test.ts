@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import type { Socket } from "bun";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readEvents } from "../event-log";
-import { createSession, loadSessionMeta, saveSessionMeta } from "../session";
+import { createSession, hostLogPath, loadSessionMeta, saveSessionMeta } from "../session";
 import { encodeMessage, type HostToServeMessage, parseLineDelimited } from "../session-host-protocol";
 import { cleanupAll, makeTmpDir } from "../test-helpers";
 import { runHost } from "./session-host";
@@ -22,7 +22,7 @@ interface HostFixture {
 async function setupHost(
   mockMode: "hang" | "echo" | "init" | "crash" | "env",
   agentEndpoint = "http://127.0.0.1:0",
-  opts: { resume?: boolean } = {},
+  opts: { resume?: boolean; logFile?: string } = {},
 ): Promise<HostFixture> {
   const sessionsDir = makeTmpDir("host-test");
   const worktree = makeTmpDir("host-test-wt");
@@ -34,6 +34,8 @@ async function setupHost(
     branchName: "host-test",
   });
   await saveSessionMeta(meta, sessionsDir);
+  // host.log lives at sessionsDir/<id>/, which saveSessionMeta has just created.
+  mkdirSync(join(sessionsDir, meta.id), { recursive: true });
   const socketPath = join(makeTmpDir("host-test-sock"), `${meta.id.slice(0, 8)}.sock`);
 
   const hostExit = runHost({
@@ -43,6 +45,7 @@ async function setupHost(
     agentEndpoint,
     spawnCommand: ["bun", MOCK, mockMode],
     ...(opts.resume && { resume: true }),
+    ...(opts.logFile !== undefined && { logFile: opts.logFile }),
   });
   return { sessionsDir, socketPath, sessionId: meta.id, hostExit };
 }
@@ -250,6 +253,83 @@ test("runHost marks meta as crashed on claude non-zero exit", async () => {
 
   const meta = await loadSessionMeta(sessionId, sessionsDir);
   expect(meta?.status).toBe("crashed");
+});
+
+test("runHost appends host_started, send_user_received and stdin_write to logFile", async () => {
+  const logFile = join(makeTmpDir("host-test-log"), "host.log");
+  const { hostExit, socketPath } = await setupHost("echo", undefined, { logFile });
+  const client = await connectClient(socketPath);
+  client.send({ type: "hello", sinceSeq: 0 });
+  await client.next((m) => m.type === "replay_done");
+
+  const wakeText = "[wake] check feedback inbox";
+  client.send({ type: "send_user", text: wakeText });
+  await client.next(
+    (m) =>
+      m.type === "event" &&
+      m.event.kind === "claude_assistant_message" &&
+      JSON.stringify(m.event.payload).includes(wakeText),
+  );
+
+  client.send({ type: "kill", signal: "SIGTERM" });
+  await client.next((m) => m.type === "exited").catch(() => {});
+  await hostExit;
+
+  const entries = readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+
+  expect(entries.some((e) => e.event === "host_started")).toBe(true);
+
+  const sendUser = entries.find((e) => e.event === "send_user_received");
+  expect(sendUser).toBeDefined();
+  expect(sendUser?.preview).toBe(wakeText);
+  expect(sendUser?.textLen).toBe(wakeText.length);
+
+  // At least one stdin_write entry must come from the wake (source !== "bootstrap").
+  const writes = entries.filter((e) => e.event === "stdin_write");
+  expect(writes.length).toBeGreaterThanOrEqual(2); // bootstrap + wake
+  expect(writes.every((e) => e.ok === true)).toBe(true);
+});
+
+test("runHost uses hostLogPath under the sessions dir for its diagnostic log", async () => {
+  const sessionsDir = makeTmpDir("host-test");
+  const worktree = makeTmpDir("host-test-wt");
+  const meta = createSession({
+    prompt: "do thing",
+    baseBranch: "main",
+    baseCommit: "abc123",
+    worktreePath: worktree,
+    branchName: "host-test",
+  });
+  await saveSessionMeta(meta, sessionsDir);
+  mkdirSync(join(sessionsDir, meta.id), { recursive: true });
+  const socketPath = join(makeTmpDir("host-test-sock"), `${meta.id.slice(0, 8)}.sock`);
+  const logFile = hostLogPath(sessionsDir, meta.id);
+
+  const hostExit = runHost({
+    sessionId: meta.id,
+    sessionsDir,
+    socketPath,
+    agentEndpoint: "http://127.0.0.1:0",
+    spawnCommand: ["bun", MOCK, "hang"],
+    logFile,
+  });
+
+  const client = await connectClient(socketPath);
+  client.send({ type: "hello", sinceSeq: 0 });
+  await client.next((m) => m.type === "replay_done");
+
+  client.send({ type: "kill", signal: "SIGTERM" });
+  await hostExit;
+
+  const entries = readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  expect(entries.some((e) => e.event === "host_started" && e.sessionId === meta.id)).toBe(true);
+  expect(entries.some((e) => e.event === "claude_exited")).toBe(true);
 });
 
 test("runHost in resume mode emits session_resumed and sends the resume kickoff (not the protocol bootstrap)", async () => {

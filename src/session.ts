@@ -83,6 +83,13 @@ export function agentEndpointPath(sessionsDir: string, sessionId: string): strin
   return `${sessionsDir}/${sessionId}/agent-endpoint`;
 }
 
+// JSONL log file the host and serve both append to for diagnosing wake-path
+// failures (host's stderr is redirected here; serve writes "wake_sent" entries
+// when forwarding feedback). Each line is `{"ts","source","event",...}`.
+export function hostLogPath(sessionsDir: string, sessionId: string): string {
+  return `${sessionsDir}/${sessionId}/host.log`;
+}
+
 export async function saveSessionMeta(
   meta: SessionMeta,
   sessionsDir: string = DEFAULT_SESSIONS_DIR,
