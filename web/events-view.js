@@ -17,6 +17,7 @@
 export const AGENT_WORK_EVENT_KINDS = new Set([
   "session_started",
   "session_resumed",
+  "session_auto_resumed",
   "claude_assistant_message",
   "claude_tool_use",
   "claude_tool_result",
@@ -118,6 +119,11 @@ export function describeEvent(event) {
     case "session_stopped": {
       const reason = payload?.reason;
       return { summary: reason ? `stopped (${reason})` : "stopped", sections: [payloadSection(payload)] };
+    }
+    case "session_auto_resumed": {
+      const reason = payload?.reason ?? "watchdog";
+      const after = Number.isFinite(payload?.silenceMs) ? ` after ${Math.round(payload.silenceMs / 1000)}s silence` : "";
+      return { summary: `🐕 auto-resumed (${reason})${after}`, sections: [payloadSection(payload)] };
     }
     case "session_crashed": {
       const parts = ["crashed"];
