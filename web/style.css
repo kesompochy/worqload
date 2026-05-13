@@ -366,7 +366,11 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-zoom { display: inline-flex; gap: .2rem; align-items: center; margin-left: auto; }
 .structure-zoom-btn { font-size: 12px; padding: .15rem .5rem; line-height: 1.2; min-width: 1.8em; }
 .structure-zoom-readout { color: var(--text-dim); min-width: 3.4em; }
-.structure-canvas { position: relative; overflow: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); max-height: 70vh; }
+/* The canvas has a *fixed* height (not max-height): if it sized to its content
+   then Fit-zoom would shrink to fit, the canvas would shrink to the new content
+   height, the next Fit would shrink again, and so on indefinitely. A fixed
+   height also keeps the anchor math stable as the model reflows. */
+.structure-canvas { position: relative; overflow: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); height: 70vh; }
 .structure-canvas svg { display: block; }
 .structure-edge { transition: opacity .12s ease; }
 /* Re-layout on highlight: animate the node/label positions and rect sizes so a
