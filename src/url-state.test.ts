@@ -40,17 +40,46 @@ afterEach(() => {
 
 test("readUrlState reads session, tab, and focus stack from the query string", () => {
   installWindow("?session=abc&tab=diff&focus=src%2Fa.ts&focus=src%2Fb.ts");
-  expect(readUrlState()).toEqual({ sessionId: "abc", tab: "diff", focusStack: ["src/a.ts", "src/b.ts"] });
+  expect(readUrlState()).toEqual({ sessionId: "abc", tab: "diff", focusStack: ["src/a.ts", "src/b.ts"], structureAnchor: null, structureHops: null });
 });
 
 test("readUrlState ignores an unknown tab name", () => {
   installWindow("?session=abc&tab=garbage");
-  expect(readUrlState()).toEqual({ sessionId: "abc", tab: null, focusStack: [] });
+  expect(readUrlState()).toEqual({ sessionId: "abc", tab: null, focusStack: [], structureAnchor: null, structureHops: null });
 });
 
 test("readUrlState returns empty values when no params are present", () => {
   installWindow("");
-  expect(readUrlState()).toEqual({ sessionId: null, tab: null, focusStack: [] });
+  expect(readUrlState()).toEqual({ sessionId: null, tab: null, focusStack: [], structureAnchor: null, structureHops: null });
+});
+
+test("readUrlState reads the Structure tab's anchor file and hops from the URL", () => {
+  installWindow("?session=abc&tab=structure&anchor=web%2Fapp.js&hops=3");
+  expect(readUrlState()).toEqual({
+    sessionId: "abc",
+    tab: "structure",
+    focusStack: [],
+    structureAnchor: { kind: "file", path: "web/app.js" },
+    structureHops: 3,
+  });
+});
+
+test("pushUrlState writes the anchor and hops query params for the Structure tab", () => {
+  installWindow("?session=abc");
+  pushUrlState({
+    sessionId: "abc",
+    tab: "structure",
+    focusStack: [],
+    structureAnchor: { kind: "file", path: "web/app.js" },
+    structureHops: 2,
+  });
+  expect(lastPushedUrl).toBe("/?session=abc&tab=structure&anchor=web%2Fapp.js&hops=2");
+});
+
+test("pushUrlState drops anchor/hops when the Structure tab leaves them unset", () => {
+  installWindow("?session=abc&tab=structure&anchor=web%2Fapp.js&hops=3");
+  pushUrlState({ sessionId: "abc", tab: "structure", focusStack: [], structureAnchor: null, structureHops: null });
+  expect(lastPushedUrl).toBe("/?session=abc&tab=structure");
 });
 
 test("replaceUrlState writes session and a non-default tab to the URL", () => {

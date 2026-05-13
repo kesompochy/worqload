@@ -12,24 +12,29 @@ const VALID_TABS = new Set(["reports", "feedback", "diff", "files", "structure",
 const DEFAULT_TAB = "reports";
 
 export function readUrlState() {
-  if (typeof window === "undefined" || !window.location) return { sessionId: null, tab: null, focusStack: [] };
+  if (typeof window === "undefined" || !window.location) return { sessionId: null, tab: null, focusStack: [], structureAnchor: null, structureHops: null };
   const params = new URLSearchParams(window.location.search);
   const sessionId = params.get("session");
   const tab = params.get("tab");
   // `focus` is repeated per stack level — the bottom of the stack first, the
   // current focus last — so a URL stays human-readable as paths drill in.
   const focusStack = params.getAll("focus");
+  const anchorPath = params.get("anchor");
+  const hopsRaw = params.get("hops");
+  const hopsNum = hopsRaw == null ? null : Number(hopsRaw);
   return {
     sessionId: sessionId || null,
     tab: tab && VALID_TABS.has(tab) ? tab : null,
     focusStack,
+    structureAnchor: anchorPath ? { kind: "file", path: anchorPath } : null,
+    structureHops: Number.isFinite(hopsNum) ? hopsNum : null,
   };
 }
 
-function buildUrl({ sessionId, tab, focusStack }) {
+function buildUrl({ sessionId, tab, focusStack, structureAnchor, structureHops }) {
   // Seed from the live query string so unrelated params (e.g. `?theme=dark`
-  // that some other layer set) survive across syncs. Only the three keys we
-  // own — session, tab, focus — get rewritten.
+  // that some other layer set) survive across syncs. Only the keys we own —
+  // session, tab, focus, anchor, hops — get rewritten.
   const params = new URLSearchParams(window.location.search);
   if (sessionId) params.set("session", sessionId);
   else params.delete("session");
@@ -40,6 +45,16 @@ function buildUrl({ sessionId, tab, focusStack }) {
   params.delete("focus");
   for (const path of focusStack ?? []) {
     if (path) params.append("focus", path);
+  }
+  if (structureAnchor && structureAnchor.kind === "file" && structureAnchor.path) {
+    params.set("anchor", structureAnchor.path);
+  } else {
+    params.delete("anchor");
+  }
+  if (typeof structureHops === "number" && Number.isFinite(structureHops)) {
+    params.set("hops", String(structureHops));
+  } else {
+    params.delete("hops");
   }
   const queryString = params.toString();
   return `${window.location.pathname}${queryString ? `?${queryString}` : ""}${window.location.hash || ""}`;

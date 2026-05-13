@@ -65,6 +65,8 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   state.callGraph = null;
   state.callGraphLoaded = false;
   state.structureFocusStack = [];
+  state.structureAnchor = null;
+  state.structureHops = null;
   state.openActionId = null;
   state.actionRunInFlight = false;
   state.runningActionId = null;
@@ -165,6 +167,16 @@ export function onDetailBodyClick(e) {
   if (permalinkBtn) {
     e.stopPropagation();
     copyPermalink(permalinkBtn.getAttribute("data-permalink-path"));
+    return;
+  }
+  // "Show in Structure" buttons live on the Files-tab file header and on each
+  // Diff-tab file header; they switch tabs and re-seed the Structure graph at
+  // the given file. stopPropagation is needed inside diff-file headers (same
+  // reason as copy-path).
+  const anchorBtn = e.target.closest("[data-structure-anchor]");
+  if (anchorBtn) {
+    e.stopPropagation();
+    void setStructureAnchor(anchorBtn.getAttribute("data-structure-anchor"));
     return;
   }
   const toggle = e.target.closest("[data-diff-toggle]");
@@ -497,7 +509,10 @@ export function copyAnchorPermalink() {
 export async function switchTab(tab, { historyAction = "push" } = {}) {
   if (tab === state.activeTab) return;
   state.activeTab = tab;
-  syncHistory(historyAction, { sessionId: state.selected, tab, focusStack: state.structureFocusStack });
+  syncHistory(historyAction, {
+    sessionId: state.selected, tab, focusStack: state.structureFocusStack,
+    structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+  });
   if (tab === "diff") await refreshDiff();
   if (tab === "files") await ensureFilesLoaded();
   if (tab === "structure") await ensureStructureLoaded();
@@ -525,7 +540,7 @@ export function pushStructureFocus(path) {
   if (stack[stack.length - 1] === path) return;
   const next = [...stack, path];
   state.structureFocusStack = next;
-  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: next });
+  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: next, structureAnchor: state.structureAnchor, structureHops: state.structureHops });
 }
 
 // "Back" — pop one level of focus and push the resulting URL so the browser's
@@ -536,13 +551,59 @@ export function popStructureFocus() {
   if (stack.length === 0) return;
   const next = stack.slice(0, -1);
   state.structureFocusStack = next;
-  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: next });
+  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: next, structureAnchor: state.structureAnchor, structureHops: state.structureHops });
 }
 
 export function clearStructureFocus() {
   if (state.structureFocusStack.length === 0) return;
   state.structureFocusStack = [];
-  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: [] });
+  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: [], structureAnchor: state.structureAnchor, structureHops: state.structureHops });
+}
+
+// Set the Structure tab's anchor to a specific file (called from the Files /
+// Diff tabs' "Show in Structure" buttons). Switches the active tab to
+// Structure, clears any focus stack (the new graph is unrelated to the old
+// one), and triggers a refetch so the canvas redraws.
+export async function setStructureAnchor(path) {
+  if (!state.selected || !path) return;
+  state.structureAnchor = { kind: "file", path };
+  state.structureFocusStack = [];
+  state.structureLoaded = false;
+  if (state.activeTab !== "structure") {
+    await switchTab("structure");
+  } else {
+    pushUrlState({
+      sessionId: state.selected, tab: "structure", focusStack: [],
+      structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+    });
+    await ensureStructureLoaded(true);
+  }
+}
+
+export async function clearStructureAnchor() {
+  if (!state.structureAnchor) return;
+  state.structureAnchor = null;
+  state.structureFocusStack = [];
+  state.structureLoaded = false;
+  pushUrlState({
+    sessionId: state.selected, tab: state.activeTab, focusStack: [],
+    structureAnchor: null, structureHops: state.structureHops,
+  });
+  await ensureStructureLoaded(true);
+}
+
+// User chose a new neighbourhood radius from the Structure toolbar. `hops` is
+// a small integer (the UI exposes 1–4) or null to mean "server default" (2;
+// DEFAULT_NEIGHBORHOOD_HOPS in src/structure-view.ts).
+export async function setStructureHops(hops) {
+  if (state.structureHops === hops) return;
+  state.structureHops = hops;
+  state.structureLoaded = false;
+  pushUrlState({
+    sessionId: state.selected, tab: state.activeTab, focusStack: state.structureFocusStack,
+    structureAnchor: state.structureAnchor, structureHops: hops,
+  });
+  await ensureStructureLoaded(true);
 }
 
 // Applied when the browser fires popstate (back / forward, or a hashchange-ish
@@ -550,7 +611,7 @@ export function clearStructureFocus() {
 // only need to bring the in-memory state in line with it. Selection and tab
 // switches go through their public handlers with historyAction "none" so they
 // don't push another entry onto an already-fired navigation.
-export async function applyUrlState({ sessionId, tab, focusStack }) {
+export async function applyUrlState({ sessionId, tab, focusStack, structureAnchor, structureHops }) {
   if (sessionId && sessionId !== state.selected) {
     await selectSession(sessionId, { historyAction: "none" });
   }
@@ -559,6 +620,16 @@ export async function applyUrlState({ sessionId, tab, focusStack }) {
     await switchTab(targetTab, { historyAction: "none" });
   }
   state.structureFocusStack = focusStack ?? [];
+  const prevAnchorPath = state.structureAnchor?.path ?? null;
+  const nextAnchorPath = structureAnchor?.path ?? null;
+  const anchorChanged = prevAnchorPath !== nextAnchorPath;
+  const hopsChanged = state.structureHops !== (structureHops ?? null);
+  state.structureAnchor = structureAnchor ?? null;
+  state.structureHops = structureHops ?? null;
+  if ((anchorChanged || hopsChanged) && state.activeTab === "structure") {
+    state.structureLoaded = false;
+    await ensureStructureLoaded(true);
+  }
 }
 
 // An anchor whose path is `./.worqload-reports/<filename>` points at a line in

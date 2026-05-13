@@ -26,8 +26,25 @@
     pushStructureFocus,
     popStructureFocus,
     clearStructureFocus,
+    clearStructureAnchor,
+    setStructureHops,
   } from "../handlers.js";
   import { ensureCallGraphLoaded } from "../api.js";
+
+  const anchor = $derived(appState.structureAnchor);
+  const anchorPath = $derived(anchor && anchor.kind === "file" ? anchor.path : null);
+  const hops = $derived(appState.structureHops);
+  // The toolbar's hops selector: empty string means "let the server pick the
+  // default" — selecting an integer overrides it. The Number()/null roundtrip
+  // keeps state.structureHops as a number-or-null, never the empty string.
+  function onHopsChange(event) {
+    const raw = event.currentTarget.value;
+    const next = raw === "" ? null : Number(raw);
+    void setStructureHops(Number.isFinite(next) ? next : null);
+  }
+  function onClearAnchor() {
+    void clearStructureAnchor();
+  }
 
   // "file" mode draws the import graph (state.structure); "function" mode
   // draws the call graph (state.callGraph). The toolbar toggle switches modes
@@ -186,6 +203,23 @@
       <label><input type="radio" name="structureMode" value="file" bind:group={appState.structureMode} /> Files</label>
       <label><input type="radio" name="structureMode" value="function" bind:group={appState.structureMode} /> Functions</label>
     </span>
+    {#if anchorPath}
+      <span class="structure-anchor-pill" title="Show in Structure からアンカー指定中">
+        <span class="structure-anchor-icon" aria-hidden="true">⌘</span>
+        <code>{anchorPath}</code>
+        <button type="button" class="structure-anchor-clear" onclick={onClearAnchor} title="アンカーを解除して changeset 全体に戻す" aria-label="アンカー解除">×</button>
+      </span>
+    {/if}
+    <label class="structure-hops" title="アンカーから何 hop までの依存を描くか（既定: 2）">
+      hops:
+      <select onchange={onHopsChange} value={hops == null ? "" : String(hops)}>
+        <option value="">auto</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+      </select>
+    </label>
   </div>
   {#if !data || data.loading}
     <div class="structure-message">{mode === "function" ? "Loading call graph… (waiting on the language server)" : "Loading dependency graph…"}</div>
@@ -197,6 +231,8 @@
         No node matching <code>{currentFocus}</code> in the graph.
         <button type="button" class="structure-zoom-btn" onclick={popStructureFocus} title="Go back one focus level">Back</button>
         <button type="button" class="structure-zoom-btn" onclick={clearStructureFocus} title="Clear focus and show the whole graph">Clear focus</button>
+      {:else if anchorPath}
+        <code>{anchorPath}</code> から描けるグラフがありません。 (file may not be a supported source file, or its imports / dependents fall outside this worktree.)
       {:else if mode === "function"}
         No function calls to draw for this change. (The language server may not be running, the changed files may have no function definitions, or callHierarchy may not be supported for this language.)
       {:else}
@@ -261,6 +297,7 @@
         {/if}
         {#each model.nodes as node (node.path)}
           {@const expanded = node.path === currentFocus}
+          {@const anchored = anchorPath != null && node.path === anchorPath}
           {@const meta = mode === "function" ? nodeMeta[node.path] : null}
           {@const filePath = meta ? meta.path : node.path}
           {@const line = meta ? meta.line + 1 : null}
@@ -270,6 +307,7 @@
             class:cycle={node.inCycle}
             class:dim={nodeDimmed(node.path)}
             class:expanded
+            class:anchored
             data-structure-id={node.path}
             data-structure-open={filePath}
             data-structure-line={line ?? undefined}

@@ -125,16 +125,20 @@ export async function ensureFilesLoaded(force = false) {
   state.filesLoaded = true;
 }
 
-// The Structure tab's import-dependency graph for the selected session's
-// changeset. Sets `state.structure` to the payload, or `{ error }` on failure,
+// The Structure tab's import-dependency graph for the selected session.
+// By default the graph is scoped to the session's diff; if
+// `state.structureAnchor` is set the graph is rebuilt around that anchor file
+// instead, and `state.structureHops` (when set) overrides the neighbourhood
+// radius. Sets `state.structure` to the payload, or `{ error }` on failure,
 // so the view can show a message rather than nothing.
 export async function ensureStructureLoaded(force = false) {
   if (!state.selected) return;
   if (state.structureLoaded && !force) return;
   state.structure = { loading: true };
   const id = state.selected;
+  const path = `/sessions/${id}/structure${buildStructureQuery()}`;
   try {
-    const data = await api("GET", `/sessions/${id}/structure`);
+    const data = await api("GET", path);
     if (state.selected !== id) return;
     state.structure = data && data.error ? { error: data.error } : data;
   } catch (e) {
@@ -142,6 +146,18 @@ export async function ensureStructureLoaded(force = false) {
     state.structure = { error: e.message };
   }
   state.structureLoaded = true;
+}
+
+function buildStructureQuery() {
+  const params = new URLSearchParams();
+  if (state.structureAnchor && state.structureAnchor.kind === "file") {
+    params.set("anchorPath", state.structureAnchor.path);
+  }
+  if (typeof state.structureHops === "number") {
+    params.set("hops", String(state.structureHops));
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
 // Function-mode counterpart: LSP-driven call graph for the changeset's

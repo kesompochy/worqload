@@ -400,6 +400,20 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-node.expanded rect { stroke: var(--accent); }
 .structure-node text { fill: var(--text); font-size: 12px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 .structure-node.changed text { fill: var(--text); font-weight: 600; }
+/* Anchor emphasis: this is the file the human picked from Files/Diff to seed
+   the graph. Distinct from "changed" (the diff-blue tint) and "expanded" (the
+   focused-node accent stroke) — a thick gold-warm outline so a node that's
+   both changed and anchored is still visually distinct. */
+.structure-node.anchored rect { stroke: #f4b840; stroke-width: 2.2px; stroke-dasharray: none; }
+.structure-node.anchored.changed rect { stroke: #f4b840; }
+.structure-node.anchored text { font-weight: 600; }
+.structure-anchor-pill { display: inline-flex; align-items: center; gap: .3rem; padding: .1rem .4rem .1rem .35rem; background: rgba(244,184,64,.12); border: 1px solid rgba(244,184,64,.55); border-radius: 999px; font-size: 12px; color: var(--text); }
+.structure-anchor-pill code { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--text); }
+.structure-anchor-icon { color: #f4b840; font-size: 12px; line-height: 1; }
+.structure-anchor-clear { background: transparent; border: none; padding: 0 .15rem; color: var(--text-dim); cursor: pointer; font-size: 13px; line-height: 1; }
+.structure-anchor-clear:hover { color: var(--text); }
+.structure-hops { display: inline-flex; align-items: center; gap: .3rem; font-size: 12px; color: var(--text-dim); }
+.structure-hops select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: .05rem .25rem; font-size: 12px; }
 .structure-details { margin-top: .7rem; font-size: 12.5px; }
 .structure-details summary { cursor: pointer; color: var(--text-dim); user-select: none; }
 .structure-details ul { list-style: none; margin: .5rem 0 0 0; padding: 0; }
