@@ -52,11 +52,12 @@ export function edgeLabelWidth(text) {
   return text ? text.length * LABEL_CHAR_WIDTH + LABEL_PADDING : 0;
 }
 
-// Effective node-rect width for a given path: the default NODE_WIDTH unless the
-// node is in `expandedNodes`, in which case it grows to fit the full path text.
-export function effectiveNodeWidth(path, expanded) {
+// Effective node-rect width for a given path: NODE_WIDTH unless the node is in
+// `expandedNodes`, in which case it grows to fit `labelText` — defaulting to
+// the full path (the import-graph view's expanded label).
+export function effectiveNodeWidth(path, expanded, labelText = path) {
   if (!expanded) return NODE_WIDTH;
-  return Math.max(NODE_WIDTH, path.length * NODE_CHAR_WIDTH + NODE_PADDING);
+  return Math.max(NODE_WIDTH, labelText.length * NODE_CHAR_WIDTH + NODE_PADDING);
 }
 
 // Longest-path layering: a node's layer is 1 + the max layer of the files that
@@ -143,13 +144,20 @@ export function buildStructureModel(payload, opts = {}) {
 
   const expandedNodes = opts.expandedNodes ?? new Set();
   const expandedEdges = opts.expandedEdges ?? new Set();
-  const changed = new Set(payload?.changedFiles ?? []);
+  // What text to render for each node in each state. The defaults — basename
+  // when compact, full path when expanded — match the import-graph view; the
+  // call-graph view overrides them to show function names.
+  const labelOf = opts.labelOf ?? baseName;
+  const expandedLabelOf = opts.expandedLabelOf ?? (path => path);
+  const changedSet = new Set(payload?.changedFiles ?? payload?.changedFunctions ?? []);
   const sccOf = cycleMembership(payload?.cycles);
   const layerOf = assignLayers(nodePaths, rawEdges);
 
   // Effective widths up-front so the column / label sizing knows the largest
-  // box it has to accommodate.
-  const widthByPath = new Map(nodePaths.map(p => [p, effectiveNodeWidth(p, expandedNodes.has(p))]));
+  // box it has to accommodate (an expanded node is sized for its expanded
+  // label, not its compact one).
+  const labelByPath = new Map(nodePaths.map(p => [p, expandedNodes.has(p) ? expandedLabelOf(p) : labelOf(p)]));
+  const widthByPath = new Map(nodePaths.map(p => [p, effectiveNodeWidth(p, expandedNodes.has(p), labelByPath.get(p))]));
   const labelTextByEdge = new Map();
   const labelWidthByEdge = new Map();
   for (const edge of rawEdges) {
@@ -198,14 +206,14 @@ export function buildStructureModel(payload, opts = {}) {
       const width = widthByPath.get(path);
       placed.set(path, {
         path,
-        label: baseName(path),
+        label: labelByPath.get(path),
         // Centre each node in its slot, so an expanded node grows symmetrically
         // and a non-expanded sibling sits in the same column on the same axis.
         x: left + (slotWidth - width) / 2,
         y: PADDING + row * rowPitch,
         width,
         height: NODE_HEIGHT,
-        changed: changed.has(path),
+        changed: changedSet.has(path),
         inCycle: sccOf.has(path),
       });
     });
@@ -241,7 +249,7 @@ export function buildStructureModel(payload, opts = {}) {
 
   const cycles = (payload?.cycles ?? []).map(paths => ({
     paths,
-    label: paths.map(baseName).join(paths.length > 1 ? " → " : " ↻ "),
+    label: paths.map(labelOf).join(paths.length > 1 ? " → " : " ↻ "),
   }));
 
   const nodeBottom = PADDING + maxRows * NODE_HEIGHT + Math.max(0, maxRows - 1) * ROW_GAP;

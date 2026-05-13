@@ -50,6 +50,8 @@ export async function selectSession(id) {
   state.actions = [];
   state.structure = null;
   state.structureLoaded = false;
+  state.callGraph = null;
+  state.callGraphLoaded = false;
   state.structureFocusPath = null;
   state.openActionId = null;
   state.actionRunInFlight = false;
@@ -214,11 +216,18 @@ export function onDetailBodyClick(e) {
   }
   const structureOpen = e.target.closest("[data-structure-open]");
   if (structureOpen) {
+    // `data-structure-id` is the graph node's identifier (== file path in file
+    // mode, function id in function mode). `data-structure-open` is the file
+    // path to open; `data-structure-line` (function mode) is its 1-based line.
+    const id = structureOpen.getAttribute("data-structure-id") ?? structureOpen.getAttribute("data-structure-open");
+    if (e.shiftKey) {
+      setStructureFocus(id);
+      return;
+    }
     const path = structureOpen.getAttribute("data-structure-open");
-    // Shift+click on a Structure-tab node redraws the graph filtered to just
-    // that node and its direct neighbours (focus mode); plain click opens the
-    // file like the Files tab.
-    if (e.shiftKey) setStructureFocus(path);
+    const lineAttr = structureOpen.getAttribute("data-structure-line");
+    const line = lineAttr ? Number(lineAttr) : NaN;
+    if (Number.isFinite(line) && line >= 1) revealFileLocation(path, line);
     else openFileFromStructure(path);
     return;
   }

@@ -3,17 +3,19 @@ import {
   parseImports,
   parseImportSpecifiers,
   resolveImportTarget,
+  resolveGoImportTargets,
   buildImportGraph,
   findImportCycles,
   importGraphNeighborhood,
   isImportParseableLanguage,
 } from "./import-graph";
 
-test("isImportParseableLanguage covers the JS/TS family only", () => {
+test("isImportParseableLanguage covers the JS/TS family and Go", () => {
   expect(isImportParseableLanguage("typescript")).toBe(true);
   expect(isImportParseableLanguage("tsx")).toBe(true);
   expect(isImportParseableLanguage("javascript")).toBe(true);
-  expect(isImportParseableLanguage("go")).toBe(false);
+  expect(isImportParseableLanguage("go")).toBe(true);
+  expect(isImportParseableLanguage("python")).toBe(false);
   expect(isImportParseableLanguage(null)).toBe(false);
 });
 
@@ -33,8 +35,31 @@ test("parseImportSpecifiers extracts every import-like specifier", () => {
   );
 });
 
-test("parseImportSpecifiers returns nothing for non-JS languages", () => {
-  expect(parseImportSpecifiers(`import "fmt"`, "go")).toEqual([]);
+test("parseImports / parseImportSpecifiers cover Go single and block imports", () => {
+  const src = [
+    `package main`,
+    ``,
+    `import "fmt"`,
+    `import _ "github.com/lib/init"`,
+    `import alias "github.com/lib/aliased"`,
+    ``,
+    `import (`,
+    `\t"github.com/user/repo/pkg/a"`,
+    `\t"github.com/user/repo/pkg/b"`,
+    `\t_ "github.com/user/repo/pkg/effect"`,
+    `)`,
+  ].join("\n");
+  const specs = parseImportSpecifiers(src, "go").sort();
+  expect(specs).toEqual([
+    "fmt",
+    "github.com/lib/aliased",
+    "github.com/lib/init",
+    "github.com/user/repo/pkg/a",
+    "github.com/user/repo/pkg/b",
+    "github.com/user/repo/pkg/effect",
+  ]);
+  // Go imports don't carry per-symbol names — references are package-qualified.
+  expect(parseImports(src, "go").every(i => i.names.length === 0)).toBe(true);
 });
 
 test("parseImports reports the names pulled from each module", () => {
@@ -101,12 +126,41 @@ test("buildImportGraph deduplicates repeated edges and skips self-imports", () =
   expect(graph.edges).toEqual([{ from: "a.js", to: "b.js", symbols: ["x"] }]);
 });
 
-test("buildImportGraph treats non-JS files as nodes with no out-edges", () => {
+test("buildImportGraph wires Go imports under the worktree's module path", () => {
   const files = new Map<string, string>([
-    ["main.go", `import "./helper.go"`],
-    ["helper.go", ``],
+    ["cmd/app/main.go", `package main\nimport (\n\t"github.com/me/repo/pkg/util"\n\t"fmt"\n)`],
+    ["pkg/util/util.go", `package util`],
+    ["pkg/util/extra.go", `package util`],
+    ["pkg/other/o.go", `package other`],
+  ]);
+  const graph = buildImportGraph(files, () => "go", { goModule: "github.com/me/repo" });
+  // The `pkg/util` import fans out to every .go file directly in that package
+  // (both `util.go` and `extra.go`); standard-library `fmt` is external and
+  // `pkg/other/o.go` is untouched.
+  expect(graph.edges.map(e => `${e.from}->${e.to}`).sort()).toEqual([
+    "cmd/app/main.go->pkg/util/extra.go",
+    "cmd/app/main.go->pkg/util/util.go",
+  ]);
+});
+
+test("buildImportGraph leaves Go imports unresolved when no `goModule` is supplied", () => {
+  const files = new Map<string, string>([
+    ["main.go", `import "github.com/me/repo/pkg/x"`],
+    ["pkg/x/x.go", ``],
   ]);
   expect(buildImportGraph(files, () => "go").edges).toEqual([]);
+});
+
+test("resolveGoImportTargets only includes .go files directly inside the target package", () => {
+  const known = new Set([
+    "pkg/foo/a.go",
+    "pkg/foo/b.go",
+    "pkg/foo/sub/c.go",  // a different package — different dir
+    "pkg/foo/README.md", // not a .go file
+  ]);
+  expect(resolveGoImportTargets("m.io/r/pkg/foo", "m.io/r", known).sort()).toEqual(["pkg/foo/a.go", "pkg/foo/b.go"]);
+  expect(resolveGoImportTargets("fmt", "m.io/r", known)).toEqual([]);            // external
+  expect(resolveGoImportTargets("m.io/r/pkg/foo", null, known)).toEqual([]);    // no module path
 });
 
 test("findImportCycles reports strongly-connected components of size >= 2", () => {

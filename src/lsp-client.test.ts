@@ -215,3 +215,74 @@ test("a pending request rejects when the language server exits", async () => {
   fp.exit();
   await expect(p).rejects.toThrow(/exited/);
 });
+
+test("documentSymbol flattens a hierarchical DocumentSymbol[] result", async () => {
+  const fp = makeFakeProcess();
+  const client = new LspClient(fp.proc, "/r");
+  const p = client.documentSymbol("/r/a.ts");
+  await completeHandshake(fp);
+  const req = sentMessages(fp.stdinWrites).find(m => m.method === "textDocument/documentSymbol");
+  expect(req.params).toEqual({ textDocument: { uri: "file:///r/a.ts" } });
+  const range = (l: number) => ({ start: { line: l, character: 0 }, end: { line: l, character: 5 } });
+  fp.pushStdout(encodeRpcMessage({
+    jsonrpc: "2.0",
+    id: req.id,
+    result: [
+      { name: "Klass", kind: 5, range: range(0), selectionRange: range(0), children: [
+        { name: "method", kind: 6, range: range(2), selectionRange: range(2) },
+      ] },
+      { name: "topFn", kind: 12, range: range(8), selectionRange: range(8) },
+    ],
+  }));
+  const symbols = await p;
+  expect(symbols.map(s => s.name).sort()).toEqual(["Klass", "method", "topFn"]);
+  expect(symbols.find(s => s.name === "method")?.kind).toBe(6);
+});
+
+test("documentSymbol normalizes a flat SymbolInformation[] result", async () => {
+  const fp = makeFakeProcess();
+  const client = new LspClient(fp.proc, "/r");
+  const p = client.documentSymbol("/r/a.ts");
+  await completeHandshake(fp);
+  const req = sentMessages(fp.stdinWrites).find(m => m.method === "textDocument/documentSymbol");
+  const range = { start: { line: 3, character: 0 }, end: { line: 3, character: 5 } };
+  fp.pushStdout(encodeRpcMessage({
+    jsonrpc: "2.0",
+    id: req.id,
+    result: [{ name: "fn", kind: 12, location: { uri: "file:///r/a.ts", range } }],
+  }));
+  expect((await p)[0]).toEqual({ name: "fn", kind: 12, range, selectionRange: range });
+});
+
+test("prepareCallHierarchy returns CallHierarchyItem[] verbatim and the calls methods forward the item", async () => {
+  const fp = makeFakeProcess();
+  const client = new LspClient(fp.proc, "/r");
+  const pos = { line: 9, character: 4 };
+  const item = {
+    name: "Greeter", kind: 12,
+    uri: "file:///r/a.ts",
+    range: { start: { line: 9, character: 0 }, end: { line: 11, character: 1 } },
+    selectionRange: { start: { line: 9, character: 4 }, end: { line: 9, character: 11 } },
+  };
+
+  const prep = client.prepareCallHierarchy("/r/a.ts", pos);
+  await completeHandshake(fp);
+  const prepReq = sentMessages(fp.stdinWrites).find(m => m.method === "textDocument/prepareCallHierarchy");
+  expect(prepReq.params).toEqual({ textDocument: { uri: "file:///r/a.ts" }, position: pos });
+  fp.pushStdout(encodeRpcMessage({ jsonrpc: "2.0", id: prepReq.id, result: [item] }));
+  expect(await prep).toEqual([item]);
+
+  const inP = client.incomingCalls(item);
+  await flush();
+  const inReq = sentMessages(fp.stdinWrites).find(m => m.method === "callHierarchy/incomingCalls");
+  expect(inReq.params).toEqual({ item });
+  fp.pushStdout(encodeRpcMessage({ jsonrpc: "2.0", id: inReq.id, result: [] }));
+  expect(await inP).toEqual([]);
+
+  const outP = client.outgoingCalls(item);
+  await flush();
+  const outReq = sentMessages(fp.stdinWrites).find(m => m.method === "callHierarchy/outgoingCalls");
+  expect(outReq.params).toEqual({ item });
+  fp.pushStdout(encodeRpcMessage({ jsonrpc: "2.0", id: outReq.id, result: null }));
+  expect(await outP).toEqual([]);
+});
