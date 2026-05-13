@@ -17,6 +17,7 @@
   // (Enter/Space on a focused node) is handled here.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
+  import { untrack } from "svelte";
   import { state as appState } from "../state.svelte.js";
   import { buildStructureModel } from "../structure-view.js";
   import { openFileFromStructure } from "../handlers.js";
@@ -60,6 +61,10 @@
     if (!data || !data.graph) return null;
     return buildStructureModel(data, { expandedNodes, expandedEdges });
   });
+  // The same model without any expansion — kept so we can read where the hovered
+  // node sat before the reflow, which lets us anchor it under the cursor
+  // throughout the animation.
+  const baseModel = $derived(data && data.graph ? buildStructureModel(data) : null);
 
   const nodeDimmed = path => related != null && !related.paths.has(path);
   const edgeDimmed = edge => related != null && !related.keys.has(edgeKey(edge));
@@ -97,8 +102,11 @@
 
   // Auto-zoom on highlight: when the human starts hovering a node we save the
   // current view, tween to a view that fits the highlighted neighbourhood, and
-  // tween back when the hover ends. A 500ms easeInOutQuad RAF on `zoom` and the
-  // canvas's scroll position — Svelte re-renders the SVG on each `zoom` change.
+  // tween back when the hover ends. A fixed 500ms linear RAF on `zoom` and the
+  // canvas's scroll position; the matching CSS transitions on the SVG transform
+  // and rect widths run on the same clock. The hovered node is *anchored* — its
+  // screen position stays fixed throughout — so the cursor doesn't fall off it
+  // mid-animation, which would otherwise break the hover state.
   const TWEEN_MS = 500;
   let rafId = null;
   let savedView = null;
@@ -106,29 +114,54 @@
   function cancelTween() {
     if (rafId != null) { cancelAnimationFrame(rafId); rafId = null; }
   }
-  function tweenView(targetZoom, targetScrollX, targetScrollY) {
+  // Plain linear tween of zoom and scroll — used when no node needs to stay
+  // anchored on screen (e.g. returning to the pre-highlight view).
+  function tweenViewPlain(targetZoom, targetScrollX, targetScrollY) {
     cancelTween();
     const startZoom = zoom;
     const startScrollX = canvasEl?.scrollLeft ?? 0;
     const startScrollY = canvasEl?.scrollTop ?? 0;
     const startTime = performance.now();
     const step = now => {
-      const raw = Math.min(1, (now - startTime) / TWEEN_MS);
-      const t = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2;
+      const t = Math.min(1, (now - startTime) / TWEEN_MS);
       zoom = startZoom + (targetZoom - startZoom) * t;
       if (canvasEl) {
         canvasEl.scrollLeft = startScrollX + (targetScrollX - startScrollX) * t;
         canvasEl.scrollTop = startScrollY + (targetScrollY - startScrollY) * t;
       }
-      if (raw < 1) rafId = requestAnimationFrame(step);
+      if (t < 1) rafId = requestAnimationFrame(step);
       else rafId = null;
     };
     rafId = requestAnimationFrame(step);
   }
-  // The view that fits the currently-highlighted neighbourhood inside the
-  // canvas, with a bit of breathing room. `related` is the source of truth for
-  // which nodes (and their edges' labels) should be in frame.
-  function viewForHighlight() {
+  // Anchored tween: drives zoom + scroll so the hovered node's centre stays at
+  // a fixed screen coordinate throughout. The CSS transition animates the
+  // node's <g transform> from its baseModel position to its expanded-model
+  // position linearly over the same 500ms, so the per-frame interpolation here
+  // matches what's actually rendered.
+  function tweenViewAnchored(targetZoom, oldCentre, newCentre, anchorScreen) {
+    cancelTween();
+    const startZoom = zoom;
+    const startTime = performance.now();
+    const step = now => {
+      const t = Math.min(1, (now - startTime) / TWEEN_MS);
+      const z = startZoom + (targetZoom - startZoom) * t;
+      const cx = oldCentre.x + (newCentre.x - oldCentre.x) * t;
+      const cy = oldCentre.y + (newCentre.y - oldCentre.y) * t;
+      zoom = z;
+      if (canvasEl) {
+        canvasEl.scrollLeft = cx * z - anchorScreen.x;
+        canvasEl.scrollTop = cy * z - anchorScreen.y;
+      }
+      if (t < 1) rafId = requestAnimationFrame(step);
+      else rafId = null;
+    };
+    rafId = requestAnimationFrame(step);
+  }
+  // The zoom that fits the currently-highlighted neighbourhood inside the
+  // canvas with breathing room — we only need the *scale* (scroll is driven by
+  // the anchor), not a centred bbox.
+  function zoomForHighlight() {
     if (!model || !related || canvasW < 20 || canvasH < 20) return null;
     const focused = model.nodes.filter(n => related.paths.has(n.path));
     if (focused.length === 0) return null;
@@ -147,40 +180,50 @@
       minY = Math.min(minY, e.labelY - 10);
       maxY = Math.max(maxY, e.labelY + 10);
     }
-    const w = maxX - minX, h = maxY - minY;
-    const targetZoom = clampZoom(Math.min((canvasW - pad * 2) / w, (canvasH - pad * 2) / h));
-    const scrollX = minX * targetZoom - (canvasW - w * targetZoom) / 2;
-    const scrollY = minY * targetZoom - (canvasH - h * targetZoom) / 2;
-    return { zoom: targetZoom, scrollX: Math.max(0, scrollX), scrollY: Math.max(0, scrollY) };
+    return clampZoom(Math.min((canvasW - pad * 2) / (maxX - minX), (canvasH - pad * 2) / (maxY - minY)));
   }
 
-  // Trigger the auto-zoom transitions on hover changes. Runs after the model
-  // has re-derived, so `viewForHighlight()` uses the expanded layout.
+  // Trigger the auto-zoom transitions on hover changes. `untrack` keeps the
+  // tween's per-frame writes to `zoom` from re-triggering this effect (which
+  // would cancel and restart the tween every frame, the slow-creep symptom).
   $effect(() => {
     const active = hoveredPath != null;
-    if (!appState.structureAutoZoom) {
-      // The toggle was flipped off mid-hover: snap back to the saved view.
-      if (savedView && !active) {
-        tweenView(savedView.zoom, savedView.scrollX, savedView.scrollY);
-        savedView = null;
+    const auto = appState.structureAutoZoom;
+    untrack(() => {
+      if (!auto) {
+        if (savedView && !active) {
+          tweenViewPlain(savedView.zoom, savedView.scrollX, savedView.scrollY);
+          savedView = null;
+        }
+        lastHoverActive = active;
+        return;
       }
+      if (active && !lastHoverActive) {
+        const z0 = zoom;
+        const sx0 = canvasEl?.scrollLeft ?? 0;
+        const sy0 = canvasEl?.scrollTop ?? 0;
+        const oldN = baseModel?.nodes.find(n => n.path === hoveredPath);
+        const newN = model?.nodes.find(n => n.path === hoveredPath);
+        const targetZoom = zoomForHighlight();
+        if (!oldN || !newN || targetZoom == null) {
+          lastHoverActive = active;
+          return;
+        }
+        savedView = { zoom: z0, scrollX: sx0, scrollY: sy0 };
+        const oldCentre = { x: oldN.x + oldN.width / 2, y: oldN.y + oldN.height / 2 };
+        const newCentre = { x: newN.x + newN.width / 2, y: newN.y + newN.height / 2 };
+        const anchorScreen = { x: oldCentre.x * z0 - sx0, y: oldCentre.y * z0 - sy0 };
+        tweenViewAnchored(targetZoom, oldCentre, newCentre, anchorScreen);
+      } else if (!active && lastHoverActive) {
+        if (savedView) {
+          tweenViewPlain(savedView.zoom, savedView.scrollX, savedView.scrollY);
+          savedView = null;
+        }
+      }
+      // active && lastHoverActive: hover moved between nodes — leave the
+      // in-flight tween alone so the duration stays a single 500ms.
       lastHoverActive = active;
-      return;
-    }
-    if (active && !lastHoverActive) {
-      savedView = { zoom, scrollX: canvasEl?.scrollLeft ?? 0, scrollY: canvasEl?.scrollTop ?? 0 };
-      const target = viewForHighlight();
-      if (target) tweenView(target.zoom, target.scrollX, target.scrollY);
-    } else if (active && lastHoverActive) {
-      const target = viewForHighlight();
-      if (target) tweenView(target.zoom, target.scrollX, target.scrollY);
-    } else if (!active && lastHoverActive) {
-      if (savedView) {
-        tweenView(savedView.zoom, savedView.scrollX, savedView.scrollY);
-        savedView = null;
-      }
-    }
-    lastHoverActive = active;
+    });
   });
 
   // A short cubic between two box-edge anchor points. Forward edges (left→right,
