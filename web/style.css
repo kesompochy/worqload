@@ -322,7 +322,6 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-zoom-btn { font-size: 12px; padding: .15rem .5rem; line-height: 1.2; min-width: 1.8em; }
 .structure-zoom-readout { color: var(--text-dim); min-width: 3.4em; }
 .structure-canvas { position: relative; overflow: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); max-height: 70vh; }
-.structure-edge-tooltip { position: absolute; transform: translate(-50%, -100%); padding: .3rem .55rem; background: var(--panel-2); border: 1px solid var(--accent); border-radius: 3px; color: var(--text); font-family: ui-monospace, monospace; font-size: 11.5px; line-height: 1.4; white-space: normal; max-width: 28em; word-break: break-all; pointer-events: none; z-index: 2; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
 .structure-canvas svg { display: block; }
 .structure-edge, .structure-edge-label, .structure-node { transition: opacity .12s ease; }
 .structure-edge.dim, .structure-edge-label.dim, .structure-node.dim { opacity: .15; }
@@ -332,6 +331,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 #structure-arrow-cycle path.cycle { fill: var(--crashed); }
 .structure-edge-label rect { fill: var(--bg); stroke: var(--border); stroke-width: .8px; opacity: .92; }
 .structure-edge-label text { fill: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; }
+.structure-edge-label.expanded rect { stroke: var(--accent); }
+.structure-edge-label.expanded text { fill: var(--text); }
 .structure-node { cursor: pointer; }
 .structure-node:focus { outline: none; }
 .structure-node rect { fill: var(--panel-2); stroke: var(--border); stroke-width: 1px; }
