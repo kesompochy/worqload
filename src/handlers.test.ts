@@ -21,7 +21,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -715,4 +715,75 @@ test("onBulkDeleteArchived asks confirm once and bails when the human cancels", 
   expect(apiCalls.filter(c => c.method === "DELETE")).toEqual([]);
   expect(fetchArchivedSessionsCalls).toBe(0);
   expect(state.archivedSelection.size).toBe(2);
+});
+
+// onArchive talks to the server with fetch (not api()) so it can read the
+// 409 body's `error` field; these tests stand up a fake fetch that records
+// every URL and returns canned responses keyed off the request URL.
+function installArchiveFetch(steps: Array<{ status: number; body?: unknown }>) {
+  const urls: string[] = [];
+  let i = 0;
+  const fake = (url: string) => {
+    urls.push(url);
+    const step = steps[i++] ?? steps[steps.length - 1];
+    return Promise.resolve({
+      ok: step.status >= 200 && step.status < 300,
+      status: step.status,
+      json: async () => step.body ?? {},
+      text: async () => JSON.stringify(step.body ?? {}),
+    });
+  };
+  const savedFetch = globalThis.fetch;
+  (globalThis as unknown as { fetch: unknown }).fetch = fake;
+  return { urls, restore: () => { (globalThis as unknown as { fetch: unknown }).fetch = savedFetch; } };
+}
+
+test("onArchive POSTs straight to /archive when the server doesn't flag a running preview", async () => {
+  state.sessions = [{ id: "sess-1" }, { id: "sess-2" }];
+  state.selected = "sess-1";
+  const { urls, restore } = installArchiveFetch([{ status: 200, body: { meta: { id: "sess-1", archivedAt: "now" } } }]);
+  try {
+    await onArchive("sess-1");
+  } finally {
+    restore();
+  }
+  expect(urls).toEqual(["/sessions/sess-1/archive"]);
+});
+
+test("onArchive surfaces the running preview, confirms, then retries with stopPreview=true on approval", async () => {
+  state.sessions = [{ id: "sess-1" }];
+  state.selected = "sess-1";
+  const { urls, restore } = installArchiveFetch([
+    { status: 409, body: { error: "preview-running", pid: 4242, url: "http://127.0.0.1:3501" } },
+    { status: 200, body: { meta: { id: "sess-1", archivedAt: "now" } } },
+  ]);
+  const savedWindow = globalThis.window;
+  let confirmedWith: string | undefined;
+  (globalThis as unknown as { window: unknown }).window = { confirm: (m: string) => { confirmedWith = m; return true; } };
+  try {
+    await onArchive("sess-1");
+  } finally {
+    restore();
+    (globalThis as unknown as { window: unknown }).window = savedWindow;
+  }
+  expect(confirmedWith).toContain("Preview");
+  expect(confirmedWith).toContain("http://127.0.0.1:3501");
+  expect(urls).toEqual(["/sessions/sess-1/archive", "/sessions/sess-1/archive?stopPreview=true"]);
+});
+
+test("onArchive bails without sending a second request when the human cancels the preview warning", async () => {
+  state.sessions = [{ id: "sess-1" }];
+  state.selected = "sess-1";
+  const { urls, restore } = installArchiveFetch([
+    { status: 409, body: { error: "preview-running", pid: 4242, url: null } },
+  ]);
+  const savedWindow = globalThis.window;
+  (globalThis as unknown as { window: unknown }).window = { confirm: () => false };
+  try {
+    await onArchive("sess-1");
+  } finally {
+    restore();
+    (globalThis as unknown as { window: unknown }).window = savedWindow;
+  }
+  expect(urls).toEqual(["/sessions/sess-1/archive"]);
 });
