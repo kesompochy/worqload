@@ -507,6 +507,8 @@ function defineRoute(
 
 const ROUTES: Route[] = [
   defineRoute("GET",  "/", getIndex),
+  defineRoute("GET",  "/favicon", getFavicon),
+  defineRoute("GET",  "/favicon.ico", getFavicon),
   defineRoute("GET",  "/assets/:filename", getAsset),
   defineRoute("GET",  "/meta", getMeta),
   defineRoute("POST", "/sessions", postSessions),
@@ -558,9 +560,44 @@ const ASSET_CONTENT_TYPES: Record<string, string> = {
   ".woff": "font/woff",
   ".ttf": "font/ttf",
   ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".gif": "image/gif",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".json": "application/json; charset=utf-8",
   ".map": "application/json; charset=utf-8",
 };
+
+// Served at /favicon when no per-repo override exists. Three stacked bars on a
+// dark tile — a nod to the load-average framing (parallel sessions, varying
+// length of work). Inlined rather than shipped as a file so it survives the
+// `bun build --compile` binary without a sidecar asset.
+const DEFAULT_FAVICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+  '<rect width="64" height="64" rx="14" fill="#1f2430"/>' +
+  '<rect x="14" y="18" width="36" height="6" rx="3" fill="#7dd3fc"/>' +
+  '<rect x="14" y="29" width="24" height="6" rx="3" fill="#a5b4fc"/>' +
+  '<rect x="14" y="40" width="30" height="6" rx="3" fill="#86efac"/>' +
+  "</svg>\n";
+
+// A repo can override the browser tab icon by dropping a `favicon.<ext>` into
+// its `.worqload/` directory; otherwise the built-in SVG above is served.
+const CUSTOM_FAVICON_EXTENSIONS = [".svg", ".png", ".ico", ".jpg", ".jpeg", ".gif", ".webp"];
+
+async function getFavicon(_req: Request, ctx: ServerContext): Promise<Response> {
+  for (const ext of CUSTOM_FAVICON_EXTENSIONS) {
+    const file = Bun.file(join(ctx.worqloadDir, `favicon${ext}`));
+    if (await file.exists()) {
+      return new Response(file, {
+        headers: { "content-type": ASSET_CONTENT_TYPES[ext] ?? "application/octet-stream" },
+      });
+    }
+  }
+  return new Response(DEFAULT_FAVICON_SVG, {
+    headers: { "content-type": "image/svg+xml; charset=utf-8" },
+  });
+}
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
   return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir) });
