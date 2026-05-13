@@ -18,8 +18,8 @@ import {
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
-import { findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
-import { buildStructureView, parseChangedFilePaths } from "./structure-view";
+import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
+import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
@@ -529,6 +529,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
   defineRoute("GET",  "/sessions/:id/files", getFiles),
   defineRoute("GET",  "/sessions/:id/structure", getStructure),
+  defineRoute("GET",  "/sessions/:id/call-graph", getCallGraph),
   defineRoute("GET",  "/sessions/:id/file", getFile),
   defineRoute("GET",  "/sessions/:id/search", getFileSearch),
   defineRoute("GET",  "/sessions/:id/code-nav/definition", getCodeNavDefinition),
@@ -936,6 +937,32 @@ async function getStructure(_req: Request, ctx: ServerContext, params: Record<st
           const result = await ctx.worktreeOps.readWorktreeFile(meta.worktreePath, path);
           return result.kind === "text" ? result.content : null;
         },
+      });
+      return json(view);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return json({ error: message }, 500);
+    }
+  });
+}
+
+// The call-graph counterpart to /structure: function→function edges instead
+// of file→file, built from a one-hop callHierarchy walk around the changeset's
+// callable symbols. Needs a language server for each touched language —
+// languages without one contribute nothing (their files just don't appear).
+async function getCallGraph(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    try {
+      const diffBase = await ctx.worktreeOps.resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
+      const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase);
+      const allPaths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
+      const inWorktree = new Set(allPaths);
+      const changedFiles = parseChangedFilePaths(diff)
+        .filter(p => inWorktree.has(p) && structureLanguageOf(p) !== null);
+      const view = await collectCallGraph({
+        worktreePath: meta.worktreePath,
+        changedFiles,
+        languageOf: p => structureLanguageOf(p) ?? null,
       });
       return json(view);
     } catch (err) {
