@@ -1,5 +1,37 @@
 import { expect, test } from "bun:test";
-import { describeEvent } from "../web/events-view.js";
+import { describeEvent, isAgentWorkEvent } from "../web/events-view.js";
+
+test("isAgentWorkEvent: agent run and its steps count as work", () => {
+  for (const kind of [
+    "session_started",
+    "session_resumed",
+    "claude_assistant_message",
+    "claude_tool_use",
+    "claude_tool_result",
+    "claude_system",
+    "session_stopped",
+    "session_crashed",
+  ]) {
+    expect(isAgentWorkEvent({ kind })).toBe(true);
+  }
+});
+
+test("isAgentWorkEvent: reports, feedback, escalations and actions are not work", () => {
+  for (const kind of [
+    "report_submitted",
+    "report_read",
+    "report_unread",
+    "escalation_requested",
+    "escalation_resolved",
+    "feedback_received",
+    "feedback_fetched",
+    "action_invoked",
+  ]) {
+    expect(isAgentWorkEvent({ kind })).toBe(false);
+  }
+  expect(isAgentWorkEvent(null)).toBe(false);
+  expect(isAgentWorkEvent({})).toBe(false);
+});
 
 test("describeEvent renders a session_started prompt", () => {
   const d = describeEvent({

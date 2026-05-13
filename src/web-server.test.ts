@@ -3,7 +3,7 @@ import { join } from "path";
 import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { startServer } from "./web-server";
 import { agentEndpointPath, loadSessionMeta } from "./session";
-import { readEvents } from "./event-log";
+import { appendEvent, readEvents } from "./event-log";
 import {
   cleanupAll,
   fakeWorktreeOps,
@@ -249,6 +249,22 @@ test("GET /sessions exposes unread report counts per session", async () => {
   const byId = Object.fromEntries(body.sessions.map((s: { id: string; unreadReportCount: number }) => [s.id, s]));
   expect(byId[aid].unreadReportCount).toBe(2);
   expect(byId[bid].unreadReportCount).toBe(0);
+});
+
+test("GET /sessions exposes the last agent-work event timestamp, ignoring reports", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const work = await appendEvent(sid, { kind: "claude_tool_use", payload: { name: "Read" } }, ctx.sessionsDir);
+  // A later event that is *not* agent work — it must not move the timestamp.
+  await appendEvent(sid, { kind: "report_submitted", payload: { filename: "001-x.md" } }, ctx.sessionsDir);
+
+  const body = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const session = body.sessions.find((s: { id: string }) => s.id === sid);
+  expect(session.lastAgentEventAt).toBe(work.timestamp);
 });
 
 test("POST /internal/sessions/:id/reports writes numbered report", async () => {

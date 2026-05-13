@@ -4,6 +4,7 @@
 
 import { workLoad, notificationForEvent, notificationsFromSessionPoll, pendingNotificationCount } from "./notifications.js";
 import { notify, fireNotification } from "./notify.js";
+import { isAgentWorkEvent } from "./events-view.js";
 import { state } from "./state.svelte.js";
 
 export async function api(method, path, body) {
@@ -198,6 +199,14 @@ export function openWs(id) {
     state.lastSeq = ev.seq;
     if (state.detail) {
       state.detail.events = [...(state.detail.events ?? []), ev];
+    }
+    // Keep the sidebar card's "last event" age in step with the live stream:
+    // the 30s poll is the only other thing that refreshes lastAgentEventAt, so
+    // without this a busy session's card would look like it had gone quiet
+    // between polls.
+    if (isAgentWorkEvent(ev)) {
+      const card = state.sessions.find(s => s.id === id);
+      if (card) card.lastAgentEventAt = ev.timestamp;
     }
     // For "interesting" events refresh the relevant slice.
     if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread"
