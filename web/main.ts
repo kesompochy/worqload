@@ -8,7 +8,7 @@ import { state } from "./state.svelte.js";
 import NewSessionModal from "./svelte/NewSessionModal.svelte";
 import FileSearchModal from "./svelte/FileSearchModal.svelte";
 import CodeNavPopover from "./svelte/CodeNavPopover.svelte";
-import FeedbackPreviewPopover from "./svelte/FeedbackPreviewPopover.svelte";
+import AnchoredFeedbackOverlay from "./svelte/AnchoredFeedbackOverlay.svelte";
 import FileNameSearchModal from "./svelte/FileNameSearchModal.svelte";
 import SessionList from "./svelte/SessionList.svelte";
 import DetailHeader from "./svelte/DetailHeader.svelte";
@@ -41,9 +41,10 @@ window.addEventListener("keydown", (e) => {
 // handlers.js / CodeNavPopover.svelte). On document.body so it floats freely.
 mount(CodeNavPopover, { target: document.body });
 
-// The anchored-feedback preview popover (opened on hover of a [data-feedback-preview]
-// pin; see handlers.js / FeedbackPreviewPopover.svelte). On document.body so it floats.
-mount(FeedbackPreviewPopover, { target: document.body });
+// The anchored-feedback pin + preview popover (surfaced on hover of a striped
+// [data-feedback-preview] line/block; see handlers.js / AnchoredFeedbackOverlay.svelte).
+// On document.body so it floats over the layout.
+mount(AnchoredFeedbackOverlay, { target: document.body });
 
 const sessionListTarget = document.getElementById("sessionList");
 if (sessionListTarget) mount(SessionList, { target: sessionListTarget });

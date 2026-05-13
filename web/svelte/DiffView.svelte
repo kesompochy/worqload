@@ -42,11 +42,10 @@
               <div class="diff-line meta"><span class="ln"></span><span class="ln"></span><span class="body">{seg.row.body}</span></div>
             {:else}
               {@const fbHere = seg.row.anchorable ? feedbacksAnchoredAt(file.path, seg.row.newNo) : []}
-              <div class="diff-line {seg.row.kind}" class:selected={seg.row.anchorable && isAnchored(file.path, seg.row.newNo)} class:has-feedback={fbHere.length > 0} data-anchor-line={seg.row.anchorable ? seg.row.newNo : undefined} data-anchor-path={seg.row.anchorable ? file.path : undefined}>
+              <div class="diff-line {seg.row.kind}" class:selected={seg.row.anchorable && isAnchored(file.path, seg.row.newNo)} class:has-feedback={fbHere.length > 0} data-feedback-preview={fbHere.length > 0 ? fbHere.join(",") : undefined} data-anchor-line={seg.row.anchorable ? seg.row.newNo : undefined} data-anchor-path={seg.row.anchorable ? file.path : undefined}>
                 <span class="ln">{seg.row.kind === "remove" ? seg.row.oldNo : ""}</span>
                 <span class="ln">{seg.row.kind === "remove" ? "" : seg.row.newNo}</span>
                 <span class="body">{@html highlightCode(seg.row.body, file.lang)}</span>
-                {#if fbHere.length > 0}<button type="button" class="feedback-anchor-pin" data-feedback-preview={fbHere.join(",")} title="{fbHere.length > 1 ? `${fbHere.length}件のフィードバック` : `フィードバック ${fbHere[0]}`} — ホバーで内容表示">💬{#if fbHere.length > 1}<span class="feedback-anchor-count">{fbHere.length}</span>{/if}</button>{/if}
               </div>
             {/if}
           {/each}

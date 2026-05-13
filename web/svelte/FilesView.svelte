@@ -80,9 +80,8 @@
         <div class="file-content-body">
           {#each fileLines as line (line.no)}
             {@const fbHere = feedbacksAnchoredAt(fileContentPath, line.no)}
-            <div class="file-line" class:selected={isAnchored(fileContentPath, line.no)} class:has-feedback={fbHere.length > 0} data-anchor-line={line.no} data-anchor-path={fileContentPath}>
+            <div class="file-line" class:selected={isAnchored(fileContentPath, line.no)} class:has-feedback={fbHere.length > 0} data-feedback-preview={fbHere.length > 0 ? fbHere.join(",") : undefined} data-anchor-line={line.no} data-anchor-path={fileContentPath}>
               <span class="ln">{line.no}</span><span class="body">{@html line.html}</span>
-              {#if fbHere.length > 0}<button type="button" class="feedback-anchor-pin" data-feedback-preview={fbHere.join(",")} title="{fbHere.length > 1 ? `${fbHere.length}件のフィードバック` : `フィードバック ${fbHere[0]}`} — ホバーで内容表示">💬{#if fbHere.length > 1}<span class="feedback-anchor-count">{fbHere.length}</span>{/if}</button>{/if}
             </div>
           {/each}
         </div>
