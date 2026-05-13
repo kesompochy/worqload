@@ -26,8 +26,9 @@ export const state = $state({
   selectedFilePath: null,        // path of the file open in the content pane
   fileContent: null,     // { path, content } | { path, binary } | { path, tooLarge, size } | { path, error } | { path, loading: true }
   codeNav: null,         // Files-tab code navigation popover: { symbol, path, rect:{top,bottom,left}, definitions:[{path,line,column?,text?}]|null, definitionsStatus:"loading"|"done", references:[{path,line,column?,text?}]|null, referencesStatus:"loading"|"done" } | null
-  structure: null,       // Structure tab: { graph:{nodes:[path],edges:[{from,to}]}, cycles:[[path,...]], changedFiles:[path] } | { loading:true } | { error:string } | null
+  structure: null,       // Structure tab: { graph:{nodes:[path],edges:[{from,to,symbols}]}, cycles:[[path,...]], changedFiles:[path] } | { loading:true } | { error:string } | null
   structureLoaded: false,
+  structureShowSymbols: true,  // Structure tab: whether per-edge import symbol-name labels are drawn (a view preference, not per-session)
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked
