@@ -43,6 +43,7 @@ export interface Action {
   // action_invoked event rather than in a panel.
   direct?: boolean;
   params?: ActionParamSpec[];
+  group?: string;
   // When present, the action is offered for a session only if this returns
   // true (e.g. preview is only meaningful when the session's worktree is a
   // worqload checkout). Absent = always offered.
@@ -57,6 +58,9 @@ export interface ActionDescriptor {
   confirmMessage?: string;
   direct?: boolean;
   params?: ActionParamSpec[];
+  // Visual grouping cue for the action button row. Buttons sharing a `group`
+  // render tight; a group change inserts a separator. Absent = its own group.
+  group?: string;
 }
 
 function cleanGitEnv(): Record<string, string | undefined> {
@@ -143,10 +147,30 @@ function defaultPrTitle(meta: SessionMeta): string {
   return firstLine.slice(0, 80);
 }
 
+export const syncBaseFromRemoteAction: Action = {
+  id: "sync-base-from-remote",
+  label: "Sync base from remote",
+  description: "Pull the latest commits for the base branch from origin into the main repo's local base branch.",
+  confirmMessage:
+    "Fetch origin and fast-forward the local base branch to match it.\n\nIf the main repo has the base branch checked out it must be clean. If it isn't checked out (you're on some other branch), the local ref is updated directly. Non-fast-forward updates are refused.",
+  group: "sync-base",
+  async run({ meta, repoDir }) {
+    const repoBranch = await gitCurrentBranch(repoDir);
+    if (repoBranch === meta.baseBranch) {
+      if (await isWorktreeDirty(repoDir)) {
+        return fail("main repo has uncommitted changes; commit or stash them before syncing the base branch");
+      }
+      return runCommand(["git", "pull", "--ff-only", "origin", meta.baseBranch], repoDir);
+    }
+    return runCommand(["git", "fetch", "origin", `${meta.baseBranch}:${meta.baseBranch}`], repoDir);
+  },
+};
+
 export const mergeToBaseAction: Action = {
   id: "merge-to-base",
   label: "Merge into base branch",
   description: "Merge this session's branch into the base branch in the main repo.",
+  group: "ship",
   confirmMessage:
     "Merge this session's branch into the base branch?\n\nThe main repo must have the base branch checked out with a clean working tree, and the session worktree itself must have no uncommitted changes. If the merge would conflict, it is aborted before it touches the base branch.",
   async run({ meta, repoDir }) {
@@ -190,6 +214,7 @@ export const createPrAction: Action = {
   id: "create-pr",
   label: "Create PR",
   description: "Push the session branch to origin and create a pull request via the gh CLI.",
+  group: "ship",
   confirmMessage:
     "Push this session's branch to origin and open a pull request with the gh CLI. Any uncommitted changes left in the session worktree are committed first, under the PR title.",
   params: [
@@ -341,6 +366,7 @@ function tailFile(path: string, maxChars = 4000): string {
 export const previewAction: Action = {
   id: "preview",
   label: "Preview",
+  group: "preview",
   description:
     "Start a worqload server running this session's branch against a throwaway repo under ~/.worqload-preview/<id> (recreated each run). It keeps running until you press \"Stop preview\"; `bun install` runs in the worktree first if it has no node_modules.",
   direct: true,
@@ -417,6 +443,7 @@ export const stopPreviewAction: Action = {
   id: "stop-preview",
   label: "Stop preview",
   description: "Stop the preview server started for this session.",
+  group: "preview",
   direct: true,
   availableFor: ({ meta }) => isWorqloadCheckout(meta.worktreePath),
   async run({ meta }) {
@@ -440,7 +467,7 @@ export const stopPreviewAction: Action = {
   },
 };
 
-const ACTIONS: Action[] = [mergeToBaseAction, createPrAction, previewAction, stopPreviewAction];
+const ACTIONS: Action[] = [syncBaseFromRemoteAction, mergeToBaseAction, createPrAction, previewAction, stopPreviewAction];
 
 function toDescriptor({ run: _run, availableFor: _availableFor, ...rest }: Action): ActionDescriptor {
   return rest;

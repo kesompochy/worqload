@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
   createPrAction,
@@ -10,6 +10,7 @@ import {
   previewAction,
   previewPortForSession,
   stopPreviewAction,
+  syncBaseFromRemoteAction,
 } from "./actions";
 import type { SessionMeta } from "./session";
 import { cleanupAll, makeRepoFromTemplate, makeTmpDir } from "./test-helpers";
@@ -75,10 +76,12 @@ test("registry exposes built-in actions and supports lookup", () => {
   const list = listActions();
   expect(list.find((a) => a.id === "merge-to-base")).toBeDefined();
   expect(list.find((a) => a.id === "create-pr")).toBeDefined();
+  expect(list.find((a) => a.id === "sync-base-from-remote")).toBeDefined();
   expect(list.find((a) => a.id === "preview")?.direct).toBe(true);
   expect(list.find((a) => a.id === "stop-preview")?.direct).toBe(true);
   // panel actions stay non-direct
   expect(list.find((a) => a.id === "merge-to-base")?.direct).toBeUndefined();
+  expect(list.find((a) => a.id === "sync-base-from-remote")?.direct).toBeUndefined();
   // descriptors must not include the run function or the availableFor predicate
   for (const d of list) {
     expect((d as { run?: unknown }).run).toBeUndefined();
@@ -269,6 +272,90 @@ test("create-pr commits the agent's uncommitted worktree changes before pushing"
   expect(worktreeStatus(meta.worktreePath).trim()).toBe("");
   expect(new TextDecoder().decode(git(["log", "--oneline"], meta.worktreePath).stdout)).toContain("my pr title");
   expect(git(["show", "HEAD:feature.txt"], meta.worktreePath).exitCode).toBe(0);
+});
+
+// Stand up a bare repo as `origin`, plus a peer clone that lets a test push
+// new commits to it so the sync-base action has something to pull. Returns the
+// peer-clone path so the test can advance origin's base branch through it.
+function attachOriginWithPeer(repoDir: string): string {
+  const bare = makeTmpDir("actions-bare-origin");
+  // re-init as bare; makeTmpDir hands us an empty dir
+  rmSync(bare, { recursive: true, force: true });
+  mkdirSync(bare, { recursive: true });
+  git(["init", "--bare", "-b", TEST_BASE], bare);
+  git(["remote", "add", "origin", bare], repoDir);
+  // Push the base branch so origin/<base> exists locally and the bare repo has it.
+  git(["push", "-u", "origin", TEST_BASE], repoDir);
+
+  const peer = makeTmpDir("actions-origin-peer");
+  git(["clone", bare, peer], process.cwd());
+  git(["config", "user.email", "peer@t.com"], peer);
+  git(["config", "user.name", "peer"], peer);
+  return peer;
+}
+
+function advanceOriginBase(peer: string, fileName: string, body: string, message: string): void {
+  writeFileSync(join(peer, fileName), body);
+  git(["add", fileName], peer);
+  git(["commit", "-m", message], peer);
+  git(["push", "origin", TEST_BASE], peer);
+}
+
+test("sync-base-from-remote fast-forwards the local base branch when main repo is on it", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+  const peer = attachOriginWithPeer(repoDir);
+
+  advanceOriginBase(peer, "from-origin.txt", "shipped on origin\n", "advance base on origin");
+
+  const res = await syncBaseFromRemoteAction.run({ meta, repoDir }, {});
+  expect(res.ok).toBe(true);
+
+  // The local base branch now contains the file pushed via origin.
+  expect(git(["show", `${TEST_BASE}:from-origin.txt`], repoDir).exitCode).toBe(0);
+});
+
+test("sync-base-from-remote updates the local base branch when main repo is on a different branch", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+  const peer = attachOriginWithPeer(repoDir);
+
+  // Main repo isn't sitting on the base branch.
+  git(["checkout", "-b", "feature/elsewhere"], repoDir);
+
+  advanceOriginBase(peer, "from-origin.txt", "shipped on origin\n", "advance base on origin");
+
+  const res = await syncBaseFromRemoteAction.run({ meta, repoDir }, {});
+  expect(res.ok).toBe(true);
+
+  // The local base branch (not currently checked out) advanced to match origin.
+  expect(git(["show", `${TEST_BASE}:from-origin.txt`], repoDir).exitCode).toBe(0);
+});
+
+test("sync-base-from-remote refuses when main repo on base has uncommitted changes", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+  attachOriginWithPeer(repoDir);
+
+  writeFileSync(join(repoDir, "scratch.txt"), "dirty\n");
+
+  const res = await syncBaseFromRemoteAction.run({ meta, repoDir }, {});
+  expect(res.ok).toBe(false);
+  expect(res.message?.toLowerCase()).toMatch(/uncommitted|dirty/);
+});
+
+test("sync-base-from-remote surfaces the git error when no origin remote is configured", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+
+  const res = await syncBaseFromRemoteAction.run({ meta, repoDir }, {});
+  expect(res.ok).toBe(false);
+  const errText = `${res.stderr} ${res.stdout}`.toLowerCase();
+  expect(errText).toMatch(/origin|remote/);
 });
 
 test("create-pr auto-commit excludes the .worqload-reports symlink even when the repo hasn't gitignored it", async () => {
