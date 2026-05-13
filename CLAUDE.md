@@ -7,6 +7,7 @@ A browser UI for observing and steering parallel `claude` sessions.
 ```sh
 bun test                   # run tests (pretest runs `vite build`)
 bun run dev                # vite build → serve with --watch
+bun run preview            # vite build → run THIS checkout against a throwaway scratch repo (~/.worqload-preview)
 bun run web:build          # build the browser frontend (web/ → web/dist/)
 bun run web:watch          # rebuild the frontend on change (run alongside `worqload serve`)
 worqload <command>         # CLI (built from src/cli.ts)

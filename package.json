@@ -9,6 +9,7 @@
   "scripts": {
     "start": "bun src/cli.ts",
     "dev": "vite build --config ./vite.config.ts && bun --watch src/cli.ts serve --no-open",
+    "preview": "vite build --config ./vite.config.ts && bun src/cli.ts preview",
     "web:build": "vite build --config ./vite.config.ts",
     "web:watch": "vite build --config ./vite.config.ts --watch",
     "build": "bun build --compile src/cli.ts --outfile dist/worqload",
