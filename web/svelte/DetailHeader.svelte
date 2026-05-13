@@ -23,6 +23,7 @@
     { id: "feedback", label: "Feedbacks" },
     { id: "diff", label: "Diff" },
     { id: "files", label: "Files" },
+    { id: "structure", label: "Structure" },
     { id: "events", label: "Events" },
   ];
 

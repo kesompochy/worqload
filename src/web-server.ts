@@ -19,6 +19,7 @@ import { connectToHost, type HostClient, spawnDetachedHost } from "./session-hos
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
 import { findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
+import { buildStructureView, parseChangedFilePaths } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
@@ -530,6 +531,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
   defineRoute("GET",  "/sessions/:id/files", getFiles),
+  defineRoute("GET",  "/sessions/:id/structure", getStructure),
   defineRoute("GET",  "/sessions/:id/file", getFile),
   defineRoute("GET",  "/sessions/:id/search", getFileSearch),
   defineRoute("GET",  "/sessions/:id/code-nav/definition", getCodeNavDefinition),
@@ -960,6 +962,32 @@ async function getFiles(_req: Request, ctx: ServerContext, params: Record<string
   return withSession(ctx, params.id, async meta => {
     const paths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
     return json({ paths });
+  });
+}
+
+// The Structure tab's import-dependency picture: the changeset's source files
+// plus the surrounding files that import them or that they import (a couple of
+// hops out), with import cycles flagged. Built from the same diff base as the
+// Diff tab; only JS/TS-family and `.svelte` files are graph nodes.
+async function getStructure(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    try {
+      const diffBase = await ctx.worktreeOps.resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
+      const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase);
+      const allPaths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
+      const view = await buildStructureView({
+        allPaths,
+        changedPaths: parseChangedFilePaths(diff),
+        readSource: async path => {
+          const result = await ctx.worktreeOps.readWorktreeFile(meta.worktreePath, path);
+          return result.kind === "text" ? result.content : null;
+        },
+      });
+      return json(view);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return json({ error: message }, 500);
+    }
   });
 }
 

@@ -16,6 +16,7 @@
   import { renderMarkdown } from "../markdown.js";
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
+  import StructureView from "./StructureView.svelte";
   import EventsView from "./EventsView.svelte";
   import { onDetailBodyClick, onResolve } from "../handlers.js";
 
@@ -186,6 +187,8 @@
       <DiffView />
     {:else if appState.activeTab === "files"}
       <FilesView />
+    {:else if appState.activeTab === "structure"}
+      <StructureView />
     {:else if appState.activeTab === "events"}
       <EventsView />
     {:else if appState.activeTab === "feedback"}

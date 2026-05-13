@@ -311,3 +311,23 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .action-panel-head .close { background: transparent; border: none; color: var(--text-dim); font-size: 16px; line-height: 1; padding: 0 .3rem; cursor: pointer; }
 .action-panel-head .close:hover { color: var(--text); }
 .action-confirm { margin: .55rem 0 0 0; padding: .5rem .7rem; border: 1px solid rgba(210,153,34,.4); background: rgba(210,153,34,.08); color: var(--waiting); border-radius: 4px; white-space: pre-wrap; font-size: 12.5px; }
+
+/* Structure tab: the import-dependency graph (StructureView.svelte). */
+.structure-view { font-size: 13px; }
+.structure-message { color: var(--text-dim); padding: .5rem .2rem; max-width: 48em; line-height: 1.6; }
+.structure-message.structure-error { color: var(--crashed); }
+.structure-cycles { margin-bottom: .7rem; padding: .45rem .6rem; border: 1px solid rgba(248,81,73,.4); background: rgba(248,81,73,.08); border-radius: 4px; color: var(--crashed); font-size: 12.5px; }
+.structure-cycle-label { font-family: ui-monospace, monospace; }
+.structure-canvas { overflow: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+.structure-canvas svg { display: block; }
+.structure-edge { fill: none; stroke: var(--border); stroke-width: 1.4px; }
+.structure-edge.cycle { stroke: var(--crashed); stroke-width: 1.8px; stroke-dasharray: 5 3; }
+#structure-arrow path { fill: var(--text-dim); }
+#structure-arrow-cycle path.cycle { fill: var(--crashed); }
+.structure-node { cursor: pointer; }
+.structure-node rect { fill: var(--panel-2); stroke: var(--border); stroke-width: 1px; }
+.structure-node:hover rect { stroke: var(--accent); }
+.structure-node.changed rect { fill: rgba(88,166,255,.16); stroke: var(--accent); stroke-width: 1.6px; }
+.structure-node.cycle rect { stroke: var(--crashed); }
+.structure-node text { fill: var(--text); font-size: 12px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+.structure-node.changed text { fill: var(--text); font-weight: 600; }
