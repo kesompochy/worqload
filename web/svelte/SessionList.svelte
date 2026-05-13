@@ -19,6 +19,10 @@
     onReorderSessions,
     onSidebarTab,
     onDeleteArchived,
+    onToggleArchivedSelection,
+    onSelectAllArchived,
+    onClearArchivedSelection,
+    onBulkDeleteArchived,
   } from "../handlers.js";
 
   // The sidebar's currently-shown feed: active sessions or the archives tab.
@@ -26,6 +30,10 @@
   // permanent Delete), and only the active list is drag-reorderable.
   const archivedView = $derived(appState.sidebarTab === "archived");
   const visibleSessions = $derived(archivedView ? appState.archivedSessions : appState.sessions);
+  const selectionCount = $derived(appState.archivedSelection.size);
+  const allArchivedSelected = $derived(
+    archivedView && visibleSessions.length > 0 && selectionCount === visibleSessions.length,
+  );
 
   // Tracked across the rename input's keydowns so a confirming Enter mid-IME
   // composition doesn't also commit the alias. Only one card renames at a time.
@@ -141,6 +149,17 @@
   >Archived</button>
 </div>
 
+{#if archivedView && selectionCount > 0}
+  <div class="bulk-action-bar">
+    <span class="bulk-count">{selectionCount} selected</span>
+    <button
+      class="bulk-select-all"
+      onclick={() => (allArchivedSelected ? onClearArchivedSelection() : onSelectAllArchived())}
+    >{allArchivedSelected ? "Clear" : "Select all"}</button>
+    <button class="bulk-delete" onclick={onBulkDeleteArchived}>Delete {selectionCount}</button>
+  </div>
+{/if}
+
 {#if visibleSessions.length === 0}
   <div style="padding:1rem; color:var(--text-dim)">{archivedView ? "No archived sessions." : "No sessions yet."}</div>
 {:else}
@@ -150,9 +169,11 @@
     {@const renaming = active && session.id === appState.renamingSessionId}
     {@const unread = Number(session.unreadReportCount) || 0}
     {@const isLast = index === visibleSessions.length - 1}
+    {@const selected = archivedView && appState.archivedSelection.has(session.id)}
     <div
       class="session-card"
       class:active
+      class:selected
       class:dragging={!archivedView && draggedId === session.id}
       class:drag-over={!archivedView && dropBeforeId === session.id && draggedId !== session.id}
       class:drag-over-end={!archivedView && dropAtEnd && isLast && draggedId !== session.id}
@@ -166,6 +187,16 @@
       onclick={() => selectSession(session.id)}
       onkeydown={(e) => selectOnEnter(e, session.id)}
     >
+      {#if archivedView}
+        <input
+          type="checkbox"
+          class="session-card-select"
+          checked={selected}
+          aria-label="Select session for bulk delete"
+          onclick={(e) => e.stopPropagation()}
+          onchange={() => onToggleArchivedSelection(session.id)}
+        />
+      {/if}
       <div class="session-card-main">
         {#if renaming}
           <p class="title"><span class="badge badge-{session.status}">{statusLabel(session.status)}</span></p>

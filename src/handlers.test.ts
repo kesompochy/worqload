@@ -21,7 +21,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onDeleteArchived } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -628,4 +628,91 @@ test("onDeleteArchived bails when the human cancels the confirm dialog", async (
 
   expect(apiCalls).toEqual([]);
   expect(fetchArchivedSessionsCalls).toBe(0);
+});
+
+test("onToggleArchivedSelection toggles ids on a fresh Set so Svelte re-renders", () => {
+  state.archivedSelection = new Set();
+  const before = state.archivedSelection;
+
+  onToggleArchivedSelection("arc-1");
+  expect(state.archivedSelection).not.toBe(before);
+  expect(state.archivedSelection.has("arc-1")).toBe(true);
+
+  onToggleArchivedSelection("arc-2");
+  expect([...state.archivedSelection].sort()).toEqual(["arc-1", "arc-2"]);
+
+  onToggleArchivedSelection("arc-1");
+  expect([...state.archivedSelection]).toEqual(["arc-2"]);
+});
+
+test("onSelectAllArchived picks every id in the archived feed; Clear empties the selection", () => {
+  state.archivedSessions = [{ id: "arc-1" }, { id: "arc-2" }, { id: "arc-3" }];
+  state.archivedSelection = new Set();
+
+  onSelectAllArchived();
+  expect([...state.archivedSelection].sort()).toEqual(["arc-1", "arc-2", "arc-3"]);
+
+  onClearArchivedSelection();
+  expect(state.archivedSelection.size).toBe(0);
+});
+
+test("leaving the archived tab drops the bulk-delete selection", async () => {
+  state.sidebarTab = "archived";
+  state.archivedSelection = new Set(["arc-1", "arc-2"]);
+
+  await onSidebarTab("active");
+
+  expect(state.sidebarTab).toBe("active");
+  expect(state.archivedSelection.size).toBe(0);
+});
+
+test("onBulkDeleteArchived DELETEs every selected id in turn, reloads the feed, and clears the selection", async () => {
+  state.archivedSessions = [{ id: "arc-1" }, { id: "arc-2" }, { id: "arc-3" }];
+  state.archivedSelection = new Set(["arc-1", "arc-3"]);
+  state.selected = "arc-1";
+  apiCalls.length = 0;
+  fetchArchivedSessionsCalls = 0;
+
+  const savedWindow = globalThis.window;
+  (globalThis as unknown as { window: unknown }).window = { confirm: () => true };
+  // onBulkDeleteArchived's outcome toast reads through document.querySelector.
+  const savedDocument = globalThis.document;
+  globalThis.document = { querySelector: () => ({ textContent: "", classList: { add() {}, remove() {} } }) } as unknown as Document;
+
+  try {
+    await onBulkDeleteArchived();
+  } finally {
+    (globalThis as unknown as { window: unknown }).window = savedWindow;
+    globalThis.document = savedDocument;
+  }
+
+  // DELETEs sent for arc-1 and arc-3 (sequential, not arc-2).
+  const deletes = apiCalls.filter(c => c.method === "DELETE").map(c => c.path).sort();
+  expect(deletes).toEqual(["/sessions/arc-1", "/sessions/arc-3"]);
+  expect(state.archivedSelection.size).toBe(0);
+  expect(fetchArchivedSessionsCalls).toBe(1);
+  // arc-1 was the selected session in the detail pane; clearing it stops the
+  // pane from showing data the server just removed.
+  expect(state.selected).toBeNull();
+});
+
+test("onBulkDeleteArchived asks confirm once and bails when the human cancels", async () => {
+  state.archivedSelection = new Set(["arc-1", "arc-2"]);
+  apiCalls.length = 0;
+  fetchArchivedSessionsCalls = 0;
+
+  const savedWindow = globalThis.window;
+  let confirmCalls = 0;
+  (globalThis as unknown as { window: unknown }).window = { confirm: () => { confirmCalls++; return false; } };
+
+  try {
+    await onBulkDeleteArchived();
+  } finally {
+    (globalThis as unknown as { window: unknown }).window = savedWindow;
+  }
+
+  expect(confirmCalls).toBe(1);
+  expect(apiCalls.filter(c => c.method === "DELETE")).toEqual([]);
+  expect(fetchArchivedSessionsCalls).toBe(0);
+  expect(state.archivedSelection.size).toBe(2);
 });

@@ -8,6 +8,7 @@
 export const state = $state({
   sessions: [],          // active sessions feed: drives notifications, load average, the active sidebar tab
   archivedSessions: [],  // archived-only feed: drives the archived sidebar tab. Populated when that tab is shown / polled.
+  archivedSelection: new Set(),  // ids of archived sessions checked for bulk delete. Cleared on tab switch away from archived. Reassigned wholesale (Svelte 5's $state doesn't proxy Set).
   sidebarTab: "active",  // "active" | "archived": which feed the sidebar renders. Archived cards swap Stop/Archive for a permanent Delete (see SessionList.svelte / handlers.js).
   selected: null,        // session id
   detail: null,          // { meta, events }
