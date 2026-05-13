@@ -1,3 +1,6 @@
 import { greet } from "./greeting";
+import { summarize } from "./summary";
+import { log } from "./logger";
 
-console.log(greet("worqload"));
+log(greet("worqload"));
+log(summarize("hello worqload, hello world from the preview repo"));
