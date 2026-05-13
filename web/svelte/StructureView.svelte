@@ -92,9 +92,10 @@
   const MIN_ZOOM = 0.1;
   const MAX_ZOOM = 4;
   const clampZoom = z => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
-  function zoomBy(factor) { cancelTween(); zoom = clampZoom(zoom * factor); }
+  function zoomBy(factor) { cancelTween(); savedView = null; zoom = clampZoom(zoom * factor); }
   function fitZoom() {
     cancelTween();
+    savedView = null;
     if (!model || !model.hasGraph || canvasW < 20 || canvasH < 20) return;
     const fit = Math.min((canvasW - 12) / model.width, (canvasH - 12) / model.height);
     zoom = clampZoom(fit);
@@ -115,8 +116,9 @@
     if (rafId != null) { cancelAnimationFrame(rafId); rafId = null; }
   }
   // Plain linear tween of zoom and scroll — used when no node needs to stay
-  // anchored on screen (e.g. returning to the pre-highlight view).
-  function tweenViewPlain(targetZoom, targetScrollX, targetScrollY) {
+  // anchored on screen (e.g. returning to the pre-highlight view). `onComplete`
+  // fires when the tween reaches t=1 and isn't cancelled along the way.
+  function tweenViewPlain(targetZoom, targetScrollX, targetScrollY, onComplete) {
     cancelTween();
     const startZoom = zoom;
     const startScrollX = canvasEl?.scrollLeft ?? 0;
@@ -130,7 +132,7 @@
         canvasEl.scrollTop = startScrollY + (targetScrollY - startScrollY) * t;
       }
       if (t < 1) rafId = requestAnimationFrame(step);
-      else rafId = null;
+      else { rafId = null; if (onComplete) onComplete(); }
     };
     rafId = requestAnimationFrame(step);
   }
@@ -232,12 +234,16 @@
         // can resize underneath without dragging the anchor with it.
         const anchorScreen = { x: oldN.x * z0 - sx0, y: oldN.y * z0 - sy0 };
         const targetZoom = anchorAwareZoom(newN, anchorScreen) ?? z0;
-        savedView = { zoom: z0, scrollX: sx0, scrollY: sy0 };
+        // Only capture the pre-hover view if we don't already have one stashed:
+        // back-to-back hover → un-hover → hover before the return tween finishes
+        // would otherwise overwrite the original with a mid-return value, and
+        // the next un-hover would restore *that* — making each cycle smaller.
+        if (savedView == null) savedView = { zoom: z0, scrollX: sx0, scrollY: sy0 };
         tweenViewAnchored(targetZoom, { x: oldN.x, y: oldN.y }, { x: newN.x, y: newN.y }, anchorScreen);
       } else if (!active && lastHoverActive) {
         if (savedView) {
-          tweenViewPlain(savedView.zoom, savedView.scrollX, savedView.scrollY);
-          savedView = null;
+          const target = savedView;
+          tweenViewPlain(target.zoom, target.scrollX, target.scrollY, () => { savedView = null; });
         }
       }
       // active && lastHoverActive: hover moved between nodes — leave the
@@ -285,7 +291,7 @@
         <button type="button" class="structure-zoom-btn" title="縮小" aria-label="Zoom out" onclick={() => zoomBy(1 / 1.25)}>−</button>
         <button type="button" class="structure-zoom-btn" title="全体に合わせる" onclick={fitZoom}>Fit</button>
         <button type="button" class="structure-zoom-btn" title="拡大" aria-label="Zoom in" onclick={() => zoomBy(1.25)}>＋</button>
-        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="等倍に戻す" onclick={() => { cancelTween(); zoom = 1; }}>{Math.round(zoom * 100)}%</button>
+        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="等倍に戻す" onclick={() => { cancelTween(); savedView = null; zoom = 1; }}>{Math.round(zoom * 100)}%</button>
       </span>
     </div>
     <div class="structure-canvas" class:structure-focusing={related != null} bind:this={canvasEl} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>
