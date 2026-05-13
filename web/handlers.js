@@ -608,9 +608,11 @@ export async function onResolveCommand(filename, decision, articleEl, buttonEl) 
   }
 }
 
-export async function onFeedback() {
+export async function onFeedback(inputId = "feedbackInput") {
   if (!state.selected) return;
-  const text = $("#feedbackInput").value.trim();
+  const inputEl = $("#" + inputId);
+  if (!inputEl) return;
+  const text = inputEl.value.trim();
   if (text === "") return;
   const body = { content: text, slug: state.anchor ? "anchored" : "feedback" };
   if (state.anchor) {
@@ -622,7 +624,7 @@ export async function onFeedback() {
   }
   try {
     await api("POST", `/sessions/${state.selected}/feedback`, body);
-    $("#feedbackInput").value = "";
+    inputEl.value = "";
     state.anchor = null;
     // Stay on whatever tab the human was reading (often the diff/file/report the
     // anchor points at): the sent feedback now shows at its anchor and in the
@@ -632,6 +634,14 @@ export async function onFeedback() {
   } catch (e) {
     toast(`failed: ${e.message}`);
   }
+}
+
+// The floating composer that surfaces next to an anchored line/block (so the
+// human doesn't have to track the cursor down to the bottom-fixed composer
+// after anchoring). It has its own textarea id; otherwise identical to
+// onFeedback.
+export function onAnchoredFeedback() {
+  return onFeedback("anchoredFeedbackInput");
 }
 
 export async function onStop(id = state.selected) {
