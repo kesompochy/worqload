@@ -26,6 +26,10 @@ export interface SpawnHostOptions {
   // sends RESUME_KICKOFF instead of the protocol bootstrap. The caller is
   // expected to have appended `--continue` to spawnCommand.
   resume?: boolean;
+  // JSONL file the host appends diagnostic entries to (wake forwarding,
+  // claude.stdin write outcomes). Unset → host logs to its stderr, which the
+  // detached spawn discards.
+  logFile?: string;
 }
 
 // Builds the argv for a `session-host` invocation. Everything after `--` is
@@ -42,6 +46,7 @@ export function buildHostArgv(opts: SpawnHostOptions): string[] {
     "--agent-endpoint",
     opts.agentEndpoint,
     ...(opts.resume ? ["--resume"] : []),
+    ...(opts.logFile !== undefined ? ["--log-file", opts.logFile] : []),
     "--",
     ...opts.spawnCommand,
   ];

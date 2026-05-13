@@ -2,7 +2,7 @@ import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { startServer } from "./web-server";
-import { agentEndpointPath, loadSessionMeta } from "./session";
+import { agentEndpointPath, hostLogPath, loadSessionMeta } from "./session";
 import { appendEvent, readEvents } from "./event-log";
 import {
   cleanupAll,
@@ -335,6 +335,29 @@ test("feedback inbox round trip: POST writes, GET fetches and moves to read", as
   expect(readdirSync(inboxDir)).toEqual([]);
   const readDir = join(ctx.sessionsDir, sid, "feedback", "read");
   expect(readdirSync(readDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md", "002-fix-this.meta.json"]);
+});
+
+test("POST /feedback appends a wake_sent entry to host.log", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
+
+  const logPath = hostLogPath(ctx.sessionsDir, sid);
+  expect(existsSync(logPath)).toBe(true);
+  const entries = readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const wake = entries.find((e) => e.event === "wake_sent");
+  expect(wake).toBeDefined();
+  expect(wake?.source).toBe("serve");
+  expect(wake?.filename).toBe("001-wake.md");
+  expect(wake?.hasClient).toBe(true);
+  expect(wake?.status).toBe("running");
 });
 
 test("feedback numbering stays monotonic after a fetch drains the inbox", async () => {

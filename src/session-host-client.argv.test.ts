@@ -56,6 +56,32 @@ test("parseHostArgs leaves resume undefined when --resume is absent", () => {
   expect(parsed?.resume).toBeUndefined();
 });
 
+test("buildHostArgv + parseHostArgs carry --log-file", () => {
+  const argv = buildHostArgv({
+    hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],
+    sessionId: "sess-1",
+    sessionsDir: "/repo/.worqload/sessions",
+    socketPath: "/tmp/worqload/sess-1.sock",
+    agentEndpoint: "http://127.0.0.1:3456",
+    spawnCommand: ["claude", "-p"],
+    logFile: "/repo/.worqload/sessions/sess-1/host.log",
+  });
+  expect(argv).toContain("--log-file");
+  const parsed = parseHostArgs(argv.slice(3));
+  expect(parsed?.logFile).toBe("/repo/.worqload/sessions/sess-1/host.log");
+});
+
+test("parseHostArgs leaves logFile undefined when --log-file is absent", () => {
+  const parsed = parseHostArgs([
+    "sess-1",
+    "--sessions-dir", "/d",
+    "--socket-path", "/s",
+    "--agent-endpoint", "http://x",
+    "--", "claude",
+  ]);
+  expect(parsed?.logFile).toBeUndefined();
+});
+
 test("parseHostArgs returns null when required pieces are missing", () => {
   expect(parseHostArgs(["sess-1", "--sessions-dir", "/d", "--socket-path", "/s", "--agent-endpoint", "http://x"])).toBeNull(); // no `--` / spawn command
   expect(parseHostArgs(["--sessions-dir", "/d", "--socket-path", "/s", "--agent-endpoint", "http://x", "--", "claude"])).toBeNull(); // no sessionId

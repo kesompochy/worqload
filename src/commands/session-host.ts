@@ -1,4 +1,5 @@
 import type { Socket } from "bun";
+import { appendFileSync } from "node:fs";
 import { mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { classifyClaudeLine, readLines } from "../claude-stream";
@@ -25,6 +26,33 @@ export interface HostOptions {
   // RESUME_KICKOFF as the first message instead of the protocol bootstrap.
   // spawnCommand is expected to already carry `--continue`.
   resume?: boolean;
+  // JSONL file to append structured diagnostic entries to (wake forwarding,
+  // claude.stdin write outcomes, etc). Falls back to process.stderr when unset
+  // so tests don't litter the filesystem.
+  logFile?: string;
+}
+
+type LogFn = (event: string, fields?: Record<string, unknown>) => void;
+
+function makeHostLogger(logFile: string | undefined): LogFn {
+  if (!logFile) return () => {};
+  return (event, fields = {}) => {
+    const line = JSON.stringify({ ts: new Date().toISOString(), source: "host", event, ...fields }) + "\n";
+    try {
+      appendFileSync(logFile, line);
+    } catch {
+      // diagnostic logging is best-effort; never throw
+    }
+  };
+}
+
+// Cap the body preview so a giant resume kickoff or feedback file doesn't
+// bloat the log file. The full text still reaches claude — only the diagnostic
+// echo is trimmed.
+const LOG_PREVIEW_MAX = 200;
+function previewText(text: string): string {
+  if (text.length <= LOG_PREVIEW_MAX) return text;
+  return `${text.slice(0, LOG_PREVIEW_MAX)}…(+${text.length - LOG_PREVIEW_MAX} chars)`;
 }
 
 interface ClientState {
@@ -35,8 +63,17 @@ interface ClientState {
 // socket has been cleaned up. The caller (CLI wrapper or test) decides what
 // to do with the resolved exit code.
 export async function runHost(opts: HostOptions): Promise<number> {
+  const log = makeHostLogger(opts.logFile);
+
   const meta = await loadSessionMeta(opts.sessionId, opts.sessionsDir);
   if (!meta) throw new Error(`session not found: ${opts.sessionId}`);
+
+  log("host_started", {
+    sessionId: opts.sessionId,
+    pid: process.pid,
+    socketPath: opts.socketPath,
+    resume: opts.resume === true,
+  });
 
   await mkdir(dirname(opts.socketPath), { recursive: true });
   try {
@@ -100,11 +137,14 @@ export async function runHost(opts: HostOptions): Promise<number> {
       }
       case "send_user": {
         const line = `${JSON.stringify(buildUserMessage(msg.text))}\n`;
+        log("send_user_received", { textLen: msg.text.length, preview: previewText(msg.text), wireBytes: line.length });
+        const start = Date.now();
         try {
           claude.stdin.write(line);
           await claude.stdin.flush();
+          log("stdin_write", { ok: true, durationMs: Date.now() - start });
         } catch (err) {
-          console.error("session-host: write to claude stdin failed:", err);
+          log("stdin_write", { ok: false, durationMs: Date.now() - start, error: String(err) });
         }
         return;
       }
@@ -162,11 +202,14 @@ export async function runHost(opts: HostOptions): Promise<number> {
   // conversation is restored by `claude --continue`, so we only nudge it back
   // into the loop (any new instruction was queued to the feedback inbox).
   const firstMessage = opts.resume ? RESUME_KICKOFF : buildProtocolPrefix(meta.baseBranch) + meta.prompt;
+  log("bootstrap_send", { textLen: firstMessage.length, resume: opts.resume === true });
+  const bootStart = Date.now();
   try {
     claude.stdin.write(`${JSON.stringify(buildUserMessage(firstMessage))}\n`);
     await claude.stdin.flush();
+    log("stdin_write", { ok: true, durationMs: Date.now() - bootStart, source: "bootstrap" });
   } catch (err) {
-    console.error("session-host: initial bootstrap write failed:", err);
+    log("stdin_write", { ok: false, durationMs: Date.now() - bootStart, source: "bootstrap", error: String(err) });
   }
 
   const stdoutTask = readLines(claude.stdout, async (line) => {
@@ -184,6 +227,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
   });
 
   const exitCode = await claude.exited;
+  log("claude_exited", { exitCode });
   await Promise.allSettled([stdoutTask, stderrTask]);
 
   const final = await loadSessionMeta(opts.sessionId, opts.sessionsDir);
@@ -223,7 +267,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
 }
 
 const HOST_USAGE =
-  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> [--resume] -- <claude command...>";
+  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> [--resume] [--log-file <path>] -- <claude command...>";
 
 // Splits the host CLI argv. Layout is `<sessionId> --flag value ... -- <claude command...>`.
 // Everything after the literal `--` is the claude spawn command verbatim (its
@@ -237,11 +281,20 @@ export function parseHostArgs(args: string[]): HostOptions | null {
   const sessionsDir = takeFlag(head, "--sessions-dir");
   const socketPath = takeFlag(head, "--socket-path");
   const agentEndpoint = takeFlag(head, "--agent-endpoint");
+  const logFile = takeFlag(head, "--log-file");
   const resume = head.includes("--resume");
   if (!sessionId || !sessionsDir || !socketPath || !agentEndpoint || spawnCommand.length === 0) {
     return null;
   }
-  return { sessionId, sessionsDir, socketPath, agentEndpoint, spawnCommand, ...(resume && { resume }) };
+  return {
+    sessionId,
+    sessionsDir,
+    socketPath,
+    agentEndpoint,
+    spawnCommand,
+    ...(resume && { resume }),
+    ...(logFile !== undefined && { logFile }),
+  };
 }
 
 export async function sessionHost(args: string[]): Promise<void> {
