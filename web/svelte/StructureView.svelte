@@ -2,14 +2,18 @@
   // The Structure tab: an import-dependency graph of the changeset's files and
   // their immediate neighborhood (the files they import / that import them).
   // Import cycles show up as dashed red edges (and red node borders); the names
-  // each import carries are written onto the edges (toggleable). Hovering or
-  // focusing a node highlights it, its direct neighbours, and the connecting
-  // edges, and dims the rest. Mounted by DetailBody when the Structure tab is
-  // active. The data comes from GET /sessions/:id/structure (held in
-  // appState.structure); buildStructureModel places the boxes and connectors,
-  // this draws the SVG. Nodes carry `data-structure-open`, so a click is picked
-  // up by DetailBody's delegated handler (which opens the file in the Files tab);
-  // keyboard activation (Enter/Space on a focused node) is handled here.
+  // each import carries are written onto the edges (toggleable; hover a label
+  // to see the full untruncated list). Hovering or focusing a node highlights
+  // it, its direct neighbours, and the connecting edges, and dims the rest.
+  // The toolbar's −/Fit/+ controls zoom the whole canvas so the human can pull
+  // back for the overall shape or push in for detail.
+  //
+  // Mounted by DetailBody when the Structure tab is active. The data comes from
+  // GET /sessions/:id/structure (held in appState.structure); buildStructureModel
+  // places the boxes and connectors, this draws the SVG. Nodes carry
+  // `data-structure-open`, so a click is picked up by DetailBody's delegated
+  // handler (which opens the file in the Files tab); keyboard activation
+  // (Enter/Space on a focused node) is handled here.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
@@ -56,6 +60,28 @@
   const nodeDimmed = path => related != null && !related.paths.has(path);
   const edgeDimmed = edge => related != null && !related.keys.has(edgeKey(edge));
 
+  // A symbol label that the human is hovering: shows the full untruncated text
+  // in an HTML tooltip overlaid on the canvas. (SVG `<title>` already produces
+  // a native tooltip after a delay — this one is immediate and visible.)
+  let hoveredLabel = $state(null); // { text, x, y } in SVG coordinates
+
+  // Zoom for the whole canvas, applied as a scale on the rendered SVG size; the
+  // viewBox stays at the model's native dimensions so the SVG scales crisply.
+  // The canvas has `overflow: auto`, so panning a zoomed-in graph is just
+  // scrolling. `clientWidth`/`clientHeight` of the canvas drive the Fit action.
+  let zoom = $state(1);
+  let canvasW = $state(0);
+  let canvasH = $state(0);
+  const MIN_ZOOM = 0.1;
+  const MAX_ZOOM = 4;
+  const clampZoom = z => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
+  function zoomBy(factor) { zoom = clampZoom(zoom * factor); }
+  function fitZoom() {
+    if (!model || !model.hasGraph || canvasW < 20 || canvasH < 20) return;
+    const fit = Math.min((canvasW - 12) / model.width, (canvasH - 12) / model.height);
+    zoom = clampZoom(fit);
+  }
+
   // A short cubic between two box-edge anchor points. Forward edges (left→right,
   // following the import) curve gently; a back/same-layer edge bows up and out
   // so it reads as "closes a loop" rather than running straight through columns.
@@ -90,9 +116,15 @@
   {:else}
     <div class="structure-toolbar">
       <label><input type="checkbox" bind:checked={appState.structureShowSymbols} /> シンボル名を表示</label>
+      <span class="structure-zoom">
+        <button type="button" class="structure-zoom-btn" title="縮小" aria-label="Zoom out" onclick={() => zoomBy(1 / 1.25)}>−</button>
+        <button type="button" class="structure-zoom-btn" title="全体に合わせる" onclick={fitZoom}>Fit</button>
+        <button type="button" class="structure-zoom-btn" title="拡大" aria-label="Zoom in" onclick={() => zoomBy(1.25)}>＋</button>
+        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="等倍に戻す" onclick={() => (zoom = 1)}>{Math.round(zoom * 100)}%</button>
+      </span>
     </div>
-    <div class="structure-canvas" class:structure-focusing={related != null}>
-      <svg width={model.width} height={model.height} viewBox="0 0 {model.width} {model.height}" role="img" aria-label="import dependency graph">
+    <div class="structure-canvas" class:structure-focusing={related != null} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>
+      <svg width={model.width * zoom} height={model.height * zoom} viewBox="0 0 {model.width} {model.height}" role="img" aria-label="import dependency graph">
         <defs>
           <marker id="structure-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
             <path d="M0,0 L8,4 L0,8 z" />
@@ -113,7 +145,13 @@
         {#if appState.structureShowSymbols}
           {#each model.edges as edge}
             {#if edge.label}
-              <g class="structure-edge-label" class:dim={edgeDimmed(edge)} transform="translate({edge.labelX},{edge.labelY})">
+              <g
+                class="structure-edge-label"
+                class:dim={edgeDimmed(edge)}
+                transform="translate({edge.labelX},{edge.labelY})"
+                onmouseenter={() => (hoveredLabel = { text: symbolsLabel(edge.symbols), x: edge.labelX, y: edge.labelY })}
+                onmouseleave={() => (hoveredLabel = null)}
+              >
                 <title>{edgeTitle(edge)}</title>
                 <rect x={-edge.labelWidth / 2} y="-8" width={edge.labelWidth} height="16" rx="3" />
                 <text>{edge.label}</text>
@@ -144,6 +182,9 @@
           </g>
         {/each}
       </svg>
+      {#if hoveredLabel}
+        <div class="structure-edge-tooltip" style="left:{hoveredLabel.x * zoom}px;top:{hoveredLabel.y * zoom - 12}px">{hoveredLabel.text}</div>
+      {/if}
     </div>
     <details class="structure-details">
       <summary>依存の詳細 ({edgeDetails.length})</summary>
