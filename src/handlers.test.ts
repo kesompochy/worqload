@@ -251,6 +251,46 @@ test("clicking a feedback anchor chip routes to gotoAnchorTarget", async () => {
   expect(state.pendingScrollTo).toEqual({ anchor: { path: "src/bar.ts", lineStart: 1, lineEnd: 1 } });
 });
 
+function diffDirToggleClick(path: string) {
+  const row = { getAttribute: (a: string) => (a === "data-diff-dir-toggle" ? path : null) };
+  return { target: { closest: (sel: string) => (sel === "[data-diff-dir-toggle]" ? row : null) } };
+}
+
+function diffFileJumpClick(path: string) {
+  const row = { getAttribute: (a: string) => (a === "data-diff-file-jump" ? path : null) };
+  return { target: { closest: (sel: string) => (sel === "[data-diff-file-jump]" ? row : null) } };
+}
+
+test("clicking a directory row in the Diff tree toggles its collapse with a fresh Set", () => {
+  state.diffTreeCollapsed = new Set();
+  const before = state.diffTreeCollapsed;
+
+  onDetailBodyClick(diffDirToggleClick("src"));
+  expect(state.diffTreeCollapsed).not.toBe(before);
+  expect(state.diffTreeCollapsed.has("src")).toBe(true);
+
+  onDetailBodyClick(diffDirToggleClick("src"));
+  expect(state.diffTreeCollapsed.has("src")).toBe(false);
+});
+
+test("clicking a file row in the Diff tree un-collapses the diff-file and queues a scroll to it", () => {
+  state.collapsedFiles = new Set(["src/foo.ts"]);
+  state.pendingScrollTo = null;
+
+  onDetailBodyClick(diffFileJumpClick("src/foo.ts"));
+
+  expect(state.collapsedFiles.has("src/foo.ts")).toBe(false);
+  expect(state.pendingScrollTo).toEqual({ article: { attr: "data-diff-path", value: "src/foo.ts" } });
+});
+
+test("selectSession resets the Diff tab's directory collapse state", async () => {
+  state.diffTreeCollapsed = new Set(["src"]);
+
+  await selectSession("session-x");
+
+  expect(state.diffTreeCollapsed.size).toBe(0);
+});
+
 test("gotoAnchorTarget falls back to the Files tab when the path is not in the diff", async () => {
   state.diff = "";  // path is not part of the diff
   state.files = ["src/util.ts"];

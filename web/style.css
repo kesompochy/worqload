@@ -159,7 +159,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .diff-expand-label { color: var(--text-dim); }
 .diff-expand-btn { background: transparent; border: 0; color: var(--accent); font: inherit; cursor: pointer; padding: 0 .6rem; }
 .diff-expand-btn:hover { text-decoration: underline; }
-.file-explorer { display: flex; gap: .8rem; align-items: flex-start; }
+.file-explorer, .diff-explorer { display: flex; gap: .8rem; align-items: flex-start; }
+.diff-files-pane { flex: 1; min-width: 0; }
 .file-tree-pane { flex: 0 0 17rem; max-height: calc(100vh - 13rem); overflow: auto; border: 1px solid var(--border); border-radius: 4px; padding: .35rem; position: sticky; top: 0; }
 .file-tree-pane .empty { color: var(--text-dim); font-style: italic; padding: .5rem; }
 .file-tree-list { font-family: ui-monospace, monospace; font-size: 12.5px; }
