@@ -17,7 +17,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { buildStructureModel } from "../structure-view.js";
+  import { buildStructureModel, edgeLabelWidth } from "../structure-view.js";
   import { openFileFromStructure } from "../handlers.js";
 
   const data = $derived(appState.structure);
@@ -25,13 +25,11 @@
 
   const edgeKey = edge => `${edge.from} ${edge.to}`;
 
-  // The full symbol list for an edge's tooltip / the details list.
+  // The full symbol list for the "依存の詳細" list (no tooltip on the figure
+  // any more — hovering an edge label or a node reveals the full names in place).
   function symbolsLabel(symbols) {
     if (!symbols || symbols.length === 0) return "(副作用 import のみ)";
     return `{ ${symbols.join(", ")} }`;
-  }
-  function edgeTitle(edge) {
-    return `${edge.from} → ${edge.to}\n${symbolsLabel(edge.symbols)}`;
   }
   // Edges sorted for the "依存の詳細" list: by importing file, then imported file.
   const edgeDetails = $derived(
@@ -60,10 +58,13 @@
   const nodeDimmed = path => related != null && !related.paths.has(path);
   const edgeDimmed = edge => related != null && !related.keys.has(edgeKey(edge));
 
-  // A symbol label that the human is hovering: shows the full untruncated text
-  // in an HTML tooltip overlaid on the canvas. (SVG `<title>` already produces
-  // a native tooltip after a delay — this one is immediate and visible.)
-  let hoveredLabel = $state(null); // { text, x, y } in SVG coordinates
+  // An edge label expands to its full untruncated text — overriding the
+  // pre-computed `edge.label` — when the human's cursor is on it, or when the
+  // edge connects to whichever node is hovered/focused (the highlighted set).
+  let hoveredEdgeKey = $state(null);
+  const isExpanded = edge =>
+    hoveredEdgeKey === edgeKey(edge) || (related != null && related.keys.has(edgeKey(edge)));
+  const fullSymbols = symbols => symbols.join(", ");
 
   // Zoom for the whole canvas, applied as a scale on the rendered SVG size; the
   // viewBox stays at the model's native dimensions so the SVG scales crisply.
@@ -140,21 +141,36 @@
             class:dim={edgeDimmed(edge)}
             d={edgePath(edge)}
             marker-end={edge.inCycle ? "url(#structure-arrow-cycle)" : "url(#structure-arrow)"}
-          ><title>{edgeTitle(edge)}</title></path>
+          />
         {/each}
         {#if appState.structureShowSymbols}
+          <!-- Two passes so an expanded label always draws on top of neighbours. -->
           {#each model.edges as edge}
-            {#if edge.label}
+            {#if edge.label && !isExpanded(edge)}
               <g
                 class="structure-edge-label"
                 class:dim={edgeDimmed(edge)}
                 transform="translate({edge.labelX},{edge.labelY})"
-                onmouseenter={() => (hoveredLabel = { text: symbolsLabel(edge.symbols), x: edge.labelX, y: edge.labelY })}
-                onmouseleave={() => (hoveredLabel = null)}
+                onmouseenter={() => (hoveredEdgeKey = edgeKey(edge))}
+                onmouseleave={() => (hoveredEdgeKey = null)}
               >
-                <title>{edgeTitle(edge)}</title>
                 <rect x={-edge.labelWidth / 2} y="-8" width={edge.labelWidth} height="16" rx="3" />
                 <text>{edge.label}</text>
+              </g>
+            {/if}
+          {/each}
+          {#each model.edges as edge}
+            {#if edge.label && isExpanded(edge)}
+              {@const full = fullSymbols(edge.symbols)}
+              {@const fullW = edgeLabelWidth(full)}
+              <g
+                class="structure-edge-label expanded"
+                transform="translate({edge.labelX},{edge.labelY})"
+                onmouseenter={() => (hoveredEdgeKey = edgeKey(edge))}
+                onmouseleave={() => (hoveredEdgeKey = null)}
+              >
+                <rect x={-fullW / 2} y="-8" width={fullW} height="16" rx="3" />
+                <text>{full}</text>
               </g>
             {/if}
           {/each}
@@ -182,9 +198,6 @@
           </g>
         {/each}
       </svg>
-      {#if hoveredLabel}
-        <div class="structure-edge-tooltip" style="left:{hoveredLabel.x * zoom}px;top:{hoveredLabel.y * zoom - 12}px">{hoveredLabel.text}</div>
-      {/if}
     </div>
     <details class="structure-details">
       <summary>依存の詳細 ({edgeDetails.length})</summary>
