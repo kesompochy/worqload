@@ -167,7 +167,7 @@
             <div class="filename">{a.filename}</div>
             <div class="md">{@html renderMarkdown(a.content)}</div>
             {#if typeof a.command === "string"}
-              <textarea class="ask-answer" rows="2" placeholder="Optional reason (sent to the agent if you reject)..." style="margin-top:.4rem"></textarea>
+              <textarea class="ask-answer" rows="2" placeholder="Optional note to the agent (sent on approve or reject)..." style="margin-top:.4rem"></textarea>
               <div class="row" style="margin-top:.3rem">
                 <button class="ask-reject">Reject</button>
                 <button class="ask-approve">Approve &amp; Run</button>

@@ -255,15 +255,19 @@ function fencedBlock(text: string): string {
   return "```\n" + (text === "" ? "(empty)" : text.replace(/\n$/, "")) + "\n```";
 }
 
-function formatApprovedCommandFeedback(escalationFilename: string, command: string, result: ApprovedCommandResult): string {
-  return [
+function formatApprovedCommandFeedback(escalationFilename: string, command: string, result: ApprovedCommandResult, note: string): string {
+  const parts = [
     `Re: command approval ${escalationFilename}`,
     "The human approved this command. worqload ran it in your worktree; here is the result.",
     `## Command\n\n${fencedBlock(command)}`,
+  ];
+  if (note !== "") parts.push(`## Human note\n\n${note}`);
+  parts.push(
     `## Exit code\n\n${describeCommandExit(result)}`,
     `## stdout\n\n${fencedBlock(result.stdout)}`,
     `## stderr\n\n${fencedBlock(result.stderr)}`,
-  ].join("\n\n") + "\n";
+  );
+  return parts.join("\n\n") + "\n";
 }
 
 function formatRejectedCommandFeedback(escalationFilename: string, command: string, reason: string): string {
@@ -1388,18 +1392,19 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       try { command = ((await sidecarFile.json()) as CommandApproval).command ?? ""; } catch { /* corrupt sidecar */ }
       await moveFile(askingFilePath, join(resolvedDir, params.filename));
       await moveFile(sidecarPath, join(resolvedDir, commandSidecarFilename(params.filename)));
+      const note = typeof body.content === "string" ? body.content.trim() : "";
       if (decision === "approve") {
         runResult = await runApprovedCommand(command, meta.worktreePath);
-        feedbackContent = formatApprovedCommandFeedback(params.filename, command, runResult);
+        feedbackContent = formatApprovedCommandFeedback(params.filename, command, runResult, note);
       } else {
-        const reason = typeof body.content === "string" ? body.content.trim() : "";
-        feedbackContent = formatRejectedCommandFeedback(params.filename, command, reason);
+        feedbackContent = formatRejectedCommandFeedback(params.filename, command, note);
       }
       slug = `command-${decision}`;
       resolvedPayload = {
         filename: params.filename,
         decision,
         command,
+        ...(note ? { note } : {}),
         ...(runResult
           ? {
               exitCode: runResult.exitCode,
