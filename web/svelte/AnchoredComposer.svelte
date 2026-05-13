@@ -134,8 +134,8 @@
     onAnchoredFeedback();
   }
 
-  const POPOVER_WIDTH = 440;
-  const POPOVER_HEIGHT_ESTIMATE = 130;
+  const POPOVER_WIDTH = 540;
+  const POPOVER_HEIGHT_ESTIMATE = 170;
   const GAP = 8;
   const style = $derived.by(() => {
     const r = anchorRect;
