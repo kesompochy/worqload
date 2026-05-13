@@ -18,7 +18,7 @@
   import FilesView from "./FilesView.svelte";
   import StructureView from "./StructureView.svelte";
   import EventsView from "./EventsView.svelte";
-  import { onDetailBodyClick, onResolve } from "../handlers.js";
+  import { onDetailBodyClick, onResolve, onDetailBodyPointerOver, onDetailBodyPointerOut } from "../handlers.js";
 
   // Tracked across the answer textarea's keydowns so a confirming Enter mid-IME
   // composition doesn't also submit (same guard as Composer.svelte).
@@ -157,7 +157,8 @@
 {#if appState.selected && appState.detail}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="detail-body" class:diff-view={appState.activeTab === "diff"} bind:this={bodyEl} onclick={onDetailBodyClick}>
+  <!-- svelte-ignore a11y_mouse_events_have_key_events -->
+  <div class="detail-body" class:diff-view={appState.activeTab === "diff"} bind:this={bodyEl} onclick={onDetailBodyClick} onmouseover={onDetailBodyPointerOver} onmouseout={onDetailBodyPointerOut}>
     {#if appState.asking.length > 0}
       <section class="asking">
         <div class="label">⚠ Waiting for you — respond below to resume</div>

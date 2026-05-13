@@ -46,7 +46,7 @@
                 <span class="ln">{seg.row.kind === "remove" ? seg.row.oldNo : ""}</span>
                 <span class="ln">{seg.row.kind === "remove" ? "" : seg.row.newNo}</span>
                 <span class="body">{@html highlightCode(seg.row.body, file.lang)}</span>
-                {#if fbHere.length > 0}<span class="line-feedback-chips">{#each fbHere as fn (fn)}<button type="button" class="line-feedback-chip" title="フィードバック {fn} — クリックで表示" data-goto-feedback={fn}>↳ {fn}</button>{/each}</span>{/if}
+                {#if fbHere.length > 0}<button type="button" class="feedback-anchor-pin" data-feedback-preview={fbHere.join(",")} title="{fbHere.length > 1 ? `${fbHere.length}件のフィードバック` : `フィードバック ${fbHere[0]}`} — ホバーで内容表示">💬{#if fbHere.length > 1}<span class="feedback-anchor-count">{fbHere.length}</span>{/if}</button>{/if}
               </div>
             {/if}
           {/each}

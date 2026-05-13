@@ -237,23 +237,41 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
   animation: anchor-flash 1s ease-out forwards;
 }
 /* "There is sent feedback anchored here": a left stripe on the line/block at all
-   times, plus — only while the line/block is the current anchor (you clicked it) —
-   a strip of "↳ <feedback>" chips floating just below it, so they never overlap
-   the line's own text. One chip per feedback anchored there. Each links to its
-   feedback via the same data-goto-feedback hook the reply chips use. */
+   times, plus an always-visible 💬 pin in the right margin. Hovering the pin
+   opens the floating preview popover (FeedbackPreviewPopover.svelte) with the
+   feedback bodies and the reports replying to them. */
 .diff-line.has-feedback, .file-line.has-feedback, .md [data-feedback-here] { box-shadow: inset 2px 0 0 #bc8cff; position: relative; }
-.line-feedback-chips { position: absolute; left: .5rem; top: 100%; z-index: 3; display: none; flex-wrap: wrap; gap: .25rem; padding: .15rem 0; }
-.diff-line.selected > .line-feedback-chips,
-.file-line.selected > .line-feedback-chips,
-.md [data-feedback-here][aria-current="true"] > .line-feedback-chips { display: flex; }
-/* Opaque background — these chips float over code/prose, so anything translucent
-   would be unreadable where it overlaps the text behind it. */
-.line-feedback-chip {
-  background: #251f33; border: 1px solid #7c5fb8; color: #d6c4ff;
-  padding: 0 .35rem; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.6;
-  cursor: pointer; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.feedback-anchor-pin {
+  position: absolute; top: 50%; right: .2rem; transform: translateY(-50%); z-index: 3;
+  display: inline-flex; align-items: center; gap: .1rem;
+  background: #251f33; border: 1px solid #7c5fb8; border-radius: 999px;
+  padding: 0 .25rem; line-height: 1.5; font-size: 10px; cursor: pointer;
 }
-.line-feedback-chip:hover { background: #322a44; border-color: #9a7ad0; }
+.feedback-anchor-pin:hover { background: #322a44; border-color: #9a7ad0; }
+.md [data-feedback-here] > .feedback-anchor-pin { top: .15rem; transform: none; }
+.feedback-anchor-count { color: #d6c4ff; font-family: ui-monospace, monospace; font-weight: 600; }
+
+/* The anchored-feedback preview popover. Mirrors .code-nav-popover's float. */
+.feedback-preview-popover {
+  position: fixed; z-index: 61; width: 380px; max-width: 92vw; max-height: 64vh;
+  overflow-y: auto; overscroll-behavior: contain;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.4); padding: .5rem; font-size: 12.5px;
+}
+.fb-preview-entry + .fb-preview-entry { margin-top: .6rem; padding-top: .6rem; border-top: 1px solid var(--border); }
+.fb-preview-title {
+  display: block; width: 100%; text-align: left; background: rgba(188,140,255,.12);
+  border: 1px solid rgba(188,140,255,.35); color: #d6c4ff; border-radius: 4px;
+  padding: .15rem .4rem; margin-bottom: .35rem; cursor: pointer;
+  font-family: ui-monospace, monospace; font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fb-preview-title:hover { background: rgba(188,140,255,.22); }
+.fb-preview-reply { background: rgba(88,166,255,.12); border-color: rgba(88,166,255,.35); color: var(--accent); margin-top: .45rem; }
+.fb-preview-reply:hover { background: rgba(88,166,255,.22); }
+.fb-preview-anchor { color: var(--text-dim); }
+.fb-preview-md { margin-bottom: .1rem; }
+.fb-preview-noreply { color: var(--text-dim); font-size: 11px; padding: .1rem .1rem .15rem; }
 .event-row { border-bottom: 1px solid var(--border); font-family: ui-monospace, monospace; font-size: 12px; }
 .event-line { display: grid; grid-template-columns: 1ch 5ch 12rem 6rem 1fr; gap: .5rem; padding: .3rem .5rem; align-items: baseline; cursor: pointer; user-select: none; }
 .event-line:hover { background: var(--panel); }

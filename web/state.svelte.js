@@ -37,6 +37,7 @@ export const state = $state({
   actionResults: new Map(),  // actionId -> last run result observed in this browser view
   renamingSessionId: null,   // session id whose sidebar title is being edited inline (null = none)
   pendingScrollTo: null,     // { anchor: {path,lineStart,lineEnd} } | { article: {attr,value} } | null: a "go to" request DetailBody resolves (scroll + flash) after the next render
+  feedbackPreview: null,     // { entries: [{ feedback, replies: [report,...] }], rect: {top,bottom,left,right} } | null: the floating popover hovering an anchored-feedback pin opens (see FeedbackPreviewPopover.svelte)
 });
 
 // Diff view: the server hands us full file context; we collapse unchanged
@@ -65,11 +66,24 @@ export function feedbackAnchorsForPath(path) {
 }
 
 // Filenames of every sent feedback whose anchor covers `lineNo` in `path` (newest
-// first). Drives the per-line feedback chips on the diff/file/report views.
+// first). Drives the per-line feedback pins on the diff/file/report views.
 export function feedbacksAnchoredAt(path, lineNo) {
   return state.feedbackHistory
     .filter(f => f.anchor && f.anchor.path === path && lineNo >= f.anchor.lineStart && lineNo <= f.anchor.lineEnd)
     .map(f => f.filename);
+}
+
+// For the floating preview popover: given feedback filenames (as carried on a
+// `data-feedback-preview` pin), resolve each to its feedback entry plus the
+// reports written in reply to it. Unknown filenames are dropped.
+export function feedbackPreviewEntries(filenames) {
+  return filenames
+    .map(name => {
+      const feedback = state.feedbackHistory.find(f => f.filename === name);
+      if (!feedback) return null;
+      return { feedback, replies: state.reports.filter(r => r.replyTo === name) };
+    })
+    .filter(Boolean);
 }
 
 export function isReportExpanded(report) {

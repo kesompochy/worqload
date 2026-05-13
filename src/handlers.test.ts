@@ -17,8 +17,16 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle } = await import("../web/handlers.js");
+const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, openFeedbackPreview, closeFeedbackPreview, onDetailBodyPointerOver, onDetailBodyPointerOut } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
+
+function feedbackPin(filenames: string) {
+  return {
+    getAttribute: (a: string) => (a === "data-feedback-preview" ? filenames : null),
+    getBoundingClientRect: () => ({ top: 10, bottom: 20, left: 30, right: 40 }),
+    contains: () => false,
+  };
+}
 
 // onDetailBodyClick reads its event off the DOM (e.target.closest); fake just
 // enough of it: closest(selector) returns a stub element for the toggle row.
@@ -263,6 +271,48 @@ test("clicking a report's reply-link chip routes to the referenced feedback", as
 
   expect(state.activeTab).toBe("feedback");
   expect(state.pendingScrollTo).toEqual({ article: { attr: "data-feedback-filename", value: "002-feedback.md" } });
+});
+
+test("hovering an anchored-feedback pin opens the preview with the feedback and its reply reports", () => {
+  state.feedbackHistory = [
+    { filename: "003-anchored.md", content: "looks off here", status: "read", anchor: { path: "src/a.ts", lineStart: 4, lineEnd: 4 } },
+    { filename: "002-feedback.md", content: "unrelated", status: "read" },
+  ];
+  state.reports = [
+    { filename: "010-fix.md", content: "fixed", replyTo: "003-anchored.md" },
+    { filename: "009-other.md", content: "no", replyTo: "002-feedback.md" },
+  ];
+  state.feedbackPreview = null;
+
+  onDetailBodyPointerOver({ target: { closest: (sel: string) => (sel === "[data-feedback-preview]" ? feedbackPin("003-anchored.md") : null) } });
+
+  expect(state.feedbackPreview?.entries).toEqual([
+    { feedback: state.feedbackHistory[0], replies: [state.reports[0]] },
+  ]);
+  expect(state.feedbackPreview?.rect).toEqual({ top: 10, bottom: 20, left: 30, right: 40 });
+});
+
+test("a pin naming an unknown feedback opens nothing", () => {
+  state.feedbackHistory = [];
+  state.reports = [];
+  state.feedbackPreview = null;
+  openFeedbackPreview(feedbackPin("404-gone.md"));
+  expect(state.feedbackPreview).toBeNull();
+});
+
+test("leaving a pin toward neither the pin nor the popover closes the preview after the debounce", async () => {
+  state.feedbackHistory = [{ filename: "003-anchored.md", content: "x", status: "read" }];
+  state.reports = [];
+  openFeedbackPreview(feedbackPin("003-anchored.md"));
+  expect(state.feedbackPreview).not.toBeNull();
+
+  const pin = feedbackPin("003-anchored.md");
+  onDetailBodyPointerOut({ target: { closest: (sel: string) => (sel === "[data-feedback-preview]" ? pin : null) }, relatedTarget: null });
+  expect(state.feedbackPreview).not.toBeNull(); // still open: close is debounced
+  await new Promise(resolve => setTimeout(resolve, 200));
+  expect(state.feedbackPreview).toBeNull();
+
+  closeFeedbackPreview();
 });
 
 test("onReorderSessions moves the dragged session before the target and persists the new order", async () => {
