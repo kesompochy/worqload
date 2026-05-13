@@ -117,6 +117,52 @@ test("buildCallGraphView reports cycles among the callable functions it walked",
   expect(view.cycles).toEqual([[ "a.ts:0:0:a", "a.ts:10:0:c", "a.ts:5:0:b" ]]);
 });
 
+test("buildCallGraphView with anchorSymbol skips the documentSymbol scan and walks one specific function", async () => {
+  // Three functions live in the file; we only anchor on `greet` (line 3).
+  // documentSymbol should NEVER be consulted, and only greet's hop neighbours
+  // should land in the result.
+  const greet = item("src/lib.ts", "greet", 3);
+  const punct = item("src/util.ts", "punct", 5);
+  const run = item("src/app.ts", "run", 1);
+  let documentSymbolCalls = 0;
+  let prepareCalls: Array<{ rel: string; line: number }> = [];
+
+  const view = await buildCallGraphView({
+    rootAbsPath: ROOT,
+    changedFiles: [], // ignored when anchorSymbol is set
+    anchorSymbol: { path: "src/lib.ts", line: 3, character: 0 },
+    async documentSymbol() {
+      documentSymbolCalls++;
+      return [];
+    },
+    async prepareCallHierarchy(rel, pos) {
+      prepareCalls.push({ rel, line: pos.line });
+      if (rel === "src/lib.ts" && pos.line === 3) return [greet];
+      return [];
+    },
+    async incomingCalls(it) {
+      if (it.name === "greet") return [{ from: run, fromRanges: [range(2)] }];
+      return [];
+    },
+    async outgoingCalls(it) {
+      if (it.name === "greet") return [{ to: punct, fromRanges: [range(4)] }];
+      return [];
+    },
+  });
+
+  expect(documentSymbolCalls).toBe(0);
+  expect(prepareCalls).toEqual([{ rel: "src/lib.ts", line: 3 }]);
+  expect(view.graph.nodes.sort()).toEqual([
+    "src/app.ts:1:0:run",
+    "src/lib.ts:3:0:greet",
+    "src/util.ts:5:0:punct",
+  ]);
+  // changedFunctions is the set of seeds the walk pinned — just `greet` in
+  // anchor mode (the import-graph view's `changedFiles` is empty for the same
+  // reason, mirroring the file-anchor design).
+  expect(view.changedFunctions).toEqual(["src/lib.ts:3:0:greet"]);
+});
+
 test("buildCallGraphView swallows per-symbol errors and keeps going", async () => {
   const a = item("a.ts", "a", 0);
   const view = await buildCallGraphView({

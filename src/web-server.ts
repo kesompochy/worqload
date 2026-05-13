@@ -1150,29 +1150,66 @@ function parseHopsParam(raw: string | null): number | undefined {
 // changed files we process so a giant diff doesn't tie up the language server
 // long enough for the browser to give up on the response.
 const CALL_GRAPH_MAX_CHANGED_FILES = 40;
-async function getCallGraph(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+// `?anchorPath` (and optional `?anchorLine` / `?anchorCharacter`, LSP 0-based)
+// narrow the walk to one seed instead of the changeset. With `anchorPath`
+// alone the seeds are every callable symbol in that file; with `anchorLine`
+// they're just the symbol the human pinned from the code-nav popover.
+async function getCallGraph(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     try {
+      const url = new URL(req.url);
+      const anchorPath = (url.searchParams.get("anchorPath") || "").trim() || null;
+      const anchorLine = parseIntegerParam(url.searchParams.get("anchorLine"));
+      const anchorCharacter = parseIntegerParam(url.searchParams.get("anchorCharacter"));
       const diffBase = await ctx.worktreeOps.resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
       const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase);
       const allPaths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
       const inWorktree = new Set(allPaths);
-      const allChanged = parseChangedFilePaths(diff)
-        .filter(p => inWorktree.has(p) && structureLanguageOf(p) !== null);
-      const truncated = allChanged.length > CALL_GRAPH_MAX_CHANGED_FILES;
-      const changedFiles = truncated ? allChanged.slice(0, CALL_GRAPH_MAX_CHANGED_FILES) : allChanged;
+
+      let changedFiles: string[];
+      let anchorSymbol: { path: string; line: number; character?: number } | undefined;
+      let totalChangedFiles: number;
+      let truncated: boolean;
+      if (anchorPath && anchorLine !== null) {
+        anchorSymbol = { path: anchorPath, line: anchorLine, character: anchorCharacter ?? undefined };
+        changedFiles = [];
+        truncated = false;
+        totalChangedFiles = 0;
+      } else if (anchorPath) {
+        changedFiles = inWorktree.has(anchorPath) && structureLanguageOf(anchorPath) !== null ? [anchorPath] : [];
+        truncated = false;
+        totalChangedFiles = changedFiles.length;
+      } else {
+        const allChanged = parseChangedFilePaths(diff)
+          .filter(p => inWorktree.has(p) && structureLanguageOf(p) !== null);
+        truncated = allChanged.length > CALL_GRAPH_MAX_CHANGED_FILES;
+        changedFiles = truncated ? allChanged.slice(0, CALL_GRAPH_MAX_CHANGED_FILES) : allChanged;
+        totalChangedFiles = allChanged.length;
+      }
+
       const view = await collectCallGraph({
         worktreePath: meta.worktreePath,
         changedFiles,
+        anchorSymbol,
         languageOf: p => structureLanguageOf(p) ?? null,
       });
-      return json({ ...view, truncated, totalChangedFiles: allChanged.length });
+      return json({
+        ...view, truncated, totalChangedFiles,
+        anchorPath: anchorPath ?? undefined,
+        anchorLine: anchorLine ?? undefined,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[/sessions/${params.id}/call-graph] ${message}`);
       return json({ error: message }, 500);
     }
   });
+}
+
+function parseIntegerParam(raw: string | null): number | null {
+  if (raw === null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.floor(n) : null;
 }
 
 async function getFile(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {

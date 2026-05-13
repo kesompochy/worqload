@@ -28,11 +28,16 @@
     clearStructureFocus,
     clearStructureAnchor,
     setStructureHops,
+    setStructureMode,
   } from "../handlers.js";
   import { ensureCallGraphLoaded } from "../api.js";
 
   const anchor = $derived(appState.structureAnchor);
-  const anchorPath = $derived(anchor && anchor.kind === "file" ? anchor.path : null);
+  const anchorPath = $derived(anchor?.path ?? null);
+  const anchorLine = $derived(anchor?.kind === "symbol" ? anchor.line : null);
+  const anchorPillLabel = $derived(
+    anchorPath == null ? "" : (anchorLine != null ? `${anchorPath}:${anchorLine}` : anchorPath)
+  );
   const hops = $derived(appState.structureHops);
   // The toolbar's hops selector: empty string means "let the server pick the
   // default" — selecting an integer overrides it. The Number()/null roundtrip
@@ -44,6 +49,21 @@
   }
   function onClearAnchor() {
     void clearStructureAnchor();
+  }
+  // The "anchored" emphasis: in file mode the node id IS the file path; in
+  // function mode the node id is a function id and the file lives in nodeMeta.
+  // A symbol anchor (line set) narrows the match to the function whose
+  // selection-range line matches the human's pinned line (-1 because the
+  // anchor stores 1-based for human readability).
+  function isAnchoredNode(nodeId) {
+    if (anchorPath == null) return false;
+    if (mode === "function") {
+      const meta = nodeMeta[nodeId];
+      if (!meta || meta.path !== anchorPath) return false;
+      if (anchorLine == null) return true;
+      return meta.line === anchorLine - 1;
+    }
+    return nodeId === anchorPath;
   }
 
   // "file" mode draws the import graph (state.structure); "function" mode
@@ -200,13 +220,13 @@
 <div class="structure-view">
   <div class="structure-toolbar">
     <span class="structure-mode">
-      <label><input type="radio" name="structureMode" value="file" bind:group={appState.structureMode} /> Files</label>
-      <label><input type="radio" name="structureMode" value="function" bind:group={appState.structureMode} /> Functions</label>
+      <label><input type="radio" name="structureMode" value="file" checked={appState.structureMode === "file"} onchange={() => setStructureMode("file")} /> Files</label>
+      <label><input type="radio" name="structureMode" value="function" checked={appState.structureMode === "function"} onchange={() => setStructureMode("function")} /> Functions</label>
     </span>
     {#if anchorPath}
-      <span class="structure-anchor-pill" title="Show in Structure からアンカー指定中">
+      <span class="structure-anchor-pill" title={anchorLine != null ? "Show in Structure からシンボルアンカー指定中" : "Show in Structure からファイルアンカー指定中"}>
         <span class="structure-anchor-icon" aria-hidden="true">⌘</span>
-        <code>{anchorPath}</code>
+        <code>{anchorPillLabel}</code>
         <button type="button" class="structure-anchor-clear" onclick={onClearAnchor} title="アンカーを解除して changeset 全体に戻す" aria-label="アンカー解除">×</button>
       </span>
     {/if}
@@ -297,7 +317,7 @@
         {/if}
         {#each model.nodes as node (node.path)}
           {@const expanded = node.path === currentFocus}
-          {@const anchored = anchorPath != null && node.path === anchorPath}
+          {@const anchored = isAnchoredNode(node.path)}
           {@const meta = mode === "function" ? nodeMeta[node.path] : null}
           {@const filePath = meta ? meta.path : node.path}
           {@const line = meta ? meta.line + 1 : null}

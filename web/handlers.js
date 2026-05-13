@@ -17,6 +17,7 @@ import {
   refreshDiff,
   ensureFilesLoaded,
   ensureStructureLoaded,
+  ensureCallGraphLoaded,
   selectFile,
   openWs,
 } from "./api.js";
@@ -506,16 +507,38 @@ export function copyAnchorPermalink() {
   copyPermalink(state.anchor.path, state.anchor.lineStart, state.anchor.lineEnd);
 }
 
+// The Structure tab's file/function-mode toggle. Pushes the URL so Back walks
+// between modes, and triggers the corresponding fetch lazily (call-graph
+// fetches go out to a language server, so we only do it when the user asks).
+export async function setStructureMode(mode) {
+  if (mode !== "file" && mode !== "function") return;
+  if (state.structureMode === mode) return;
+  state.structureMode = mode;
+  pushUrlState({
+    sessionId: state.selected, tab: state.activeTab, focusStack: state.structureFocusStack,
+    structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+    structureMode: mode,
+  });
+  if (state.activeTab === "structure") {
+    if (mode === "function") await ensureCallGraphLoaded();
+    else await ensureStructureLoaded();
+  }
+}
+
 export async function switchTab(tab, { historyAction = "push" } = {}) {
   if (tab === state.activeTab) return;
   state.activeTab = tab;
   syncHistory(historyAction, {
     sessionId: state.selected, tab, focusStack: state.structureFocusStack,
     structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+    structureMode: state.structureMode,
   });
   if (tab === "diff") await refreshDiff();
   if (tab === "files") await ensureFilesLoaded();
-  if (tab === "structure") await ensureStructureLoaded();
+  if (tab === "structure") {
+    if (state.structureMode === "function") await ensureCallGraphLoaded();
+    else await ensureStructureLoaded();
+  }
 }
 
 // Open a file from the Structure graph: switch to the Files tab and load it
@@ -540,7 +563,7 @@ export function pushStructureFocus(path) {
   if (stack[stack.length - 1] === path) return;
   const next = [...stack, path];
   state.structureFocusStack = next;
-  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: next, structureAnchor: state.structureAnchor, structureHops: state.structureHops });
+  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: next, structureAnchor: state.structureAnchor, structureHops: state.structureHops, structureMode: state.structureMode });
 }
 
 // "Back" — pop one level of focus and push the resulting URL so the browser's
@@ -551,7 +574,7 @@ export function popStructureFocus() {
   if (stack.length === 0) return;
   const next = stack.slice(0, -1);
   state.structureFocusStack = next;
-  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: next, structureAnchor: state.structureAnchor, structureHops: state.structureHops });
+  pushUrlState({ sessionId: state.selected, tab: state.activeTab, focusStack: next, structureAnchor: state.structureAnchor, structureHops: state.structureHops, structureMode: state.structureMode });
 }
 
 export function clearStructureFocus() {
@@ -569,14 +592,40 @@ export async function setStructureAnchor(path) {
   state.structureAnchor = { kind: "file", path };
   state.structureFocusStack = [];
   state.structureLoaded = false;
+  state.callGraphLoaded = false;
   if (state.activeTab !== "structure") {
     await switchTab("structure");
   } else {
     pushUrlState({
       sessionId: state.selected, tab: "structure", focusStack: [],
       structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+      structureMode: state.structureMode,
     });
-    await ensureStructureLoaded(true);
+    await reloadActiveStructure();
+  }
+}
+
+// Symbol-anchored counterpart to setStructureAnchor: pins the call graph to a
+// specific function (path + 1-based line, optionally with the LSP character
+// for an exact match). Triggered from the code-nav popover's "Show in
+// Structure" entry; flips the Structure tab into function mode since that's
+// what symbol anchoring is built for.
+export async function setStructureSymbolAnchor(path, line, character) {
+  if (!state.selected || !path || typeof line !== "number") return;
+  state.structureAnchor = { kind: "symbol", path, line, character: typeof character === "number" ? character : undefined };
+  state.structureMode = "function";
+  state.structureFocusStack = [];
+  state.structureLoaded = false;
+  state.callGraphLoaded = false;
+  if (state.activeTab !== "structure") {
+    await switchTab("structure");
+  } else {
+    pushUrlState({
+      sessionId: state.selected, tab: "structure", focusStack: [],
+      structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+      structureMode: "function",
+    });
+    await reloadActiveStructure();
   }
 }
 
@@ -585,16 +634,20 @@ export async function clearStructureAnchor() {
   state.structureAnchor = null;
   state.structureFocusStack = [];
   state.structureLoaded = false;
+  state.callGraphLoaded = false;
   pushUrlState({
     sessionId: state.selected, tab: state.activeTab, focusStack: [],
     structureAnchor: null, structureHops: state.structureHops,
+    structureMode: state.structureMode,
   });
-  await ensureStructureLoaded(true);
+  await reloadActiveStructure();
 }
 
 // User chose a new neighbourhood radius from the Structure toolbar. `hops` is
 // a small integer (the UI exposes 1–4) or null to mean "server default" (2;
-// DEFAULT_NEIGHBORHOOD_HOPS in src/structure-view.ts).
+// DEFAULT_NEIGHBORHOOD_HOPS in src/structure-view.ts). The call-graph
+// endpoint ignores hops (it always walks one hop), so we only re-fetch the
+// import graph.
 export async function setStructureHops(hops) {
   if (state.structureHops === hops) return;
   state.structureHops = hops;
@@ -602,8 +655,17 @@ export async function setStructureHops(hops) {
   pushUrlState({
     sessionId: state.selected, tab: state.activeTab, focusStack: state.structureFocusStack,
     structureAnchor: state.structureAnchor, structureHops: hops,
+    structureMode: state.structureMode,
   });
   await ensureStructureLoaded(true);
+}
+
+async function reloadActiveStructure() {
+  // Refetch whichever mode is currently on screen so the anchor change is
+  // visible immediately. The other mode's data is invalidated above and will
+  // refetch the next time the user flips the toolbar toggle.
+  if (state.structureMode === "function") await ensureCallGraphLoaded(true);
+  else await ensureStructureLoaded(true);
 }
 
 // Applied when the browser fires popstate (back / forward, or a hashchange-ish
@@ -611,7 +673,7 @@ export async function setStructureHops(hops) {
 // only need to bring the in-memory state in line with it. Selection and tab
 // switches go through their public handlers with historyAction "none" so they
 // don't push another entry onto an already-fired navigation.
-export async function applyUrlState({ sessionId, tab, focusStack, structureAnchor, structureHops }) {
+export async function applyUrlState({ sessionId, tab, focusStack, structureAnchor, structureHops, structureMode }) {
   if (sessionId && sessionId !== state.selected) {
     await selectSession(sessionId, { historyAction: "none" });
   }
@@ -620,16 +682,26 @@ export async function applyUrlState({ sessionId, tab, focusStack, structureAncho
     await switchTab(targetTab, { historyAction: "none" });
   }
   state.structureFocusStack = focusStack ?? [];
-  const prevAnchorPath = state.structureAnchor?.path ?? null;
-  const nextAnchorPath = structureAnchor?.path ?? null;
-  const anchorChanged = prevAnchorPath !== nextAnchorPath;
+  const prevAnchorKey = anchorKey(state.structureAnchor);
+  const nextAnchorKey = anchorKey(structureAnchor);
+  const anchorChanged = prevAnchorKey !== nextAnchorKey;
   const hopsChanged = state.structureHops !== (structureHops ?? null);
+  const targetMode = structureMode === "function" ? "function" : "file";
+  const modeChanged = state.structureMode !== targetMode;
   state.structureAnchor = structureAnchor ?? null;
   state.structureHops = structureHops ?? null;
-  if ((anchorChanged || hopsChanged) && state.activeTab === "structure") {
+  state.structureMode = targetMode;
+  if ((anchorChanged || hopsChanged || modeChanged) && state.activeTab === "structure") {
     state.structureLoaded = false;
-    await ensureStructureLoaded(true);
+    state.callGraphLoaded = false;
+    await reloadActiveStructure();
   }
+}
+
+function anchorKey(anchor) {
+  if (!anchor || !anchor.path) return "";
+  if (anchor.kind === "symbol") return `s:${anchor.path}:${anchor.line ?? ""}`;
+  return `f:${anchor.path}`;
 }
 
 // An anchor whose path is `./.worqload-reports/<filename>` points at a line in

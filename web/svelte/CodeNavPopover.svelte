@@ -9,7 +9,7 @@
   // (`state` is imported as `appState`: a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { revealFileLocation, closeCodeNav } from "../handlers.js";
+  import { revealFileLocation, closeCodeNav, setStructureSymbolAnchor } from "../handlers.js";
 
   const nav = $derived(appState.codeNav);
 
@@ -51,11 +51,11 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="code-nav-popover" style={popoverStyle} onclick={(e) => e.stopPropagation()}>
     <div class="code-nav-symbol">{nav.symbol}</div>
-    {@render section("定義", nav.definitions, nav.definitionsStatus)}
-    {@render section("使用箇所", nav.references, nav.referencesStatus)}
+    {@render section("定義", nav.definitions, nav.definitionsStatus, true)}
+    {@render section("使用箇所", nav.references, nav.referencesStatus, false)}
   </div>
 
-  {#snippet section(title, locations, status)}
+  {#snippet section(title, locations, status, allowAnchor)}
     <div class="code-nav-section">
       <div class="code-nav-section-title">{title}{#if status === "done"} ({locations.length}){/if}</div>
       {#if status === "loading"}
@@ -65,10 +65,15 @@
       {:else}
         <div class="code-nav-refs">
           {#each locations as loc, i (loc.path + ":" + loc.line + ":" + i)}
-            <button type="button" class="code-nav-item" onclick={() => revealFileLocation(loc.path, loc.line)}>
-              <span class="code-nav-loc">{loc.path}<span class="code-nav-lineno">:{loc.line}</span></span>
-              {#if loc.text}<span class="code-nav-text">{loc.text}</span>{/if}
-            </button>
+            <div class="code-nav-row">
+              <button type="button" class="code-nav-item" onclick={() => revealFileLocation(loc.path, loc.line)}>
+                <span class="code-nav-loc">{loc.path}<span class="code-nav-lineno">:{loc.line}</span></span>
+                {#if loc.text}<span class="code-nav-text">{loc.text}</span>{/if}
+              </button>
+              {#if allowAnchor}
+                <button type="button" class="code-nav-anchor-btn" title="この定義を起点に Structure (Functions) を描画" onclick={() => { closeCodeNav(); void setStructureSymbolAnchor(loc.path, loc.line, loc.column); }}>⌘</button>
+              {/if}
+            </div>
           {/each}
         </div>
       {/if}

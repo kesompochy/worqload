@@ -160,17 +160,20 @@ function buildStructureQuery() {
   return qs ? `?${qs}` : "";
 }
 
-// Function-mode counterpart: LSP-driven call graph for the changeset's
-// callable symbols. Slower than the import graph (each query goes out to a
-// language server), so it loads on demand when the user flips the toolbar
-// mode toggle.
+// Function-mode counterpart: LSP-driven call graph. By default seeded by the
+// changeset's callable symbols; if `state.structureAnchor` is a symbol the
+// walk pins to that one function instead, and if it's a file the walk pins to
+// every callable symbol in that file. Slower than the import graph (each
+// query goes out to a language server), so it loads on demand when the user
+// flips the toolbar mode toggle.
 export async function ensureCallGraphLoaded(force = false) {
   if (!state.selected) return;
   if (state.callGraphLoaded && !force) return;
   state.callGraph = { loading: true };
   const id = state.selected;
+  const path = `/sessions/${id}/call-graph${buildCallGraphQuery()}`;
   try {
-    const data = await api("GET", `/sessions/${id}/call-graph`);
+    const data = await api("GET", path);
     if (state.selected !== id) return;
     state.callGraph = data && data.error ? { error: data.error } : data;
   } catch (e) {
@@ -178,6 +181,23 @@ export async function ensureCallGraphLoaded(force = false) {
     state.callGraph = { error: e.message };
   }
   state.callGraphLoaded = true;
+}
+
+function buildCallGraphQuery() {
+  const params = new URLSearchParams();
+  const anchor = state.structureAnchor;
+  if (anchor && anchor.path) {
+    params.set("anchorPath", anchor.path);
+    if (anchor.kind === "symbol" && typeof anchor.line === "number") {
+      // state stores 1-based line for human-readability; LSP wants 0-based.
+      params.set("anchorLine", String(anchor.line - 1));
+      if (typeof anchor.character === "number") {
+        params.set("anchorCharacter", String(anchor.character));
+      }
+    }
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
 export async function selectFile(path) {

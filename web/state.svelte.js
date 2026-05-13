@@ -34,7 +34,7 @@ export const state = $state({
   structureMode: "file", // Structure tab: "file" (import graph) | "function" (call graph via LSP)
   structureShowSymbols: true,  // Structure tab: whether per-edge import symbol-name labels are drawn (a view preference, not per-session)
   structureFocusStack: [],     // Structure tab focus history: each entry is a graph node id. Empty = whole graph. Top of stack is the current focus and the graph is filtered to that node and its direct neighbours. Clicking a node pushes; Back pops; Clear empties.
-  structureAnchor: null,       // Structure tab: { kind:"file", path } | null. null = default scope (the diff's changeset); when set, the graph is rebuilt from this file's neighbourhood instead. Pushed in from the Files/Diff tabs' "Show in Structure" buttons.
+  structureAnchor: null,       // Structure tab: { kind:"file", path } | { kind:"symbol", path, line } | null. null = default scope (the diff's changeset); a file anchor re-seeds the graph from that file's neighbourhood; a symbol anchor (function mode) re-seeds the call graph from that specific function (1-based line for human-readability — converted to 0-based at the api boundary). Pushed in from the Files/Diff tabs' "Show in Structure" buttons (file kind) and the code-nav popover (symbol kind).
   structureHops: null,         // Structure tab: neighbourhood radius override (integer 0–4) | null = server default (2). The toolbar exposes a small selector once the user wants something other than the default.
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override

@@ -195,6 +195,10 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .code-nav-loc { display: block; font-family: ui-monospace, monospace; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .code-nav-lineno { color: var(--text-dim); }
 .code-nav-text { display: block; font-family: ui-monospace, monospace; color: var(--text-dim); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.code-nav-row { display: flex; align-items: stretch; gap: .15rem; }
+.code-nav-row .code-nav-item { flex: 1 1 auto; min-width: 0; }
+.code-nav-anchor-btn { flex: 0 0 auto; background: transparent; border: 0; padding: 0 .4rem; color: var(--text-dim); cursor: pointer; border-radius: 4px; font-size: 13px; }
+.code-nav-anchor-btn:hover { background: rgba(244,184,64,.18); color: #f4b840; }
 .md { word-break: break-word; }
 .md > * { margin: 0; }
 .md > * + * { margin-top: .55rem; }

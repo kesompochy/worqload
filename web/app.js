@@ -39,6 +39,7 @@ if (idMatchesUrl && urlState.focusStack.length > 0) {
 if (idMatchesUrl) {
   state.structureAnchor = urlState.structureAnchor;
   state.structureHops = urlState.structureHops;
+  if (urlState.structureMode === "function") state.structureMode = "function";
 }
 
 // Browser Back / Forward: walk the URL stack and bring the in-memory view in
