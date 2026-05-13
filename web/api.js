@@ -21,6 +21,7 @@ export async function fetchSessions() {
   state.sessions = sessions;
   // Reports / escalations of the selected session arrive over its websocket;
   // here we cover every other session, comparing this poll to the last one.
+  // Archived sessions never gain new reports, so they don't enter this diff.
   if (notify.active()) {
     for (const n of notificationsFromSessionPoll(previous, sessions, { selectedId: state.selected })) {
       fireNotification(n);
@@ -28,6 +29,14 @@ export async function fetchSessions() {
   }
   updateDocumentTitle();
   updateLoadAverage();
+}
+
+// The archived-tab feed. Kept separate from `state.sessions` so the active
+// list — and the notification / load-average derivations that read it — stay
+// untouched while the human browses archives.
+export async function fetchArchivedSessions() {
+  const { sessions } = await api("GET", "/sessions?archived=only");
+  state.archivedSessions = sessions;
 }
 
 // The "労働の load average" pill in the sidebar header: total pending work for

@@ -11,6 +11,7 @@ import { isIdentifierName, resolveDefinitions, resolveReferences } from "./code-
 import {
   api,
   fetchSessions,
+  fetchArchivedSessions,
   fetchActions,
   reorderSessions,
   refreshDetail,
@@ -640,6 +641,43 @@ export async function revealReport(sessionId, filename) {
     const el = document.querySelector(`[data-report-filename="${CSS.escape(filename)}"]`);
     if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
   }));
+}
+
+// Sidebar tab switch: flips the visible feed between active sessions and the
+// archived list. Polling stays on whichever tab is shown (so the archived view
+// keeps up with newly archived sessions / deletions). The selected session id
+// is preserved across tab flips — an archived card in the detail pane stays
+// readable while the human browses the active list.
+export async function onSidebarTab(tab) {
+  if (tab !== "active" && tab !== "archived") return;
+  if (state.sidebarTab === tab) return;
+  state.sidebarTab = tab;
+  if (tab === "archived") {
+    await fetchArchivedSessions();
+  } else {
+    await fetchSessions();
+  }
+}
+
+// Permanent delete from the archived tab. Confirms first (no undo: the
+// worktree, the working branch, and the session dir all go), then calls the
+// backend DELETE. On success the archived feed is reloaded; if the detail pane
+// was showing this session, the selection is cleared.
+export async function onDeleteArchived(id = state.selected) {
+  if (!id) return;
+  const session = state.archivedSessions.find(s => s.id === id) || state.sessions.find(s => s.id === id);
+  const label = session?.title || session?.prompt?.slice(0, 40) || id;
+  const message = `「${label}」を削除します。\nworktree・作業ブランチ・このセッションの記録 (reports / events / feedback) が消え、復元できません。よろしいですか？`;
+  if (typeof window !== "undefined" && typeof window.confirm === "function" && !window.confirm(message)) return;
+  try {
+    await api("DELETE", `/sessions/${id}`);
+    await fetchArchivedSessions();
+    if (id === state.selected) {
+      await selectSession(null);
+    }
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
 }
 
 export async function onArchive(id = state.selected) {

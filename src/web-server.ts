@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess } from "bun";
 import { appendFileSync, existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import {
@@ -642,6 +642,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/stop", postStop),
   defineRoute("POST", "/sessions/:id/resume", postResume),
   defineRoute("POST", "/sessions/:id/archive", postArchive),
+  defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
@@ -899,9 +900,15 @@ async function resolveBranchName(params: {
 
 async function getSessions(req: Request, ctx: ServerContext): Promise<Response> {
   const url = new URL(req.url);
+  const archivedParam = url.searchParams.get("archived");
   const includeArchived = url.searchParams.get("includeArchived") === "true";
   const sessions = await listSessionMetas(ctx.sessionsDir);
-  const filtered = includeArchived ? sessions : sessions.filter(s => !s.archivedAt);
+  // archived=only is the archives-tab feed; takes precedence over includeArchived.
+  const filtered = archivedParam === "only"
+    ? sessions.filter(s => s.archivedAt)
+    : includeArchived
+      ? sessions
+      : sessions.filter(s => !s.archivedAt);
   const decorated = await Promise.all(filtered.map(async meta => {
     const dir = reportsDirFor(ctx, meta.id);
     const [reports, readSet, events] = await Promise.all([
@@ -941,6 +948,28 @@ async function postArchive(_req: Request, ctx: ServerContext, params: Record<str
     const updated: SessionMeta = { ...meta, archivedAt: new Date().toISOString() };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
+  });
+}
+
+// Permanent delete: only allowed after archive. Removes the worktree, the
+// working branch, and the whole .worqload/sessions/<id>/ directory (reports,
+// events, feedback, escalations — everything). No undo. Archive is the soft
+// step; this is the hard step.
+async function deleteSession(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    if (!meta.archivedAt) {
+      return json({ error: "archive the session before deleting" }, 400);
+    }
+    ctx.clients.delete(meta.id);
+    ctx.lastClaudeActivityAt.delete(meta.id);
+    try {
+      await ctx.worktreeOps.removeWorktree(meta.worktreePath, meta.branchName, ctx.repoDir);
+    } catch {
+      // worktree already gone (manual cleanup, repo moved, ...) — keep going so
+      // the session dir still gets cleared.
+    }
+    await rm(join(ctx.sessionsDir, meta.id), { recursive: true, force: true });
+    return json({ ok: true });
   });
 }
 
