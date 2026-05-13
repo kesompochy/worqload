@@ -6,10 +6,13 @@
   // main.ts) so it floats over the detail pane.
   //
   // Position: anchor is looked up by `[data-anchor-path][data-anchor-line]`
-  // (the same hooks DiffView / FilesView / report markdown use). Placed to the
-  // right of the line; falls back to below it when the right side is too
-  // narrow. Repositioned on scroll and resize (without hiding — the human is
-  // typing into it).
+  // (the same hooks DiffView / FilesView / report markdown use). For a single
+  // line we place to the right (falling back to below when the right side is
+  // too narrow). For a multi-line range we always place below the entire
+  // range — placing next to the top would leave the popover overlapping the
+  // bottom-fixed composer when the range reaches near the bottom of the pane.
+  // Repositioned on scroll and resize (without hiding — the human is typing
+  // into it).
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
@@ -28,38 +31,51 @@
       : null,
   );
 
-  // For a multi-line anchor, prefer the row whose data-anchor-line matches
-  // lineStart (diff/file rows are per-line). Report markdown blocks span a
-  // range; fall back to the first block that overlaps the anchor.
-  function findAnchorElement(path, lineStart, lineEnd) {
+  // The bounding box of every row/block that overlaps [lineStart, lineEnd] for
+  // `path`. DiffView/FilesView render each line as its own row; report markdown
+  // blocks span a line range. For multi-line anchors we need the full extent
+  // (top of the first row down to the bottom of the last) so the popover can
+  // sit below the entire range.
+  function findAnchorRect(path, lineStart, lineEnd) {
     const rows = document.querySelectorAll(
       `[data-anchor-path="${CSS.escape(path)}"][data-anchor-line]`,
     );
-    let overlap = null;
+    let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
+    let found = false;
     for (const el of rows) {
       const start = Number(el.getAttribute("data-anchor-line"));
       const endAttr = el.getAttribute("data-anchor-line-end");
       const end = endAttr !== null ? Number(endAttr) : start;
       if (start > lineEnd || end < lineStart) continue;
-      if (start === lineStart) return el;
-      if (overlap === null) overlap = el;
+      const r = el.getBoundingClientRect();
+      if (r.top < top) top = r.top;
+      if (r.bottom > bottom) bottom = r.bottom;
+      if (r.left < left) left = r.left;
+      if (r.right > right) right = r.right;
+      found = true;
     }
-    return overlap;
+    return found ? { top, bottom, left, right } : null;
   }
 
   function recomputeRect() {
     const a = appState.anchor;
     if (!a) { anchorRect = null; return; }
-    const el = findAnchorElement(a.path, a.lineStart, a.lineEnd);
-    if (!el) { anchorRect = null; return; }
-    const r = el.getBoundingClientRect();
-    anchorRect = { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+    const r = findAnchorRect(a.path, a.lineStart, a.lineEnd);
+    if (!r) { anchorRect = null; return; }
+    anchorRect = r;
     if (pendingFocus && textareaEl) {
       pendingFocus = false;
       // Focus once the rect is set so the textarea is no longer display:none.
       // tick() lets Svelte apply the derived style before we move focus.
       tick().then(() => textareaEl?.focus());
     }
+  }
+
+  // The effective viewport bottom for placement — the top of the bottom-fixed
+  // composer when present, so the floating popover doesn't tuck under it.
+  function effectiveViewportBottom() {
+    const el = document.querySelector(".feedback-form");
+    return el ? el.getBoundingClientRect().top : window.innerHeight;
   }
 
   // The anchored element is part of the detail body that just rendered; wait
@@ -118,26 +134,40 @@
     onAnchoredFeedback();
   }
 
-  const POPOVER_WIDTH = 360;
-  const POPOVER_HEIGHT_ESTIMATE = 140;
+  const POPOVER_WIDTH = 440;
+  const POPOVER_HEIGHT_ESTIMATE = 130;
   const GAP = 8;
   const style = $derived.by(() => {
     const r = anchorRect;
     if (!r) return "display:none";
+    const a = appState.anchor;
+    const isMultiLine = !!a && a.lineEnd > a.lineStart;
     const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const spaceRight = vw - r.right;
+    const viewportBottom = effectiveViewportBottom();
     let left;
     let top;
-    if (spaceRight >= POPOVER_WIDTH + GAP * 2) {
-      left = r.right + GAP;
-      top = Math.max(GAP, Math.min(r.top, vh - POPOVER_HEIGHT_ESTIMATE - GAP));
-    } else {
+    if (isMultiLine) {
+      // Below the entire range, so the popover never sits alongside more rows
+      // than it has height for. If there isn't room below the range before the
+      // bottom composer, fall back to above the range.
       left = Math.max(GAP, Math.min(r.left, vw - POPOVER_WIDTH - GAP));
-      const roomBelow = vh - r.bottom;
-      top = roomBelow >= POPOVER_HEIGHT_ESTIMATE + GAP || r.top < POPOVER_HEIGHT_ESTIMATE + GAP
+      const roomBelow = viewportBottom - r.bottom;
+      top = roomBelow >= POPOVER_HEIGHT_ESTIMATE + GAP
         ? r.bottom + GAP
         : Math.max(GAP, r.top - POPOVER_HEIGHT_ESTIMATE - GAP);
+    } else {
+      // Single line: prefer the right side; below as the fallback.
+      const spaceRight = vw - r.right;
+      if (spaceRight >= POPOVER_WIDTH + GAP * 2) {
+        left = r.right + GAP;
+        top = Math.max(GAP, Math.min(r.top, viewportBottom - POPOVER_HEIGHT_ESTIMATE - GAP));
+      } else {
+        left = Math.max(GAP, Math.min(r.left, vw - POPOVER_WIDTH - GAP));
+        const roomBelow = viewportBottom - r.bottom;
+        top = roomBelow >= POPOVER_HEIGHT_ESTIMATE + GAP || r.top < POPOVER_HEIGHT_ESTIMATE + GAP
+          ? r.bottom + GAP
+          : Math.max(GAP, r.top - POPOVER_HEIGHT_ESTIMATE - GAP);
+      }
     }
     return `left:${Math.round(left)}px; top:${Math.round(top)}px; width:${POPOVER_WIDTH}px`;
   });
