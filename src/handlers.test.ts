@@ -11,6 +11,7 @@ mock.module("../web/api.js", () => ({
   refreshDetail: async () => {},
   refreshDiff: async () => {},
   ensureFilesLoaded: async () => {},
+  ensureStructureLoaded: async () => {},
   selectFile: async () => {},
   searchFiles: async () => ({ matches: [], truncated: false }),
   fetchCodeNavLocations: async () => ({ available: false }),

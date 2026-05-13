@@ -15,6 +15,7 @@ import {
   refreshDetail,
   refreshDiff,
   ensureFilesLoaded,
+  ensureStructureLoaded,
   selectFile,
   openWs,
 } from "./api.js";
@@ -42,6 +43,8 @@ export async function selectSession(id) {
   state.selectedFilePath = null;
   state.fileContent = null;
   state.codeNav = null;
+  state.structure = null;
+  state.structureLoaded = false;
   state.openActionId = null;
   state.actionRunInFlight = false;
   state.actionResults = new Map();
@@ -176,6 +179,11 @@ export function onDetailBodyClick(e) {
   const fileOpen = e.target.closest("[data-file-open]");
   if (fileOpen) {
     selectFile(fileOpen.getAttribute("data-file-open"));
+    return;
+  }
+  const structureOpen = e.target.closest("[data-structure-open]");
+  if (structureOpen) {
+    openFileFromStructure(structureOpen.getAttribute("data-structure-open"));
     return;
   }
   // A symbol token in the Files-tab content pane (highlighter wraps plain
@@ -382,6 +390,16 @@ export async function switchTab(tab) {
   state.activeTab = tab;
   if (tab === "diff") await refreshDiff();
   if (tab === "files") await ensureFilesLoaded();
+  if (tab === "structure") await ensureStructureLoaded();
+}
+
+// Open a file from the Structure graph: switch to the Files tab and load it
+// there. (Structure nodes carry `data-structure-open`; this is the delegated
+// handler in onDetailBodyClick.)
+export async function openFileFromStructure(path) {
+  if (!path) return;
+  await switchTab("files");
+  await selectFile(path);
 }
 
 // An anchor whose path is `./.worqload-reports/<filename>` points at a line in

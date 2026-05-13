@@ -103,6 +103,7 @@ export async function refreshDetail() {
   state.lastSeq = events.length > 0 ? events[events.length - 1].seq : 0;
   if (state.activeTab === "diff") await refreshDiff();
   if (state.activeTab === "files") await ensureFilesLoaded(true);
+  if (state.activeTab === "structure") await ensureStructureLoaded(true);
 }
 
 export async function ensureFilesLoaded(force = false) {
@@ -115,6 +116,25 @@ export async function ensureFilesLoaded(force = false) {
     state.files = [];
   }
   state.filesLoaded = true;
+}
+
+// The Structure tab's import-dependency graph for the selected session's
+// changeset. Sets `state.structure` to the payload, or `{ error }` on failure,
+// so the view can show a message rather than nothing.
+export async function ensureStructureLoaded(force = false) {
+  if (!state.selected) return;
+  if (state.structureLoaded && !force) return;
+  state.structure = { loading: true };
+  const id = state.selected;
+  try {
+    const data = await api("GET", `/sessions/${id}/structure`);
+    if (state.selected !== id) return;
+    state.structure = data && data.error ? { error: data.error } : data;
+  } catch (e) {
+    if (state.selected !== id) return;
+    state.structure = { error: e.message };
+  }
+  state.structureLoaded = true;
 }
 
 export async function selectFile(path) {
