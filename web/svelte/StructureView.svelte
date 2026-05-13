@@ -134,38 +134,38 @@
     };
     rafId = requestAnimationFrame(step);
   }
-  // Anchored tween: drives zoom + scroll so the hovered node's centre stays at
-  // a fixed screen coordinate throughout. The CSS transition animates the
-  // node's <g transform> from its baseModel position to its expanded-model
-  // position linearly over the same 500ms, so the per-frame interpolation here
-  // matches what's actually rendered.
-  function tweenViewAnchored(targetZoom, oldCentre, newCentre, anchorScreen) {
+  // Anchored tween: drives zoom + scroll so the hovered node's top-left (which
+  // is what the <g>'s transform points at) stays at a fixed screen coordinate
+  // throughout. The matching CSS transition animates the node's `style.transform`
+  // linearly over the same 500ms, so the per-frame interpolation here matches
+  // what's actually rendered.
+  function tweenViewAnchored(targetZoom, oldOrigin, newOrigin, anchorScreen) {
     cancelTween();
     const startZoom = zoom;
     const startTime = performance.now();
     const step = now => {
       const t = Math.min(1, (now - startTime) / TWEEN_MS);
       const z = startZoom + (targetZoom - startZoom) * t;
-      const cx = oldCentre.x + (newCentre.x - oldCentre.x) * t;
-      const cy = oldCentre.y + (newCentre.y - oldCentre.y) * t;
+      const ox = oldOrigin.x + (newOrigin.x - oldOrigin.x) * t;
+      const oy = oldOrigin.y + (newOrigin.y - oldOrigin.y) * t;
       zoom = z;
       if (canvasEl) {
-        canvasEl.scrollLeft = cx * z - anchorScreen.x;
-        canvasEl.scrollTop = cy * z - anchorScreen.y;
+        canvasEl.scrollLeft = ox * z - anchorScreen.x;
+        canvasEl.scrollTop = oy * z - anchorScreen.y;
       }
       if (t < 1) rafId = requestAnimationFrame(step);
       else rafId = null;
     };
     rafId = requestAnimationFrame(step);
   }
-  // The zoom that fits the currently-highlighted neighbourhood inside the
-  // canvas with breathing room — we only need the *scale* (scroll is driven by
-  // the anchor), not a centred bbox.
-  function zoomForHighlight() {
-    if (!model || !related || canvasW < 20 || canvasH < 20) return null;
+
+  // The bounding rectangle in svg coords of the currently-highlighted
+  // neighbourhood: nodes plus their expanded label pills, with a little
+  // headroom for back-edge label arcs.
+  function highlightBoundingBox() {
+    if (!model || !related) return null;
     const focused = model.nodes.filter(n => related.paths.has(n.path));
     if (focused.length === 0) return null;
-    const pad = 40;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of focused) {
       minX = Math.min(minX, n.x);
@@ -177,10 +177,30 @@
       if (!related.keys.has(edgeKey(e)) || !e.label) continue;
       minX = Math.min(minX, e.labelX - e.labelWidth / 2);
       maxX = Math.max(maxX, e.labelX + e.labelWidth / 2);
-      minY = Math.min(minY, e.labelY - 10);
-      maxY = Math.max(maxY, e.labelY + 10);
+      minY = Math.min(minY, e.labelY - 12);
+      maxY = Math.max(maxY, e.labelY + 12);
     }
-    return clampZoom(Math.min((canvasW - pad * 2) / (maxX - minX), (canvasH - pad * 2) / (maxY - minY)));
+    return { minX, minY, maxX, maxY };
+  }
+
+  // The largest zoom at which the highlight bbox still fits inside the canvas
+  // *while keeping `newOrigin` at `anchorScreen`*. Each side of the bbox
+  // contributes one upper bound on zoom; we take the tightest. (Centring the
+  // bbox would let us pick a bigger zoom but would also move the hovered node
+  // off the cursor — the anchor wins.)
+  function anchorAwareZoom(newOrigin, anchorScreen) {
+    if (canvasW < 20 || canvasH < 20) return null;
+    const bbox = highlightBoundingBox();
+    if (!bbox) return null;
+    const pad = 40;
+    const caps = [];
+    if (newOrigin.x > bbox.minX) caps.push((anchorScreen.x - pad) / (newOrigin.x - bbox.minX));
+    if (bbox.maxX > newOrigin.x) caps.push((canvasW - pad - anchorScreen.x) / (bbox.maxX - newOrigin.x));
+    if (newOrigin.y > bbox.minY) caps.push((anchorScreen.y - pad) / (newOrigin.y - bbox.minY));
+    if (bbox.maxY > newOrigin.y) caps.push((canvasH - pad - anchorScreen.y) / (bbox.maxY - newOrigin.y));
+    const valid = caps.filter(v => isFinite(v) && v > 0);
+    if (valid.length === 0) return null;
+    return clampZoom(Math.min(...valid));
   }
 
   // Trigger the auto-zoom transitions on hover changes. `untrack` keeps the
@@ -204,16 +224,16 @@
         const sy0 = canvasEl?.scrollTop ?? 0;
         const oldN = baseModel?.nodes.find(n => n.path === hoveredPath);
         const newN = model?.nodes.find(n => n.path === hoveredPath);
-        const targetZoom = zoomForHighlight();
-        if (!oldN || !newN || targetZoom == null) {
+        if (!oldN || !newN) {
           lastHoverActive = active;
           return;
         }
+        // Anchor the node's top-left (= the <g>'s transform point) so the rect
+        // can resize underneath without dragging the anchor with it.
+        const anchorScreen = { x: oldN.x * z0 - sx0, y: oldN.y * z0 - sy0 };
+        const targetZoom = anchorAwareZoom(newN, anchorScreen) ?? z0;
         savedView = { zoom: z0, scrollX: sx0, scrollY: sy0 };
-        const oldCentre = { x: oldN.x + oldN.width / 2, y: oldN.y + oldN.height / 2 };
-        const newCentre = { x: newN.x + newN.width / 2, y: newN.y + newN.height / 2 };
-        const anchorScreen = { x: oldCentre.x * z0 - sx0, y: oldCentre.y * z0 - sy0 };
-        tweenViewAnchored(targetZoom, oldCentre, newCentre, anchorScreen);
+        tweenViewAnchored(targetZoom, { x: oldN.x, y: oldN.y }, { x: newN.x, y: newN.y }, anchorScreen);
       } else if (!active && lastHoverActive) {
         if (savedView) {
           tweenViewPlain(savedView.zoom, savedView.scrollX, savedView.scrollY);
@@ -294,7 +314,7 @@
                 class="structure-edge-label"
                 class:dim={edgeDimmed(edge)}
                 class:expanded={edge.expanded}
-                transform="translate({edge.labelX},{edge.labelY})"
+                style="transform: translate({edge.labelX}px, {edge.labelY}px);"
                 onmouseenter={() => (hoveredEdgeKey = edgeKey(edge))}
                 onmouseleave={() => (hoveredEdgeKey = null)}
               >
@@ -313,7 +333,7 @@
             class:dim={nodeDimmed(node.path)}
             class:expanded
             data-structure-open={node.path}
-            transform="translate({node.x},{node.y})"
+            style="transform: translate({node.x}px, {node.y}px);"
             role="button"
             tabindex="0"
             aria-label={`${node.path} — open in Files`}
