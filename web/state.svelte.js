@@ -30,7 +30,7 @@ export const state = $state({
   structure: null,       // Structure tab: { graph:{nodes:[path],edges:[{from,to,symbols}]}, cycles:[[path,...]], changedFiles:[path] } | { loading:true } | { error:string } | null
   structureLoaded: false,
   structureShowSymbols: true,  // Structure tab: whether per-edge import symbol-name labels are drawn (a view preference, not per-session)
-  structureAutoZoom: true,     // Structure tab: when on, hovering/focusing a node zooms+pans the canvas to fit the highlighted neighbourhood and restores the previous view on un-hover
+  structureFocusPath: null,    // Structure tab: when set, the graph is filtered to this node and its direct neighbours — shift+click on a node enters; toolbar clears it
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked

@@ -1,58 +1,80 @@
 <script>
   // The Structure tab: an import-dependency graph of the changeset's files and
-  // their immediate neighborhood (the files they import / that import them).
-  // Import cycles show up as dashed red edges (and red node borders); the names
-  // each import carries are written onto the edges (toggleable). Hovering or
-  // focusing a node highlights it, its direct neighbours, and the connecting
-  // edges, *re-flows the layout* around the expanded sizes (so the highlighted
-  // group never overlaps with itself), and — unless the human turned auto-zoom
-  // off — zooms and pans the canvas so that group fills the visible area. The
-  // pre-hover view is remembered; un-hovering restores it.
+  // their neighbourhood. Click a node to open it in the Files tab; shift+click
+  // to *focus* — the canvas redraws filtered to that node, its direct
+  // neighbours, and the edges between, with the focused node's full path
+  // shown. The toolbar's "Clear focus" returns to the whole graph.
+  //
+  // Hovering a node still dims the unrelated nodes/edges as a preview; hovering
+  // a truncated edge label expands that label in place. The manual zoom
+  // (−/Fit/+/%) is independent of all that.
   //
   // Mounted by DetailBody when the Structure tab is active. The data comes from
   // GET /sessions/:id/structure (held in appState.structure); buildStructureModel
   // places the boxes and connectors, this draws the SVG. Nodes carry
-  // `data-structure-open`, so a click is picked up by DetailBody's delegated
-  // handler (which opens the file in the Files tab); keyboard activation
-  // (Enter/Space on a focused node) is handled here.
+  // `data-structure-open`, so click/shift-click handling is in
+  // onDetailBodyClick's delegated handler (web/handlers.js); keyboard
+  // activation (Enter / shift+Enter on a focused node) is handled here.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
-  import { untrack } from "svelte";
   import { state as appState } from "../state.svelte.js";
   import { buildStructureModel } from "../structure-view.js";
-  import { openFileFromStructure } from "../handlers.js";
+  import { openFileFromStructure, setStructureFocus } from "../handlers.js";
 
   const data = $derived(appState.structure);
   const edgeKey = edge => `${edge.from} ${edge.to}`;
 
-  // What the human is currently directing attention at. `hoveredPath` is the
-  // node under the cursor or focus; `hoveredEdgeKey` is an edge label being
-  // hovered on its own (a label-only hover expands just that label, while a
-  // node hover expands the node, its neighbours, and the edges between).
-  // `pendingPointerAnchor` carries the cursor's canvas-relative screen position
-  // captured on `mouseenter`, so the upcoming auto-zoom can anchor the hovered
-  // node's centre right at the pointer.
+  // When focus is set, restrict the payload to the focused node, its direct
+  // neighbours, and the edges between them. buildStructureModel sees a smaller
+  // graph and lays out only that.
+  const focusedData = $derived.by(() => {
+    if (!data || !data.graph) return data;
+    const focus = appState.structureFocusPath;
+    if (!focus) return data;
+    const allow = new Set([focus]);
+    for (const edge of data.graph.edges ?? []) {
+      if (edge.from === focus || edge.to === focus) {
+        allow.add(edge.from);
+        allow.add(edge.to);
+      }
+    }
+    return {
+      ...data,
+      graph: {
+        nodes: (data.graph.nodes ?? []).filter(p => allow.has(p)),
+        edges: (data.graph.edges ?? []).filter(e => allow.has(e.from) && allow.has(e.to)),
+      },
+      changedFiles: (data.changedFiles ?? []).filter(p => allow.has(p)),
+    };
+  });
+
+  // Per-element expansion:
+  //   - the focused node is shown with its full path (so the user can read
+  //     exactly what was focused on)
+  //   - the edge label the cursor is over expands to its full symbol list
+  //   - everything else uses the compact default (basename, truncated label).
+  // Hovering a node does *not* expand it — it would push the layout around and
+  // is what got the previous auto-zoom attempts into trouble; the hover here
+  // only dims the unrelated parts as a preview.
   let hoveredPath = $state(null);
   let hoveredEdgeKey = $state(null);
-  let pendingPointerAnchor = null;
-  function onNodeEnter(event, path) {
-    if (canvasEl && event && typeof event.clientX === "number") {
-      const r = canvasEl.getBoundingClientRect();
-      pendingPointerAnchor = { x: event.clientX - r.left, y: event.clientY - r.top };
-    } else {
-      pendingPointerAnchor = null;
-    }
-    hoveredPath = path;
-  }
+  const expandedNodes = $derived(
+    appState.structureFocusPath ? new Set([appState.structureFocusPath]) : new Set(),
+  );
+  const expandedEdges = $derived(hoveredEdgeKey ? new Set([hoveredEdgeKey]) : new Set());
+  const model = $derived.by(() => {
+    if (!focusedData || !focusedData.graph) return null;
+    return buildStructureModel(focusedData, { expandedNodes, expandedEdges });
+  });
 
-  // The set of paths and edge-keys related to the hovered node. Derived from
-  // the raw payload — not from `model` — so it doesn't depend on the model that
-  // itself depends on it (a `data → related → model → related` loop).
+  // The set of paths/edge-keys related to the hovered node, used for dim/
+  // highlight. Derived from the (possibly focused) data — when focused, only
+  // edges inside the focused subgraph count.
   const related = $derived.by(() => {
-    if (!hoveredPath || !data || !data.graph) return null;
+    if (!hoveredPath || !focusedData || !focusedData.graph) return null;
     const paths = new Set([hoveredPath]);
     const keys = new Set();
-    for (const edge of data.graph.edges ?? []) {
+    for (const edge of focusedData.graph.edges ?? []) {
       if (edge.from === hoveredPath || edge.to === hoveredPath) {
         paths.add(edge.from);
         paths.add(edge.to);
@@ -61,29 +83,11 @@
     }
     return { paths, keys };
   });
-  const expandedNodes = $derived(related?.paths ?? new Set());
-  const expandedEdges = $derived.by(() => {
-    const s = new Set(related?.keys ?? []);
-    if (hoveredEdgeKey) s.add(hoveredEdgeKey);
-    return s;
-  });
-  // The layout reflows when either expansion set changes — buildStructureModel
-  // uses them to widen the relevant rects and pull the surrounding columns
-  // outwards so the highlighted neighbourhood lays out without overlap.
-  const model = $derived.by(() => {
-    if (!data || !data.graph) return null;
-    return buildStructureModel(data, { expandedNodes, expandedEdges });
-  });
-  // The same model without any expansion — kept so we can read where the hovered
-  // node sat before the reflow, which lets us anchor it under the cursor
-  // throughout the animation.
-  const baseModel = $derived(data && data.graph ? buildStructureModel(data) : null);
-
   const nodeDimmed = path => related != null && !related.paths.has(path);
   const edgeDimmed = edge => related != null && !related.keys.has(edgeKey(edge));
 
   // The full symbol list for the "依存の詳細" list (no tooltip on the figure
-  // any more — hovering an edge label or a node reveals the full names in place).
+  // any more — hovering an edge label reveals the full names in place).
   function symbolsLabel(symbols) {
     if (!symbols || symbols.length === 0) return "(副作用 import のみ)";
     return `{ ${symbols.join(", ")} }`;
@@ -96,181 +100,18 @@
 
   // Manual zoom: the toolbar buttons scale the rendered SVG (the viewBox stays
   // at the model's native size so it scales crisply). The canvas has
-  // `overflow: auto`, so panning a zoomed-in graph is just scrolling. Auto-zoom
-  // drives the same `zoom` plus `canvasEl.scrollLeft/Top` via a RAF tween.
+  // `overflow: auto`, so panning a zoomed-in graph is just scrolling.
   let zoom = $state(1);
   let canvasW = $state(0);
   let canvasH = $state(0);
-  let canvasEl = $state(null);
   const MIN_ZOOM = 0.1;
   const MAX_ZOOM = 4;
   const clampZoom = z => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
-  function zoomBy(factor) { cancelTween(); savedView = null; zoom = clampZoom(zoom * factor); }
+  function zoomBy(factor) { zoom = clampZoom(zoom * factor); }
   function fitZoom() {
-    cancelTween();
-    savedView = null;
     if (!model || !model.hasGraph || canvasW < 20 || canvasH < 20) return;
-    const fit = Math.min((canvasW - 12) / model.width, (canvasH - 12) / model.height);
-    zoom = clampZoom(fit);
+    zoom = clampZoom(Math.min((canvasW - 12) / model.width, (canvasH - 12) / model.height));
   }
-
-  // Auto-zoom on highlight: when the human starts hovering a node we save the
-  // current view, tween to a view that fits the highlighted neighbourhood, and
-  // tween back when the hover ends. A fixed 500ms linear RAF on `zoom` and the
-  // canvas's scroll position; the matching CSS transitions on the SVG transform
-  // and rect widths run on the same clock. The hovered node is *anchored* — its
-  // screen position stays fixed throughout — so the cursor doesn't fall off it
-  // mid-animation, which would otherwise break the hover state.
-  const TWEEN_MS = 500;
-  let rafId = null;
-  let savedView = null;
-  let lastHoverActive = false;
-  function cancelTween() {
-    if (rafId != null) { cancelAnimationFrame(rafId); rafId = null; }
-  }
-  // Plain linear tween of zoom and scroll — used when no node needs to stay
-  // anchored on screen (e.g. returning to the pre-highlight view). `onComplete`
-  // fires when the tween reaches t=1 and isn't cancelled along the way.
-  function tweenViewPlain(targetZoom, targetScrollX, targetScrollY, onComplete) {
-    cancelTween();
-    const startZoom = zoom;
-    const startScrollX = canvasEl?.scrollLeft ?? 0;
-    const startScrollY = canvasEl?.scrollTop ?? 0;
-    const startTime = performance.now();
-    const step = now => {
-      const t = Math.min(1, (now - startTime) / TWEEN_MS);
-      zoom = startZoom + (targetZoom - startZoom) * t;
-      if (canvasEl) {
-        canvasEl.scrollLeft = startScrollX + (targetScrollX - startScrollX) * t;
-        canvasEl.scrollTop = startScrollY + (targetScrollY - startScrollY) * t;
-      }
-      if (t < 1) rafId = requestAnimationFrame(step);
-      else { rafId = null; if (onComplete) onComplete(); }
-    };
-    rafId = requestAnimationFrame(step);
-  }
-  // Anchored tween: drives zoom + scroll so the hovered node's top-left (which
-  // is what the <g>'s transform points at) stays at a fixed screen coordinate
-  // throughout. The matching CSS transition animates the node's `style.transform`
-  // linearly over the same 500ms, so the per-frame interpolation here matches
-  // what's actually rendered.
-  function tweenViewAnchored(targetZoom, oldOrigin, newOrigin, anchorScreen) {
-    cancelTween();
-    const startZoom = zoom;
-    const startTime = performance.now();
-    const step = now => {
-      const t = Math.min(1, (now - startTime) / TWEEN_MS);
-      const z = startZoom + (targetZoom - startZoom) * t;
-      const ox = oldOrigin.x + (newOrigin.x - oldOrigin.x) * t;
-      const oy = oldOrigin.y + (newOrigin.y - oldOrigin.y) * t;
-      zoom = z;
-      if (canvasEl) {
-        canvasEl.scrollLeft = ox * z - anchorScreen.x;
-        canvasEl.scrollTop = oy * z - anchorScreen.y;
-      }
-      if (t < 1) rafId = requestAnimationFrame(step);
-      else rafId = null;
-    };
-    rafId = requestAnimationFrame(step);
-  }
-
-  // The bounding rectangle in svg coords of the currently-highlighted
-  // neighbourhood: nodes plus their expanded label pills, with a little
-  // headroom for back-edge label arcs.
-  function highlightBoundingBox() {
-    if (!model || !related) return null;
-    const focused = model.nodes.filter(n => related.paths.has(n.path));
-    if (focused.length === 0) return null;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const n of focused) {
-      minX = Math.min(minX, n.x);
-      minY = Math.min(minY, n.y);
-      maxX = Math.max(maxX, n.x + n.width);
-      maxY = Math.max(maxY, n.y + n.height);
-    }
-    for (const e of model.edges) {
-      if (!related.keys.has(edgeKey(e)) || !e.label) continue;
-      minX = Math.min(minX, e.labelX - e.labelWidth / 2);
-      maxX = Math.max(maxX, e.labelX + e.labelWidth / 2);
-      minY = Math.min(minY, e.labelY - 12);
-      maxY = Math.max(maxY, e.labelY + 12);
-    }
-    return { minX, minY, maxX, maxY };
-  }
-
-  // The largest zoom at which the highlight bbox still fits inside the canvas
-  // *while keeping `newOrigin` at `anchorScreen`*. Each side of the bbox
-  // contributes one upper bound on zoom; we take the tightest. (Centring the
-  // bbox would let us pick a bigger zoom but would also move the hovered node
-  // off the cursor — the anchor wins.)
-  function anchorAwareZoom(newOrigin, anchorScreen) {
-    if (canvasW < 20 || canvasH < 20) return null;
-    const bbox = highlightBoundingBox();
-    if (!bbox) return null;
-    const pad = 40;
-    const caps = [];
-    if (newOrigin.x > bbox.minX) caps.push((anchorScreen.x - pad) / (newOrigin.x - bbox.minX));
-    if (bbox.maxX > newOrigin.x) caps.push((canvasW - pad - anchorScreen.x) / (bbox.maxX - newOrigin.x));
-    if (newOrigin.y > bbox.minY) caps.push((anchorScreen.y - pad) / (newOrigin.y - bbox.minY));
-    if (bbox.maxY > newOrigin.y) caps.push((canvasH - pad - anchorScreen.y) / (bbox.maxY - newOrigin.y));
-    const valid = caps.filter(v => isFinite(v) && v > 0);
-    if (valid.length === 0) return null;
-    return clampZoom(Math.min(...valid));
-  }
-
-  // Trigger the auto-zoom transitions on hover changes. `untrack` keeps the
-  // tween's per-frame writes to `zoom` from re-triggering this effect (which
-  // would cancel and restart the tween every frame, the slow-creep symptom).
-  $effect(() => {
-    const active = hoveredPath != null;
-    const auto = appState.structureAutoZoom;
-    untrack(() => {
-      if (!auto) {
-        if (savedView && !active) {
-          tweenViewPlain(savedView.zoom, savedView.scrollX, savedView.scrollY);
-          savedView = null;
-        }
-        lastHoverActive = active;
-        return;
-      }
-      if (active && !lastHoverActive) {
-        const z0 = zoom;
-        const sx0 = canvasEl?.scrollLeft ?? 0;
-        const sy0 = canvasEl?.scrollTop ?? 0;
-        const oldN = baseModel?.nodes.find(n => n.path === hoveredPath);
-        const newN = model?.nodes.find(n => n.path === hoveredPath);
-        if (!oldN || !newN) {
-          pendingPointerAnchor = null;
-          lastHoverActive = active;
-          return;
-        }
-        // Anchor the node's *centre* at the pointer. Both halves of the centre
-        // (the <g> transform and the rect width) transition linearly via CSS,
-        // so the centre's rendered position interpolates linearly too — match
-        // it in JS frame for frame and the centre stays under the cursor.
-        const oldCentre = { x: oldN.x + oldN.width / 2, y: oldN.y + oldN.height / 2 };
-        const newCentre = { x: newN.x + newN.width / 2, y: newN.y + newN.height / 2 };
-        const anchorScreen = pendingPointerAnchor
-          ?? { x: oldCentre.x * z0 - sx0, y: oldCentre.y * z0 - sy0 };
-        pendingPointerAnchor = null;
-        const targetZoom = anchorAwareZoom(newCentre, anchorScreen) ?? z0;
-        // Only capture the pre-hover view if we don't already have one stashed:
-        // back-to-back hover → un-hover → hover before the return tween finishes
-        // would otherwise overwrite the original with a mid-return value, and
-        // the next un-hover would restore *that* — making each cycle smaller.
-        if (savedView == null) savedView = { zoom: z0, scrollX: sx0, scrollY: sy0 };
-        tweenViewAnchored(targetZoom, oldCentre, newCentre, anchorScreen);
-      } else if (!active && lastHoverActive) {
-        if (savedView) {
-          const target = savedView;
-          tweenViewPlain(target.zoom, target.scrollX, target.scrollY, () => { savedView = null; });
-        }
-      }
-      // active && lastHoverActive: hover moved between nodes — leave the
-      // in-flight tween alone so the duration stays a single 500ms.
-      lastHoverActive = active;
-    });
-  });
 
   // A short cubic between two box-edge anchor points. Forward edges (left→right,
   // following the import) curve gently; a back/same-layer edge bows up and out
@@ -286,10 +127,10 @@
   }
 
   function onNodeKeydown(event, path) {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      openFileFromStructure(path);
-    }
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (event.shiftKey) setStructureFocus(path);
+    else openFileFromStructure(path);
   }
 </script>
 
@@ -300,21 +141,34 @@
     <div class="structure-message structure-error">読み込みに失敗しました: {data.error}</div>
   {:else if !model || !model.hasGraph}
     <div class="structure-message">
-      この変更について図示できる import 依存関係がありません。
-      （グラフ化の対象は JavaScript / TypeScript / Svelte ファイルのみ。変更ファイルが孤立しているか、import グラフ未対応の言語です。）
+      {#if appState.structureFocusPath}
+        Focus 中: <code>{appState.structureFocusPath}</code>
+        にマッチするノードがグラフ内に見つかりません。
+        <button type="button" class="structure-zoom-btn" onclick={() => setStructureFocus(null)}>Focus 解除</button>
+      {:else}
+        この変更について図示できる import 依存関係がありません。
+        （グラフ化の対象は JavaScript / TypeScript / Svelte ファイルのみ。変更ファイルが孤立しているか、import グラフ未対応の言語です。）
+      {/if}
     </div>
   {:else}
     <div class="structure-toolbar">
       <label><input type="checkbox" bind:checked={appState.structureShowSymbols} /> シンボル名を表示</label>
-      <label><input type="checkbox" bind:checked={appState.structureAutoZoom} /> 強調時に自動ズーム</label>
+      {#if appState.structureFocusPath}
+        <span class="structure-focus">
+          Focus: <code>{appState.structureFocusPath}</code>
+          <button type="button" class="structure-zoom-btn" onclick={() => setStructureFocus(null)} title="Focus を解除して全体表示に戻る">Clear focus</button>
+        </span>
+      {:else}
+        <span class="structure-focus-hint">Shift+Click でノードを Focus（クリックはファイルへ）</span>
+      {/if}
       <span class="structure-zoom">
         <button type="button" class="structure-zoom-btn" title="縮小" aria-label="Zoom out" onclick={() => zoomBy(1 / 1.25)}>−</button>
         <button type="button" class="structure-zoom-btn" title="全体に合わせる" onclick={fitZoom}>Fit</button>
         <button type="button" class="structure-zoom-btn" title="拡大" aria-label="Zoom in" onclick={() => zoomBy(1.25)}>＋</button>
-        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="等倍に戻す" onclick={() => { cancelTween(); savedView = null; zoom = 1; }}>{Math.round(zoom * 100)}%</button>
+        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="等倍に戻す" onclick={() => (zoom = 1)}>{Math.round(zoom * 100)}%</button>
       </span>
     </div>
-    <div class="structure-canvas" class:structure-focusing={related != null} bind:this={canvasEl} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>
+    <div class="structure-canvas" class:structure-focusing={related != null} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>
       <svg width={model.width * zoom} height={model.height * zoom} viewBox="0 0 {model.width} {model.height}" role="img" aria-label="import dependency graph">
         <defs>
           <marker id="structure-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
@@ -340,7 +194,7 @@
                 class="structure-edge-label"
                 class:dim={edgeDimmed(edge)}
                 class:expanded={edge.expanded}
-                style="transform: translate({edge.labelX}px, {edge.labelY}px);"
+                transform="translate({edge.labelX},{edge.labelY})"
                 onmouseenter={() => (hoveredEdgeKey = edgeKey(edge))}
                 onmouseleave={() => (hoveredEdgeKey = null)}
               >
@@ -351,7 +205,7 @@
           {/each}
         {/if}
         {#each model.nodes as node (node.path)}
-          {@const expanded = related != null && related.paths.has(node.path)}
+          {@const expanded = node.path === appState.structureFocusPath}
           <g
             class="structure-node"
             class:changed={node.changed}
@@ -359,13 +213,13 @@
             class:dim={nodeDimmed(node.path)}
             class:expanded
             data-structure-open={node.path}
-            style="transform: translate({node.x}px, {node.y}px);"
+            transform="translate({node.x},{node.y})"
             role="button"
             tabindex="0"
-            aria-label={`${node.path} — open in Files`}
-            onmouseenter={e => onNodeEnter(e, node.path)}
+            aria-label={`${node.path} — click to open, shift+click to focus`}
+            onmouseenter={() => (hoveredPath = node.path)}
             onmouseleave={() => (hoveredPath = null)}
-            onfocus={() => onNodeEnter(null, node.path)}
+            onfocus={() => (hoveredPath = node.path)}
             onblur={() => (hoveredPath = null)}
             onkeydown={e => onNodeKeydown(e, node.path)}
           >

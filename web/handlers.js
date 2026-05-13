@@ -50,6 +50,7 @@ export async function selectSession(id) {
   state.actions = [];
   state.structure = null;
   state.structureLoaded = false;
+  state.structureFocusPath = null;
   state.openActionId = null;
   state.actionRunInFlight = false;
   state.runningActionId = null;
@@ -213,7 +214,12 @@ export function onDetailBodyClick(e) {
   }
   const structureOpen = e.target.closest("[data-structure-open]");
   if (structureOpen) {
-    openFileFromStructure(structureOpen.getAttribute("data-structure-open"));
+    const path = structureOpen.getAttribute("data-structure-open");
+    // Shift+click on a Structure-tab node redraws the graph filtered to just
+    // that node and its direct neighbours (focus mode); plain click opens the
+    // file like the Files tab.
+    if (e.shiftKey) setStructureFocus(path);
+    else openFileFromStructure(path);
     return;
   }
   // A symbol token in the Files-tab content pane (highlighter wraps plain
@@ -478,6 +484,13 @@ export async function openFileFromStructure(path) {
   if (!path) return;
   await switchTab("files");
   await selectFile(path);
+}
+
+// Focus the Structure graph on `path` and its direct neighbours — the rest of
+// the graph stops rendering until the focus is cleared. Bound to shift+click
+// on a Structure-tab node; the toolbar's "Clear focus" sets it back to null.
+export function setStructureFocus(path) {
+  state.structureFocusPath = path || null;
 }
 
 // An anchor whose path is `./.worqload-reports/<filename>` points at a line in
