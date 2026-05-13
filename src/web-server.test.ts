@@ -1444,6 +1444,34 @@ test("command approval: approve runs the command in the worktree and feeds back 
   expect(resolvedPayload?.stdout).toContain("approved-ok");
 });
 
+test("command approval: approve with a human note relays that note in the feedback to the agent", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "echo approved-ok" });
+
+  const note = "use the output but truncate to the first line only";
+  const resolved = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, {
+    decision: "approve",
+    content: note,
+  }).then(r => r.json());
+  expect(resolved.ok).toBe(true);
+
+  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  expect(inbox.messages).toHaveLength(1);
+  expect(inbox.messages[0].content).toContain("approved this command");
+  expect(inbox.messages[0].content).toContain(note);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const resolvedEvent = events.find(e => e.kind === "escalation_resolved");
+  const resolvedPayload = resolvedEvent?.payload as { decision?: string; note?: string };
+  expect(resolvedPayload?.decision).toBe("approve");
+  expect(resolvedPayload?.note).toBe(note);
+});
+
 test("command approval: reject does not run the command and feeds back the rejection", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

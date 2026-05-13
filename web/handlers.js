@@ -637,15 +637,14 @@ export async function onResolve(filename, articleEl, buttonEl) {
 }
 
 // Resolve a command-approval escalation: the human either approves (the server
-// runs the command and feeds back its output) or rejects it, optionally with a
-// reason typed into the article's textarea that's relayed to the agent.
+// runs the command and feeds back its output) or rejects it. Any text typed
+// into the article's textarea is relayed to the agent — as the human's note in
+// the approve feedback, or as the reason in the reject feedback.
 export async function onResolveCommand(filename, decision, articleEl, buttonEl) {
   if (!state.selected) return;
   const body = { decision };
-  if (decision === "reject") {
-    const reason = articleEl?.querySelector(".ask-answer")?.value.trim() ?? "";
-    if (reason !== "") body.content = reason;
-  }
+  const note = articleEl?.querySelector(".ask-answer")?.value.trim() ?? "";
+  if (note !== "") body.content = note;
   const restore = lockAskingArticle(articleEl, buttonEl);
   try {
     const res = await api("POST", `/sessions/${state.selected}/escalations/${encodeURIComponent(filename)}/resolve`, body);
