@@ -1232,3 +1232,34 @@ test("command approval: resolve without a decision is rejected", async () => {
   const res = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, { content: "yes please" });
   expect(res.status).toBe(400);
 });
+
+test("GET /favicon serves the built-in default icon when no custom favicon is configured", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const res = await fetch(`${baseUrl}/favicon`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("image/svg+xml");
+  expect(await res.text()).toContain("<svg");
+});
+
+test("GET /favicon serves a custom favicon dropped at .worqload/favicon.*", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  writeFileSync(join(repoDir, ".worqload", "favicon.png"), pngBytes);
+
+  const res = await fetch(`${baseUrl}/favicon`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("image/png");
+  expect(Buffer.from(await res.arrayBuffer())).toEqual(pngBytes);
+});
+
+test("GET / links the favicon route in the document head", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const html = await fetch(`${baseUrl}/`).then(r => r.text());
+  expect(html).toMatch(/<link[^>]+rel="icon"[^>]+href="\/favicon"/);
+});
