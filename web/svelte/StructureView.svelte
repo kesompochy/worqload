@@ -147,17 +147,18 @@
     zoom = clampZoom(Math.min((canvasW - 12) / model.width, (canvasH - 12) / model.height));
   }
 
-  // A short cubic between two box-edge anchor points. Forward edges (left→right,
-  // following the import) curve gently; a back/same-layer edge bows up and out
-  // so it reads as "closes a loop" rather than running straight through columns.
+  // A short cubic between two box-edge anchor points. Forward edges (top→bottom,
+  // following the import) curve gently; a back/same-layer edge bows out to the
+  // right so it reads as "closes a loop" rather than running straight through
+  // rows.
   function edgePath(edge) {
-    const reach = Math.max(40, Math.abs(edge.x2 - edge.x1) * 0.5);
+    const reach = Math.max(40, Math.abs(edge.y2 - edge.y1) * 0.5);
     if (edge.forward) {
-      return `M${edge.x1},${edge.y1} C${edge.x1 + reach},${edge.y1} ${edge.x2 - reach},${edge.y2} ${edge.x2},${edge.y2}`;
+      return `M${edge.x1},${edge.y1} C${edge.x1},${edge.y1 + reach} ${edge.x2},${edge.y2 - reach} ${edge.x2},${edge.y2}`;
     }
-    const lift = 30 + Math.abs(edge.y2 - edge.y1) * 0.2;
-    const apex = Math.min(edge.y1, edge.y2) - lift;
-    return `M${edge.x1},${edge.y1} C${edge.x1 + reach},${apex} ${edge.x2 - reach},${apex} ${edge.x2},${edge.y2}`;
+    const swing = 30 + Math.abs(edge.x2 - edge.x1) * 0.2;
+    const apex = Math.max(edge.x1, edge.x2) + swing;
+    return `M${edge.x1},${edge.y1} C${apex},${edge.y1} ${apex},${edge.y2} ${edge.x2},${edge.y2}`;
   }
 
   function onNodeKeydown(event, path) {
