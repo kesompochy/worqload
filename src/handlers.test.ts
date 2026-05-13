@@ -18,17 +18,27 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
 // needs it, removed at the end so other tests keep seeing the real globals.
+// Tracks both pushState and replaceState calls; tests can read `lastUrl` for
+// the latest write and `pushCount` for how many history entries were created.
 function installUrlWindow(search = "") {
   let urlSearch = search;
+  const apply = (url: string) => {
+    urlSearch = new URL(url, "http://x").search;
+    (fake as unknown as { lastUrl: string }).lastUrl = url;
+  };
   const fake = {
     location: { get search() { return urlSearch; }, pathname: "/", hash: "" },
-    history: { replaceState(_s: unknown, _t: string, url: string) { urlSearch = new URL(url, "http://x").search; (fake as unknown as { lastUrl: string }).lastUrl = url; } },
+    history: {
+      replaceState(_s: unknown, _t: string, url: string) { apply(url); },
+      pushState(_s: unknown, _t: string, url: string) { apply(url); (fake as unknown as { pushCount: number }).pushCount++; },
+    },
     lastUrl: search ? `/${search}` : "/",
+    pushCount: 0,
   };
   (globalThis as unknown as { window: unknown }).window = fake;
   return fake;
@@ -459,6 +469,87 @@ test("switchTab writes the new tab into the URL (default tab is omitted)", async
     expect(win.lastUrl).toBe("/?session=session-c&tab=diff");
     await switchTab("reports");
     expect(win.lastUrl).toBe("/?session=session-c");
+  } finally {
+    uninstallUrlWindow();
+  }
+});
+
+test("pushStructureFocus drills the focus stack and appends a focus query param per level", async () => {
+  const win = installUrlWindow("?session=session-c&tab=structure");
+  state.selected = "session-c";
+  state.activeTab = "structure";
+  state.structureFocusStack = [];
+  try {
+    pushStructureFocus("src/a.ts");
+    expect(state.structureFocusStack).toEqual(["src/a.ts"]);
+    expect(win.lastUrl).toBe("/?session=session-c&tab=structure&focus=src%2Fa.ts");
+    pushStructureFocus("src/b.ts");
+    expect(state.structureFocusStack).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(win.lastUrl).toBe("/?session=session-c&tab=structure&focus=src%2Fa.ts&focus=src%2Fb.ts");
+  } finally {
+    uninstallUrlWindow();
+  }
+});
+
+test("pushStructureFocus is a no-op when the path is already on top", async () => {
+  const win = installUrlWindow("?session=session-c&tab=structure&focus=src%2Fa.ts");
+  state.selected = "session-c";
+  state.activeTab = "structure";
+  state.structureFocusStack = ["src/a.ts"];
+  const before = win.pushCount;
+  try {
+    pushStructureFocus("src/a.ts");
+    expect(state.structureFocusStack).toEqual(["src/a.ts"]);
+    expect(win.pushCount).toBe(before);
+  } finally {
+    uninstallUrlWindow();
+  }
+});
+
+test("popStructureFocus walks one level back and rewrites the URL", async () => {
+  const win = installUrlWindow("?session=session-c&tab=structure&focus=src%2Fa.ts&focus=src%2Fb.ts");
+  state.selected = "session-c";
+  state.activeTab = "structure";
+  state.structureFocusStack = ["src/a.ts", "src/b.ts"];
+  try {
+    popStructureFocus();
+    expect(state.structureFocusStack).toEqual(["src/a.ts"]);
+    expect(win.lastUrl).toBe("/?session=session-c&tab=structure&focus=src%2Fa.ts");
+    popStructureFocus();
+    expect(state.structureFocusStack).toEqual([]);
+    expect(win.lastUrl).toBe("/?session=session-c&tab=structure");
+  } finally {
+    uninstallUrlWindow();
+  }
+});
+
+test("clearStructureFocus empties the stack in one history entry", async () => {
+  const win = installUrlWindow("?session=session-c&tab=structure&focus=src%2Fa.ts&focus=src%2Fb.ts");
+  state.selected = "session-c";
+  state.activeTab = "structure";
+  state.structureFocusStack = ["src/a.ts", "src/b.ts"];
+  const before = win.pushCount;
+  try {
+    clearStructureFocus();
+    expect(state.structureFocusStack).toEqual([]);
+    expect(win.lastUrl).toBe("/?session=session-c&tab=structure");
+    expect(win.pushCount).toBe(before + 1);
+  } finally {
+    uninstallUrlWindow();
+  }
+});
+
+test("applyUrlState restores session, tab, and focus stack without pushing further history", async () => {
+  const win = installUrlWindow("?session=session-c&tab=structure&focus=src%2Fa.ts");
+  state.selected = "session-a";
+  state.activeTab = "reports";
+  state.structureFocusStack = [];
+  try {
+    await applyUrlState({ sessionId: "session-c", tab: "structure", focusStack: ["src/a.ts"] });
+    expect(state.selected).toBe("session-c");
+    expect(state.activeTab).toBe("structure");
+    expect(state.structureFocusStack).toEqual(["src/a.ts"]);
+    expect(win.pushCount).toBe(0);
   } finally {
     uninstallUrlWindow();
   }
