@@ -23,6 +23,10 @@ test("buildStructureModel lays files out left→right following the import arrow
   expect(byPath["b.js"].changed).toBe(true);
   expect(byPath["a.js"].changed).toBe(false);
   expect(model.edges.every(e => e.forward)).toBe(true);
+  // Each edge carries a label anchor point at the midpoint of its run.
+  const ab = model.edges.find(e => e.from === "a.js" && e.to === "b.js");
+  expect(ab.labelX).toBe((ab.x1 + ab.x2) / 2);
+  expect(ab.labelY).toBe((ab.y1 + ab.y2) / 2 - 6);
 });
 
 test("buildStructureModel uses the file's basename as the node label", () => {

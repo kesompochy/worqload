@@ -315,14 +315,14 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-view { font-size: 13px; }
 .structure-message { color: var(--text-dim); padding: .5rem .2rem; max-width: 48em; line-height: 1.6; }
 .structure-message.structure-error { color: var(--crashed); }
-.structure-cycles { margin-bottom: .7rem; padding: .45rem .6rem; border: 1px solid rgba(248,81,73,.4); background: rgba(248,81,73,.08); border-radius: 4px; color: var(--crashed); font-size: 12.5px; }
-.structure-cycle-label { font-family: ui-monospace, monospace; }
 .structure-canvas { overflow: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
 .structure-canvas svg { display: block; }
 .structure-edge { fill: none; stroke: var(--border); stroke-width: 1.4px; }
 .structure-edge.cycle { stroke: var(--crashed); stroke-width: 1.8px; stroke-dasharray: 5 3; }
 #structure-arrow path { fill: var(--text-dim); }
 #structure-arrow-cycle path.cycle { fill: var(--crashed); }
+.structure-edge-label rect { fill: var(--bg); stroke: var(--border); stroke-width: .8px; opacity: .92; }
+.structure-edge-label text { fill: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; }
 .structure-node { cursor: pointer; }
 .structure-node rect { fill: var(--panel-2); stroke: var(--border); stroke-width: 1px; }
 .structure-node:hover rect { stroke: var(--accent); }
