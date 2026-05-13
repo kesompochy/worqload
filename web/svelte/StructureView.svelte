@@ -1,9 +1,11 @@
 <script>
   // The Structure tab: an import-dependency graph of the changeset's files and
-  // their neighbourhood. Click a node to open it in the Files tab; shift+click
-  // to *focus* — the canvas redraws filtered to that node, its direct
-  // neighbours, and the edges between, with the focused node's full path
-  // shown. The toolbar's "Clear focus" returns to the whole graph.
+  // their neighbourhood. Click a node to *focus* on it — the canvas redraws
+  // filtered to that node, its direct neighbours, and the edges between, with
+  // the focused node's full path shown. Clicking another node from the focused
+  // subgraph pushes a new level of focus, so the toolbar's "Back" button walks
+  // one step out at a time and "Clear focus" empties the history. Shift+Click
+  // opens the node in the Files tab.
   //
   // Hovering a node still dims the unrelated nodes/edges as a preview; hovering
   // a truncated edge label expands that label in place. The manual zoom
@@ -19,7 +21,12 @@
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
   import { buildStructureModel } from "../structure-view.js";
-  import { openFileFromStructure, setStructureFocus } from "../handlers.js";
+  import {
+    openFileFromStructure,
+    pushStructureFocus,
+    popStructureFocus,
+    clearStructureFocus,
+  } from "../handlers.js";
   import { ensureCallGraphLoaded } from "../api.js";
 
   // "file" mode draws the import graph (state.structure); "function" mode
@@ -39,12 +46,17 @@
     : path => path);
   const edgeKey = edge => `${edge.from} ${edge.to}`;
 
+  // The focus history. Top of the stack is what the canvas is currently
+  // filtered to; `null` (empty stack) shows the whole graph.
+  const focusStack = $derived(appState.structureFocusStack);
+  const currentFocus = $derived(focusStack.length > 0 ? focusStack[focusStack.length - 1] : null);
+
   // When focus is set, restrict the payload to the focused node, its direct
   // neighbours, and the edges between them. buildStructureModel sees a smaller
   // graph and lays out only that.
   const focusedData = $derived.by(() => {
     if (!data || !data.graph) return data;
-    const focus = appState.structureFocusPath;
+    const focus = currentFocus;
     if (!focus) return data;
     const allow = new Set([focus]);
     for (const edge of data.graph.edges ?? []) {
@@ -74,7 +86,7 @@
   let hoveredPath = $state(null);
   let hoveredEdgeKey = $state(null);
   const expandedNodes = $derived(
-    appState.structureFocusPath ? new Set([appState.structureFocusPath]) : new Set(),
+    currentFocus ? new Set([currentFocus]) : new Set(),
   );
   const expandedEdges = $derived(hoveredEdgeKey ? new Set([hoveredEdgeKey]) : new Set());
   const model = $derived.by(() => {
@@ -107,10 +119,11 @@
   const nodeDimmed = path => related != null && !related.paths.has(path);
   const edgeDimmed = edge => related != null && !related.keys.has(edgeKey(edge));
 
-  // The full symbol list for the "依存の詳細" list (no tooltip on the figure
-  // any more — hovering an edge label reveals the full names in place).
+  // The full symbol list for the "Dependencies" details panel (no tooltip on
+  // the figure any more — hovering an edge label reveals the full names in
+  // place).
   function symbolsLabel(symbols) {
-    if (!symbols || symbols.length === 0) return "(副作用 import のみ)";
+    if (!symbols || symbols.length === 0) return "(side-effect import only)";
     return `{ ${symbols.join(", ")} }`;
   }
   const edgeDetails = $derived(
@@ -150,51 +163,52 @@
   function onNodeKeydown(event, path) {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    if (event.shiftKey) setStructureFocus(path);
-    else openFileFromStructure(path);
+    if (event.shiftKey) openFileFromStructure(path);
+    else pushStructureFocus(path);
   }
 </script>
 
 <div class="structure-view">
   <div class="structure-toolbar">
     <span class="structure-mode">
-      <label><input type="radio" name="structureMode" value="file" bind:group={appState.structureMode} /> ファイル</label>
-      <label><input type="radio" name="structureMode" value="function" bind:group={appState.structureMode} /> 関数</label>
+      <label><input type="radio" name="structureMode" value="file" bind:group={appState.structureMode} /> Files</label>
+      <label><input type="radio" name="structureMode" value="function" bind:group={appState.structureMode} /> Functions</label>
     </span>
   </div>
   {#if !data || data.loading}
-    <div class="structure-message">{mode === "function" ? "コールグラフを読み込み中…（LSP が応答する間しばらくお待ちください）" : "依存グラフを読み込み中…"}</div>
+    <div class="structure-message">{mode === "function" ? "Loading call graph… (waiting on the language server)" : "Loading dependency graph…"}</div>
   {:else if data.error}
-    <div class="structure-message structure-error">読み込みに失敗しました: {data.error}</div>
+    <div class="structure-message structure-error">Failed to load: {data.error}</div>
   {:else if !model || !model.hasGraph}
     <div class="structure-message">
-      {#if appState.structureFocusPath}
-        Focus 中: <code>{appState.structureFocusPath}</code>
-        にマッチするノードがグラフ内に見つかりません。
-        <button type="button" class="structure-zoom-btn" onclick={() => setStructureFocus(null)}>Focus 解除</button>
+      {#if currentFocus}
+        No node matching <code>{currentFocus}</code> in the graph.
+        <button type="button" class="structure-zoom-btn" onclick={popStructureFocus} title="Go back one focus level">Back</button>
+        <button type="button" class="structure-zoom-btn" onclick={clearStructureFocus} title="Clear focus and show the whole graph">Clear focus</button>
       {:else if mode === "function"}
-        この変更について図示できる関数呼び出しがありません。（言語サーバが起動していない、変更ファイルに関数定義がない、または callHierarchy 未対応の言語かもしれません。）
+        No function calls to draw for this change. (The language server may not be running, the changed files may have no function definitions, or callHierarchy may not be supported for this language.)
       {:else}
-        この変更について図示できる import 依存関係がありません。
-        （グラフ化の対象は JavaScript / TypeScript / Svelte / Go ファイル。変更ファイルが孤立しているか、import グラフ未対応の言語です。Go は worktree 直下に go.mod が無いと import を解決できません。）
+        No import dependencies to draw for this change. (Supported languages: JavaScript / TypeScript / Svelte / Go. The changed files may be isolated, or the language has no import-graph support. Go imports require a go.mod at the worktree root.)
       {/if}
     </div>
   {:else}
     <div class="structure-toolbar">
-      <label><input type="checkbox" bind:checked={appState.structureShowSymbols} /> シンボル名を表示</label>
-      {#if appState.structureFocusPath}
+      <label><input type="checkbox" bind:checked={appState.structureShowSymbols} /> Show symbol names</label>
+      {#if currentFocus}
         <span class="structure-focus">
-          Focus: <code>{appState.structureFocusPath}</code>
-          <button type="button" class="structure-zoom-btn" onclick={() => setStructureFocus(null)} title="Focus を解除して全体表示に戻る">Clear focus</button>
+          Focus: <code>{currentFocus}</code>
+          <span class="structure-focus-depth">({focusStack.length} level{focusStack.length > 1 ? "s" : ""})</span>
+          <button type="button" class="structure-zoom-btn" onclick={popStructureFocus} title="Go back one focus level">Back</button>
+          <button type="button" class="structure-zoom-btn" onclick={clearStructureFocus} title="Clear focus and show the whole graph">Clear focus</button>
         </span>
       {:else}
-        <span class="structure-focus-hint">Shift+Click でノードを Focus（クリックはファイルへ）</span>
+        <span class="structure-focus-hint">Click a node to focus on it · Shift+Click to open the file</span>
       {/if}
       <span class="structure-zoom">
-        <button type="button" class="structure-zoom-btn" title="縮小" aria-label="Zoom out" onclick={() => zoomBy(1 / 1.25)}>−</button>
-        <button type="button" class="structure-zoom-btn" title="全体に合わせる" onclick={fitZoom}>Fit</button>
-        <button type="button" class="structure-zoom-btn" title="拡大" aria-label="Zoom in" onclick={() => zoomBy(1.25)}>＋</button>
-        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="等倍に戻す" onclick={() => (zoom = 1)}>{Math.round(zoom * 100)}%</button>
+        <button type="button" class="structure-zoom-btn" title="Zoom out" aria-label="Zoom out" onclick={() => zoomBy(1 / 1.25)}>−</button>
+        <button type="button" class="structure-zoom-btn" title="Fit to canvas" onclick={fitZoom}>Fit</button>
+        <button type="button" class="structure-zoom-btn" title="Zoom in" aria-label="Zoom in" onclick={() => zoomBy(1.25)}>＋</button>
+        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="Reset zoom" onclick={() => (zoom = 1)}>{Math.round(zoom * 100)}%</button>
       </span>
     </div>
     <div class="structure-canvas" class:structure-focusing={related != null} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>
@@ -234,7 +248,7 @@
           {/each}
         {/if}
         {#each model.nodes as node (node.path)}
-          {@const expanded = node.path === appState.structureFocusPath}
+          {@const expanded = node.path === currentFocus}
           {@const meta = mode === "function" ? nodeMeta[node.path] : null}
           {@const filePath = meta ? meta.path : node.path}
           {@const line = meta ? meta.line + 1 : null}
@@ -250,7 +264,7 @@
             transform="translate({node.x},{node.y})"
             role="button"
             tabindex="0"
-            aria-label={`${node.label} — click to open, shift+click to focus`}
+            aria-label={`${node.label} — click to focus, shift+click to open file`}
             onmouseenter={() => (hoveredPath = node.path)}
             onmouseleave={() => (hoveredPath = null)}
             onfocus={() => (hoveredPath = node.path)}
@@ -264,7 +278,7 @@
       </svg>
     </div>
     <details class="structure-details">
-      <summary>依存の詳細 ({edgeDetails.length})</summary>
+      <summary>Dependencies ({edgeDetails.length})</summary>
       <ul>
         {#each edgeDetails as edge}
           {@const fromMeta = mode === "function" ? nodeMeta[edge.from] : null}

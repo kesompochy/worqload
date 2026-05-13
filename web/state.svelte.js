@@ -33,7 +33,7 @@ export const state = $state({
   callGraphLoaded: false,
   structureMode: "file", // Structure tab: "file" (import graph) | "function" (call graph via LSP)
   structureShowSymbols: true,  // Structure tab: whether per-edge import symbol-name labels are drawn (a view preference, not per-session)
-  structureFocusPath: null,    // Structure tab: when set, the graph is filtered to this node and its direct neighbours — shift+click on a node enters; toolbar clears it
+  structureFocusStack: [],     // Structure tab focus history: each entry is a graph node id. Empty = whole graph. Top of stack is the current focus and the graph is filtered to that node and its direct neighbours. Clicking a node pushes; Back pops; Clear empties.
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked

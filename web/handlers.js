@@ -52,7 +52,7 @@ export async function selectSession(id) {
   state.structureLoaded = false;
   state.callGraph = null;
   state.callGraphLoaded = false;
-  state.structureFocusPath = null;
+  state.structureFocusStack = [];
   state.openActionId = null;
   state.actionRunInFlight = false;
   state.runningActionId = null;
@@ -221,14 +221,14 @@ export function onDetailBodyClick(e) {
     // path to open; `data-structure-line` (function mode) is its 1-based line.
     const id = structureOpen.getAttribute("data-structure-id") ?? structureOpen.getAttribute("data-structure-open");
     if (e.shiftKey) {
-      setStructureFocus(id);
+      const path = structureOpen.getAttribute("data-structure-open");
+      const lineAttr = structureOpen.getAttribute("data-structure-line");
+      const line = lineAttr ? Number(lineAttr) : NaN;
+      if (Number.isFinite(line) && line >= 1) revealFileLocation(path, line);
+      else openFileFromStructure(path);
       return;
     }
-    const path = structureOpen.getAttribute("data-structure-open");
-    const lineAttr = structureOpen.getAttribute("data-structure-line");
-    const line = lineAttr ? Number(lineAttr) : NaN;
-    if (Number.isFinite(line) && line >= 1) revealFileLocation(path, line);
-    else openFileFromStructure(path);
+    pushStructureFocus(id);
     return;
   }
   // A symbol token in the Files-tab content pane or the Diff-tab body
@@ -500,11 +500,27 @@ export async function openFileFromStructure(path) {
   await selectFile(path);
 }
 
-// Focus the Structure graph on `path` and its direct neighbours — the rest of
-// the graph stops rendering until the focus is cleared. Bound to shift+click
-// on a Structure-tab node; the toolbar's "Clear focus" sets it back to null.
-export function setStructureFocus(path) {
-  state.structureFocusPath = path || null;
+// Push a node onto the Structure-tab focus history. The view filters to that
+// node and its direct neighbours; clicking another node from the focused
+// subgraph pushes again, so Back walks one step out. Clicking the node already
+// at the top is a no-op (pushing the same path twice adds nothing).
+export function pushStructureFocus(path) {
+  if (!path) return;
+  const stack = state.structureFocusStack;
+  if (stack[stack.length - 1] === path) return;
+  state.structureFocusStack = [...stack, path];
+}
+
+// "Back" — pop one level of focus. Empty stack stays empty (the toolbar button
+// is disabled in that case).
+export function popStructureFocus() {
+  const stack = state.structureFocusStack;
+  if (stack.length === 0) return;
+  state.structureFocusStack = stack.slice(0, -1);
+}
+
+export function clearStructureFocus() {
+  state.structureFocusStack = [];
 }
 
 // An anchor whose path is `./.worqload-reports/<filename>` points at a line in
