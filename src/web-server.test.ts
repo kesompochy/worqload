@@ -596,6 +596,52 @@ test("GET /sessions/:id/files lists worktree files and hides the .worqload-repor
   expect(res.paths).not.toContain(".worqload-reports");
 });
 
+// What the import graph / cycle detection actually computes is import-graph's
+// and structure-view's contract — covered by their own tests. Here we only
+// check the endpoint wires the diff (for the changeset's files) and the
+// worktree's source files into a scoped graph. The fake worktreeOps echoes a
+// canned diff so the changed file is observable.
+test("GET /sessions/:id/structure returns the changeset's import-dependency neighborhood with cycles flagged", async () => {
+  const repoDir = makeTmpDir("repo");
+  const cannedDiff = [
+    "diff --git a/web/greet.js b/web/greet.js",
+    "index 1111111..2222222 100644",
+    "--- a/web/greet.js",
+    "+++ b/web/greet.js",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+  ].join("\n");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: { ...fakeWorktreeOps(), async gitDiff() { return cannedDiff; } },
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+  mkdirSync(join(wt, "web"), { recursive: true });
+  writeFileSync(join(wt, "web", "app.js"), `import { greet } from "./greet.js";\n`);
+  writeFileSync(join(wt, "web", "greet.js"), `import { punctuate } from "./util.js";\n`);
+  writeFileSync(join(wt, "web", "util.js"), `import "./app.js";\nexport const punctuate = s => s + "!";\n`);
+  writeFileSync(join(wt, "web", "elsewhere.js"), `import "./standalone.js";\n`);
+  writeFileSync(join(wt, "web", "standalone.js"), ``);
+  writeFileSync(join(wt, "README.md"), `not source\n`);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/structure`).then(r => r.json());
+  expect(res.changedFiles).toEqual(["web/greet.js"]);
+  // greet.js (changed) and everything within the default hop radius: it imports
+  // util.js, which imports app.js, which imports greet.js — a 3-file cycle.
+  // elsewhere.js / standalone.js are disconnected; README.md isn't a source file.
+  expect(res.graph.nodes).toEqual(["web/app.js", "web/greet.js", "web/util.js"]);
+  expect(res.cycles).toEqual([["web/app.js", "web/greet.js", "web/util.js"]]);
+});
+
 test("GET /sessions/:id/file returns text content of a worktree file", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
