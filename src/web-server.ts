@@ -642,6 +642,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/stop", postStop),
   defineRoute("POST", "/sessions/:id/resume", postResume),
   defineRoute("POST", "/sessions/:id/archive", postArchive),
+  defineRoute("POST", "/sessions/:id/unarchive", postUnarchive),
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
@@ -946,6 +947,20 @@ async function postArchive(_req: Request, ctx: ServerContext, params: Record<str
     }
     if (meta.archivedAt) return json({ meta });
     const updated: SessionMeta = { ...meta, archivedAt: new Date().toISOString() };
+    await saveSessionMeta(updated, ctx.sessionsDir);
+    return json({ meta: updated });
+  });
+}
+
+// Inverse of postArchive: drops `archivedAt` so the session reappears in the
+// default sidebar list. A safety net for accidental archives — the session's
+// worktree and records are untouched (only DELETE removes those). No-op when
+// the session is already unarchived.
+async function postUnarchive(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    if (!meta.archivedAt) return json({ meta });
+    const { archivedAt: _archivedAt, ...rest } = meta;
+    const updated: SessionMeta = rest;
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
   });

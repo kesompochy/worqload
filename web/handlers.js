@@ -759,6 +759,26 @@ export async function onArchive(id = state.selected) {
   }
 }
 
+// Reverse of onArchive — used by the "Unarchive" button on archived cards.
+// Drops the bulk-delete checkbox state for this id (the card is about to leave
+// the archived feed) and refreshes both lists so the session reappears in the
+// active sidebar.
+export async function onUnarchive(id = state.selected) {
+  if (!id) return;
+  try {
+    await api("POST", `/sessions/${id}/unarchive`, {});
+    if (state.archivedSelection.has(id)) {
+      const nextSel = new Set(state.archivedSelection);
+      nextSel.delete(id);
+      state.archivedSelection = nextSel;
+    }
+    await fetchArchivedSessions();
+    await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 // Disable every button in the asking article (and show "Sending…" on the one
 // the human clicked) while its resolve request is in flight, so a second click
 // can't fire a duplicate POST. On success refreshDetail tears the article down;

@@ -1051,6 +1051,50 @@ test("GET /sessions?archived=only returns only archived sessions", async () => {
   expect(ids).not.toContain(active.meta.id);
 });
 
+test("POST /sessions/:id/unarchive clears archivedAt and the session reappears in the default list", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "rescue-me", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+  await postJson(baseUrl, `/sessions/${sid}/archive`, {});
+
+  const hidden = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  expect(hidden.sessions.find((s: { id: string }) => s.id === sid)).toBeUndefined();
+
+  const restored = await postJson(baseUrl, `/sessions/${sid}/unarchive`, {}).then(r => r.json());
+  expect(restored.meta.archivedAt).toBeUndefined();
+
+  const visible = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  expect(visible.sessions.find((s: { id: string }) => s.id === sid)).toBeDefined();
+
+  const onlyArchived = await fetch(`${baseUrl}/sessions?archived=only`).then(r => r.json());
+  expect(onlyArchived.sessions.find((s: { id: string }) => s.id === sid)).toBeUndefined();
+});
+
+test("POST /sessions/:id/unarchive on a non-archived session is a no-op (200)", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "active", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/unarchive`, {});
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.meta.archivedAt).toBeUndefined();
+});
+
+test("POST /sessions/:id/unarchive returns 404 for an unknown id", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const res = await postJson(baseUrl, "/sessions/nope/unarchive", {});
+  expect(res.status).toBe(404);
+});
+
 test("DELETE /sessions/:id removes worktree, branch, and session dir for an archived session", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
