@@ -6,7 +6,9 @@
 // src/svelte-runes-test-shim.ts.)
 
 export const state = $state({
-  sessions: [],
+  sessions: [],          // active sessions feed: drives notifications, load average, the active sidebar tab
+  archivedSessions: [],  // archived-only feed: drives the archived sidebar tab. Populated when that tab is shown / polled.
+  sidebarTab: "active",  // "active" | "archived": which feed the sidebar renders. Archived cards swap Stop/Archive for a permanent Delete (see SessionList.svelte / handlers.js).
   selected: null,        // session id
   detail: null,          // { meta, events }
   reports: [],

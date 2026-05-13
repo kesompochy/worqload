@@ -17,7 +17,15 @@
     onRenameCommit,
     onRenameCancel,
     onReorderSessions,
+    onSidebarTab,
+    onDeleteArchived,
   } from "../handlers.js";
+
+  // The sidebar's currently-shown feed: active sessions or the archives tab.
+  // Card actions differ between the two (archived cards swap Stop/Archive for a
+  // permanent Delete), and only the active list is drag-reorderable.
+  const archivedView = $derived(appState.sidebarTab === "archived");
+  const visibleSessions = $derived(archivedView ? appState.archivedSessions : appState.sessions);
 
   // Tracked across the rename input's keydowns so a confirming Enter mid-IME
   // composition doesn't also commit the alias. Only one card renames at a time.
@@ -54,6 +62,9 @@
     const index = appState.sessions.findIndex((s) => s.id === sessionId);
     return appState.sessions[index + 1]?.id ?? null;
   }
+  // Drag-reorder only applies to the active tab (the archived list isn't
+  // user-orderable — it's the result of a server filter), so the listeners
+  // bail when archivedView is true.
 
   function onDragOver(event, sessionId) {
     if (!draggedId) return;
@@ -113,27 +124,44 @@
   }
 </script>
 
-{#if appState.sessions.length === 0}
-  <div style="padding:1rem; color:var(--text-dim)">No sessions yet.</div>
+<div class="sidebar-tabs" role="tablist" aria-label="Sessions">
+  <button
+    class="sidebar-tab"
+    class:active={!archivedView}
+    role="tab"
+    aria-selected={!archivedView}
+    onclick={() => onSidebarTab("active")}
+  >Active</button>
+  <button
+    class="sidebar-tab"
+    class:active={archivedView}
+    role="tab"
+    aria-selected={archivedView}
+    onclick={() => onSidebarTab("archived")}
+  >Archived</button>
+</div>
+
+{#if visibleSessions.length === 0}
+  <div style="padding:1rem; color:var(--text-dim)">{archivedView ? "No archived sessions." : "No sessions yet."}</div>
 {:else}
-  {#each appState.sessions as session, index (session.id)}
+  {#each visibleSessions as session, index (session.id)}
     {@const active = session.id === appState.selected}
     {@const terminal = isTerminal(session)}
     {@const renaming = active && session.id === appState.renamingSessionId}
     {@const unread = Number(session.unreadReportCount) || 0}
-    {@const isLast = index === appState.sessions.length - 1}
+    {@const isLast = index === visibleSessions.length - 1}
     <div
       class="session-card"
       class:active
-      class:dragging={draggedId === session.id}
-      class:drag-over={dropBeforeId === session.id && draggedId !== session.id}
-      class:drag-over-end={dropAtEnd && isLast && draggedId !== session.id}
+      class:dragging={!archivedView && draggedId === session.id}
+      class:drag-over={!archivedView && dropBeforeId === session.id && draggedId !== session.id}
+      class:drag-over-end={!archivedView && dropAtEnd && isLast && draggedId !== session.id}
       role="button"
       tabindex="0"
-      draggable={!renaming}
-      ondragstart={(e) => onDragStart(e, session.id)}
-      ondragover={(e) => onDragOver(e, session.id)}
-      ondrop={(e) => onDrop(e, session.id)}
+      draggable={!archivedView && !renaming}
+      ondragstart={(e) => !archivedView && onDragStart(e, session.id)}
+      ondragover={(e) => !archivedView && onDragOver(e, session.id)}
+      ondrop={(e) => !archivedView && onDrop(e, session.id)}
       ondragend={resetDrag}
       onclick={() => selectSession(session.id)}
       onkeydown={(e) => selectOnEnter(e, session.id)}
@@ -161,12 +189,16 @@
           {#if active && !renaming}
             <button class="btn-card-rename" onclick={(e) => { e.stopPropagation(); onRenameStart(session.id); }}>Rename</button>
           {/if}
-          {#if terminal}
-            <button class="btn-card-resume" onclick={(e) => { e.stopPropagation(); onResume(session.id); }}>Resume</button>
+          {#if archivedView}
+            <button class="btn-card-delete" onclick={(e) => { e.stopPropagation(); onDeleteArchived(session.id); }}>Delete</button>
           {:else}
-            <button class="btn-card-stop" onclick={(e) => { e.stopPropagation(); onStop(session.id); }}>Stop</button>
+            {#if terminal}
+              <button class="btn-card-resume" onclick={(e) => { e.stopPropagation(); onResume(session.id); }}>Resume</button>
+            {:else}
+              <button class="btn-card-stop" onclick={(e) => { e.stopPropagation(); onStop(session.id); }}>Stop</button>
+            {/if}
+            <button class="btn-card-archive" disabled={!terminal} onclick={(e) => { e.stopPropagation(); onArchive(session.id); }}>Archive</button>
           {/if}
-          <button class="btn-card-archive" disabled={!terminal} onclick={(e) => { e.stopPropagation(); onArchive(session.id); }}>Archive</button>
         </div>
       </div>
       {#if unread > 0}

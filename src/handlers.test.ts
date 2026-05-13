@@ -4,9 +4,12 @@ import { test, expect, mock } from "bun:test";
 // state reset can be asserted in isolation.
 const reorderSessionsCalls: string[][] = [];
 let fetchSessionsCalls = 0;
+let fetchArchivedSessionsCalls = 0;
+const apiCalls: Array<{ method: string; path: string; body?: unknown }> = [];
 mock.module("../web/api.js", () => ({
-  api: async () => ({}),
+  api: async (method: string, path: string, body?: unknown) => { apiCalls.push({ method, path, body }); return {}; },
   fetchSessions: async () => { fetchSessionsCalls++; },
+  fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
   fetchActions: async () => {},
   reorderSessions: async (ids: string[]) => { reorderSessionsCalls.push(ids); },
   refreshDetail: async () => {},
@@ -18,7 +21,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onDeleteArchived } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -553,4 +556,76 @@ test("applyUrlState restores session, tab, and focus stack without pushing furth
   } finally {
     uninstallUrlWindow();
   }
+});
+
+test("onSidebarTab flips to the archived feed and pulls it from the server", async () => {
+  state.sidebarTab = "active";
+  fetchArchivedSessionsCalls = 0;
+  fetchSessionsCalls = 0;
+
+  await onSidebarTab("archived");
+
+  expect(state.sidebarTab).toBe("archived");
+  expect(fetchArchivedSessionsCalls).toBe(1);
+  expect(fetchSessionsCalls).toBe(0);
+
+  // Flipping back refreshes the active list, not the archived one.
+  await onSidebarTab("active");
+  expect(state.sidebarTab).toBe("active");
+  expect(fetchSessionsCalls).toBe(1);
+  expect(fetchArchivedSessionsCalls).toBe(1);
+});
+
+test("onSidebarTab does nothing when the requested tab is already shown", async () => {
+  state.sidebarTab = "active";
+  fetchSessionsCalls = 0;
+  fetchArchivedSessionsCalls = 0;
+
+  await onSidebarTab("active");
+
+  expect(fetchSessionsCalls).toBe(0);
+  expect(fetchArchivedSessionsCalls).toBe(0);
+});
+
+test("onDeleteArchived confirms, calls DELETE /sessions/:id, and reloads the archived feed", async () => {
+  state.sidebarTab = "archived";
+  state.archivedSessions = [{ id: "arc-1", title: "old session" }];
+  state.selected = "arc-1";
+  apiCalls.length = 0;
+  fetchArchivedSessionsCalls = 0;
+
+  const savedWindow = globalThis.window;
+  let confirmCalledWith: string | undefined;
+  (globalThis as unknown as { window: unknown }).window = { confirm: (m: string) => { confirmCalledWith = m; return true; } };
+
+  try {
+    await onDeleteArchived("arc-1");
+  } finally {
+    (globalThis as unknown as { window: unknown }).window = savedWindow;
+  }
+
+  expect(confirmCalledWith).toContain("old session");
+  expect(apiCalls).toEqual([{ method: "DELETE", path: "/sessions/arc-1", body: undefined }]);
+  expect(fetchArchivedSessionsCalls).toBe(1);
+  // The deleted session was the selected one; selection clears so the detail
+  // pane stops trying to show data that no longer exists.
+  expect(state.selected).toBeNull();
+});
+
+test("onDeleteArchived bails when the human cancels the confirm dialog", async () => {
+  state.archivedSessions = [{ id: "arc-2", title: "x" }];
+  apiCalls.length = 0;
+  fetchArchivedSessionsCalls = 0;
+
+  const savedWindow = globalThis.window;
+  (globalThis as unknown as { window: unknown }).window = { confirm: () => false };
+
+  try {
+    await onDeleteArchived("arc-2");
+  } finally {
+    (globalThis as unknown as { window: unknown }).window = savedWindow;
+  }
+
+  expect(apiCalls).toEqual([]);
+  expect(fetchArchivedSessionsCalls).toBe(0);
 });

@@ -5,7 +5,7 @@
 import { $ } from "./dom.js";
 import { state } from "./state.svelte.js";
 import { startClock } from "./clock.svelte.js";
-import { fetchMeta, fetchSessions } from "./api.js";
+import { fetchMeta, fetchSessions, fetchArchivedSessions } from "./api.js";
 import { selectSession, switchTab, applyUrlState } from "./handlers.js";
 import { syncNotifyButton, onNotifyClick } from "./notify.js";
 import { readUrlState } from "./url-state.js";
@@ -45,5 +45,10 @@ window.addEventListener("popstate", () => {
 
 // Refresh the sidebar every 30s so unread-report badges and relative
 // timestamps reflect activity in non-selected sessions (the WebSocket only
-// streams the currently-selected session).
-setInterval(() => fetchSessions(), 30_000);
+// streams the currently-selected session). The archived feed is polled on the
+// same tick when its tab is showing — archived sessions never gain reports,
+// but the list still has to track new archives / deletions.
+setInterval(() => {
+  fetchSessions();
+  if (state.sidebarTab === "archived") fetchArchivedSessions();
+}, 30_000);
