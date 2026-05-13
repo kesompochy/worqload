@@ -9,6 +9,7 @@ import NewSessionModal from "./svelte/NewSessionModal.svelte";
 import FileSearchModal from "./svelte/FileSearchModal.svelte";
 import CodeNavPopover from "./svelte/CodeNavPopover.svelte";
 import AnchoredFeedbackOverlay from "./svelte/AnchoredFeedbackOverlay.svelte";
+import AnchoredComposer from "./svelte/AnchoredComposer.svelte";
 import FileNameSearchModal from "./svelte/FileNameSearchModal.svelte";
 import SessionList from "./svelte/SessionList.svelte";
 import DetailHeader from "./svelte/DetailHeader.svelte";
@@ -45,6 +46,11 @@ mount(CodeNavPopover, { target: document.body });
 // [data-feedback-preview] line/block; see handlers.js / AnchoredFeedbackOverlay.svelte).
 // On document.body so it floats over the layout.
 mount(AnchoredFeedbackOverlay, { target: document.body });
+
+// The floating feedback composer that appears next to an anchored line while
+// state.anchor is set, so the human doesn't have to track the cursor down to
+// the bottom-fixed composer. The bottom composer stays in place.
+mount(AnchoredComposer, { target: document.body });
 
 const sessionListTarget = document.getElementById("sessionList");
 if (sessionListTarget) mount(SessionList, { target: sessionListTarget });
