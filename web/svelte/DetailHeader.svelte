@@ -15,7 +15,7 @@
   import { formatRelative, eventAgeIsStale } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, onStopAndMarkRead, toggleActionPanel, runDirectAction } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
   const tabs = [
@@ -30,18 +30,10 @@
   // Feedback the agent has not fetched yet — the count the human still has "out".
   const unreadFeedbackCount = $derived(appState.feedbackHistory.filter(f => f.status === "unread").length);
 
-  // Action buttons live in the title row, not in a strip below the tabs: a
-  // tab-independent control under the tab bar competes with the mental model
-  // that everything below the tabs belongs to the active tab.
-  const isTerminal = $derived(
-    appState.detail?.meta.status === "stopped" || appState.detail?.meta.status === "crashed",
-  );
-
-  // Visual IA: cluster the action buttons by `group`. The first action after
-  // the "Stop & mark all read" client button always starts a new group; after
-  // that, a separator is rendered whenever the group key changes.
-  function groupBoundary(actions, index, hadStopButton) {
-    if (index === 0) return hadStopButton;
+  // Visual IA: cluster the action buttons by `group`. A separator is rendered
+  // whenever the group key changes between adjacent actions.
+  function groupBoundary(actions, index) {
+    if (index === 0) return false;
     return (actions[index - 1].group || actions[index - 1].id) !== (actions[index].group || actions[index].id);
   }
 </script>
@@ -52,15 +44,10 @@
   {@const lastEvent = events.length > 0 ? events[events.length - 1] : null}
   <div class="detail-header">
     <div class="title"><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
-    {#if appState.actions.length > 0 || !isTerminal}
+    {#if appState.actions.length > 0}
       <div class="header-actions">
-        {#if !isTerminal}
-          <!-- A client-side composite (not a server "gh action"): mark every
-               report read, then stop — pointless once already stopped/crashed. -->
-          <button class="btn-action" title="Mark every report read, then stop the session" onclick={onStopAndMarkRead}>Stop &amp; mark all read</button>
-        {/if}
         {#each appState.actions as a, i (a.id)}
-          {#if groupBoundary(appState.actions, i, !isTerminal)}
+          {#if groupBoundary(appState.actions, i)}
             <span class="action-group-sep" aria-hidden="true"></span>
           {/if}
           {#if a.direct}

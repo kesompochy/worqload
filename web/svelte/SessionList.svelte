@@ -11,6 +11,7 @@
   import {
     selectSession,
     onStop,
+    onStopAndMarkRead,
     onArchive,
     onResume,
     onRenameStart,
@@ -238,6 +239,7 @@
               <button class="btn-card-resume" onclick={(e) => { e.stopPropagation(); onResume(session.id); }}>Resume</button>
             {:else}
               <button class="btn-card-stop" onclick={(e) => { e.stopPropagation(); onStop(session.id); }}>Stop</button>
+              <button class="btn-card-stop-ack" title="Mark every report read, then stop the session" onclick={(e) => { e.stopPropagation(); onStopAndMarkRead(session.id); }}>Stop &amp; ack all</button>
             {/if}
             <button class="btn-card-archive" disabled={!terminal} onclick={(e) => { e.stopPropagation(); onArchive(session.id); }}>Archive</button>
           {/if}
