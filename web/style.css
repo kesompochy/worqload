@@ -358,11 +358,13 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-canvas svg { display: block; }
 .structure-edge { transition: opacity .12s ease; }
 /* Re-layout on highlight: animate the node/label positions and rect sizes so a
-   reflow doesn't snap. Edge `d` doesn't transition cross-browser, so paths
-   still snap — the eye tracks the bigger node motion anyway. */
-.structure-node, .structure-edge-label { transition: opacity .12s ease, transform .5s ease; }
-.structure-node rect, .structure-edge-label rect { transition: width .5s ease, x .5s ease; }
-.structure-node text { transition: x .5s ease; }
+   reflow doesn't snap. Linear easing over the same 500ms the JS scroll/zoom
+   tween uses, so the hovered node's screen position (which the JS tween anchors
+   per frame) matches what CSS is actually rendering. Edge `d` doesn't
+   transition cross-browser — paths still snap. */
+.structure-node, .structure-edge-label { transition: opacity .12s ease, transform .5s linear; }
+.structure-node rect, .structure-edge-label rect { transition: width .5s linear, x .5s linear; }
+.structure-node text { transition: x .5s linear; }
 .structure-edge.dim, .structure-edge-label.dim, .structure-node.dim { opacity: .15; }
 .structure-edge { fill: none; stroke: var(--border); stroke-width: 1.4px; }
 .structure-edge.cycle { stroke: var(--crashed); stroke-width: 1.8px; stroke-dasharray: 5 3; }
