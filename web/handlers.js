@@ -569,7 +569,9 @@ export async function onFeedback() {
     await api("POST", `/sessions/${state.selected}/feedback`, body);
     $("#feedbackInput").value = "";
     state.anchor = null;
-    state.activeTab = "feedback";  // show the message land in the feedback list
+    // Stay on whatever tab the human was reading (often the diff/file/report the
+    // anchor points at): the sent feedback now shows at its anchor and in the
+    // Feedbacks tab, so yanking the view away to the list is just disruptive.
     toast("feedback queued");
     await refreshDetail();
   } catch (e) {
