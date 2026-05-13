@@ -1,10 +1,10 @@
 // Pure layout for the Structure tab: turn the server's import-dependency
 // payload ({ graph: { nodes, edges }, cycles, changedFiles }) into placed boxes
-// and connector lines the SVG can draw. Files are laid out left→right by
-// dependency depth (a file sits to the right of the files it imports); edges
-// that close an import cycle are flagged so they can be drawn distinctly. The
-// names each import carries become an edge label, placed between the columns
-// (never on top of a node) and nudged apart from neighbouring labels.
+// and connector lines the SVG can draw. Files are laid out top→bottom by
+// dependency depth (a file sits below the files it imports); edges that close
+// an import cycle are flagged so they can be drawn distinctly. The names each
+// import carries become an edge label, placed between the rows (never on top of
+// a node) and nudged apart from neighbouring labels.
 //
 // The caller can pass `{ expandedNodes, expandedEdges }` so a highlighted node
 // shows its full path and a highlighted edge its full symbol list — the layout
@@ -14,24 +14,25 @@
 // No DOM, no Svelte — StructureView.svelte renders the result. (`bun test` reads
 // this module without the Svelte compiler, but it uses no runes.)
 
-export const NODE_WIDTH = 184;
-export const NODE_HEIGHT = 34;
-const PADDING = 18;
-// Node margins (clear space around a box) are deliberately larger than label
-// margins (clear space around a symbol pill): COLUMN_GAP is widened to fit the
-// widest label *plus* LABEL_MARGIN on each side, and ROW_GAP > LABEL_MARGIN.
-const COLUMN_GAP_MIN = 72;
-const ROW_GAP = 20;
-const LABEL_HEIGHT = 16;
-const LABEL_MARGIN = 8;
+export const NODE_WIDTH = 200;
+export const NODE_HEIGHT = 40;
+const PADDING = 28;
+// Layer gap (vertical clearance between dependency layers) must fit an edge
+// label pill plus breathing room. Sibling gap (horizontal clearance between
+// nodes in the same layer) is widened to fit the widest label, so labels
+// sitting in the vertical channel between rows don't crowd each other on x.
+const LAYER_GAP_MIN = 96;
+const SIBLING_GAP_MIN = 48;
+const LABEL_HEIGHT = 18;
+const LABEL_MARGIN = 14;
 const LABEL_MAX_CHARS = 22;
 // Conservative width-per-glyph and box padding for both node text (12px) and
 // label text (11px): we can't measure rendered text without a DOM, so we err
 // wide so a string always fits inside its pill.
 const LABEL_CHAR_WIDTH = 7.4;
-const LABEL_PADDING = 14;
+const LABEL_PADDING = 18;
 const NODE_CHAR_WIDTH = 7.8;
-const NODE_PADDING = 16;
+const NODE_PADDING = 22;
 
 function baseName(path) {
   const slash = path.lastIndexOf("/");
@@ -98,26 +99,29 @@ function cycleMembership(cycles) {
   return membership;
 }
 
-// Pull labels that share a vertical channel (same midpoint-x) apart so their
-// pills don't overlap: within each channel, sort by the preferred y and bump
-// each one down until it clears the previous by LABEL_HEIGHT + LABEL_MARGIN.
+// Pull labels that share a horizontal channel (same midpoint-y) apart so their
+// pills don't overlap: within each channel, sort by the preferred x and bump
+// each one right until it clears the previous by its own half-width plus
+// LABEL_MARGIN.
 function deoverlapLabels(labelledEdges) {
   const channels = new Map();
   for (const edge of labelledEdges) {
-    const key = Math.round(edge.labelX);
+    const key = Math.round(edge.labelY);
     (channels.get(key) ?? channels.set(key, []).get(key)).push(edge);
   }
-  let lowestLabelBottom = 0;
+  let rightmostLabelEdge = 0;
   for (const channel of channels.values()) {
-    channel.sort((a, b) => a.labelY - b.labelY);
+    channel.sort((a, b) => a.labelX - b.labelX);
     let cursor = -Infinity;
     for (const edge of channel) {
-      edge.labelY = Math.max(edge.labelY, cursor + LABEL_HEIGHT + LABEL_MARGIN);
-      cursor = edge.labelY;
-      lowestLabelBottom = Math.max(lowestLabelBottom, edge.labelY + LABEL_HEIGHT / 2);
+      const halfWidth = edge.labelWidth / 2;
+      const minX = cursor + halfWidth + LABEL_MARGIN;
+      edge.labelX = Math.max(edge.labelX, minX);
+      cursor = edge.labelX + halfWidth;
+      rightmostLabelEdge = Math.max(rightmostLabelEdge, cursor);
     }
   }
-  return lowestLabelBottom;
+  return rightmostLabelEdge;
 }
 
 const edgeKeyOf = (from, to) => `${from} ${to}`;
@@ -153,9 +157,9 @@ export function buildStructureModel(payload, opts = {}) {
   const sccOf = cycleMembership(payload?.cycles);
   const layerOf = assignLayers(nodePaths, rawEdges);
 
-  // Effective widths up-front so the column / label sizing knows the largest
-  // box it has to accommodate (an expanded node is sized for its expanded
-  // label, not its compact one).
+  // Effective widths up-front so the sibling sizing knows the largest box it
+  // has to accommodate (an expanded node is sized for its expanded label, not
+  // its compact one).
   const labelByPath = new Map(nodePaths.map(p => [p, expandedNodes.has(p) ? expandedLabelOf(p) : labelOf(p)]));
   const widthByPath = new Map(nodePaths.map(p => [p, effectiveNodeWidth(p, expandedNodes.has(p), labelByPath.get(p))]));
   const labelTextByEdge = new Map();
@@ -167,8 +171,13 @@ export function buildStructureModel(payload, opts = {}) {
     labelWidthByEdge.set(key, edgeLabelWidth(text));
   }
   const widestLabel = Math.max(0, ...labelWidthByEdge.values());
-  const columnGap = Math.max(COLUMN_GAP_MIN, widestLabel + 2 * LABEL_MARGIN);
-  const rowPitch = NODE_HEIGHT + ROW_GAP;
+  // Sibling gap widens to the widest edge label so labels sitting in the
+  // vertical channel between rows can fit between sibling columns without
+  // crowding.
+  const siblingGap = Math.max(SIBLING_GAP_MIN, widestLabel + 2 * LABEL_MARGIN);
+  // Layer gap only needs to clear one label pill height — labels are short
+  // vertically.
+  const layerGap = Math.max(LAYER_GAP_MIN, LABEL_HEIGHT + 2 * LABEL_MARGIN);
 
   // Group by layer; within a layer, sort alphabetically so files in the same
   // directory cluster together.
@@ -180,54 +189,79 @@ export function buildStructureModel(payload, opts = {}) {
   const layers = [...byLayer.keys()].sort((a, b) => a - b);
   for (const layer of layers) byLayer.get(layer).sort();
 
-  // Per-layer column width = the widest node in that layer; layers stack
-  // left-to-right with one columnGap between them.
-  const columnWidth = new Map();
+  // Layer top: layers stack vertically with one layerGap between them.
+  const layerTop = new Map();
+  let cursorY = PADDING;
   for (const layer of layers) {
-    const widest = Math.max(NODE_WIDTH, ...byLayer.get(layer).map(p => widthByPath.get(p)));
-    columnWidth.set(layer, widest);
+    layerTop.set(layer, cursorY);
+    cursorY += NODE_HEIGHT + layerGap;
   }
-  const layerLeft = new Map();
-  let cursor = PADDING;
-  for (const layer of layers) {
-    layerLeft.set(layer, cursor);
-    cursor += columnWidth.get(layer) + columnGap;
-  }
-  const totalWidth = cursor - columnGap + PADDING; // last layer doesn't trail a gap
+  const totalHeight = cursorY - layerGap + PADDING;
 
-  let maxRows = 0;
+  // Each layer is a horizontal row. Compute total width per layer; centre
+  // every layer in the widest layer's width so an expanded node grows
+  // symmetrically and narrow layers align under the wide ones.
+  const layerWidth = new Map();
+  let widestLayerWidth = 0;
+  for (const layer of layers) {
+    const row = byLayer.get(layer);
+    const sumWidths = row.reduce((acc, p) => acc + widthByPath.get(p), 0);
+    const width = sumWidths + Math.max(0, row.length - 1) * siblingGap;
+    layerWidth.set(layer, width);
+    widestLayerWidth = Math.max(widestLayerWidth, width);
+  }
+  const totalNodeWidth = widestLayerWidth + 2 * PADDING;
+
   const placed = new Map();
   for (const layer of layers) {
-    const column = byLayer.get(layer);
-    maxRows = Math.max(maxRows, column.length);
-    const left = layerLeft.get(layer);
-    const slotWidth = columnWidth.get(layer);
-    column.forEach((path, row) => {
+    const row = byLayer.get(layer);
+    const layerStartX = PADDING + (widestLayerWidth - layerWidth.get(layer)) / 2;
+    let cursorX = layerStartX;
+    const top = layerTop.get(layer);
+    for (const path of row) {
       const width = widthByPath.get(path);
       placed.set(path, {
         path,
         label: labelByPath.get(path),
-        // Centre each node in its slot, so an expanded node grows symmetrically
-        // and a non-expanded sibling sits in the same column on the same axis.
-        x: left + (slotWidth - width) / 2,
-        y: PADDING + row * rowPitch,
+        x: cursorX,
+        y: top,
         width,
         height: NODE_HEIGHT,
         changed: changedSet.has(path),
         inCycle: sccOf.has(path),
       });
-    });
+      cursorX += width + siblingGap;
+    }
   }
 
   const layoutEdges = rawEdges.map(({ from, to, symbols }) => {
     const a = placed.get(from);
     const b = placed.get(to);
     const forward = (layerOf.get(to) ?? 0) > (layerOf.get(from) ?? 0);
-    const x1 = forward ? a.x + a.width : a.x;
-    const y1 = a.y + a.height / 2;
-    const x2 = forward ? b.x : b.x + b.width;
-    const y2 = b.y + b.height / 2;
+    let x1, y1, x2, y2;
+    if (forward) {
+      // Bottom of source → top of target.
+      x1 = a.x + a.width / 2;
+      y1 = a.y + a.height;
+      x2 = b.x + b.width / 2;
+      y2 = b.y;
+    } else {
+      // Same-layer or back edge: anchor on the right side so the curve can
+      // bow out rightward around the boxes.
+      x1 = a.x + a.width;
+      y1 = a.y + a.height / 2;
+      x2 = b.x + b.width;
+      y2 = b.y + b.height / 2;
+    }
     const key = edgeKeyOf(from, to);
+    // Preferred label position: the midpoint of a forward edge sits in the
+    // vertical channel between layers, where there's clear space. Back/
+    // same-layer edges bow rightward, so push the label out to the right
+    // (deoverlapLabels may push further to avoid collisions on x).
+    const labelX = forward
+      ? (x1 + x2) / 2
+      : Math.max(x1, x2) + 34;
+    const labelY = (y1 + y2) / 2;
     return {
       from, to,
       symbols: symbols ?? [],
@@ -235,30 +269,25 @@ export function buildStructureModel(payload, opts = {}) {
       forward,
       label: labelTextByEdge.get(key),
       labelWidth: labelWidthByEdge.get(key),
-      // Preferred label position: the curve's midpoint for a forward edge,
-      // lifted above the bow for a back/same-layer edge (which arcs up), but not
-      // so high its pill clips the top of the canvas. deoverlapLabels may push
-      // labelY further down to avoid collisions.
-      labelX: (x1 + x2) / 2,
-      labelY: Math.max(LABEL_HEIGHT, forward ? (y1 + y2) / 2 - 6 : Math.min(y1, y2) - 34),
+      labelX,
+      labelY,
       inCycle: sccOf.has(from) && sccOf.get(from) === sccOf.get(to),
       expanded: expandedEdges.has(key),
     };
   });
-  const lowestLabelBottom = deoverlapLabels(layoutEdges.filter(e => e.label));
+  const rightmostLabelEdge = deoverlapLabels(layoutEdges.filter(e => e.label));
 
   const cycles = (payload?.cycles ?? []).map(paths => ({
     paths,
     label: paths.map(labelOf).join(paths.length > 1 ? " → " : " ↻ "),
   }));
 
-  const nodeBottom = PADDING + maxRows * NODE_HEIGHT + Math.max(0, maxRows - 1) * ROW_GAP;
   return {
     hasGraph: true,
     nodes: [...placed.values()],
     edges: layoutEdges,
-    width: totalWidth,
-    height: Math.max(nodeBottom, lowestLabelBottom) + PADDING,
+    width: Math.max(totalNodeWidth, rightmostLabelEdge + PADDING),
+    height: totalHeight,
     cycles,
   };
 }
