@@ -330,6 +330,9 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-focus { display: inline-flex; align-items: center; gap: .35rem; color: var(--text); font-size: 12px; }
 .structure-focus code { font-family: ui-monospace, monospace; color: var(--accent); }
 .structure-focus-hint { color: var(--text-dim); font-size: 12px; }
+.structure-mode { display: inline-flex; gap: .6rem; align-items: center; }
+.structure-mode label { display: inline-flex; align-items: center; gap: .25rem; cursor: pointer; user-select: none; }
+.structure-mode input { width: auto; }
 .structure-edge, .structure-node, .structure-edge-label { transition: opacity .12s ease; }
 .structure-edge.dim, .structure-edge-label.dim, .structure-node.dim { opacity: .15; }
 .structure-edge { fill: none; stroke: var(--border); stroke-width: 1.4px; }

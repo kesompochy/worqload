@@ -20,8 +20,23 @@
   import { state as appState } from "../state.svelte.js";
   import { buildStructureModel } from "../structure-view.js";
   import { openFileFromStructure, setStructureFocus } from "../handlers.js";
+  import { ensureCallGraphLoaded } from "../api.js";
 
-  const data = $derived(appState.structure);
+  // "file" mode draws the import graph (state.structure); "function" mode
+  // draws the call graph (state.callGraph). The toolbar toggle switches modes
+  // and triggers the call-graph fetch on demand.
+  const mode = $derived(appState.structureMode);
+  const data = $derived(mode === "function" ? appState.callGraph : appState.structure);
+  // Function-mode nodes carry presentation data in `nodeMeta`; the basename
+  // fallback is the import-graph behaviour.
+  const nodeMeta = $derived(data && data.nodeMeta ? data.nodeMeta : {});
+  function basename(path) { const slash = path.lastIndexOf("/"); return slash >= 0 ? path.slice(slash + 1) : path; }
+  const labelOf = $derived(mode === "function"
+    ? id => nodeMeta[id]?.name ?? id
+    : path => basename(path));
+  const expandedLabelOf = $derived(mode === "function"
+    ? id => { const m = nodeMeta[id]; return m ? `${m.name} (${basename(m.path)}:${m.line + 1})` : id; }
+    : path => path);
   const edgeKey = edge => `${edge.from} ${edge.to}`;
 
   // When focus is set, restrict the payload to the focused node, its direct
@@ -64,7 +79,13 @@
   const expandedEdges = $derived(hoveredEdgeKey ? new Set([hoveredEdgeKey]) : new Set());
   const model = $derived.by(() => {
     if (!focusedData || !focusedData.graph) return null;
-    return buildStructureModel(focusedData, { expandedNodes, expandedEdges });
+    return buildStructureModel(focusedData, { expandedNodes, expandedEdges, labelOf, expandedLabelOf });
+  });
+
+  // Lazily fetch the call graph the first time the human flips into function
+  // mode (server query is expensive — bursts of LSP traffic).
+  $effect(() => {
+    if (appState.structureMode === "function") void ensureCallGraphLoaded();
   });
 
   // The set of paths/edge-keys related to the hovered node, used for dim/
@@ -135,8 +156,14 @@
 </script>
 
 <div class="structure-view">
+  <div class="structure-toolbar">
+    <span class="structure-mode">
+      <label><input type="radio" name="structureMode" value="file" bind:group={appState.structureMode} /> ファイル</label>
+      <label><input type="radio" name="structureMode" value="function" bind:group={appState.structureMode} /> 関数</label>
+    </span>
+  </div>
   {#if !data || data.loading}
-    <div class="structure-message">依存グラフを読み込み中…</div>
+    <div class="structure-message">{mode === "function" ? "コールグラフを読み込み中…（LSP が応答する間しばらくお待ちください）" : "依存グラフを読み込み中…"}</div>
   {:else if data.error}
     <div class="structure-message structure-error">読み込みに失敗しました: {data.error}</div>
   {:else if !model || !model.hasGraph}
@@ -145,6 +172,8 @@
         Focus 中: <code>{appState.structureFocusPath}</code>
         にマッチするノードがグラフ内に見つかりません。
         <button type="button" class="structure-zoom-btn" onclick={() => setStructureFocus(null)}>Focus 解除</button>
+      {:else if mode === "function"}
+        この変更について図示できる関数呼び出しがありません。（言語サーバが起動していない、変更ファイルに関数定義がない、または callHierarchy 未対応の言語かもしれません。）
       {:else}
         この変更について図示できる import 依存関係がありません。
         （グラフ化の対象は JavaScript / TypeScript / Svelte / Go ファイル。変更ファイルが孤立しているか、import グラフ未対応の言語です。Go は worktree 直下に go.mod が無いと import を解決できません。）
@@ -206,17 +235,22 @@
         {/if}
         {#each model.nodes as node (node.path)}
           {@const expanded = node.path === appState.structureFocusPath}
+          {@const meta = mode === "function" ? nodeMeta[node.path] : null}
+          {@const filePath = meta ? meta.path : node.path}
+          {@const line = meta ? meta.line + 1 : null}
           <g
             class="structure-node"
             class:changed={node.changed}
             class:cycle={node.inCycle}
             class:dim={nodeDimmed(node.path)}
             class:expanded
-            data-structure-open={node.path}
+            data-structure-id={node.path}
+            data-structure-open={filePath}
+            data-structure-line={line ?? undefined}
             transform="translate({node.x},{node.y})"
             role="button"
             tabindex="0"
-            aria-label={`${node.path} — click to open, shift+click to focus`}
+            aria-label={`${node.label} — click to open, shift+click to focus`}
             onmouseenter={() => (hoveredPath = node.path)}
             onmouseleave={() => (hoveredPath = null)}
             onfocus={() => (hoveredPath = node.path)}
@@ -224,7 +258,7 @@
             onkeydown={e => onNodeKeydown(e, node.path)}
           >
             <rect width={node.width} height={node.height} rx="5" />
-            <text x={node.width / 2} y={node.height / 2}>{expanded ? node.path : node.label}</text>
+            <text x={node.width / 2} y={node.height / 2}>{node.label}</text>
           </g>
         {/each}
       </svg>
@@ -233,11 +267,27 @@
       <summary>依存の詳細 ({edgeDetails.length})</summary>
       <ul>
         {#each edgeDetails as edge}
+          {@const fromMeta = mode === "function" ? nodeMeta[edge.from] : null}
+          {@const toMeta = mode === "function" ? nodeMeta[edge.to] : null}
           <li>
-            <button type="button" class="structure-detail-file" class:changed={model.nodes.find(n => n.path === edge.from)?.changed} data-structure-open={edge.from}>{edge.from}</button>
+            <button
+              type="button"
+              class="structure-detail-file"
+              class:changed={model.nodes.find(n => n.path === edge.from)?.changed}
+              data-structure-id={edge.from}
+              data-structure-open={fromMeta ? fromMeta.path : edge.from}
+              data-structure-line={fromMeta ? fromMeta.line + 1 : undefined}
+            >{labelOf(edge.from)}{fromMeta ? ` (${basename(fromMeta.path)}:${fromMeta.line + 1})` : ""}</button>
             <span class="structure-detail-arrow">→</span>
-            <button type="button" class="structure-detail-file" class:changed={model.nodes.find(n => n.path === edge.to)?.changed} data-structure-open={edge.to}>{edge.to}</button>
-            <span class="structure-detail-symbols">{symbolsLabel(edge.symbols)}</span>
+            <button
+              type="button"
+              class="structure-detail-file"
+              class:changed={model.nodes.find(n => n.path === edge.to)?.changed}
+              data-structure-id={edge.to}
+              data-structure-open={toMeta ? toMeta.path : edge.to}
+              data-structure-line={toMeta ? toMeta.line + 1 : undefined}
+            >{labelOf(edge.to)}{toMeta ? ` (${basename(toMeta.path)}:${toMeta.line + 1})` : ""}</button>
+            <span class="structure-detail-symbols">{mode === "function" ? "" : symbolsLabel(edge.symbols)}</span>
           </li>
         {/each}
       </ul>

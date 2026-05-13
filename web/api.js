@@ -137,6 +137,26 @@ export async function ensureStructureLoaded(force = false) {
   state.structureLoaded = true;
 }
 
+// Function-mode counterpart: LSP-driven call graph for the changeset's
+// callable symbols. Slower than the import graph (each query goes out to a
+// language server), so it loads on demand when the user flips the toolbar
+// mode toggle.
+export async function ensureCallGraphLoaded(force = false) {
+  if (!state.selected) return;
+  if (state.callGraphLoaded && !force) return;
+  state.callGraph = { loading: true };
+  const id = state.selected;
+  try {
+    const data = await api("GET", `/sessions/${id}/call-graph`);
+    if (state.selected !== id) return;
+    state.callGraph = data && data.error ? { error: data.error } : data;
+  } catch (e) {
+    if (state.selected !== id) return;
+    state.callGraph = { error: e.message };
+  }
+  state.callGraphLoaded = true;
+}
+
 export async function selectFile(path) {
   if (!state.selected || !path) return;
   state.selectedFilePath = path;
