@@ -13,6 +13,7 @@
     onStop,
     onStopAndMarkRead,
     onArchive,
+    onUnarchive,
     onResume,
     onRenameStart,
     onRenameCommit,
@@ -233,6 +234,7 @@
             <button class="btn-card-rename" onclick={(e) => { e.stopPropagation(); onRenameStart(session.id); }}>Rename</button>
           {/if}
           {#if archivedView}
+            <button class="btn-card-unarchive" onclick={(e) => { e.stopPropagation(); onUnarchive(session.id); }}>Unarchive</button>
             <button class="btn-card-delete" onclick={(e) => { e.stopPropagation(); onDeleteArchived(session.id); }}>Delete</button>
           {:else}
             {#if terminal}
