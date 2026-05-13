@@ -231,11 +231,12 @@ export function onDetailBodyClick(e) {
     else openFileFromStructure(path);
     return;
   }
-  // A symbol token in the Files-tab content pane (highlighter wraps plain
-  // identifiers in .tok-ident there) — open the code-navigation popover instead
-  // of anchoring the line. Anchoring still works by clicking the line number.
+  // A symbol token in the Files-tab content pane or the Diff-tab body
+  // (highlighter wraps plain identifiers in .tok-ident in both) — open the
+  // code-navigation popover instead of anchoring the line. Anchoring still
+  // works by clicking the line number.
   const identToken = e.target.closest(".tok-ident");
-  if (identToken && e.target.closest(".file-content-body")) {
+  if (identToken && e.target.closest(".file-content-body, .diff-file-body")) {
     openCodeNav(identToken);
     return;
   }
@@ -272,8 +273,12 @@ export function openCodeNav(tokenEl) {
   const line = Number(lineEl.getAttribute("data-anchor-line"));
   if (!path || !Number.isFinite(line)) return;
   const bodyEl = tokenEl.closest(".body");
+  // The Files-tab cache only counts as source text for the symbol being
+  // resolved when it actually holds *that* file: a click in the Diff body for
+  // file X must not feed the heuristic file Y's content (whatever the user
+  // happened to be viewing in the Files tab).
   const fc = state.fileContent;
-  const sourceText = fc && !fc.loading && !fc.error && !fc.binary && !fc.tooLarge ? (fc.content ?? "") : "";
+  const sourceText = fc && fc.path === path && !fc.loading && !fc.error && !fc.binary && !fc.tooLarge ? (fc.content ?? "") : "";
   const ctx = {
     sessionId: state.selected,
     path,

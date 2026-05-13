@@ -104,14 +104,18 @@ test("clicking a report header toggles its expansion with a fresh Map (so Svelte
   expect(isReportExpanded(state.reports[0])).toBe(false);
 });
 
-function identTokenClick(symbol: string, path: string, line: number) {
+function identTokenClick(symbol: string, path: string, line: number, container = ".file-content-body") {
   const lineEl = { getAttribute: (a: string) => (a === "data-anchor-path" ? path : a === "data-anchor-line" ? String(line) : null) };
   const token = {
     textContent: symbol,
     getBoundingClientRect: () => ({ top: 0, bottom: 10, left: 0 }),
     closest: (sel: string) => (sel === "[data-anchor-line]" ? lineEl : null),
   };
-  return { target: { closest: (sel: string) => (sel === ".tok-ident" ? token : sel === ".file-content-body" ? {} : null) } };
+  // The production handler queries a comma-separated selector list to allow the
+  // popover in either the Files or the Diff body — match this token's claimed
+  // container against any entry in that list.
+  const matchesContainer = (sel: string) => sel.split(",").map(s => s.trim()).includes(container);
+  return { target: { closest: (sel: string) => (sel === ".tok-ident" ? token : matchesContainer(sel) ? {} : null) } };
 }
 
 test("clicking a symbol token in the Files content pane opens the code-nav popover, then resolves it via the heuristic fallback", async () => {
@@ -136,6 +140,32 @@ test("clicking a symbol token in the Files content pane opens the code-nav popov
 
   closeCodeNav();
   expect(state.codeNav).toBeNull();
+});
+
+test("clicking a symbol token in the Diff body opens the code-nav popover for that diff file", async () => {
+  // The diff line carries `data-anchor-path` for the file it diffs; the click
+  // happens inside .diff-file-body rather than .file-content-body. Code-nav must
+  // still open. state.fileContent here is a *different* file the user happens to
+  // have viewed in the Files tab; openCodeNav must not feed its content to the
+  // heuristic as if it were the clicked file's source.
+  state.selected = null; // no session → server provider declines, heuristic answers
+  state.fileContent = { path: "lib/other.js", content: "function unrelated() {}\n" };
+  state.selectedFilePath = "lib/other.js";
+  state.codeNav = null;
+
+  onDetailBodyClick(identTokenClick("greet", "lib/app.js", 2, ".diff-file-body"));
+  expect(state.codeNav?.symbol).toBe("greet");
+  expect(state.codeNav?.path).toBe("lib/app.js");
+  expect(state.codeNav?.definitionsStatus).toBe("loading");
+
+  await new Promise(r => setTimeout(r, 5));
+  expect(state.codeNav?.definitionsStatus).toBe("done");
+  // No matching sourceText for lib/app.js → heuristic finds no declarations.
+  // The wrong file's content (lib/other.js) must not leak in as a false match.
+  expect(state.codeNav?.definitions).toEqual([]);
+  expect(state.codeNav?.referencesStatus).toBe("done");
+
+  closeCodeNav();
 });
 
 test("command-result feedback is expanded only until the agent consumes it", () => {

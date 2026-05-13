@@ -68,7 +68,7 @@
                   <div class="diff-line {seg.row.kind}" class:selected={seg.row.anchorable && isAnchored(file.path, seg.row.newNo)} class:has-feedback={fbHere.length > 0} data-feedback-preview={fbHere.length > 0 ? fbHere.join(",") : undefined} data-anchor-line={seg.row.anchorable ? seg.row.newNo : undefined} data-anchor-path={seg.row.anchorable ? file.path : undefined}>
                     <span class="ln">{seg.row.kind === "remove" ? seg.row.oldNo : ""}</span>
                     <span class="ln">{seg.row.kind === "remove" ? "" : seg.row.newNo}</span>
-                    <span class="body">{@html highlightCode(seg.row.body, file.lang)}</span>
+                    <span class="body">{@html highlightCode(seg.row.body, file.lang, seg.row.anchorable ? { wrapIdentifiers: true } : undefined)}</span>
                   </div>
                 {/if}
               {/each}
