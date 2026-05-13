@@ -26,7 +26,7 @@ import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadSt
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
-import { listActions, listAvailableActions, findAction } from "./actions";
+import { isSessionPreviewAlive, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { isAgentWorkEvent } from "../web/events-view.js";
@@ -940,12 +940,28 @@ async function postSessionsOrder(req: Request, ctx: ServerContext): Promise<Resp
   return json({ ok: true });
 }
 
-async function postArchive(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+async function postArchive(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     if (!isTerminal(meta.status)) {
       return json({ error: "stop the session before archiving" }, 400);
     }
     if (meta.archivedAt) return json({ meta });
+    // Archiving abandons the session — the preview that points at its
+    // worktree would keep serving stale code (and tie up its port) with no
+    // sidebar entry to surface a Stop button. The client gets a 409 so it
+    // can warn the human; passing `?stopPreview=true` accepts the warning
+    // and asks the server to SIGTERM the preview before archiving.
+    const preview = isSessionPreviewAlive(meta);
+    if (preview.alive) {
+      const force = new URL(req.url).searchParams.get("stopPreview") === "true";
+      if (!force) {
+        return json(
+          { error: "preview-running", message: "preview server is still running for this session", pid: preview.pid, url: preview.url },
+          409,
+        );
+      }
+      await stopSessionPreview(meta);
+    }
     const updated: SessionMeta = { ...meta, archivedAt: new Date().toISOString() };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });

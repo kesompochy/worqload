@@ -364,6 +364,32 @@ function tailFile(path: string, maxChars = 4000): string {
   }
 }
 
+// Lets callers outside the preview action (e.g. the archive flow) ask whether
+// this session's preview server is currently running, without restarting it
+// or otherwise mutating state. `url` is best-effort: it's parsed from the
+// preview's startup log, which may not yet contain a "listening on" line if
+// the server is still booting.
+export type SessionPreviewStatus =
+  | { alive: false }
+  | { alive: true; pid: number; url: string | null };
+
+export function isSessionPreviewAlive(meta: SessionMeta): SessionPreviewStatus {
+  const { logPath, pidPath } = previewPaths(meta);
+  const pid = readPreviewPid(pidPath);
+  if (pid === null || !processAlive(pid)) return { alive: false };
+  return { alive: true, pid, url: parsePreviewListeningUrl(tailFile(logPath)) };
+}
+
+// Companion to isSessionPreviewAlive: SIGTERMs the preview server (if any),
+// waits for it to exit, and removes the pidfile. Returns the stopped pid, or
+// null if nothing was running. Shared with the archive flow so the same code
+// path that powers the "Stop preview" action can run as a side effect of
+// archiving a session whose preview is still live.
+export async function stopSessionPreview(meta: SessionMeta): Promise<number | null> {
+  const { pidPath } = previewPaths(meta);
+  return stopPreviewProcess(pidPath);
+}
+
 export const previewAction: Action = {
   id: "preview",
   label: "Preview",

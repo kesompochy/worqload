@@ -1035,6 +1035,73 @@ test("POST /sessions/:id/archive hides terminal sessions from default list", asy
   expect(all.sessions.find((s: { id: string }) => s.id === sid)).toBeDefined();
 });
 
+// Plants the per-session preview pidfile that `isSessionPreviewAlive` reads,
+// pointed at a live process so the archive guard sees a running preview. The
+// pidfile path mirrors `previewPaths()` in src/actions.ts; we only write the
+// pidfile itself (no log) so the URL field on the 409 response is null.
+function plantLivePreviewPid(root: string, sessionId: string, pid: number): void {
+  const shortId = sessionId.slice(0, 8);
+  const dir = join(root, shortId, ".worqload");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "preview.pid"), String(pid));
+}
+
+test("POST /sessions/:id/archive refuses with 409 when a preview is still running", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+  const previewRoot = makeTmpDir("preview-root");
+  process.env.WORQLOAD_PREVIEW_DIR = previewRoot;
+  try {
+    const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+    const sid = created.meta.id;
+    await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+    plantLivePreviewPid(previewRoot, sid, process.pid);
+
+    const res = await fetch(`${baseUrl}/sessions/${sid}/archive`, { method: "POST" });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe("preview-running");
+    expect(body.pid).toBe(process.pid);
+
+    // The session must not have been marked archived by the refused request.
+    const all = await fetch(`${baseUrl}/sessions?includeArchived=true`).then(r => r.json());
+    const found = all.sessions.find((s: { id: string; archivedAt?: string }) => s.id === sid);
+    expect(found?.archivedAt).toBeUndefined();
+  } finally {
+    delete process.env.WORQLOAD_PREVIEW_DIR;
+  }
+});
+
+test("POST /sessions/:id/archive?stopPreview=true stops the preview then archives", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+  const previewRoot = makeTmpDir("preview-root");
+  process.env.WORQLOAD_PREVIEW_DIR = previewRoot;
+
+  // Spawn a real child we control so the archive flow can SIGTERM it. `sleep`
+  // exits on SIGTERM with a non-zero status, which is what we want — we only
+  // need it alive long enough to be killed.
+  const proc = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+  try {
+    const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+    const sid = created.meta.id;
+    await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+    plantLivePreviewPid(previewRoot, sid, proc.pid as number);
+
+    const res = await fetch(`${baseUrl}/sessions/${sid}/archive?stopPreview=true`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.meta.archivedAt).toBeDefined();
+
+    // The preview child must have been signalled — proc.exited resolves once
+    // the SIGTERM the archive flow sent lands.
+    await proc.exited;
+  } finally {
+    try { proc.kill(); } catch { /* already gone */ }
+    delete process.env.WORQLOAD_PREVIEW_DIR;
+  }
+});
+
 test("GET /sessions?archived=only returns only archived sessions", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

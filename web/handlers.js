@@ -745,7 +745,31 @@ export async function onBulkDeleteArchived() {
 export async function onArchive(id = state.selected) {
   if (!id) return;
   try {
-    await api("POST", `/sessions/${id}/archive`, {});
+    // fetch directly (not api()): a 409 here carries a structured body the
+    // confirm flow below reads — api() would fold the body into an Error
+    // message and lose the fields.
+    let res = await fetch(`/sessions/${id}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}));
+      if (body.error === "preview-running") {
+        const where = body.url ? `\n${body.url}` : "";
+        const ok = window.confirm(`このセッションには動作中の Preview があります${where}\nPreview を停止して archive しますか？`);
+        if (!ok) return;
+        res = await fetch(`/sessions/${id}/archive?stopPreview=true`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({}),
+        });
+      }
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`POST /sessions/${id}/archive → ${res.status}: ${text}`);
+    }
     await fetchSessions();
     // Archiving the session in the detail pane empties it — move to the first
     // session left, or an empty pane. Archiving some other card via its hover

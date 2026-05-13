@@ -4,12 +4,14 @@ import { join } from "path";
 import {
   createPrAction,
   findAction,
+  isSessionPreviewAlive,
   listActions,
   mergeToBaseAction,
   parsePreviewListeningUrl,
   previewAction,
   previewPortForSession,
   stopPreviewAction,
+  stopSessionPreview,
   syncBaseFromRemoteAction,
 } from "./actions";
 import type { SessionMeta } from "./session";
@@ -141,6 +143,68 @@ test("stop-preview reports cleanly when no preview is running for the session", 
     const res = await stopPreviewAction.run({ meta: metaWithWorktree("/irrelevant"), repoDir: "/irrelevant" }, {});
     expect(res.ok).toBe(true);
     expect(res.message).toContain("no preview server");
+  } finally {
+    delete process.env.WORQLOAD_PREVIEW_DIR;
+  }
+});
+
+// The pidfile lives under <previewRoot>/<shortId>/.worqload/preview.pid; that
+// path mirrors `previewPaths()` exactly so the helper under test reads the
+// file we just wrote.
+function writePreviewPid(root: string, sessionId: string, pid: number, logBody?: string): void {
+  const shortId = sessionId.slice(0, 8);
+  const dir = join(root, shortId, ".worqload");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "preview.pid"), String(pid));
+  if (logBody !== undefined) writeFileSync(join(root, `${shortId}.log`), logBody);
+}
+
+test("isSessionPreviewAlive returns alive=false when no pidfile is present", () => {
+  process.env.WORQLOAD_PREVIEW_DIR = makeTmpDir("actions-preview-alive-empty");
+  try {
+    const status = isSessionPreviewAlive(metaWithWorktree("/irrelevant"));
+    expect(status.alive).toBe(false);
+  } finally {
+    delete process.env.WORQLOAD_PREVIEW_DIR;
+  }
+});
+
+test("isSessionPreviewAlive returns alive=false when the pidfile points at a dead process", () => {
+  const root = makeTmpDir("actions-preview-alive-stale");
+  process.env.WORQLOAD_PREVIEW_DIR = root;
+  try {
+    const meta = metaWithWorktree("/irrelevant");
+    // pid 2**31 - 1 is well above any conceivable live pid on the test host.
+    writePreviewPid(root, meta.id, 2_147_483_646);
+    const status = isSessionPreviewAlive(meta);
+    expect(status.alive).toBe(false);
+  } finally {
+    delete process.env.WORQLOAD_PREVIEW_DIR;
+  }
+});
+
+test("isSessionPreviewAlive surfaces the pid and parses the listening URL from the log when the process is alive", () => {
+  const root = makeTmpDir("actions-preview-alive-live");
+  process.env.WORQLOAD_PREVIEW_DIR = root;
+  try {
+    const meta = metaWithWorktree("/irrelevant");
+    writePreviewPid(root, meta.id, process.pid, "worqload preview listening on http://127.0.0.1:3501\n");
+    const status = isSessionPreviewAlive(meta);
+    expect(status.alive).toBe(true);
+    if (status.alive) {
+      expect(status.pid).toBe(process.pid);
+      expect(status.url).toBe("http://127.0.0.1:3501");
+    }
+  } finally {
+    delete process.env.WORQLOAD_PREVIEW_DIR;
+  }
+});
+
+test("stopSessionPreview returns null when there's nothing to stop", async () => {
+  process.env.WORQLOAD_PREVIEW_DIR = makeTmpDir("actions-preview-stop-empty");
+  try {
+    const pid = await stopSessionPreview(metaWithWorktree("/irrelevant"));
+    expect(pid).toBeNull();
   } finally {
     delete process.env.WORQLOAD_PREVIEW_DIR;
   }
