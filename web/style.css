@@ -43,7 +43,10 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .bulk-action-bar button { font-size: 11px; padding: .2rem .5rem; }
 .bulk-delete { color: var(--crashed); border-color: rgba(248,81,73,.5); }
 .bulk-delete:hover { background: rgba(248,81,73,.12); }
-.session-card-select { flex: 0 0 auto; margin: .25rem .1rem 0 0; cursor: pointer; }
+/* The global `textarea, input { width: 100%; ... }` rule (see top of file) would
+   stretch the bulk-select checkbox to the whole card width and paint it with the
+   text-input background; reset to native checkbox dimensions and chrome. */
+.session-card-select { flex: 0 0 auto; width: auto; padding: 0; background: transparent; border: 0; border-radius: 0; margin: .35rem .15rem 0 0; cursor: pointer; }
 .session-card.selected { background: rgba(88,166,255,.08); }
 .session-card { padding: .75rem; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: .55rem; align-items: flex-start; }
 .session-card:hover { background: var(--panel); }
