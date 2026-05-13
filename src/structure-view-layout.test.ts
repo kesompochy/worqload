@@ -1,7 +1,7 @@
 // Layout for the Structure tab's graph. Lives under src/ so `bun test` picks it
 // up (the module under test is web/structure-view.js, a plain ES module).
 import { test, expect } from "bun:test";
-import { buildStructureModel, edgeLabelText, edgeLabelWidth, NODE_WIDTH } from "../web/structure-view.js";
+import { buildStructureModel, edgeLabelText, edgeLabelWidth, effectiveNodeWidth, NODE_WIDTH } from "../web/structure-view.js";
 
 test("buildStructureModel reports no graph for an empty payload", () => {
   const model = buildStructureModel({ graph: { nodes: [], edges: [] }, cycles: [], changedFiles: [] });
@@ -55,6 +55,32 @@ test("buildStructureModel widens the column gap to fit symbol labels and writes 
   expect(edge.label).toBe(edgeLabelText(edge.symbols));
   expect(edge.label.length).toBeGreaterThan(0);
   expect(edge.labelWidth).toBeGreaterThan(0);
+});
+
+test("buildStructureModel expands nodes / edges in `expandedNodes` / `expandedEdges` and reflows around them", () => {
+  const longPath = "web/svelte/StructureView.svelte";
+  const longSymbols = ["aLongSymbolName", "anotherLongOne", "yetMore"];
+  const payload = {
+    graph: { nodes: ["app.js", longPath], edges: [{ from: "app.js", to: longPath, symbols: longSymbols }] },
+    cycles: [],
+    changedFiles: [],
+  };
+  const collapsed = buildStructureModel(payload);
+  const expanded = buildStructureModel(payload, {
+    expandedNodes: new Set([longPath]),
+    expandedEdges: new Set(["app.js " + longPath]),
+  });
+  const longNode = p => p.nodes.find(n => n.path === longPath);
+  expect(longNode(collapsed).width).toBe(NODE_WIDTH);
+  expect(longNode(expanded).width).toBe(effectiveNodeWidth(longPath, true));
+  expect(longNode(expanded).width).toBeGreaterThan(NODE_WIDTH);
+  // The expanded edge carries the full symbol text and a correspondingly wider pill.
+  const edge = e => e.edges.find(x => x.from === "app.js" && x.to === longPath);
+  expect(edge(collapsed).label.endsWith("…")).toBe(true);
+  expect(edge(expanded).label).toBe(longSymbols.join(", "));
+  expect(edge(expanded).labelWidth).toBeGreaterThan(edge(collapsed).labelWidth);
+  // The canvas grows so the expanded box and label have room.
+  expect(expanded.width).toBeGreaterThan(collapsed.width);
 });
 
 test("buildStructureModel pushes apart labels that share a vertical channel", () => {

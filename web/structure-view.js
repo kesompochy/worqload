@@ -5,6 +5,12 @@
 // that close an import cycle are flagged so they can be drawn distinctly. The
 // names each import carries become an edge label, placed between the columns
 // (never on top of a node) and nudged apart from neighbouring labels.
+//
+// The caller can pass `{ expandedNodes, expandedEdges }` so a highlighted node
+// shows its full path and a highlighted edge its full symbol list — the layout
+// then widens the relevant rects and reflows everything around them. The
+// frontend rebuilds the model when the hover/focus selection changes, so a
+// highlighted neighborhood gets its own non-overlapping arrangement.
 // No DOM, no Svelte — StructureView.svelte renders the result. (`bun test` reads
 // this module without the Svelte compiler, but it uses no runes.)
 
@@ -19,12 +25,13 @@ const ROW_GAP = 20;
 const LABEL_HEIGHT = 16;
 const LABEL_MARGIN = 8;
 const LABEL_MAX_CHARS = 22;
-// Conservative width-per-glyph at 11px monospace and box padding: we can't
-// measure rendered text without a DOM, so we err wide so a label always fits
-// inside its pill (the alternative — text overflowing the rect — is the bug
-// these constants exist to prevent).
+// Conservative width-per-glyph and box padding for both node text (12px) and
+// label text (11px): we can't measure rendered text without a DOM, so we err
+// wide so a string always fits inside its pill.
 const LABEL_CHAR_WIDTH = 7.4;
 const LABEL_PADDING = 14;
+const NODE_CHAR_WIDTH = 7.8;
+const NODE_PADDING = 16;
 
 function baseName(path) {
   const slash = path.lastIndexOf("/");
@@ -33,15 +40,23 @@ function baseName(path) {
 
 // The compact symbol-name label written onto an edge ("" for a side-effect-only
 // import, which gets no label — the arrow alone says "depends on"). Long lists
-// are clipped; the full list lives in the edge's tooltip / the details list.
-export function edgeLabelText(symbols) {
+// are clipped; the full list appears when the edge is in `expandedEdges`.
+export function edgeLabelText(symbols, expanded = false) {
   if (!symbols || symbols.length === 0) return "";
   const joined = symbols.join(", ");
+  if (expanded) return joined;
   return joined.length > LABEL_MAX_CHARS ? `${joined.slice(0, LABEL_MAX_CHARS - 1)}…` : joined;
 }
 
 export function edgeLabelWidth(text) {
   return text ? text.length * LABEL_CHAR_WIDTH + LABEL_PADDING : 0;
+}
+
+// Effective node-rect width for a given path: the default NODE_WIDTH unless the
+// node is in `expandedNodes`, in which case it grows to fit the full path text.
+export function effectiveNodeWidth(path, expanded) {
+  if (!expanded) return NODE_WIDTH;
+  return Math.max(NODE_WIDTH, path.length * NODE_CHAR_WIDTH + NODE_PADDING);
 }
 
 // Longest-path layering: a node's layer is 1 + the max layer of the files that
@@ -104,53 +119,91 @@ function deoverlapLabels(labelledEdges) {
   return lowestLabelBottom;
 }
 
-// Build the drawable model. Returns `{ hasGraph, nodes, edges, width, height,
-// cycles }`:
+const edgeKeyOf = (from, to) => `${from} ${to}`;
+
+// Build the drawable model. `opts.expandedNodes` (Set<path>) and
+// `opts.expandedEdges` (Set<"from to">) widen the corresponding rects; the
+// layout reflows around them so nothing in the highlighted set overlaps.
+// Returns:
 //   - nodes: { path, label, x, y, width, height, changed, inCycle }
+//     `width` already reflects expansion; `label` is always the basename
+//     (the renderer swaps to the full path when expanded).
 //   - edges: { from, to, symbols, label, labelWidth, labelX, labelY,
-//     x1, y1, x2, y2, forward, inCycle } — the {x,y}{1,2} are box-edge anchor
-//     points; `forward` is false for a back/same-layer edge so the renderer can
-//     route it around the column instead of straight through.
-//   - cycles: [{ paths, label }] — basenames joined; kept for callers that want it.
-export function buildStructureModel(payload) {
+//     x1, y1, x2, y2, forward, inCycle, expanded } — `label`/`labelWidth`
+//     already reflect expansion; `(x,y){1,2}` are box-edge anchor points.
+//   - width, height: the bounding rectangle of the laid-out content.
+//   - cycles: [{ paths, label }] — kept for callers that want it.
+export function buildStructureModel(payload, opts = {}) {
   const graph = payload?.graph ?? { nodes: [], edges: [] };
   const nodePaths = [...(graph.nodes ?? [])];
-  const edges = (graph.edges ?? []).filter(e => e && nodePaths.includes(e.from) && nodePaths.includes(e.to));
+  const rawEdges = (graph.edges ?? []).filter(e => e && nodePaths.includes(e.from) && nodePaths.includes(e.to));
   if (nodePaths.length === 0) {
     return { hasGraph: false, nodes: [], edges: [], width: 0, height: 0, cycles: [] };
   }
 
+  const expandedNodes = opts.expandedNodes ?? new Set();
+  const expandedEdges = opts.expandedEdges ?? new Set();
   const changed = new Set(payload?.changedFiles ?? []);
   const sccOf = cycleMembership(payload?.cycles);
-  const layerOf = assignLayers(nodePaths, edges);
+  const layerOf = assignLayers(nodePaths, rawEdges);
 
-  // Widen the inter-column gap so the widest label fits between two columns with
-  // a LABEL_MARGIN to spare on each side — that keeps labels off the nodes.
-  const widestLabel = Math.max(0, ...edges.map(e => edgeLabelWidth(edgeLabelText(e.symbols))));
+  // Effective widths up-front so the column / label sizing knows the largest
+  // box it has to accommodate.
+  const widthByPath = new Map(nodePaths.map(p => [p, effectiveNodeWidth(p, expandedNodes.has(p))]));
+  const labelTextByEdge = new Map();
+  const labelWidthByEdge = new Map();
+  for (const edge of rawEdges) {
+    const key = edgeKeyOf(edge.from, edge.to);
+    const text = edgeLabelText(edge.symbols, expandedEdges.has(key));
+    labelTextByEdge.set(key, text);
+    labelWidthByEdge.set(key, edgeLabelWidth(text));
+  }
+  const widestLabel = Math.max(0, ...labelWidthByEdge.values());
   const columnGap = Math.max(COLUMN_GAP_MIN, widestLabel + 2 * LABEL_MARGIN);
-  const columnPitch = NODE_WIDTH + columnGap;
   const rowPitch = NODE_HEIGHT + ROW_GAP;
 
-  // Group by layer, then order within a layer alphabetically (stable, and keeps
-  // a file near the others in its directory).
+  // Group by layer; within a layer, sort alphabetically so files in the same
+  // directory cluster together.
   const byLayer = new Map();
   for (const path of nodePaths) {
     const layer = layerOf.get(path) ?? 0;
     (byLayer.get(layer) ?? byLayer.set(layer, []).get(layer)).push(path);
   }
   const layers = [...byLayer.keys()].sort((a, b) => a - b);
+  for (const layer of layers) byLayer.get(layer).sort();
+
+  // Per-layer column width = the widest node in that layer; layers stack
+  // left-to-right with one columnGap between them.
+  const columnWidth = new Map();
+  for (const layer of layers) {
+    const widest = Math.max(NODE_WIDTH, ...byLayer.get(layer).map(p => widthByPath.get(p)));
+    columnWidth.set(layer, widest);
+  }
+  const layerLeft = new Map();
+  let cursor = PADDING;
+  for (const layer of layers) {
+    layerLeft.set(layer, cursor);
+    cursor += columnWidth.get(layer) + columnGap;
+  }
+  const totalWidth = cursor - columnGap + PADDING; // last layer doesn't trail a gap
+
   let maxRows = 0;
   const placed = new Map();
   for (const layer of layers) {
-    const column = byLayer.get(layer).sort();
+    const column = byLayer.get(layer);
     maxRows = Math.max(maxRows, column.length);
+    const left = layerLeft.get(layer);
+    const slotWidth = columnWidth.get(layer);
     column.forEach((path, row) => {
+      const width = widthByPath.get(path);
       placed.set(path, {
         path,
         label: baseName(path),
-        x: PADDING + layer * columnPitch,
+        // Centre each node in its slot, so an expanded node grows symmetrically
+        // and a non-expanded sibling sits in the same column on the same axis.
+        x: left + (slotWidth - width) / 2,
         y: PADDING + row * rowPitch,
-        width: NODE_WIDTH,
+        width,
         height: NODE_HEIGHT,
         changed: changed.has(path),
         inCycle: sccOf.has(path),
@@ -158,7 +211,7 @@ export function buildStructureModel(payload) {
     });
   }
 
-  const layoutEdges = edges.map(({ from, to, symbols }) => {
+  const layoutEdges = rawEdges.map(({ from, to, symbols }) => {
     const a = placed.get(from);
     const b = placed.get(to);
     const forward = (layerOf.get(to) ?? 0) > (layerOf.get(from) ?? 0);
@@ -166,14 +219,14 @@ export function buildStructureModel(payload) {
     const y1 = a.y + a.height / 2;
     const x2 = forward ? b.x : b.x + b.width;
     const y2 = b.y + b.height / 2;
-    const text = edgeLabelText(symbols);
+    const key = edgeKeyOf(from, to);
     return {
       from, to,
       symbols: symbols ?? [],
       x1, y1, x2, y2,
       forward,
-      label: text,
-      labelWidth: edgeLabelWidth(text),
+      label: labelTextByEdge.get(key),
+      labelWidth: labelWidthByEdge.get(key),
       // Preferred label position: the curve's midpoint for a forward edge,
       // lifted above the bow for a back/same-layer edge (which arcs up), but not
       // so high its pill clips the top of the canvas. deoverlapLabels may push
@@ -181,6 +234,7 @@ export function buildStructureModel(payload) {
       labelX: (x1 + x2) / 2,
       labelY: Math.max(LABEL_HEIGHT, forward ? (y1 + y2) / 2 - 6 : Math.min(y1, y2) - 34),
       inCycle: sccOf.has(from) && sccOf.get(from) === sccOf.get(to),
+      expanded: expandedEdges.has(key),
     };
   });
   const lowestLabelBottom = deoverlapLabels(layoutEdges.filter(e => e.label));
@@ -190,14 +244,13 @@ export function buildStructureModel(payload) {
     label: paths.map(baseName).join(paths.length > 1 ? " → " : " ↻ "),
   }));
 
-  const maxLayer = layers[layers.length - 1] ?? 0;
-  const nodeHeight = PADDING + maxRows * NODE_HEIGHT + Math.max(0, maxRows - 1) * ROW_GAP;
+  const nodeBottom = PADDING + maxRows * NODE_HEIGHT + Math.max(0, maxRows - 1) * ROW_GAP;
   return {
     hasGraph: true,
     nodes: [...placed.values()],
     edges: layoutEdges,
-    width: PADDING * 2 + (maxLayer + 1) * NODE_WIDTH + maxLayer * columnGap,
-    height: Math.max(nodeHeight, lowestLabelBottom) + PADDING,
+    width: totalWidth,
+    height: Math.max(nodeBottom, lowestLabelBottom) + PADDING,
     cycles,
   };
 }

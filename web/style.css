@@ -343,7 +343,13 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .structure-zoom-readout { color: var(--text-dim); min-width: 3.4em; }
 .structure-canvas { position: relative; overflow: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); max-height: 70vh; }
 .structure-canvas svg { display: block; }
-.structure-edge, .structure-edge-label, .structure-node { transition: opacity .12s ease; }
+.structure-edge { transition: opacity .12s ease; }
+/* Re-layout on highlight: animate the node/label positions and rect sizes so a
+   reflow doesn't snap. Edge `d` doesn't transition cross-browser, so paths
+   still snap — the eye tracks the bigger node motion anyway. */
+.structure-node, .structure-edge-label { transition: opacity .12s ease, transform .5s ease; }
+.structure-node rect, .structure-edge-label rect { transition: width .5s ease, x .5s ease; }
+.structure-node text { transition: x .5s ease; }
 .structure-edge.dim, .structure-edge-label.dim, .structure-node.dim { opacity: .15; }
 .structure-edge { fill: none; stroke: var(--border); stroke-width: 1.4px; }
 .structure-edge.cycle { stroke: var(--crashed); stroke-width: 1.8px; stroke-dasharray: 5 3; }
