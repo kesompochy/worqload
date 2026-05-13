@@ -61,7 +61,7 @@
     if (!r) return "";
     const left = Math.max(8, Math.min(r.left, window.innerWidth - POPOVER_WIDTH - 8));
     const roomBelow = window.innerHeight - r.bottom;
-    return roomBelow < 240 && r.top > roomBelow
+    return roomBelow < 180 && r.top > roomBelow
       ? `left:${left}px; bottom:${Math.round(window.innerHeight - r.top + 4)}px`
       : `left:${left}px; top:${Math.round(r.bottom + 4)}px`;
   });
