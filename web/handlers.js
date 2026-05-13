@@ -20,10 +20,12 @@ import {
   selectFile,
   openWs,
 } from "./api.js";
+import { syncUrlState } from "./url-state.js";
 
 export async function selectSession(id) {
   if (state.ws) { state.ws.close(); state.ws = null; }
   state.selected = id;
+  syncUrlState({ sessionId: id, tab: state.activeTab });
   state.renamingSessionId = null;
   state.lastSeq = 0;
   state.reports = [];
@@ -440,6 +442,7 @@ export function copyAnchorPermalink() {
 export async function switchTab(tab) {
   if (tab === state.activeTab) return;
   state.activeTab = tab;
+  syncUrlState({ sessionId: state.selected, tab });
   if (tab === "diff") await refreshDiff();
   if (tab === "files") await ensureFilesLoaded();
   if (tab === "structure") await ensureStructureLoaded();

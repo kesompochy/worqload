@@ -18,8 +18,24 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
+
+// A minimal window fake the URL-state sync writes into. Installed per test that
+// needs it, removed at the end so other tests keep seeing the real globals.
+function installUrlWindow(search = "") {
+  let urlSearch = search;
+  const fake = {
+    location: { get search() { return urlSearch; }, pathname: "/", hash: "" },
+    history: { replaceState(_s: unknown, _t: string, url: string) { urlSearch = new URL(url, "http://x").search; (fake as unknown as { lastUrl: string }).lastUrl = url; } },
+    lastUrl: search ? `/${search}` : "/",
+  };
+  (globalThis as unknown as { window: unknown }).window = fake;
+  return fake;
+}
+function uninstallUrlWindow() {
+  (globalThis as unknown as { window: unknown }).window = undefined;
+}
 
 // A fake of the striped [data-feedback-preview] line element the hover handlers
 // delegate on.
@@ -349,4 +365,29 @@ test("onReorderSessions is a no-op when dropped onto itself", async () => {
 
   expect(state.sessions.map((s: { id: string }) => s.id)).toEqual(["a", "b"]);
   expect(reorderSessionsCalls).toEqual([]);
+});
+
+test("selectSession writes the new session id into the URL", async () => {
+  const win = installUrlWindow("");
+  state.activeTab = "reports";
+  try {
+    await selectSession("session-c");
+    expect(win.lastUrl).toBe("/?session=session-c");
+  } finally {
+    uninstallUrlWindow();
+  }
+});
+
+test("switchTab writes the new tab into the URL (default tab is omitted)", async () => {
+  const win = installUrlWindow("?session=session-c");
+  state.selected = "session-c";
+  state.activeTab = "reports";
+  try {
+    await switchTab("diff");
+    expect(win.lastUrl).toBe("/?session=session-c&tab=diff");
+    await switchTab("reports");
+    expect(win.lastUrl).toBe("/?session=session-c");
+  } finally {
+    uninstallUrlWindow();
+  }
 });
