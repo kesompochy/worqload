@@ -16,7 +16,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
-  import { state as appState, anchorLabel } from "../state.svelte.js";
+  import { state as appState } from "../state.svelte.js";
   import { onAnchoredFeedback, clearAnchor, copyAnchorPermalink } from "../handlers.js";
 
   let anchorRect = $state(null);
@@ -135,7 +135,7 @@
   }
 
   const POPOVER_WIDTH = 540;
-  const POPOVER_HEIGHT_ESTIMATE = 170;
+  const POPOVER_HEIGHT_ESTIMATE = 140;
   const GAP = 8;
   const style = $derived.by(() => {
     const r = anchorRect;
@@ -179,11 +179,6 @@
     style={style}
     onsubmit={(e) => { e.preventDefault(); onAnchoredFeedback(); }}
   >
-    <div class="anchor-chip">
-      Re: {anchorLabel(appState.anchor)}
-      <button type="button" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button>
-      <button type="button" title="clear anchor" onclick={clearAnchor}>×</button>
-    </div>
     <textarea
       id="anchoredFeedbackInput"
       bind:this={textareaEl}
@@ -194,6 +189,7 @@
       onkeydown={onKeydown}
     ></textarea>
     <div class="row">
+      <button type="button" class="anchored-composer-permalink" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button>
       <span class="spacer"></span>
       <button type="submit">Send feedback</button>
     </div>
