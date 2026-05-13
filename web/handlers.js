@@ -647,16 +647,41 @@ export async function revealReport(sessionId, filename) {
 // archived list. Polling stays on whichever tab is shown (so the archived view
 // keeps up with newly archived sessions / deletions). The selected session id
 // is preserved across tab flips — an archived card in the detail pane stays
-// readable while the human browses the active list.
+// readable while the human browses the active list. The bulk-delete selection
+// is per-archived-visit: leaving the tab drops it.
 export async function onSidebarTab(tab) {
   if (tab !== "active" && tab !== "archived") return;
   if (state.sidebarTab === tab) return;
   state.sidebarTab = tab;
+  if (tab !== "archived" && state.archivedSelection.size > 0) {
+    state.archivedSelection = new Set();
+  }
   if (tab === "archived") {
     await fetchArchivedSessions();
   } else {
     await fetchSessions();
   }
+}
+
+// Multi-select checkbox toggle in the archived feed. The selection drives the
+// bulk-delete bar in SessionList.svelte. Reassigning the Set wholesale rather
+// than mutating it lets Svelte 5's $state notice the change (it doesn't proxy
+// Sets, so an in-place add/delete would go unnoticed).
+export function onToggleArchivedSelection(id) {
+  if (!id) return;
+  const next = new Set(state.archivedSelection);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  state.archivedSelection = next;
+}
+
+export function onSelectAllArchived() {
+  state.archivedSelection = new Set(state.archivedSessions.map(s => s.id));
+}
+
+export function onClearArchivedSelection() {
+  if (state.archivedSelection.size === 0) return;
+  state.archivedSelection = new Set();
 }
 
 // Permanent delete from the archived tab. Confirms first (no undo: the
@@ -671,12 +696,49 @@ export async function onDeleteArchived(id = state.selected) {
   if (typeof window !== "undefined" && typeof window.confirm === "function" && !window.confirm(message)) return;
   try {
     await api("DELETE", `/sessions/${id}`);
+    if (state.archivedSelection.has(id)) {
+      const nextSel = new Set(state.archivedSelection);
+      nextSel.delete(id);
+      state.archivedSelection = nextSel;
+    }
     await fetchArchivedSessions();
     if (id === state.selected) {
       await selectSession(null);
     }
   } catch (e) {
     toast(`failed: ${e.message}`);
+  }
+}
+
+// Bulk delete every checkbox-selected archived session. The DELETEs run
+// sequentially rather than via Promise.all: each removes a git worktree from
+// the same repo, and parallelising those would risk index-lock contention.
+// One failed delete doesn't abort the batch — the surviving sessions still go,
+// and the toast reports successes / failures at the end.
+export async function onBulkDeleteArchived() {
+  const ids = [...state.archivedSelection];
+  if (ids.length === 0) return;
+  const message = `${ids.length} 件のアーカイブを削除します。\nworktree・作業ブランチ・記録 (reports / events / feedback) が消え、復元できません。よろしいですか？`;
+  if (typeof window !== "undefined" && typeof window.confirm === "function" && !window.confirm(message)) return;
+  let succeeded = 0;
+  const failed = [];
+  for (const id of ids) {
+    try {
+      await api("DELETE", `/sessions/${id}`);
+      succeeded++;
+      if (id === state.selected) state.selected = null;
+    } catch (e) {
+      failed.push({ id, message: e.message });
+    }
+  }
+  state.archivedSelection = new Set();
+  await fetchArchivedSessions();
+  if (failed.length === 0) {
+    toast(`${succeeded} 件削除`);
+  } else if (succeeded === 0) {
+    toast(`削除失敗: ${failed[0].message}`);
+  } else {
+    toast(`${succeeded} 件削除 / ${failed.length} 件失敗`);
   }
 }
 
