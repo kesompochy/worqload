@@ -2,11 +2,12 @@
   // The Structure tab: an import-dependency graph of the changeset's files and
   // their immediate neighborhood (the files they import / that import them).
   // Import cycles show up as dashed red edges (and red node borders); the names
-  // each import carries are written onto the edges (toggleable; hover a label
-  // to see the full untruncated list). Hovering or focusing a node highlights
-  // it, its direct neighbours, and the connecting edges, and dims the rest.
-  // The toolbar's −/Fit/+ controls zoom the whole canvas so the human can pull
-  // back for the overall shape or push in for detail.
+  // each import carries are written onto the edges (toggleable). Hovering or
+  // focusing a node highlights it, its direct neighbours, and the connecting
+  // edges, *re-flows the layout* around the expanded sizes (so the highlighted
+  // group never overlaps with itself), and — unless the human turned auto-zoom
+  // off — zooms and pans the canvas so that group fills the visible area. The
+  // pre-hover view is remembered; un-hovering restores it.
   //
   // Mounted by DetailBody when the Structure tab is active. The data comes from
   // GET /sessions/:id/structure (held in appState.structure); buildStructureModel
@@ -17,13 +18,51 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { buildStructureModel, edgeLabelWidth } from "../structure-view.js";
+  import { buildStructureModel } from "../structure-view.js";
   import { openFileFromStructure } from "../handlers.js";
 
   const data = $derived(appState.structure);
-  const model = $derived(data && data.graph ? buildStructureModel(data) : null);
-
   const edgeKey = edge => `${edge.from} ${edge.to}`;
+
+  // What the human is currently directing attention at. `hoveredPath` is the
+  // node under the cursor or focus; `hoveredEdgeKey` is an edge label being
+  // hovered on its own (a label-only hover expands just that label, while a
+  // node hover expands the node, its neighbours, and the edges between).
+  let hoveredPath = $state(null);
+  let hoveredEdgeKey = $state(null);
+
+  // The set of paths and edge-keys related to the hovered node. Derived from
+  // the raw payload — not from `model` — so it doesn't depend on the model that
+  // itself depends on it (a `data → related → model → related` loop).
+  const related = $derived.by(() => {
+    if (!hoveredPath || !data || !data.graph) return null;
+    const paths = new Set([hoveredPath]);
+    const keys = new Set();
+    for (const edge of data.graph.edges ?? []) {
+      if (edge.from === hoveredPath || edge.to === hoveredPath) {
+        paths.add(edge.from);
+        paths.add(edge.to);
+        keys.add(`${edge.from} ${edge.to}`);
+      }
+    }
+    return { paths, keys };
+  });
+  const expandedNodes = $derived(related?.paths ?? new Set());
+  const expandedEdges = $derived.by(() => {
+    const s = new Set(related?.keys ?? []);
+    if (hoveredEdgeKey) s.add(hoveredEdgeKey);
+    return s;
+  });
+  // The layout reflows when either expansion set changes — buildStructureModel
+  // uses them to widen the relevant rects and pull the surrounding columns
+  // outwards so the highlighted neighbourhood lays out without overlap.
+  const model = $derived.by(() => {
+    if (!data || !data.graph) return null;
+    return buildStructureModel(data, { expandedNodes, expandedEdges });
+  });
+
+  const nodeDimmed = path => related != null && !related.paths.has(path);
+  const edgeDimmed = edge => related != null && !related.keys.has(edgeKey(edge));
 
   // The full symbol list for the "依存の詳細" list (no tooltip on the figure
   // any more — hovering an edge label or a node reveals the full names in place).
@@ -31,63 +70,118 @@
     if (!symbols || symbols.length === 0) return "(副作用 import のみ)";
     return `{ ${symbols.join(", ")} }`;
   }
-  // Edges sorted for the "依存の詳細" list: by importing file, then imported file.
   const edgeDetails = $derived(
     model && model.hasGraph
       ? [...model.edges].sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to))
       : [],
   );
 
-  // The node currently hovered/focused, and the set of paths and edge-keys
-  // related to it (itself, its direct neighbours, the edges between). `null`
-  // when nothing is hovered — then nothing is dimmed.
-  let hoveredPath = $state(null);
-  const related = $derived.by(() => {
-    if (!hoveredPath || !model || !model.hasGraph) return null;
-    const paths = new Set([hoveredPath]);
-    const keys = new Set();
-    for (const edge of model.edges) {
-      if (edge.from === hoveredPath || edge.to === hoveredPath) {
-        paths.add(edge.from);
-        paths.add(edge.to);
-        keys.add(edgeKey(edge));
-      }
-    }
-    return { paths, keys };
-  });
-  const nodeDimmed = path => related != null && !related.paths.has(path);
-  const edgeDimmed = edge => related != null && !related.keys.has(edgeKey(edge));
-
-  // An edge label expands to its full untruncated text — overriding the
-  // pre-computed `edge.label` — when the human's cursor is on it, or when the
-  // edge connects to whichever node is hovered/focused (the highlighted set).
-  // Nodes get the parallel treatment: a highlighted node's basename swaps to
-  // its full path, with the rect widened so the text stays inside the pill.
-  let hoveredEdgeKey = $state(null);
-  const isExpanded = edge =>
-    hoveredEdgeKey === edgeKey(edge) || (related != null && related.keys.has(edgeKey(edge)));
-  const fullSymbols = symbols => symbols.join(", ");
-  const isNodeExpanded = path => related != null && related.paths.has(path);
-  // Same conservative monospace-width estimate the edge labels use (12px node
-  // font here vs 11px label font; the slightly wider number leaves margin).
-  const nodeFullWidth = path => Math.max(184, path.length * 7.8 + 16);
-
-  // Zoom for the whole canvas, applied as a scale on the rendered SVG size; the
-  // viewBox stays at the model's native dimensions so the SVG scales crisply.
-  // The canvas has `overflow: auto`, so panning a zoomed-in graph is just
-  // scrolling. `clientWidth`/`clientHeight` of the canvas drive the Fit action.
+  // Manual zoom: the toolbar buttons scale the rendered SVG (the viewBox stays
+  // at the model's native size so it scales crisply). The canvas has
+  // `overflow: auto`, so panning a zoomed-in graph is just scrolling. Auto-zoom
+  // drives the same `zoom` plus `canvasEl.scrollLeft/Top` via a RAF tween.
   let zoom = $state(1);
   let canvasW = $state(0);
   let canvasH = $state(0);
+  let canvasEl = $state(null);
   const MIN_ZOOM = 0.1;
   const MAX_ZOOM = 4;
   const clampZoom = z => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
-  function zoomBy(factor) { zoom = clampZoom(zoom * factor); }
+  function zoomBy(factor) { cancelTween(); zoom = clampZoom(zoom * factor); }
   function fitZoom() {
+    cancelTween();
     if (!model || !model.hasGraph || canvasW < 20 || canvasH < 20) return;
     const fit = Math.min((canvasW - 12) / model.width, (canvasH - 12) / model.height);
     zoom = clampZoom(fit);
   }
+
+  // Auto-zoom on highlight: when the human starts hovering a node we save the
+  // current view, tween to a view that fits the highlighted neighbourhood, and
+  // tween back when the hover ends. A 500ms easeInOutQuad RAF on `zoom` and the
+  // canvas's scroll position — Svelte re-renders the SVG on each `zoom` change.
+  const TWEEN_MS = 500;
+  let rafId = null;
+  let savedView = null;
+  let lastHoverActive = false;
+  function cancelTween() {
+    if (rafId != null) { cancelAnimationFrame(rafId); rafId = null; }
+  }
+  function tweenView(targetZoom, targetScrollX, targetScrollY) {
+    cancelTween();
+    const startZoom = zoom;
+    const startScrollX = canvasEl?.scrollLeft ?? 0;
+    const startScrollY = canvasEl?.scrollTop ?? 0;
+    const startTime = performance.now();
+    const step = now => {
+      const raw = Math.min(1, (now - startTime) / TWEEN_MS);
+      const t = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2;
+      zoom = startZoom + (targetZoom - startZoom) * t;
+      if (canvasEl) {
+        canvasEl.scrollLeft = startScrollX + (targetScrollX - startScrollX) * t;
+        canvasEl.scrollTop = startScrollY + (targetScrollY - startScrollY) * t;
+      }
+      if (raw < 1) rafId = requestAnimationFrame(step);
+      else rafId = null;
+    };
+    rafId = requestAnimationFrame(step);
+  }
+  // The view that fits the currently-highlighted neighbourhood inside the
+  // canvas, with a bit of breathing room. `related` is the source of truth for
+  // which nodes (and their edges' labels) should be in frame.
+  function viewForHighlight() {
+    if (!model || !related || canvasW < 20 || canvasH < 20) return null;
+    const focused = model.nodes.filter(n => related.paths.has(n.path));
+    if (focused.length === 0) return null;
+    const pad = 40;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of focused) {
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + n.width);
+      maxY = Math.max(maxY, n.y + n.height);
+    }
+    for (const e of model.edges) {
+      if (!related.keys.has(edgeKey(e)) || !e.label) continue;
+      minX = Math.min(minX, e.labelX - e.labelWidth / 2);
+      maxX = Math.max(maxX, e.labelX + e.labelWidth / 2);
+      minY = Math.min(minY, e.labelY - 10);
+      maxY = Math.max(maxY, e.labelY + 10);
+    }
+    const w = maxX - minX, h = maxY - minY;
+    const targetZoom = clampZoom(Math.min((canvasW - pad * 2) / w, (canvasH - pad * 2) / h));
+    const scrollX = minX * targetZoom - (canvasW - w * targetZoom) / 2;
+    const scrollY = minY * targetZoom - (canvasH - h * targetZoom) / 2;
+    return { zoom: targetZoom, scrollX: Math.max(0, scrollX), scrollY: Math.max(0, scrollY) };
+  }
+
+  // Trigger the auto-zoom transitions on hover changes. Runs after the model
+  // has re-derived, so `viewForHighlight()` uses the expanded layout.
+  $effect(() => {
+    const active = hoveredPath != null;
+    if (!appState.structureAutoZoom) {
+      // The toggle was flipped off mid-hover: snap back to the saved view.
+      if (savedView && !active) {
+        tweenView(savedView.zoom, savedView.scrollX, savedView.scrollY);
+        savedView = null;
+      }
+      lastHoverActive = active;
+      return;
+    }
+    if (active && !lastHoverActive) {
+      savedView = { zoom, scrollX: canvasEl?.scrollLeft ?? 0, scrollY: canvasEl?.scrollTop ?? 0 };
+      const target = viewForHighlight();
+      if (target) tweenView(target.zoom, target.scrollX, target.scrollY);
+    } else if (active && lastHoverActive) {
+      const target = viewForHighlight();
+      if (target) tweenView(target.zoom, target.scrollX, target.scrollY);
+    } else if (!active && lastHoverActive) {
+      if (savedView) {
+        tweenView(savedView.zoom, savedView.scrollX, savedView.scrollY);
+        savedView = null;
+      }
+    }
+    lastHoverActive = active;
+  });
 
   // A short cubic between two box-edge anchor points. Forward edges (left→right,
   // following the import) curve gently; a back/same-layer edge bows up and out
@@ -123,14 +217,15 @@
   {:else}
     <div class="structure-toolbar">
       <label><input type="checkbox" bind:checked={appState.structureShowSymbols} /> シンボル名を表示</label>
+      <label><input type="checkbox" bind:checked={appState.structureAutoZoom} /> 強調時に自動ズーム</label>
       <span class="structure-zoom">
         <button type="button" class="structure-zoom-btn" title="縮小" aria-label="Zoom out" onclick={() => zoomBy(1 / 1.25)}>−</button>
         <button type="button" class="structure-zoom-btn" title="全体に合わせる" onclick={fitZoom}>Fit</button>
         <button type="button" class="structure-zoom-btn" title="拡大" aria-label="Zoom in" onclick={() => zoomBy(1.25)}>＋</button>
-        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="等倍に戻す" onclick={() => (zoom = 1)}>{Math.round(zoom * 100)}%</button>
+        <button type="button" class="structure-zoom-btn structure-zoom-readout" title="等倍に戻す" onclick={() => { cancelTween(); zoom = 1; }}>{Math.round(zoom * 100)}%</button>
       </span>
     </div>
-    <div class="structure-canvas" class:structure-focusing={related != null} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>
+    <div class="structure-canvas" class:structure-focusing={related != null} bind:this={canvasEl} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>
       <svg width={model.width * zoom} height={model.height * zoom} viewBox="0 0 {model.width} {model.height}" role="img" aria-label="import dependency graph">
         <defs>
           <marker id="structure-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
@@ -150,12 +245,12 @@
           />
         {/each}
         {#if appState.structureShowSymbols}
-          <!-- Two passes so an expanded label always draws on top of neighbours. -->
           {#each model.edges as edge}
-            {#if edge.label && !isExpanded(edge)}
+            {#if edge.label}
               <g
                 class="structure-edge-label"
                 class:dim={edgeDimmed(edge)}
+                class:expanded={edge.expanded}
                 transform="translate({edge.labelX},{edge.labelY})"
                 onmouseenter={() => (hoveredEdgeKey = edgeKey(edge))}
                 onmouseleave={() => (hoveredEdgeKey = null)}
@@ -165,26 +260,9 @@
               </g>
             {/if}
           {/each}
-          {#each model.edges as edge}
-            {#if edge.label && isExpanded(edge)}
-              {@const full = fullSymbols(edge.symbols)}
-              {@const fullW = edgeLabelWidth(full)}
-              <g
-                class="structure-edge-label expanded"
-                transform="translate({edge.labelX},{edge.labelY})"
-                onmouseenter={() => (hoveredEdgeKey = edgeKey(edge))}
-                onmouseleave={() => (hoveredEdgeKey = null)}
-              >
-                <rect x={-fullW / 2} y="-8" width={fullW} height="16" rx="3" />
-                <text>{full}</text>
-              </g>
-            {/if}
-          {/each}
         {/if}
         {#each model.nodes as node (node.path)}
-          {@const expanded = isNodeExpanded(node.path)}
-          {@const w = expanded ? nodeFullWidth(node.path) : node.width}
-          {@const xOffset = (node.width - w) / 2}
+          {@const expanded = related != null && related.paths.has(node.path)}
           <g
             class="structure-node"
             class:changed={node.changed}
@@ -202,7 +280,7 @@
             onblur={() => (hoveredPath = null)}
             onkeydown={e => onNodeKeydown(e, node.path)}
           >
-            <rect x={xOffset} width={w} height={node.height} rx="5" />
+            <rect width={node.width} height={node.height} rx="5" />
             <text x={node.width / 2} y={node.height / 2}>{expanded ? node.path : node.label}</text>
           </g>
         {/each}
