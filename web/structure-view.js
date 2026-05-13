@@ -105,14 +105,19 @@ export function buildStructureModel(payload) {
     const a = placed.get(from);
     const b = placed.get(to);
     const forward = (layerOf.get(to) ?? 0) > (layerOf.get(from) ?? 0);
+    const x1 = forward ? a.x + a.width : a.x;
+    const y1 = a.y + a.height / 2;
+    const x2 = forward ? b.x : b.x + b.width;
+    const y2 = b.y + b.height / 2;
     return {
       from, to,
       symbols: symbols ?? [],
-      x1: forward ? a.x + a.width : a.x,
-      y1: a.y + a.height / 2,
-      x2: forward ? b.x : b.x + b.width,
-      y2: b.y + b.height / 2,
+      x1, y1, x2, y2,
       forward,
+      // Where to draw the symbol-name label: the curve's midpoint for a forward
+      // edge, lifted above the bow for a back/same-layer edge (which arcs up).
+      labelX: (x1 + x2) / 2,
+      labelY: forward ? (y1 + y2) / 2 - 6 : Math.min(y1, y2) - 34,
       inCycle: sccOf.has(from) && sccOf.get(from) === sccOf.get(to),
     };
   });

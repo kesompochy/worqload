@@ -1,11 +1,13 @@
 <script>
   // The Structure tab: an import-dependency graph of the changeset's files and
-  // their immediate neighborhood (the files they import / that import them),
-  // with import cycles flagged. Mounted by DetailBody when the Structure tab is
-  // active. The data comes from GET /sessions/:id/structure (held in
-  // appState.structure); buildStructureModel places the boxes and connectors,
-  // this draws the SVG. Nodes carry `data-structure-open`, so a click is picked
-  // up by DetailBody's delegated handler (which opens the file in the Files tab).
+  // their immediate neighborhood (the files they import / that import them).
+  // Import cycles show up as dashed red edges (and red node borders); the names
+  // each import carries are written onto the edges. Mounted by DetailBody when
+  // the Structure tab is active. The data comes from GET /sessions/:id/structure
+  // (held in appState.structure); buildStructureModel places the boxes and
+  // connectors, this draws the SVG. Nodes carry `data-structure-open`, so a
+  // click is picked up by DetailBody's delegated handler (which opens the file
+  // in the Files tab).
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
@@ -14,11 +16,18 @@
   const data = $derived(appState.structure);
   const model = $derived(data && data.graph ? buildStructureModel(data) : null);
 
-  // The names a→b depends on, as a short label. Empty means the only import is a
-  // bare side-effect `import "…"`.
+  // The names a→b depends on, as a label. Empty `symbols` means the only import
+  // is a bare side-effect `import "…"`.
   function symbolsLabel(symbols) {
     if (!symbols || symbols.length === 0) return "(副作用 import のみ)";
     return `{ ${symbols.join(", ")} }`;
+  }
+  // The compact form written onto the edge in the graph. Side-effect-only edges
+  // get no label (the arrow alone says "depends on"); long lists are clipped.
+  function symbolsBrief(symbols) {
+    if (!symbols || symbols.length === 0) return "";
+    const joined = symbols.join(", ");
+    return joined.length > 22 ? `${joined.slice(0, 21)}…` : joined;
   }
   function edgeTitle(edge) {
     return `${edge.from} → ${edge.to}\n${symbolsLabel(edge.symbols)}`;
@@ -42,6 +51,9 @@
     const apex = Math.min(edge.y1, edge.y2) - lift;
     return `M${edge.x1},${edge.y1} C${edge.x1 + reach},${apex} ${edge.x2 - reach},${apex} ${edge.x2},${edge.y2}`;
   }
+  // Approximate width of an edge label's backing pill (no DOM to measure with):
+  // ~6.4px per monospace glyph at 11px, plus a little padding.
+  const labelWidth = text => text.length * 6.4 + 8;
 </script>
 
 <div class="structure-view">
@@ -55,12 +67,6 @@
       （グラフ化の対象は JavaScript / TypeScript / Svelte ファイルのみ。変更ファイルが孤立しているか、import グラフ未対応の言語です。）
     </div>
   {:else}
-    {#if model.cycles.length > 0}
-      <div class="structure-cycles">
-        ⚠ import 循環 {model.cycles.length} 件:
-        {#each model.cycles as cycle, i}{#if i > 0} · {/if}<span class="structure-cycle-label">{cycle.label}</span>{/each}
-      </div>
-    {/if}
     <div class="structure-canvas">
       <svg width={model.width} height={model.height} viewBox="0 0 {model.width} {model.height}" role="img" aria-label="import dependency graph">
         <defs>
@@ -78,6 +84,16 @@
             d={edgePath(edge)}
             marker-end={edge.inCycle ? "url(#structure-arrow-cycle)" : "url(#structure-arrow)"}
           ><title>{edgeTitle(edge)}</title></path>
+        {/each}
+        {#each model.edges as edge}
+          {@const brief = symbolsBrief(edge.symbols)}
+          {#if brief}
+            <g class="structure-edge-label" transform="translate({edge.labelX},{edge.labelY})">
+              <title>{edgeTitle(edge)}</title>
+              <rect x={-labelWidth(brief) / 2} y="-8" width={labelWidth(brief)} height="16" rx="3" />
+              <text>{brief}</text>
+            </g>
+          {/if}
         {/each}
         {#each model.nodes as node (node.path)}
           <g
