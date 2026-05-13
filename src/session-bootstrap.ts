@@ -1,6 +1,8 @@
 // Prepended to the first user message so the agent learns the worqload
-// protocol without depending on user-side .claude/skills/ setup.
-export const PROTOCOL_PREFIX = `You are running inside a worqload session.
+// protocol without depending on user-side .claude/skills/ setup. Takes the
+// base branch so the agent can name it when checking the branch for conflicts.
+export function buildProtocolPrefix(baseBranch: string): string {
+  return `You are running inside a worqload session.
 
 Communication protocol with the human:
 - The human rarely reads your raw turn-by-turn chat. They read **reports** you submit, in a timeline UI.
@@ -27,15 +29,17 @@ Files & git:
 - Commit your work yourself in small, descriptive units. Reports about completed work — logical-unit completions, task completion, "I changed X" status updates — should describe a state that is already committed in this worktree at the time of the report. The human reads the report and the diff together; uncommitted edits invalidate that pairing.
 - Reports that are not about completed work (initial plan, pre-flight thinking, escalations, mid-flight progress notes on a single change) do not require a prior commit.
 - worqload itself does NOT merge, push, or manage branches. The human owns merge / push / branch lifecycle.
+- After committing — and before reporting a logical unit or the task complete — check that the branch still merges cleanly into the base branch '${baseBranch}': run \`git merge-tree --write-tree --name-only ${baseBranch} HEAD\` (exit 0 = clean, exit 1 = conflict, with the conflicting paths listed in its output). This is the same pre-merge validation worqload's "Merge into base branch" runs. If it conflicts, merge '${baseBranch}' into this branch, resolve the conflicts, and commit before reporting.
 
 Your task follows. Begin by submitting a brief plan report, then start work.
 
 ---
 
 `;
+}
 
 // Sent as the first user message when a host is (re)spawned in resume mode.
-// The prior conversation (including PROTOCOL_PREFIX and the original task) is
+// The prior conversation (including the protocol prefix and the original task) is
 // restored by `claude --continue`, so this only needs to nudge the agent back
 // into the loop and point it at any new instructions the human left.
 export const RESUME_KICKOFF = `[resumed] The human has resumed this session. Run \`worqload feedback fetch\` for any new instructions, then continue. If there is no new feedback and your previous report says the task is complete, submit a short report saying so rather than redoing work.`;

@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { classifyClaudeLine, readLines } from "../claude-stream";
 import { appendEvent, readEvents } from "../event-log";
 import { exitWithUsage } from "./cli-helpers";
-import { buildUserMessage, PROTOCOL_PREFIX, RESUME_KICKOFF } from "../session-bootstrap";
+import { buildProtocolPrefix, buildUserMessage, RESUME_KICKOFF } from "../session-bootstrap";
 import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
 import {
   encodeMessage,
@@ -158,10 +158,10 @@ export async function runHost(opts: HostOptions): Promise<number> {
   });
 
   // First message. On a fresh start the agent learns the protocol from
-  // PROTOCOL_PREFIX and the task from meta.prompt. On resume the prior
+  // the protocol prefix and the task from meta.prompt. On resume the prior
   // conversation is restored by `claude --continue`, so we only nudge it back
   // into the loop (any new instruction was queued to the feedback inbox).
-  const firstMessage = opts.resume ? RESUME_KICKOFF : PROTOCOL_PREFIX + meta.prompt;
+  const firstMessage = opts.resume ? RESUME_KICKOFF : buildProtocolPrefix(meta.baseBranch) + meta.prompt;
   try {
     claude.stdin.write(`${JSON.stringify(buildUserMessage(firstMessage))}\n`);
     await claude.stdin.flush();
