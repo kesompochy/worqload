@@ -6,7 +6,8 @@
   // (`state` is imported as `appState` because a local binding named `state`
   // would make Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { formatRelative } from "../dom.js";
+  import { formatRelative, eventAgeIsStale } from "../dom.js";
+  import { clock } from "../clock.svelte.js";
   import {
     selectSession,
     onStop,
@@ -155,7 +156,7 @@
         {:else}
           <p class="title"><span class="badge badge-{session.status}">{statusLabel(session.status)}</span>{session.title || session.prompt.slice(0, 80)}</p>
         {/if}
-        <div class="meta">{session.baseBranch} · {formatRelative(session.createdAt)}</div>
+        <div class="meta">{session.baseBranch} · {formatRelative(session.createdAt)}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}</div>
         <div class="session-card-actions">
           {#if active && !renaming}
             <button class="btn-card-rename" onclick={(e) => { e.stopPropagation(); onRenameStart(session.id); }}>Rename</button>

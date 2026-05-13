@@ -11,10 +11,12 @@
   import { state as appState, isEventExpanded } from "../state.svelte.js";
   import { formatRelative } from "../dom.js";
   import { renderMarkdown } from "../markdown.js";
-  import { describeEvent } from "../events-view.js";
+  import { describeEvent, isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
 
-  const eventsNewestFirst = $derived([...(appState.detail?.events ?? [])].reverse());
+  // Only the agent's own work — reports, feedback, escalations and
+  // human-triggered actions belong to the Reports / Feedbacks tabs, not here.
+  const eventsNewestFirst = $derived((appState.detail?.events ?? []).filter(isAgentWorkEvent).reverse());
 </script>
 
 {#if eventsNewestFirst.length === 0}

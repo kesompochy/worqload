@@ -19,6 +19,7 @@ import { connectToHost, type HostClient, spawnDetachedHost } from "./session-hos
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
 import { findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
+import { buildStructureView, parseChangedFilePaths } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
@@ -27,6 +28,7 @@ import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
 import { listActions, listAvailableActions, findAction } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
+import { isAgentWorkEvent } from "../web/events-view.js";
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -507,6 +509,8 @@ function defineRoute(
 
 const ROUTES: Route[] = [
   defineRoute("GET",  "/", getIndex),
+  defineRoute("GET",  "/favicon", getFavicon),
+  defineRoute("GET",  "/favicon.ico", getFavicon),
   defineRoute("GET",  "/assets/:filename", getAsset),
   defineRoute("GET",  "/meta", getMeta),
   defineRoute("POST", "/sessions", postSessions),
@@ -527,6 +531,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
   defineRoute("GET",  "/sessions/:id/files", getFiles),
+  defineRoute("GET",  "/sessions/:id/structure", getStructure),
   defineRoute("GET",  "/sessions/:id/file", getFile),
   defineRoute("GET",  "/sessions/:id/search", getFileSearch),
   defineRoute("GET",  "/sessions/:id/code-nav/definition", getCodeNavDefinition),
@@ -559,9 +564,44 @@ const ASSET_CONTENT_TYPES: Record<string, string> = {
   ".woff": "font/woff",
   ".ttf": "font/ttf",
   ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".gif": "image/gif",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".json": "application/json; charset=utf-8",
   ".map": "application/json; charset=utf-8",
 };
+
+// Served at /favicon when no per-repo override exists. Three stacked bars on a
+// dark tile — a nod to the load-average framing (parallel sessions, varying
+// length of work). Inlined rather than shipped as a file so it survives the
+// `bun build --compile` binary without a sidecar asset.
+const DEFAULT_FAVICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+  '<rect width="64" height="64" rx="14" fill="#1f2430"/>' +
+  '<rect x="14" y="18" width="36" height="6" rx="3" fill="#7dd3fc"/>' +
+  '<rect x="14" y="29" width="24" height="6" rx="3" fill="#a5b4fc"/>' +
+  '<rect x="14" y="40" width="30" height="6" rx="3" fill="#86efac"/>' +
+  "</svg>\n";
+
+// A repo can override the browser tab icon by dropping a `favicon.<ext>` into
+// its `.worqload/` directory; otherwise the built-in SVG above is served.
+const CUSTOM_FAVICON_EXTENSIONS = [".svg", ".png", ".ico", ".jpg", ".jpeg", ".gif", ".webp"];
+
+async function getFavicon(_req: Request, ctx: ServerContext): Promise<Response> {
+  for (const ext of CUSTOM_FAVICON_EXTENSIONS) {
+    const file = Bun.file(join(ctx.worqloadDir, `favicon${ext}`));
+    if (await file.exists()) {
+      return new Response(file, {
+        headers: { "content-type": ASSET_CONTENT_TYPES[ext] ?? "application/octet-stream" },
+      });
+    }
+  }
+  return new Response(DEFAULT_FAVICON_SVG, {
+    headers: { "content-type": "image/svg+xml; charset=utf-8" },
+  });
+}
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
   return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir) });
@@ -738,9 +778,17 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
   const filtered = includeArchived ? sessions : sessions.filter(s => !s.archivedAt);
   const decorated = await Promise.all(filtered.map(async meta => {
     const dir = reportsDirFor(ctx, meta.id);
-    const [reports, readSet] = await Promise.all([listAllFiles(dir), readReadState(dir)]);
+    const [reports, readSet, events] = await Promise.all([
+      listAllFiles(dir),
+      readReadState(dir),
+      readEvents(meta.id, 1, ctx.sessionsDir),
+    ]);
     const unreadReportCount = reports.reduce((n, r) => n + (readSet.has(r.filename) ? 0 : 1), 0);
-    return { ...meta, unreadReportCount };
+    // The sidebar's liveness signal: when the agent last did something — its run
+    // or a step within it, not a report/feedback/escalation. Undefined until the
+    // session has produced one.
+    const lastAgentEventAt = events.filter(isAgentWorkEvent).at(-1)?.timestamp;
+    return { ...meta, unreadReportCount, lastAgentEventAt };
   }));
   return json({ sessions: decorated });
 }
@@ -915,6 +963,32 @@ async function getFiles(_req: Request, ctx: ServerContext, params: Record<string
   return withSession(ctx, params.id, async meta => {
     const paths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
     return json({ paths });
+  });
+}
+
+// The Structure tab's import-dependency picture: the changeset's source files
+// plus the surrounding files that import them or that they import (a couple of
+// hops out), with import cycles flagged. Built from the same diff base as the
+// Diff tab; only JS/TS-family and `.svelte` files are graph nodes.
+async function getStructure(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    try {
+      const diffBase = await ctx.worktreeOps.resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
+      const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase);
+      const allPaths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
+      const view = await buildStructureView({
+        allPaths,
+        changedPaths: parseChangedFilePaths(diff),
+        readSource: async path => {
+          const result = await ctx.worktreeOps.readWorktreeFile(meta.worktreePath, path);
+          return result.kind === "text" ? result.content : null;
+        },
+      });
+      return json(view);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return json({ error: message }, 500);
+    }
   });
 }
 

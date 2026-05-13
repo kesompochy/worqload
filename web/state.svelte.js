@@ -14,7 +14,7 @@ export const state = $state({
   feedbackHistory: [],
   ws: null,
   lastSeq: 0,
-  activeTab: "reports",  // "reports" | "feedback" | "diff" | "files" | "events"
+  activeTab: "reports",  // "reports" | "feedback" | "diff" | "files" | "structure" | "events"
   tabScroll: new Map(),  // tab name -> remembered scroll position (see DetailBody.svelte), so switching back returns there
   diff: "",              // text/plain diff (full file context, -U<huge>) — the branch's changes since the session forked
   anchor: null,          // { path, lineStart, lineEnd } | null
@@ -26,6 +26,8 @@ export const state = $state({
   selectedFilePath: null,        // path of the file open in the content pane
   fileContent: null,     // { path, content } | { path, binary } | { path, tooLarge, size } | { path, error } | { path, loading: true }
   codeNav: null,         // Files-tab code navigation popover: { symbol, path, rect:{top,bottom,left}, definitions:[{path,line,column?,text?}]|null, definitionsStatus:"loading"|"done", references:[{path,line,column?,text?}]|null, referencesStatus:"loading"|"done" } | null
+  structure: null,       // Structure tab: { graph:{nodes:[path],edges:[{from,to}]}, cycles:[[path,...]], changedFiles:[path] } | { loading:true } | { error:string } | null
+  structureLoaded: false,
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked

@@ -14,3 +14,5 @@ bun run preview      # try this checkout's UI against a throwaway ~/.worqload-pr
 ```
 
 Run `worqload` with no arguments to list the CLI subcommands.
+
+Drop a `favicon.{svg,png,ico,jpg,gif,webp}` into a repo's `.worqload/` directory to override the browser-tab icon; without one, a built-in default is served.

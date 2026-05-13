@@ -3,7 +3,7 @@ import { join } from "path";
 import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { startServer } from "./web-server";
 import { agentEndpointPath, loadSessionMeta } from "./session";
-import { readEvents } from "./event-log";
+import { appendEvent, readEvents } from "./event-log";
 import {
   cleanupAll,
   fakeWorktreeOps,
@@ -249,6 +249,22 @@ test("GET /sessions exposes unread report counts per session", async () => {
   const byId = Object.fromEntries(body.sessions.map((s: { id: string; unreadReportCount: number }) => [s.id, s]));
   expect(byId[aid].unreadReportCount).toBe(2);
   expect(byId[bid].unreadReportCount).toBe(0);
+});
+
+test("GET /sessions exposes the last agent-work event timestamp, ignoring reports", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const work = await appendEvent(sid, { kind: "claude_tool_use", payload: { name: "Read" } }, ctx.sessionsDir);
+  // A later event that is *not* agent work — it must not move the timestamp.
+  await appendEvent(sid, { kind: "report_submitted", payload: { filename: "001-x.md" } }, ctx.sessionsDir);
+
+  const body = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const session = body.sessions.find((s: { id: string }) => s.id === sid);
+  expect(session.lastAgentEventAt).toBe(work.timestamp);
 });
 
 test("POST /internal/sessions/:id/reports writes numbered report", async () => {
@@ -594,6 +610,52 @@ test("GET /sessions/:id/files lists worktree files and hides the .worqload-repor
   expect(res.paths).toContain("src/new.ts");
   // the worqload-injected symlink is not project content and points outside the worktree
   expect(res.paths).not.toContain(".worqload-reports");
+});
+
+// What the import graph / cycle detection actually computes is import-graph's
+// and structure-view's contract — covered by their own tests. Here we only
+// check the endpoint wires the diff (for the changeset's files) and the
+// worktree's source files into a scoped graph. The fake worktreeOps echoes a
+// canned diff so the changed file is observable.
+test("GET /sessions/:id/structure returns the changeset's import-dependency neighborhood with cycles flagged", async () => {
+  const repoDir = makeTmpDir("repo");
+  const cannedDiff = [
+    "diff --git a/web/greet.js b/web/greet.js",
+    "index 1111111..2222222 100644",
+    "--- a/web/greet.js",
+    "+++ b/web/greet.js",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+  ].join("\n");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: { ...fakeWorktreeOps(), async gitDiff() { return cannedDiff; } },
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+  mkdirSync(join(wt, "web"), { recursive: true });
+  writeFileSync(join(wt, "web", "app.js"), `import { greet } from "./greet.js";\n`);
+  writeFileSync(join(wt, "web", "greet.js"), `import { punctuate } from "./util.js";\n`);
+  writeFileSync(join(wt, "web", "util.js"), `import "./app.js";\nexport const punctuate = s => s + "!";\n`);
+  writeFileSync(join(wt, "web", "elsewhere.js"), `import "./standalone.js";\n`);
+  writeFileSync(join(wt, "web", "standalone.js"), ``);
+  writeFileSync(join(wt, "README.md"), `not source\n`);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/structure`).then(r => r.json());
+  expect(res.changedFiles).toEqual(["web/greet.js"]);
+  // greet.js (changed) and everything within the default hop radius: it imports
+  // util.js, which imports app.js, which imports greet.js — a 3-file cycle.
+  // elsewhere.js / standalone.js are disconnected; README.md isn't a source file.
+  expect(res.graph.nodes).toEqual(["web/app.js", "web/greet.js", "web/util.js"]);
+  expect(res.cycles).toEqual([["web/app.js", "web/greet.js", "web/util.js"]]);
 });
 
 test("GET /sessions/:id/file returns text content of a worktree file", async () => {
@@ -1231,4 +1293,35 @@ test("command approval: resolve without a decision is rejected", async () => {
   await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "echo hi" });
   const res = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, { content: "yes please" });
   expect(res.status).toBe(400);
+});
+
+test("GET /favicon serves the built-in default icon when no custom favicon is configured", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const res = await fetch(`${baseUrl}/favicon`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("image/svg+xml");
+  expect(await res.text()).toContain("<svg");
+});
+
+test("GET /favicon serves a custom favicon dropped at .worqload/favicon.*", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  writeFileSync(join(repoDir, ".worqload", "favicon.png"), pngBytes);
+
+  const res = await fetch(`${baseUrl}/favicon`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("image/png");
+  expect(Buffer.from(await res.arrayBuffer())).toEqual(pngBytes);
+});
+
+test("GET / links the favicon route in the document head", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const html = await fetch(`${baseUrl}/`).then(r => r.text());
+  expect(html).toMatch(/<link[^>]+rel="icon"[^>]+href="\/favicon"/);
 });
