@@ -35,7 +35,7 @@ export function renderMarkdown(source, options = {}) {
     anchorPath: options.anchorPath ?? null,
     currentAnchor: options.anchor ?? null,
     // [{ lineStart, lineEnd, filename }] — sent feedback anchored into this
-    // source; blocks overlapping a range get a data-feedback-here marker.
+    // source; blocks overlapping a range get a data-feedback-preview attr.
     feedbackAnchors: options.feedbackAnchors ?? [],
   };
   return blocks.map(b => renderBlock(b, ctx)).join("");
@@ -270,18 +270,18 @@ function renderBlock(block, ctx) {
 
 function renderHeading(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
-  return `<h${block.level}${attrs}>${renderInline(block.content)}${feedbackPin(block.startLine, block.endLine, ctx)}</h${block.level}>`;
+  return `<h${block.level}${attrs}>${renderInline(block.content)}</h${block.level}>`;
 }
 
 function renderParagraph(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
-  return `<p${attrs}>${renderInline(block.content)}${feedbackPin(block.startLine, block.endLine, ctx)}</p>`;
+  return `<p${attrs}>${renderInline(block.content)}</p>`;
 }
 
 function renderCode(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
   const langAttr = block.lang ? ` class="language-${escapeAttr(block.lang)}"` : "";
-  return `<pre${attrs}><code${langAttr}>${escapeHtml(block.content)}</code>${feedbackPin(block.startLine, block.endLine, ctx)}</pre>`;
+  return `<pre${attrs}><code${langAttr}>${escapeHtml(block.content)}</code></pre>`;
 }
 
 function renderHr(block, ctx) {
@@ -293,13 +293,13 @@ function renderBlockquote(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
   // We do not recurse into the quote body; rendering it as a single paragraph
   // keeps the renderer simple and covers the typical agent-report use.
-  return `<blockquote${attrs}><p>${renderInline(block.content)}</p>${feedbackPin(block.startLine, block.endLine, ctx)}</blockquote>`;
+  return `<blockquote${attrs}><p>${renderInline(block.content)}</p></blockquote>`;
 }
 
 function renderList(tag, block, ctx) {
   const items = block.items.map(item => {
     const attrs = anchorAttrs(item.startLine, item.endLine, ctx);
-    return `<li${attrs}>${renderInline(item.content)}${feedbackPin(item.startLine, item.endLine, ctx)}</li>`;
+    return `<li${attrs}>${renderInline(item.content)}</li>`;
   }).join("");
   return `<${tag}>${items}</${tag}>`;
 }
@@ -366,9 +366,12 @@ function anchorAttrs(startLine, endLine, ctx) {
   const selected = isOverlap(startLine, endLine, ctx.currentAnchor, ctx.anchorPath)
     ? ` aria-current="true"`
     : "";
-  // `data-feedback-here` draws the left stripe; the always-visible preview pin
-  // is appended as a child by feedbackPin().
-  const feedbackAttr = feedbackAnchorsOverlapping(startLine, endLine, ctx).length > 0 ? ` data-feedback-here` : "";
+  // `data-feedback-preview` both draws the left stripe (CSS) and carries the
+  // comma-joined filenames of the sent feedback anchored over this block;
+  // hovering the block surfaces the 💬 pin / preview popover (see handlers.js /
+  // AnchoredFeedbackOverlay.svelte). The diff and file views set the same attr.
+  const names = feedbackAnchorsOverlapping(startLine, endLine, ctx).map(f => f.filename);
+  const feedbackAttr = names.length > 0 ? ` data-feedback-preview="${escapeAttr(names.join(","))}"` : "";
   return ` data-anchor-path="${escapeAttr(ctx.anchorPath)}"`
        + ` data-anchor-line="${startLine}"`
        + ` data-anchor-line-end="${endLine}"`
@@ -378,20 +381,6 @@ function anchorAttrs(startLine, endLine, ctx) {
 
 function feedbackAnchorsOverlapping(startLine, endLine, ctx) {
   return ctx.feedbackAnchors.filter(a => startLine <= a.lineEnd && endLine >= a.lineStart);
-}
-
-// The always-visible "💬" pin for the sent feedback anchored over a block,
-// appended as the block's last child (position:absolute, in the block's right
-// margin). `data-feedback-preview` carries the comma-joined feedback filenames;
-// hovering it opens the floating preview popover (see handlers.js /
-// FeedbackPreviewPopover.svelte). The diff and file views render the same pin.
-function feedbackPin(startLine, endLine, ctx) {
-  const names = feedbackAnchorsOverlapping(startLine, endLine, ctx).map(f => f.filename);
-  if (names.length === 0) return "";
-  const label = names.length > 1 ? `${names.length}件のフィードバック` : `フィードバック ${escapeHtml(names[0])}`;
-  const count = names.length > 1 ? `<span class="feedback-anchor-count">${names.length}</span>` : "";
-  return `<button type="button" class="feedback-anchor-pin" data-feedback-preview="${escapeAttr(names.join(","))}"`
-       + ` title="${label} — ホバーで内容表示">💬${count}</button>`;
 }
 
 function isOverlap(startLine, endLine, anchor, anchorPath) {

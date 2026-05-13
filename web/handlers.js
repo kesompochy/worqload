@@ -51,7 +51,7 @@ export async function selectSession(id) {
   state.actionRunInFlight = false;
   state.actionResults = new Map();
   state.pendingScrollTo = null;
-  state.feedbackPreview = null;
+  state.feedbackPinAt = null;
   if (!id) return;
   await refreshDetail();
   await fetchActions(id);
@@ -64,10 +64,6 @@ export function onDetailBodyClick(e) {
   // which re-renders the pane and detaches the <a> before navigation, so the
   // new tab never opens.
   if (e.target.closest("a")) return;
-  // An anchored-feedback pin: open (or keep open) its preview popover rather
-  // than letting the click fall through to anchoring the underlying line.
-  const previewPin = e.target.closest("[data-feedback-preview]");
-  if (previewPin) { openFeedbackPreview(previewPin); return; }
   // A feedback anchor chip: jump to the diff/file/report line it points at.
   // Sits before the data-feedback-toggle branch because the chip lives inside
   // the feedback header (which carries that attribute).
@@ -269,52 +265,51 @@ export function closeCodeNav() {
   state.codeNav = null;
 }
 
-// --- anchored-feedback preview popover -------------------------------------
-// An anchored-feedback pin (`[data-feedback-preview]`, rendered on diff/file
-// lines and report-markdown blocks) opens a floating popover on hover that
-// shows the feedback bodies and the reports written in reply. The popover lives
-// on document.body (FeedbackPreviewPopover.svelte); the close is debounced so
-// the cursor can travel from the pin to the popover without it flickering shut.
-let feedbackPreviewCloseTimer = null;
+// --- anchored-feedback hover (pin + preview popover) -----------------------
+// A line/block with sent feedback anchored on it carries `[data-feedback-preview]`
+// (a left stripe in CSS, the comma-joined feedback filenames as the value).
+// Hovering it surfaces a 💬 pin at the cursor; hovering the pin opens a floating
+// popover with the feedback bodies and the reports written in reply. The pin and
+// popover live on document.body (AnchoredFeedbackOverlay.svelte). Hiding is
+// debounced so the cursor can travel line → pin → popover without flicker.
+const HOVER_TARGET_SELECTOR = "[data-feedback-preview], .feedback-anchor-pin, .feedback-preview-popover";
+let feedbackPinHideTimer = null;
 
-export function openFeedbackPreview(pinEl) {
-  if (!pinEl) return;
-  cancelFeedbackPreviewClose();
-  const names = (pinEl.getAttribute("data-feedback-preview") || "").split(",").filter(Boolean);
-  const entries = feedbackPreviewEntries(names);
-  if (entries.length === 0) return;
-  const r = pinEl.getBoundingClientRect();
-  state.feedbackPreview = { entries, rect: { top: r.top, bottom: r.bottom, left: r.left, right: r.right } };
+export function cancelFeedbackPinHide() {
+  if (feedbackPinHideTimer) { clearTimeout(feedbackPinHideTimer); feedbackPinHideTimer = null; }
 }
 
-export function cancelFeedbackPreviewClose() {
-  if (feedbackPreviewCloseTimer) { clearTimeout(feedbackPreviewCloseTimer); feedbackPreviewCloseTimer = null; }
+export function scheduleFeedbackPinHide() {
+  cancelFeedbackPinHide();
+  feedbackPinHideTimer = setTimeout(() => { state.feedbackPinAt = null; feedbackPinHideTimer = null; }, 200);
 }
 
-export function scheduleFeedbackPreviewClose() {
-  cancelFeedbackPreviewClose();
-  feedbackPreviewCloseTimer = setTimeout(() => { state.feedbackPreview = null; feedbackPreviewCloseTimer = null; }, 150);
+export function hideFeedbackPin() {
+  cancelFeedbackPinHide();
+  state.feedbackPinAt = null;
 }
 
-export function closeFeedbackPreview() {
-  cancelFeedbackPreviewClose();
-  state.feedbackPreview = null;
-}
-
-// Hover delegation for the detail body: entering a pin opens the popover,
-// leaving one toward anything that is neither the pin nor the popover starts
-// the debounced close.
+// Hover delegation for the detail body. Entering a striped line/block places the
+// pin at the pointer (only on the first entry — re-emitted mouseover events from
+// child elements keep it put, "the position at first hover"). Leaving one toward
+// anything that is neither the line, the pin, nor the popover starts the hide.
 export function onDetailBodyPointerOver(e) {
-  const pin = e.target.closest?.("[data-feedback-preview]");
-  if (pin) { openFeedbackPreview(pin); return; }
+  const lineEl = e.target.closest?.("[data-feedback-preview]");
+  if (!lineEl) return;
+  cancelFeedbackPinHide();
+  const key = lineEl.getAttribute("data-feedback-preview") || "";
+  if (state.feedbackPinAt && state.feedbackPinAt.key === key) return;
+  const filenames = key.split(",").filter(Boolean);
+  if (feedbackPreviewEntries(filenames).length === 0) return;
+  state.feedbackPinAt = { key, filenames, x: e.clientX, y: e.clientY };
 }
 
 export function onDetailBodyPointerOut(e) {
-  const pin = e.target.closest?.("[data-feedback-preview]");
-  if (!pin) return;
+  const lineEl = e.target.closest?.("[data-feedback-preview]");
+  if (!lineEl) return;
   const to = e.relatedTarget;
-  if (to && (pin.contains(to) || to.closest?.("[data-feedback-preview], .feedback-preview-popover"))) return;
-  scheduleFeedbackPreviewClose();
+  if (to && (lineEl.contains(to) || to.closest?.(HOVER_TARGET_SELECTOR))) return;
+  scheduleFeedbackPinHide();
 }
 
 // Jump the Files tab to a path:line — the action behind a code-nav popover

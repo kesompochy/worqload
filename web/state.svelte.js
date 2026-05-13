@@ -37,7 +37,7 @@ export const state = $state({
   actionResults: new Map(),  // actionId -> last run result observed in this browser view
   renamingSessionId: null,   // session id whose sidebar title is being edited inline (null = none)
   pendingScrollTo: null,     // { anchor: {path,lineStart,lineEnd} } | { article: {attr,value} } | null: a "go to" request DetailBody resolves (scroll + flash) after the next render
-  feedbackPreview: null,     // { entries: [{ feedback, replies: [report,...] }], rect: {top,bottom,left,right} } | null: the floating popover hovering an anchored-feedback pin opens (see FeedbackPreviewPopover.svelte)
+  feedbackPinAt: null,       // { key, filenames: [...], x, y } | null: hovering a left-striped anchored line/block surfaces a 💬 pin at the cursor; hovering that pin opens the preview popover (see handlers.js / AnchoredFeedbackOverlay.svelte)
 });
 
 // Diff view: the server hands us full file context; we collapse unchanged
