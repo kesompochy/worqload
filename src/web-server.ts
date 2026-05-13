@@ -404,6 +404,12 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const server = listenWithFallback(opts.port ?? 3456, port => Bun.serve<WsClientData, undefined>({
     hostname: "127.0.0.1",
     port,
+    // Bun's default idleTimeout (~10s) drops a TCP connection that has had no
+    // bytes either way for the timeout. /sessions/:id/call-graph and
+    // /sessions/:id/diff can sit silent on the wire well past that while the
+    // server is waiting on a language server / git — the fetch then surfaces
+    // as a generic "Failed to fetch" with no clue what happened. Raise it.
+    idleTimeout: 180,
     fetch(req, srv) {
       const url = new URL(req.url);
       const wsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/stream$/);
