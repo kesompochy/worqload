@@ -1035,6 +1035,68 @@ test("POST /sessions/:id/archive hides terminal sessions from default list", asy
   expect(all.sessions.find((s: { id: string }) => s.id === sid)).toBeDefined();
 });
 
+test("GET /sessions?archived=only returns only archived sessions", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const active = await postJson(baseUrl, "/sessions", { prompt: "active", baseBranch: TEST_BASE }).then(r => r.json());
+  const toArchive = await postJson(baseUrl, "/sessions", { prompt: "to-archive", baseBranch: TEST_BASE }).then(r => r.json());
+
+  await postJson(baseUrl, `/sessions/${toArchive.meta.id}/stop`, {});
+  await postJson(baseUrl, `/sessions/${toArchive.meta.id}/archive`, {});
+
+  const onlyArchived = await fetch(`${baseUrl}/sessions?archived=only`).then(r => r.json());
+  const ids = onlyArchived.sessions.map((s: { id: string }) => s.id);
+  expect(ids).toContain(toArchive.meta.id);
+  expect(ids).not.toContain(active.meta.id);
+});
+
+test("DELETE /sessions/:id removes worktree, branch, and session dir for an archived session", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "delete-me", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const worktreePath = created.meta.worktreePath;
+  const sessionDir = join(ctx.sessionsDir, sid);
+
+  expect(existsSync(worktreePath)).toBe(true);
+  expect(existsSync(sessionDir)).toBe(true);
+
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+  await postJson(baseUrl, `/sessions/${sid}/archive`, {});
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}`, { method: "DELETE" });
+  expect(res.status).toBe(200);
+
+  expect(existsSync(worktreePath)).toBe(false);
+  expect(existsSync(sessionDir)).toBe(false);
+
+  const all = await fetch(`${baseUrl}/sessions?includeArchived=true`).then(r => r.json());
+  expect(all.sessions.find((s: { id: string }) => s.id === sid)).toBeUndefined();
+});
+
+test("DELETE /sessions/:id refuses to delete a non-archived session", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "still-active", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}`, { method: "DELETE" });
+  expect(res.status).toBe(400);
+
+  expect(existsSync(join(ctx.sessionsDir, sid))).toBe(true);
+});
+
+test("DELETE /sessions/:id returns 404 for an unknown id", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const res = await fetch(`${baseUrl}/sessions/nope`, { method: "DELETE" });
+  expect(res.status).toBe(404);
+});
+
 test("GET /sessions/:id/feedback merges inbox and read with status", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
