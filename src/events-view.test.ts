@@ -5,6 +5,7 @@ test("isAgentWorkEvent: agent run and its steps count as work", () => {
   for (const kind of [
     "session_started",
     "session_resumed",
+    "session_auto_resumed",
     "claude_assistant_message",
     "claude_tool_use",
     "claude_tool_result",

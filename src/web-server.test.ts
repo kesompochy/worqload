@@ -360,6 +360,91 @@ test("POST /feedback appends a wake_sent entry to host.log", async () => {
   expect(wake?.status).toBe("running");
 });
 
+test("wake watchdog auto-resumes when no claude_* event arrives within the threshold", async () => {
+  const repoDir = makeTmpDir("repo");
+  // Pin the watchdog short so the test isn't flaky.
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    wakeWatchdogMs: 60,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
+
+  // Allow the watchdog to fire and run the resume path.
+  await new Promise((r) => setTimeout(r, 250));
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const kinds = events.map((e) => e.kind);
+  expect(kinds).toContain("session_auto_resumed");
+  // The respawn should write a fresh session_resumed (in addition to the
+  // original session_started).
+  expect(kinds.filter((k) => k === "session_resumed").length).toBeGreaterThanOrEqual(1);
+
+  const auto = events.find((e) => e.kind === "session_auto_resumed");
+  expect((auto?.payload as Record<string, unknown>).reason).toBe("wake_unanswered");
+});
+
+test("wake watchdog stays quiet when claude responds before the threshold", async () => {
+  const repoDir = makeTmpDir("repo");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    wakeWatchdogMs: 100,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
+  // Simulate claude reacting to the wake before the watchdog fires.
+  ctx.lastClaudeActivityAt.set(sid, Date.now() + 1);
+
+  await new Promise((r) => setTimeout(r, 250));
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.some((e) => e.kind === "session_auto_resumed")).toBe(false);
+});
+
+test("wake watchdog disabled with wakeWatchdogMs=0 leaves a silent session alone", async () => {
+  const repoDir = makeTmpDir("repo");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    wakeWatchdogMs: 0,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
+  await new Promise((r) => setTimeout(r, 150));
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.some((e) => e.kind === "session_auto_resumed")).toBe(false);
+});
+
 test("feedback numbering stays monotonic after a fetch drains the inbox", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

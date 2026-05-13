@@ -135,6 +135,12 @@ export interface ServerContext {
   clients: Map<string, SessionAttachment>;
   baseUrlForAgent: string;
   wsClients: Set<ServerWebSocket<WsClientData>>;
+  // Wall-clock of the latest claude_* event observed per session. The wake
+  // watchdog compares it with the wake-send time to decide whether to
+  // auto-resume a host whose claude has gone deaf to stdin.
+  lastClaudeActivityAt: Map<string, number>;
+  // Watchdog threshold. Zero (or negative) disables the watchdog entirely.
+  wakeWatchdogMs: number;
 }
 
 export interface StartServerOptions {
@@ -147,6 +153,11 @@ export interface StartServerOptions {
   hostCommand?: string[];       // override how the (subprocess) host is launched
   hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
   worktreeOps?: WorktreeOps;    // override the git/worktree layer (tests use a fake)
+  // Auto-resume threshold for the wake watchdog (ms). The watchdog scans for
+  // a fresh claude_* event after each wake; if none arrives within this
+  // window, it tears down the host and re-spawns with --continue. Zero or
+  // negative disables it. Production default is 90s; tests override down.
+  wakeWatchdogMs?: number;
 }
 
 export interface ShutdownOptions {
@@ -276,6 +287,9 @@ async function writeAgentEndpointFile(ctx: ServerContext, sessionId: string): Pr
 }
 
 function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./event-log").Event): void {
+  if (event.kind.startsWith("claude_")) {
+    ctx.lastClaudeActivityAt.set(sessionId, Date.now());
+  }
   const payload = JSON.stringify({ sessionId, event });
   for (const ws of ctx.wsClients) {
     if (ws.data.sessionId === sessionId) {
@@ -350,6 +364,67 @@ function appendHostLog(
     appendFileSync(path, line);
   } catch {
     // session dir may have been cleaned up; ignore
+  }
+}
+
+// Production default for the wake watchdog. The audit's failure cases sat
+// silent for 21s to 27 minutes after the wake; 90s is well past any normal
+// "claude is mid-turn on the previous message" delay while still cutting the
+// worst-case waiting time short.
+const DEFAULT_WAKE_WATCHDOG_MS = 90_000;
+
+// Fire-and-forget watchdog: after the configured silence window, if no
+// claude_* event has been observed since the wake, tear the host down and
+// re-spawn it in resume mode. The queued feedback file survives the restart
+// because it lives on disk in the feedback inbox, so `--continue` + the
+// resume kickoff drains it on the way back up.
+function scheduleWakeWatchdog(ctx: ServerContext, sessionId: string): void {
+  if (ctx.wakeWatchdogMs <= 0) return;
+  const wakeAt = Date.now();
+  const timer = setTimeout(() => { void runWakeWatchdog(ctx, sessionId, wakeAt); }, ctx.wakeWatchdogMs);
+  // The watchdog is purely advisory; it must never keep the event loop alive
+  // past the rest of the server.
+  if (typeof (timer as { unref?: () => void }).unref === "function") {
+    (timer as { unref: () => void }).unref();
+  }
+}
+
+async function runWakeWatchdog(ctx: ServerContext, sessionId: string, wakeAt: number): Promise<void> {
+  const lastActivity = ctx.lastClaudeActivityAt.get(sessionId) ?? 0;
+  if (lastActivity >= wakeAt) return; // claude responded in time
+  const meta = await loadSessionMeta(sessionId, ctx.sessionsDir);
+  if (!meta || isTerminal(meta.status)) return; // session has moved on
+  // The user (or another path) may have manually resumed since the wake; only
+  // act when this attachment is still the one we sent the wake to.
+  const att = ctx.clients.get(sessionId);
+  if (!att) return;
+  const silenceMs = Date.now() - wakeAt;
+  appendHostLog(ctx, sessionId, "watchdog_auto_resume", { silenceMs, hostPid: att.hostPid });
+  await appendAndBroadcast(ctx, sessionId, {
+    kind: "session_auto_resumed",
+    payload: { reason: "wake_unanswered", silenceMs },
+  });
+  try {
+    await att.client.kill("SIGTERM");
+    await Promise.race([
+      att.client.exited,
+      new Promise((r) => setTimeout(r, 500)),
+    ]);
+    if (ctx.clients.has(sessionId)) {
+      await att.client.kill("SIGKILL");
+      await att.client.exited.catch(() => {});
+    }
+  } catch {
+    // host already gone; fall through to respawn
+  }
+  ctx.clients.delete(sessionId);
+  const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = meta;
+  const resumed: SessionMeta = { ...rest, status: "running" };
+  await saveSessionMeta(resumed, ctx.sessionsDir);
+  try {
+    await spawnAndAttachHost(ctx, resumed, { resume: true });
+  } catch (err) {
+    appendHostLog(ctx, sessionId, "watchdog_respawn_failed", { error: String(err) });
   }
 }
 
@@ -481,6 +556,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     port: server.port,
     baseUrlForAgent: `http://127.0.0.1:${server.port}`,
     wsClients: new Set(),
+    lastClaudeActivityAt: new Map(),
+    wakeWatchdogMs: opts.wakeWatchdogMs ?? DEFAULT_WAKE_WATCHDOG_MS,
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -1256,6 +1333,7 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     });
     if (att) {
       att.client.send("[wake] check feedback inbox").catch(() => {});
+      scheduleWakeWatchdog(ctx, meta.id);
     }
 
     return json({ filename: file.filename, seq: file.seq });
@@ -1360,6 +1438,7 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
     });
     if (att) {
       att.client.send("[wake] check feedback inbox").catch(() => {});
+      scheduleWakeWatchdog(ctx, meta.id);
     }
 
     return json({
