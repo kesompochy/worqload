@@ -42,6 +42,16 @@ async function run(cmd: string, args: string[], cwd: string): Promise<void> {
   }
 }
 
+async function runOutput(cmd: string, args: string[], cwd: string): Promise<string> {
+  const proc = Bun.spawn([cmd, ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const out = await new Response(proc.stdout).text();
+  if ((await proc.exited) !== 0) {
+    const stderr = (await new Response(proc.stderr).text()).trim();
+    throw new Error(`${cmd} ${args.join(" ")} failed: ${stderr}`);
+  }
+  return out.trim();
+}
+
 // Ensures repoDir is a git repo seeded from preview-seed/. An existing repo is
 // reused as-is (keeping its sessions and worktrees) unless reset is requested;
 // worqload makes session worktrees off its HEAD branch, so the seed must carry
@@ -73,28 +83,56 @@ async function ensurePreviewRepo(repoDir: string, opts: { reset: boolean }): Pro
   await installMockSessions(repoDir);
 }
 
-// Copies preview-seed/mock-sessions/<id>/ into <repoDir>/.worqload/sessions/<id>/,
-// substituting __REPO_DIR__ in meta.json with the actual preview repo path so
-// the mock session's worktreePath resolves on this machine. Skips silently when
-// the staging directory is absent.
+// For each preview-seed/mock-sessions/<id>/, materialise the session under
+// <repoDir>/.worqload/sessions/<id>/ and — when the seed carries a `worktree/`
+// overlay — a real git branch + worktree off main so the Diff tab has content
+// to show. meta.json placeholders __REPO_DIR__ and __BASE_COMMIT__ are
+// substituted with the actual worktree path and main's HEAD sha.
 async function installMockSessions(repoDir: string): Promise<void> {
   if (!existsSync(mockSessionsSrc)) return;
   const targetRoot = join(repoDir, ".worqload", "sessions");
   await mkdir(targetRoot, { recursive: true });
-  await copyMockTree(mockSessionsSrc, targetRoot, repoDir);
+  const baseCommit = await runOutput("git", ["rev-parse", "HEAD"], repoDir);
+  for (const id of await readdir(mockSessionsSrc)) {
+    const srcDir = join(mockSessionsSrc, id);
+    if (!(await stat(srcDir)).isDirectory()) continue;
+    await installMockSession(srcDir, join(targetRoot, id), repoDir, id, baseCommit);
+  }
 }
 
-async function copyMockTree(src: string, dest: string, repoDir: string): Promise<void> {
-  for (const name of await readdir(src)) {
-    const s = join(src, name);
-    const d = join(dest, name);
+async function installMockSession(
+  srcDir: string,
+  destSessionDir: string,
+  repoDir: string,
+  id: string,
+  baseCommit: string,
+): Promise<void> {
+  const overlayDir = join(srcDir, "worktree");
+  const metaRaw = await Bun.file(join(srcDir, "meta.json")).text();
+  const meta = JSON.parse(metaRaw) as { branchName: string; title?: string; prompt: string };
+
+  let worktreePath = repoDir;
+  if (existsSync(overlayDir)) {
+    const shortId = id.slice(0, 8);
+    worktreePath = join(repoDir, ".worktrees", shortId);
+    const message = (meta.title?.trim() || meta.prompt.slice(0, 60)).trim();
+    await run("git", ["worktree", "add", "-b", meta.branchName, worktreePath, "main"], repoDir);
+    await cp(overlayDir, worktreePath, { recursive: true, force: true });
+    await run("git", ["add", "-A"], worktreePath);
+    await run("git", ["commit", "--no-verify", "-q", "-m", message], worktreePath);
+  }
+
+  await mkdir(destSessionDir, { recursive: true });
+  for (const name of await readdir(srcDir)) {
+    if (name === "worktree") continue;
+    const s = join(srcDir, name);
+    const d = join(destSessionDir, name);
     const st = await stat(s);
     if (st.isDirectory()) {
       await mkdir(d, { recursive: true });
-      await copyMockTree(s, d, repoDir);
+      await cp(s, d, { recursive: true });
     } else if (name === "meta.json") {
-      const raw = await Bun.file(s).text();
-      await Bun.write(d, raw.replaceAll("__REPO_DIR__", repoDir));
+      await Bun.write(d, metaRaw.replaceAll("__REPO_DIR__", worktreePath).replaceAll("__BASE_COMMIT__", baseCommit));
     } else {
       await cp(s, d);
     }

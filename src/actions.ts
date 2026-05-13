@@ -353,6 +353,24 @@ export const previewAction: Action = {
     const { scratchRepo, logPath, pidPath } = previewPaths(meta);
     const port = previewPortForSession(meta.id);
 
+    // A preview is already running for this session: open it instead of
+    // restarting. The pidfile is written by `worqload preview` on boot and
+    // unlinked on exit; if it's stale (process dead) we fall through to the
+    // restart flow below.
+    const existingPid = readPreviewPid(pidPath);
+    if (existingPid !== null && processAlive(existingPid)) {
+      const existingUrl = parsePreviewListeningUrl(tailFile(logPath));
+      if (existingUrl) {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: `preview server (pid ${existingPid}) already listening on ${existingUrl}\nscratch repo: ${scratchRepo}\nlog: ${logPath}`,
+          stderr: "",
+          message: `Preview already running — open ${existingUrl}`,
+        };
+      }
+    }
+
     if (!existsSync(join(worktree, "node_modules"))) {
       const install = await runCommand(["bun", "install"], worktree);
       if (!install.ok) return { ...install, message: "`bun install` failed in the session worktree; the preview server was not started" };
