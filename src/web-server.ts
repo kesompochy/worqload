@@ -991,6 +991,7 @@ async function getStructure(_req: Request, ctx: ServerContext, params: Record<st
       return json(view);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      console.error(`[/sessions/${params.id}/structure] ${message}`);
       return json({ error: message }, 500);
     }
   });
@@ -1000,6 +1001,10 @@ async function getStructure(_req: Request, ctx: ServerContext, params: Record<st
 // of file→file, built from a one-hop callHierarchy walk around the changeset's
 // callable symbols. Needs a language server for each touched language —
 // languages without one contribute nothing (their files just don't appear).
+// The work scales with files × symbols × LSP round-trips; we cap the number of
+// changed files we process so a giant diff doesn't tie up the language server
+// long enough for the browser to give up on the response.
+const CALL_GRAPH_MAX_CHANGED_FILES = 40;
 async function getCallGraph(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     try {
@@ -1007,16 +1012,19 @@ async function getCallGraph(_req: Request, ctx: ServerContext, params: Record<st
       const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase);
       const allPaths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
       const inWorktree = new Set(allPaths);
-      const changedFiles = parseChangedFilePaths(diff)
+      const allChanged = parseChangedFilePaths(diff)
         .filter(p => inWorktree.has(p) && structureLanguageOf(p) !== null);
+      const truncated = allChanged.length > CALL_GRAPH_MAX_CHANGED_FILES;
+      const changedFiles = truncated ? allChanged.slice(0, CALL_GRAPH_MAX_CHANGED_FILES) : allChanged;
       const view = await collectCallGraph({
         worktreePath: meta.worktreePath,
         changedFiles,
         languageOf: p => structureLanguageOf(p) ?? null,
       });
-      return json(view);
+      return json({ ...view, truncated, totalChangedFiles: allChanged.length });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      console.error(`[/sessions/${params.id}/call-graph] ${message}`);
       return json({ error: message }, 500);
     }
   });
