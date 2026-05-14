@@ -27,9 +27,6 @@
     { id: "events", label: "Events" },
   ];
 
-  // Feedback the agent has not fetched yet — the count the human still has "out".
-  const unreadFeedbackCount = $derived(appState.feedbackHistory.filter(f => f.status === "unread").length);
-
   // The selected session's outstanding work asking for the human's attention:
   // reports not yet marked read, plus escalations that pause the agent's turn
   // until answered. Surfaced as a single badge on the Reports tab so the human
@@ -80,7 +77,7 @@
   </div>
   <div class="tabs">
     {#each tabs as tab}
-      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "feedback" && unreadFeedbackCount > 0} <span class="tab-count tab-count-unread">({unreadFeedbackCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span>{/if}</button>
+      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span>{/if}</button>
     {/each}
     {#if appState.activeTab === "diff"}
       <span class="diff-base-toggle">
