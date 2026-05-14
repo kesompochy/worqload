@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Wraps `gh issue comment <issue>` with worqload's command-approval flow so the
+# human reviews the body before anything is posted. Distributed alongside the
+# `worqload` binary (see package.json `bin`) — worqload itself has no UI for
+# letting an agent invoke a GitHub MCP tool, so the agent gets this script
+# instead and the approval rides on top of the existing
+# `worqload escalate command` plumbing.
+#
+# Usage:
+#   wq-issue-comment <issue-url-or-number>
+#   (comment body on stdin)
+
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+  echo "Usage: wq-issue-comment <issue-url-or-number>" >&2
+  echo "       (comment body on stdin)" >&2
+  exit 2
+fi
+
+issue=$1
+
+body=$(cat)
+if [ -z "${body//[[:space:]]/}" ]; then
+  echo "wq-issue-comment: comment body must be provided on stdin" >&2
+  exit 2
+fi
+
+# The approved command is eventually run by worqload via `sh -c`, so wrap both
+# the issue ref and the body in single quotes and replace each embedded `'`
+# with `'\''` (end-quote, escaped quote, re-open-quote) so sh sees the
+# original strings verbatim.
+escape_sq() {
+  local s=$1
+  printf "%s" "${s//\'/\'\\\'\'}"
+}
+
+issue_sq=$(escape_sq "$issue")
+body_sq=$(escape_sq "$body")
+command="gh issue comment '$issue_sq' --body '$body_sq'"
+
+reason=$(printf 'Issue %s に投稿するコメント本文:\n\n%s\n' "$issue" "$body")
+
+printf '%s' "$reason" | worqload escalate command --command "$command"

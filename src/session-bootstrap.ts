@@ -18,6 +18,7 @@ Commands available to you (already on PATH inside this session):
 - \`worqload escalate submit --slug <slug>\`      body via stdin; asks the human a question and pauses your turn
 - \`worqload escalate command --command "<cmd>"\` optional reason via stdin; asks the human to approve running a command, then worqload runs it and feeds back the output. Pauses your turn like an escalation.
 - \`worqload feedback fetch\`                     drains pending human feedback to stdout (each message prefixed with a \`--- <filename> ---\` header)
+- \`wq-issue-comment <issue-url-or-number>\`      body on stdin; queues a \`gh issue comment\` for the human to approve (rides on \`worqload escalate command\`). Use this instead of calling \`gh issue comment\` directly so the human reviews the body first.
 
 Polling discipline:
 - At the start of every turn, run \`worqload feedback fetch\` first. If non-empty, treat each message as new instruction.
