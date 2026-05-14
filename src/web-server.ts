@@ -1017,6 +1017,15 @@ async function deleteSession(_req: Request, ctx: ServerContext, params: Record<s
       // worktree already gone (manual cleanup, repo moved, ...) — keep going so
       // the session dir still gets cleared.
     }
+    // The structure tab's function-mode Before split may have materialised a
+    // sibling worktree at the diff base; remove it too. Detached, so no branch
+    // to delete. Best-effort: most sessions never create one.
+    try {
+      const basePath = ctx.worktreeOps.baseWorktreePathFor(meta.worktreePath);
+      await ctx.worktreeOps.removeWorktree(basePath, undefined, ctx.repoDir);
+    } catch {
+      /* base worktree was never created or already gone */
+    }
     await rm(join(ctx.sessionsDir, meta.id), { recursive: true, force: true });
     return json({ ok: true });
   });
@@ -1252,6 +1261,11 @@ const CALL_GRAPH_MAX_CHANGED_FILES = 40;
 // narrow the walk to one seed instead of the changeset. With `anchorPath`
 // alone the seeds are every callable symbol in that file; with `anchorLine`
 // they're just the symbol the human pinned from the code-nav popover.
+//
+// `?side=before` switches the analysed tree from the session worktree to a
+// sibling worktree materialised at the diff base. A separate LSP server runs
+// rooted there, so an anchor on a brand-new file (one that didn't exist at
+// the base) yields an empty graph rather than an error.
 async function getCallGraph(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     try {
@@ -1259,9 +1273,18 @@ async function getCallGraph(req: Request, ctx: ServerContext, params: Record<str
       const anchorPath = (url.searchParams.get("anchorPath") || "").trim() || null;
       const anchorLine = parseIntegerParam(url.searchParams.get("anchorLine"));
       const anchorCharacter = parseIntegerParam(url.searchParams.get("anchorCharacter"));
+      const side = parseSideParam(url.searchParams.get("side"));
       const diffBase = await ctx.worktreeOps.resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
       const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase);
-      const allPaths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
+
+      // The LSP's view of the world is its `worktreePath` — the session
+      // worktree (HEAD) for After, a detached sibling at the diff base for
+      // Before. Both queries share the diff (and so its `changedFiles`); each
+      // then restricts that list to files that exist in *its* tree.
+      const analysisWorktreePath = side === "before"
+        ? await ctx.worktreeOps.ensureBaseWorktree(meta.worktreePath, ctx.repoDir, diffBase)
+        : meta.worktreePath;
+      const allPaths = await ctx.worktreeOps.listWorktreeFiles(analysisWorktreePath);
       const inWorktree = new Set(allPaths);
 
       let changedFiles: string[];
@@ -1269,6 +1292,9 @@ async function getCallGraph(req: Request, ctx: ServerContext, params: Record<str
       let totalChangedFiles: number;
       let truncated: boolean;
       if (anchorPath && anchorLine !== null) {
+        // The symbol-anchor walk doesn't seed from changed files at all — it
+        // pins to one function, so a missing anchor file just yields an empty
+        // graph (collectCallGraph treats anchorSymbol as advisory).
         anchorSymbol = { path: anchorPath, line: anchorLine, character: anchorCharacter ?? undefined };
         changedFiles = [];
         truncated = false;
@@ -1286,7 +1312,7 @@ async function getCallGraph(req: Request, ctx: ServerContext, params: Record<str
       }
 
       const view = await collectCallGraph({
-        worktreePath: meta.worktreePath,
+        worktreePath: analysisWorktreePath,
         changedFiles,
         anchorSymbol,
         languageOf: p => structureLanguageOf(p) ?? null,
@@ -1295,6 +1321,7 @@ async function getCallGraph(req: Request, ctx: ServerContext, params: Record<str
         ...view, truncated, totalChangedFiles,
         anchorPath: anchorPath ?? undefined,
         anchorLine: anchorLine ?? undefined,
+        side,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

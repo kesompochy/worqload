@@ -75,6 +75,46 @@ export async function removeWorktree(
   }
 }
 
+// The path of a session's *base* worktree — its detached-HEAD sibling at the
+// diff base, used so the Structure tab can run a second LSP against the
+// before-the-branch state. Always a sibling of the session worktree at
+// `<...>-base` so a glance at `.worktrees/` tells you which session it belongs
+// to.
+export function baseWorktreePathFor(sessionWorktreePath: string): string {
+  return `${sessionWorktreePath}-base`;
+}
+
+// Lazily provision the base worktree at `baseCommit`. The path is the
+// session's `<id>-base` sibling; if it already exists and its HEAD points at
+// `baseCommit` we reuse it, otherwise we tear it down and re-add. Used by the
+// Structure tab's function-mode Before split — the LSP needs a real on-disk
+// tree (gopls' go.mod, tsserver's tsconfig.json + node_modules, …) so a
+// virtual `git show` view isn't enough.
+export async function ensureBaseWorktree(
+  sessionWorktreePath: string,
+  repoDir: string,
+  baseCommit: string,
+): Promise<string> {
+  const basePath = baseWorktreePathFor(sessionWorktreePath);
+  if (existsSync(basePath)) {
+    const head = await gitOutput(basePath, ["rev-parse", "HEAD"]);
+    if (head === baseCommit) return basePath;
+    // Stale (diff base moved, e.g. after the human ran update-branch). Remove
+    // and re-add — `git worktree add` refuses to overwrite an existing path.
+    await removeWorktree(basePath, undefined, repoDir);
+  }
+  const proc = Bun.spawn(
+    ["git", "worktree", "add", "--detach", basePath, baseCommit],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
+  );
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    throw new Error(`Failed to create base worktree at ${basePath}: ${stderr.trim()}`);
+  }
+  return basePath;
+}
+
 export async function resolveBaseCommit(
   baseBranch: string,
   repoDir: string,
@@ -426,6 +466,8 @@ export interface WorktreeOps {
   readWorktreeFile(worktreePath: string, relPath: string): Promise<WorktreeFileContent>;
   listFilesAtRevision(worktreePath: string, rev: string): Promise<string[]>;
   readFileAtRevision(worktreePath: string, rev: string, relPath: string): Promise<WorktreeFileContent>;
+  ensureBaseWorktree(sessionWorktreePath: string, repoDir: string, baseCommit: string): Promise<string>;
+  baseWorktreePathFor(sessionWorktreePath: string): string;
   gitRemoteUrl(worktreePath: string): Promise<string | null>;
   gitHeadSha(worktreePath: string): Promise<string | null>;
 }
@@ -441,6 +483,8 @@ export const realWorktreeOps: WorktreeOps = {
   readWorktreeFile,
   listFilesAtRevision,
   readFileAtRevision,
+  ensureBaseWorktree,
+  baseWorktreePathFor,
   gitRemoteUrl,
   gitHeadSha,
 };

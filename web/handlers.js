@@ -17,9 +17,7 @@ import {
   refreshDetail,
   refreshDiff,
   ensureFilesLoaded,
-  ensureStructureLoaded,
-  ensureStructureBeforeLoaded,
-  ensureCallGraphLoaded,
+  ensureStructureViewLoaded,
   selectFile,
   openWs,
 } from "./api.js";
@@ -69,6 +67,8 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   state.structureBeforeLoaded = false;
   state.callGraph = null;
   state.callGraphLoaded = false;
+  state.callGraphBefore = null;
+  state.callGraphBeforeLoaded = false;
   state.structureFocusStack = [];
   state.structureAnchor = null;
   state.structureHops = null;
@@ -524,16 +524,7 @@ export async function setStructureMode(mode) {
     structureAnchor: state.structureAnchor, structureHops: state.structureHops,
     structureMode: mode,
   });
-  if (state.activeTab === "structure") {
-    if (mode === "function") await ensureCallGraphLoaded();
-    else {
-      await ensureStructureLoaded();
-      // ensureStructureLoaded only chains to the Before fetch when the After
-      // payload was stale; coming back from function mode with both caches
-      // intact would otherwise leave Before unloaded.
-      if (state.structureSplit) await ensureStructureBeforeLoaded();
-    }
-  }
+  if (state.activeTab === "structure") await ensureStructureViewLoaded();
 }
 
 export async function switchTab(tab, { historyAction = "push" } = {}) {
@@ -546,13 +537,7 @@ export async function switchTab(tab, { historyAction = "push" } = {}) {
   });
   if (tab === "diff") await refreshDiff();
   if (tab === "files") await ensureFilesLoaded();
-  if (tab === "structure") {
-    if (state.structureMode === "function") await ensureCallGraphLoaded();
-    else {
-      await ensureStructureLoaded();
-      if (state.structureSplit) await ensureStructureBeforeLoaded();
-    }
-  }
+  if (tab === "structure") await ensureStructureViewLoaded();
 }
 
 // Open a file from the Structure graph: switch to the Files tab and load it
@@ -608,6 +593,7 @@ export async function setStructureAnchor(path) {
   state.structureLoaded = false;
   state.structureBeforeLoaded = false;
   state.callGraphLoaded = false;
+  state.callGraphBeforeLoaded = false;
   if (state.activeTab !== "structure") {
     await switchTab("structure");
   } else {
@@ -633,6 +619,7 @@ export async function setStructureSymbolAnchor(path, line, character) {
   state.structureLoaded = false;
   state.structureBeforeLoaded = false;
   state.callGraphLoaded = false;
+  state.callGraphBeforeLoaded = false;
   if (state.activeTab !== "structure") {
     await switchTab("structure");
   } else {
@@ -652,6 +639,7 @@ export async function clearStructureAnchor() {
   state.structureLoaded = false;
   state.structureBeforeLoaded = false;
   state.callGraphLoaded = false;
+  state.callGraphBeforeLoaded = false;
   pushUrlState({
     sessionId: state.selected, tab: state.activeTab, focusStack: [],
     structureAnchor: null, structureHops: state.structureHops,
@@ -675,34 +663,21 @@ export async function setStructureHops(hops) {
     structureAnchor: state.structureAnchor, structureHops: hops,
     structureMode: state.structureMode,
   });
-  await ensureStructureLoaded(true);
+  if (state.activeTab === "structure") await ensureStructureViewLoaded(true);
 }
 
-// The Structure tab's Before / After split toggle. Turning it on triggers the
-// Before fetch (the After payload is whatever the file-mode view was already
-// holding); turning it off discards the Before snapshot so a re-enable later
-// always fetches afresh against the current anchor / hops. Function mode has
-// no diff-base counterpart, so the toggle is a no-op there.
-export async function setStructureSplit(enabled) {
-  const next = !!enabled;
-  if (state.structureSplit === next) return;
-  state.structureSplit = next;
-  if (!next) {
-    state.structureBefore = null;
-    state.structureBeforeLoaded = false;
-    return;
-  }
-  if (state.structureMode === "file" && state.activeTab === "structure") {
-    await ensureStructureBeforeLoaded();
-  }
+// The Structure tab's Before / After split toggle. Pure visibility — the
+// Before payload is fetched eagerly alongside After whenever the tab is
+// active, so the canvas is already loaded by the time the human flips this.
+export function setStructureSplit(enabled) {
+  state.structureSplit = !!enabled;
 }
 
 async function reloadActiveStructure() {
-  // Refetch whichever mode is currently on screen so the anchor change is
-  // visible immediately. The other mode's data is invalidated above and will
-  // refetch the next time the user flips the toolbar toggle.
-  if (state.structureMode === "function") await ensureCallGraphLoaded(true);
-  else await ensureStructureLoaded(true);
+  // Refetch After + Before for the active mode so anchor / hops / mode
+  // changes show up everywhere immediately. The other mode is invalidated at
+  // the call site and will refetch the next time the user flips the toggle.
+  await ensureStructureViewLoaded(true);
 }
 
 // Applied when the browser fires popstate (back / forward, or a hashchange-ish
@@ -730,7 +705,9 @@ export async function applyUrlState({ sessionId, tab, focusStack, structureAncho
   state.structureMode = targetMode;
   if ((anchorChanged || hopsChanged || modeChanged) && state.activeTab === "structure") {
     state.structureLoaded = false;
+    state.structureBeforeLoaded = false;
     state.callGraphLoaded = false;
+    state.callGraphBeforeLoaded = false;
     await reloadActiveStructure();
   }
 }

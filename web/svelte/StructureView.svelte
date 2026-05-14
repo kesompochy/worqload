@@ -30,7 +30,6 @@
     setStructureMode,
     setStructureSplit,
   } from "../handlers.js";
-  import { ensureCallGraphLoaded } from "../api.js";
   import StructureCanvas from "./StructureCanvas.svelte";
 
   const anchor = $derived(appState.structureAnchor);
@@ -49,9 +48,11 @@
   function onSplitChange(event) { void setStructureSplit(event.currentTarget.checked); }
 
   const mode = $derived(appState.structureMode);
-  const split = $derived(appState.structureSplit && mode === "file");
+  const split = $derived(appState.structureSplit);
   const afterData = $derived(mode === "function" ? appState.callGraph : appState.structure);
-  const beforeData = $derived(split ? appState.structureBefore : null);
+  // The Before snapshot is fetched eagerly for both modes (api.js's
+  // ensureStructureViewLoaded). Toggling Split flips visibility, not fetching.
+  const beforeData = $derived(mode === "function" ? appState.callGraphBefore : appState.structureBefore);
   // The Dependencies panel reads from whichever side the After-style canvas is
   // showing — the current state of the world. In split mode the Before side
   // gets its own canvas-internal node/edge listing implicitly via the SVG; the
@@ -79,10 +80,6 @@
     }
     return nodeId === anchorPath;
   }
-
-  $effect(() => {
-    if (appState.structureMode === "function") void ensureCallGraphLoaded();
-  });
 
   // The "any side has a drawable graph" gate, used to decide whether to show
   // the focus / details strip. In split mode either side counts — a brand-new
@@ -118,12 +115,10 @@
       <label><input type="radio" name="structureMode" value="file" checked={appState.structureMode === "file"} onchange={() => setStructureMode("file")} /> Files</label>
       <label><input type="radio" name="structureMode" value="function" checked={appState.structureMode === "function"} onchange={() => setStructureMode("function")} /> Functions</label>
     </span>
-    {#if mode === "file"}
-      <label class="structure-split-toggle" title="Before（diff base 時点）と After（現在の worktree）の依存グラフを左右で比較する">
-        <input type="checkbox" checked={appState.structureSplit} onchange={onSplitChange} />
-        Before / After split
-      </label>
-    {/if}
+    <label class="structure-split-toggle" title="Before（diff base 時点）と After（現在の worktree）のグラフを左右で比較する。 Before は タブを開いた瞬間に裏で読み込み始める。">
+      <input type="checkbox" checked={appState.structureSplit} onchange={onSplitChange} />
+      Before / After split
+    </label>
     {#if anchorPath}
       <span class="structure-anchor-pill" title={anchorLine != null ? "Show in Structure からシンボルアンカー指定中" : "Show in Structure からファイルアンカー指定中"}>
         <span class="structure-anchor-icon" aria-hidden="true">⌘</span>
