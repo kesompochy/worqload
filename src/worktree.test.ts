@@ -13,6 +13,8 @@ import {
   searchFileContents,
   gitDiff,
   resolveDiffBase,
+  listFilesAtRevision,
+  readFileAtRevision,
 } from "./worktree";
 
 const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
@@ -472,6 +474,102 @@ describe("resolveDiffBase", () => {
     git(["reset", "--hard", "HEAD~1"], repoDir);
 
     expect(await resolveDiffBase(worktreePath, TEST_BASE_BRANCH, baseCommit)).toBe(baseCommit);
+  });
+});
+
+describe("listFilesAtRevision / readFileAtRevision", () => {
+  async function makeWorktree(repoDir: string): Promise<string> {
+    const sessionId = crypto.randomUUID();
+    const { worktreePath } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      branchName: `s-${sessionId.slice(0, 8)}`,
+      reportsDirAbsolute: join(repoDir, ".worqload", "sessions", sessionId, "reports"),
+    });
+    return worktreePath;
+  }
+
+  test("lists tracked files as they existed at the given revision, ignoring later worktree changes", async () => {
+    const repoDir = createTempGitRepo(); // commit: README.md
+    cleanupDirs.push(repoDir);
+    mkdirSync(join(repoDir, "src"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "a.ts"), "export const a = 1\n");
+    git(["add", "src/a.ts"], repoDir);
+    git(["commit", "-m", "add a"], repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+
+    const worktreePath = await makeWorktree(repoDir);
+    // After the fork, add and remove files in the worktree — these must not
+    // appear in the Before snapshot.
+    writeFileSync(join(worktreePath, "src", "b.ts"), "export const b = 2\n");
+    git(["add", "src/b.ts"], worktreePath);
+    git(["commit", "-m", "add b"], worktreePath);
+    git(["rm", "src/a.ts"], worktreePath);
+    git(["commit", "-m", "remove a"], worktreePath);
+
+    const before = await listFilesAtRevision(worktreePath, baseCommit);
+    expect(before).toContain("README.md");
+    expect(before).toContain("src/a.ts");
+    expect(before).not.toContain("src/b.ts");
+  });
+
+  test("returns an empty list when the revision can't be resolved", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const worktreePath = await makeWorktree(repoDir);
+    expect(await listFilesAtRevision(worktreePath, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")).toEqual([]);
+  });
+
+  test("reads the file blob as it existed at the given revision", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, "hello.txt"), "before\n");
+    git(["add", "hello.txt"], repoDir);
+    git(["commit", "-m", "before"], repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+
+    const worktreePath = await makeWorktree(repoDir);
+    writeFileSync(join(worktreePath, "hello.txt"), "after\n");
+    git(["add", "hello.txt"], worktreePath);
+    git(["commit", "-m", "after"], worktreePath);
+
+    expect(await readFileAtRevision(worktreePath, baseCommit, "hello.txt")).toEqual({ kind: "text", content: "before\n" });
+  });
+
+  test("returns not-found for files that did not exist at the revision", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+    const worktreePath = await makeWorktree(repoDir);
+    writeFileSync(join(worktreePath, "new.txt"), "new\n");
+    git(["add", "new.txt"], worktreePath);
+    git(["commit", "-m", "new"], worktreePath);
+
+    expect((await readFileAtRevision(worktreePath, baseCommit, "new.txt")).kind).toBe("not-found");
+  });
+
+  test("rejects paths that escape the repo", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+    const worktreePath = await makeWorktree(repoDir);
+
+    expect((await readFileAtRevision(worktreePath, baseCommit, "../etc/hosts")).kind).toBe("denied");
+    expect((await readFileAtRevision(worktreePath, baseCommit, "/etc/hosts")).kind).toBe("denied");
+    expect((await readFileAtRevision(worktreePath, baseCommit, "")).kind).toBe("denied");
+  });
+
+  test("flags binary blobs without buffering them as text", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, "bin.dat"), Buffer.from([0x68, 0x69, 0x00, 0x01, 0xff]));
+    git(["add", "bin.dat"], repoDir);
+    git(["commit", "-m", "add bin"], repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+    const worktreePath = await makeWorktree(repoDir);
+
+    expect((await readFileAtRevision(worktreePath, baseCommit, "bin.dat")).kind).toBe("binary");
   });
 });
 
