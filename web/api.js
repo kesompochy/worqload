@@ -119,7 +119,24 @@ export async function refreshDetail() {
   state.lastSeq = events.length > 0 ? events[events.length - 1].seq : 0;
   if (state.activeTab === "diff") await refreshDiff();
   if (state.activeTab === "files") await ensureFilesLoaded(true);
-  if (state.activeTab === "structure") await ensureStructureLoaded(true);
+  if (state.activeTab === "structure") await ensureStructureViewLoaded(true);
+}
+
+// One-stop loader for whichever Structure-tab snapshots the current mode
+// needs: After + Before for that mode. Before always fires alongside After —
+// the Split toggle is visibility-only, so the Before payload is ready by the
+// time the human clicks it. We await After (the human is staring at it) but
+// fire Before with `void` so it doesn't delay the After render when the
+// language server hasn't started up yet.
+export async function ensureStructureViewLoaded(force = false) {
+  if (!state.selected) return;
+  if (state.structureMode === "function") {
+    await ensureCallGraphLoaded(force);
+    void ensureCallGraphBeforeLoaded(force);
+  } else {
+    await ensureStructureLoaded(force);
+    void ensureStructureBeforeLoaded(force);
+  }
 }
 
 export async function ensureFilesLoaded(force = false) {
@@ -155,17 +172,13 @@ export async function ensureStructureLoaded(force = false) {
     state.structure = { error: e.message };
   }
   state.structureLoaded = true;
-  // The split toggle wants both snapshots loaded; the Before companion fetches
-  // in parallel-by-callback so the After arrives independently and the canvas
-  // can show the After half immediately when Before is the slower of the two.
-  if (state.structureSplit) await ensureStructureBeforeLoaded(force);
 }
 
 // The diff-base "Before" counterpart to ensureStructureLoaded. Tracked on its
 // own `structureBeforeLoaded` flag so the same anchor/hops invalidations that
-// drop `structure` also drop `structureBefore`. No-op when the split view
-// isn't active — we don't pay for the extra git read on every Structure-tab
-// open, only when the human asks for the comparison.
+// drop `structure` also drop `structureBefore`. Called eagerly alongside the
+// After fetch so flipping the Split toggle is instantaneous; the extra cost
+// is a few git reads against the diff-base tree.
 export async function ensureStructureBeforeLoaded(force = false) {
   if (!state.selected) return;
   if (state.structureBeforeLoaded && !force) return;
@@ -219,7 +232,29 @@ export async function ensureCallGraphLoaded(force = false) {
   state.callGraphLoaded = true;
 }
 
-function buildCallGraphQuery() {
+// Function-mode Before: the call graph at the diff base, computed by a second
+// LSP rooted in a sibling worktree at that revision. The server materialises
+// the sibling on demand the first time this fetch lands. Triggered alongside
+// the After call graph whenever the Structure tab is on function mode so
+// flipping Split shows the Before half immediately.
+export async function ensureCallGraphBeforeLoaded(force = false) {
+  if (!state.selected) return;
+  if (state.callGraphBeforeLoaded && !force) return;
+  state.callGraphBefore = { loading: true };
+  const id = state.selected;
+  const path = `/sessions/${id}/call-graph${buildCallGraphQuery({ side: "before" })}`;
+  try {
+    const data = await api("GET", path);
+    if (state.selected !== id) return;
+    state.callGraphBefore = data && data.error ? { error: data.error } : data;
+  } catch (e) {
+    if (state.selected !== id) return;
+    state.callGraphBefore = { error: e.message };
+  }
+  state.callGraphBeforeLoaded = true;
+}
+
+function buildCallGraphQuery({ side } = {}) {
   const params = new URLSearchParams();
   const anchor = state.structureAnchor;
   if (anchor && anchor.path) {
@@ -232,6 +267,7 @@ function buildCallGraphQuery() {
       }
     }
   }
+  if (side === "before") params.set("side", "before");
   const qs = params.toString();
   return qs ? `?${qs}` : "";
 }

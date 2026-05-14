@@ -38,9 +38,15 @@ export const state = $state({
   // side. Stays null until the first split fetch resolves.
   structureBefore: null,
   structureBeforeLoaded: false,
-  structureSplit: false,       // Structure tab: split (Before | After) view toggle. File mode only — the call graph has no diff-base counterpart, so the toggle is hidden in function mode.
+  structureSplit: false,       // Structure tab: split (Before | After) view toggle. Toggles visibility of the Before canvas only; the Before payload is fetched eagerly on tab open in both file and function modes so flipping the toggle is instantaneous.
   callGraph: null,       // Structure tab (function mode): { graph, cycles, changedFunctions, nodeMeta } | { loading } | { error } | null — built from LSP callHierarchy
   callGraphLoaded: false,
+  // Structure tab "Before" call graph (function mode): same shape as
+  // `callGraph` but computed against the diff base via a second LSP. Loaded
+  // alongside the After call graph whenever the Structure tab is active —
+  // split is purely a visibility toggle, not a fetch gate.
+  callGraphBefore: null,
+  callGraphBeforeLoaded: false,
   structureMode: "file", // Structure tab: "file" (import graph) | "function" (call graph via LSP)
   structureShowSymbols: true,  // Structure tab: whether per-edge import symbol-name labels are drawn (a view preference, not per-session)
   structureFocusStack: [],     // Structure tab focus history: each entry is a graph node id. Empty = whole graph. Top of stack is the current focus and the graph is filtered to that node and its direct neighbours. Clicking a node pushes; Back pops; Clear empties.
