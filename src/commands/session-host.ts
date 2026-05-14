@@ -7,12 +7,26 @@ import { exitWithUsage } from "./cli-helpers";
 import { buildProtocolPrefix, RESUME_KICKOFF } from "../session-bootstrap";
 import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
 import { claudePipeDriver, type SessionDriverFactory } from "../session-driver";
+import { tmuxClaudeDriver } from "../session-driver-tmux";
 import {
   encodeMessage,
   type HostToServeMessage,
   parseLineDelimited,
   type ServeToHostMessage,
 } from "../session-host-protocol";
+
+export type DriverName = "pipe" | "tmux";
+
+export function resolveDriverByName(name: string): SessionDriverFactory {
+  switch (name) {
+    case "pipe":
+      return claudePipeDriver;
+    case "tmux":
+      return tmuxClaudeDriver;
+    default:
+      throw new Error(`unknown WORQLOAD_DRIVER: ${name} (expected 'pipe' or 'tmux')`);
+  }
+}
 
 export interface HostOptions {
   sessionId: string;
@@ -238,7 +252,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
 }
 
 const HOST_USAGE =
-  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> [--resume] [--log-file <path>] -- <claude command...>";
+  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> [--resume] [--log-file <path>] [--driver pipe|tmux] -- <claude command...>";
 
 // Splits the host CLI argv. Layout is `<sessionId> --flag value ... -- <claude command...>`.
 // Everything after the literal `--` is the claude spawn command verbatim (its
@@ -253,10 +267,12 @@ export function parseHostArgs(args: string[]): HostOptions | null {
   const socketPath = takeFlag(head, "--socket-path");
   const agentEndpoint = takeFlag(head, "--agent-endpoint");
   const logFile = takeFlag(head, "--log-file");
+  const driverName = takeFlag(head, "--driver");
   const resume = head.includes("--resume");
   if (!sessionId || !sessionsDir || !socketPath || !agentEndpoint || spawnCommand.length === 0) {
     return null;
   }
+  const driver = driverName ? resolveDriverByName(driverName) : undefined;
   return {
     sessionId,
     sessionsDir,
@@ -265,6 +281,7 @@ export function parseHostArgs(args: string[]): HostOptions | null {
     spawnCommand,
     ...(resume && { resume }),
     ...(logFile !== undefined && { logFile }),
+    ...(driver !== undefined && { driver }),
   };
 }
 

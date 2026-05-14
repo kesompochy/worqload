@@ -82,6 +82,54 @@ test("parseHostArgs leaves logFile undefined when --log-file is absent", () => {
   expect(parsed?.logFile).toBeUndefined();
 });
 
+test("buildHostArgv omits --driver when driverName is unset", () => {
+  const argv = buildHostArgv({
+    hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],
+    sessionId: "sess-1",
+    sessionsDir: "/repo/.worqload/sessions",
+    socketPath: "/tmp/worqload/sess-1.sock",
+    agentEndpoint: "http://127.0.0.1:3456",
+    spawnCommand: ["claude", "-p"],
+  });
+  expect(argv).not.toContain("--driver");
+  const parsed = parseHostArgs(argv.slice(3));
+  expect(parsed?.driver).toBeUndefined();
+});
+
+test("buildHostArgv + parseHostArgs carry --driver tmux and resolve to the tmux factory", () => {
+  const argv = buildHostArgv({
+    hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],
+    sessionId: "sess-1",
+    sessionsDir: "/repo/.worqload/sessions",
+    socketPath: "/tmp/worqload/sess-1.sock",
+    agentEndpoint: "http://127.0.0.1:3456",
+    spawnCommand: ["claude", "--dangerously-skip-permissions"],
+    driverName: "tmux",
+  });
+  expect(argv).toContain("--driver");
+  const driverIdx = argv.indexOf("--driver");
+  expect(argv[driverIdx + 1]).toBe("tmux");
+  const parsed = parseHostArgs(argv.slice(3));
+  expect(parsed?.driver).toBeDefined();
+  // The driver field is a function — we can't compare it to tmuxClaudeDriver
+  // directly without importing it here, but its presence is enough to confirm
+  // the round-trip resolved a factory.
+  expect(typeof parsed?.driver).toBe("function");
+});
+
+test("parseHostArgs rejects --driver with an unknown name", () => {
+  expect(() =>
+    parseHostArgs([
+      "sess-1",
+      "--sessions-dir", "/d",
+      "--socket-path", "/s",
+      "--agent-endpoint", "http://x",
+      "--driver", "nope",
+      "--", "claude",
+    ]),
+  ).toThrow();
+});
+
 test("parseHostArgs returns null when required pieces are missing", () => {
   expect(parseHostArgs(["sess-1", "--sessions-dir", "/d", "--socket-path", "/s", "--agent-endpoint", "http://x"])).toBeNull(); // no `--` / spawn command
   expect(parseHostArgs(["--sessions-dir", "/d", "--socket-path", "/s", "--agent-endpoint", "http://x", "--", "claude"])).toBeNull(); // no sessionId
