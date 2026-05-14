@@ -161,7 +161,20 @@ export async function serve(args: string[]): Promise<void> {
     ? hostEnv.trim().split(/\s+/)
     : undefined;
 
-  const { ctx } = await startServer({ port: requestedPort, spawnCommand, hostCommand });
+  // WORQLOAD_DRIVER picks which SessionDriver implementation to run for each
+  // session. "pipe" (default) runs `claude -p` over stdio; "tmux" runs
+  // interactive `claude` inside a tmux session and reads claude's JSONL
+  // transcript — the PoC route for avoiding the Agent SDK credit pool.
+  const driverEnv = (process.env.WORQLOAD_DRIVER ?? "").trim();
+  let driverName: "pipe" | "tmux" | undefined;
+  if (driverEnv === "tmux") driverName = "tmux";
+  else if (driverEnv === "pipe" || driverEnv === "") driverName = undefined;
+  else {
+    console.error(`unknown WORQLOAD_DRIVER: ${driverEnv} (expected 'pipe' or 'tmux')`);
+    process.exit(1);
+  }
+
+  const { ctx } = await startServer({ port: requestedPort, spawnCommand, hostCommand, ...(driverName && { driverName }) });
   if (requestedPort !== 0 && ctx.port !== requestedPort) {
     console.log(`port ${requestedPort} was in use; using ${ctx.port} instead`);
   }

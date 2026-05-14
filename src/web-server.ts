@@ -58,13 +58,20 @@ function listenWithFallback(requestedPort: number, listen: (port: number) => Ser
   throw new Error(`no free port found in range ${requestedPort}-${requestedPort + PORT_FALLBACK_ATTEMPTS - 1}`);
 }
 
-function buildDefaultSpawnCommand(): string[] {
+function buildDefaultSpawnCommand(driverName: "pipe" | "tmux"): string[] {
   // bypassPermissions is the default for v1 ergonomics: a -p session has no
   // human to approve prompts, so any unallowed Bash would auto-fail. Set
   // WORQLOAD_PERMISSION_MODE=default (or acceptEdits) to lock the session
   // down to only the protocol allowlist above (the agent will then be able
   // to write reports etc. but not run arbitrary dev commands).
   const permissionMode = process.env.WORQLOAD_PERMISSION_MODE || "bypassPermissions";
+  if (driverName === "tmux") {
+    // The tmux driver runs interactive `claude` inside a detached tmux session
+    // (see src/session-driver-tmux.ts). Interactive mode does not understand
+    // --input-format or --output-format; `--dangerously-skip-permissions` is
+    // the interactive equivalent of bypassPermissions.
+    return ["claude", "--dangerously-skip-permissions"];
+  }
   return [
     "claude",
     "-p",
@@ -152,6 +159,12 @@ export interface StartServerOptions {
   port?: number;                // 0 = random
   repoDir?: string;
   spawnCommand?: string[];      // override the claude binary command
+  // Which SessionDriver implementation to spawn each session with. "pipe"
+  // (default) runs `claude -p` and exchanges stream-json over stdio. "tmux"
+  // runs interactive `claude` inside a tmux session, reading claude's JSONL
+  // transcript for output — avoids the Agent SDK credit pool that `claude -p`
+  // will draw from starting 2026-06-15.
+  driverName?: "pipe" | "tmux";
   // Overrides the helper that turns a prompt into a short branch name.
   // Return null to skip generation; the caller then falls back to <shortId>.
   branchNameGenerator?: BranchNameGenerator;
@@ -338,7 +351,7 @@ async function transitionStatus(
 // session). The host — not serve — writes the session_started / session_resumed
 // event and sends claude its first message. On resume claude's prior
 // conversation is continued (`--continue`), so we still connect from seq 0.
-function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: string[] }): HostLauncher {
+function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: string[]; driverName: "pipe" | "tmux" }): HostLauncher {
   return async ({ meta, sessionsDir, agentEndpoint, resume, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
     const logFile = hostLogPath(sessionsDir, meta.id);
@@ -350,6 +363,9 @@ function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: st
       spawnCommand: resume ? [...config.spawnCommand, "--continue"] : config.spawnCommand,
       hostCommand: config.hostCommand,
       logFile,
+      // Only pass `--driver` when it differs from the host CLI's default
+      // ("pipe"). Avoids churning host argv in the common case.
+      ...(config.driverName === "tmux" ? { driverName: "tmux" as const } : {}),
       ...(resume && { resume: true }),
     });
     const client = await connectToHost({ socketPath, sinceSeq: 0, onEvent, onDisconnect });
@@ -495,10 +511,11 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const worqloadDir = join(repoDir, ".worqload");
   const sessionsDir = join(worqloadDir, "sessions");
   const worktreesDir = join(repoDir, ".worktrees");
-  const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand();
+  const driverName = opts.driverName ?? "pipe";
+  const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand(driverName);
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
-  const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand });
+  const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand, driverName });
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
 
   await mkdir(sessionsDir, { recursive: true });
