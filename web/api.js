@@ -155,9 +155,35 @@ export async function ensureStructureLoaded(force = false) {
     state.structure = { error: e.message };
   }
   state.structureLoaded = true;
+  // The split toggle wants both snapshots loaded; the Before companion fetches
+  // in parallel-by-callback so the After arrives independently and the canvas
+  // can show the After half immediately when Before is the slower of the two.
+  if (state.structureSplit) await ensureStructureBeforeLoaded(force);
 }
 
-function buildStructureQuery() {
+// The diff-base "Before" counterpart to ensureStructureLoaded. Tracked on its
+// own `structureBeforeLoaded` flag so the same anchor/hops invalidations that
+// drop `structure` also drop `structureBefore`. No-op when the split view
+// isn't active — we don't pay for the extra git read on every Structure-tab
+// open, only when the human asks for the comparison.
+export async function ensureStructureBeforeLoaded(force = false) {
+  if (!state.selected) return;
+  if (state.structureBeforeLoaded && !force) return;
+  state.structureBefore = { loading: true };
+  const id = state.selected;
+  const path = `/sessions/${id}/structure${buildStructureQuery({ side: "before" })}`;
+  try {
+    const data = await api("GET", path);
+    if (state.selected !== id) return;
+    state.structureBefore = data && data.error ? { error: data.error } : data;
+  } catch (e) {
+    if (state.selected !== id) return;
+    state.structureBefore = { error: e.message };
+  }
+  state.structureBeforeLoaded = true;
+}
+
+function buildStructureQuery({ side } = {}) {
   const params = new URLSearchParams();
   if (state.structureAnchor && state.structureAnchor.kind === "file") {
     params.set("anchorPath", state.structureAnchor.path);
@@ -165,6 +191,7 @@ function buildStructureQuery() {
   if (typeof state.structureHops === "number") {
     params.set("hops", String(state.structureHops));
   }
+  if (side === "before") params.set("side", "before");
   const qs = params.toString();
   return qs ? `?${qs}` : "";
 }
