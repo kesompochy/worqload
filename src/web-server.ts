@@ -640,6 +640,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions", getSessions),
   defineRoute("GET",  "/sessions/:id", getSessionDetail),
   defineRoute("POST", "/sessions/:id/stop", postStop),
+  defineRoute("POST", "/sessions/:id/wake", postWake),
   defineRoute("POST", "/sessions/:id/resume", postResume),
   defineRoute("POST", "/sessions/:id/archive", postArchive),
   defineRoute("POST", "/sessions/:id/unarchive", postUnarchive),
@@ -1400,6 +1401,30 @@ async function postStop(_req: Request, ctx: ServerContext, params: Record<string
     const updated = await transitionStatus(ctx, meta, "stopped");
     await appendAndBroadcast(ctx, meta.id, { kind: "session_stopped", payload: { reason: "stop" } });
     return json({ meta: updated });
+  });
+}
+
+// Manual wake: re-send the wake-stdin write that postFeedback/postEscalationResolve
+// trigger as a side effect, without queueing any feedback. The escape hatch for
+// the "host still says running but the agent stopped consuming stdin" case the
+// 90s watchdog hasn't caught yet (or for nudging the agent the human just
+// recovered from a wedged state). Does not touch session status.
+async function postWake(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    if (isTerminal(meta.status)) {
+      return json({ error: "session is terminal; nothing to wake" }, 400);
+    }
+    const att = ctx.clients.get(meta.id);
+    appendHostLog(ctx, meta.id, "wake_sent", {
+      hasClient: att !== undefined,
+      status: meta.status,
+      reason: "manual",
+    });
+    if (att) {
+      att.client.send("[wake] check feedback inbox").catch(() => {});
+      scheduleWakeWatchdog(ctx, meta.id, att);
+    }
+    return json({ ok: true, sent: att !== undefined });
   });
 }
 

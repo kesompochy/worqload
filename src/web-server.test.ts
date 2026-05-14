@@ -520,6 +520,45 @@ test("wake watchdog disabled with wakeWatchdogMs=0 leaves a silent session alone
   expect(events.some((e) => e.kind === "session_auto_resumed")).toBe(false);
 });
 
+test("POST /sessions/:id/wake sends a manual wake and logs it to host.log", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/wake`, {}).then(r => r.json());
+  expect(res.ok).toBe(true);
+  expect(res.sent).toBe(true);
+
+  const logPath = hostLogPath(ctx.sessionsDir, sid);
+  expect(existsSync(logPath)).toBe(true);
+  const entries = readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const wake = entries.find((e) => e.event === "wake_sent" && e.reason === "manual");
+  expect(wake).toBeDefined();
+  expect(wake?.hasClient).toBe(true);
+  expect(wake?.status).toBe("running");
+});
+
+test("POST /sessions/:id/wake rejects a terminal session", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/wake`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  expect(res.status).toBe(400);
+});
+
 test("feedback numbering stays monotonic after a fetch drains the inbox", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

@@ -1034,6 +1034,22 @@ export function onAnchoredFeedback() {
   return onFeedback("anchoredFeedbackInput");
 }
 
+// Manual wake: re-send the stdin nudge that feedback / escalation-resolve also
+// trigger, but without enqueuing anything. The escape hatch for the case where
+// the session shows RUNNING but claude has stopped consuming stdin and the 90s
+// watchdog hasn't kicked in (yet). The server returns sent=false when no live
+// host attachment exists; surface that to the human so they can fall back to
+// Stop + Resume.
+export async function onWake(id = state.selected) {
+  if (!id) return;
+  try {
+    const res = await api("POST", `/sessions/${id}/wake`, {});
+    toast(res.sent ? "wake sent" : "no live host to wake");
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 export async function onStop(id = state.selected) {
   if (!id) return;
   try {
