@@ -323,6 +323,88 @@ export async function gitDiff(
   return out;
 }
 
+// Worktree paths must be relative and stay inside the repo. `git show <rev>:<path>`
+// and `git ls-tree` both interpret paths in the repo's index space (no symlink
+// traversal), so the symlink-escape check `readWorktreeFile` runs doesn't apply
+// here — but a `..` segment can still climb out of the tree as `git ls-tree`
+// resolves it. Reject anything that isn't a POSIX-style relative subpath.
+function isSafeRepoRelativePath(relPath: string): boolean {
+  if (relPath === "" || relPath.startsWith("/")) return false;
+  if (relPath.includes("\\")) return false;
+  for (const segment of relPath.split("/")) {
+    if (segment === "" || segment === "." || segment === "..") return false;
+  }
+  return true;
+}
+
+// Files tracked at `rev`, mirroring the path convention `listWorktreeFiles` uses
+// (worktree-relative, POSIX separators). The list is whatever `git ls-tree`
+// reports — no `.gitignore` filtering, since at a commit boundary every entry
+// in the tree is tracked. Returns [] if `rev` doesn't resolve (a stale base
+// commit, an unborn HEAD).
+export async function listFilesAtRevision(
+  worktreePath: string,
+  rev: string,
+): Promise<string[]> {
+  if (!existsSync(worktreePath)) return [];
+  const proc = Bun.spawn(
+    ["git", "ls-tree", "-r", "--name-only", "-z", rev],
+    { stdout: "pipe", stderr: "pipe", cwd: worktreePath, env: cleanGitEnv() },
+  );
+  const out = await new Response(proc.stdout).text();
+  const exit = await proc.exited;
+  if (exit !== 0) return [];
+  return out.split("\0").filter(p => p !== "").sort();
+}
+
+// Read a tracked file's blob at `rev`. Returns `not-found` for paths the tree
+// doesn't contain (deleted files, never-existed paths, an unresolved `rev`),
+// `denied` for paths that escape the repo, `too-large` past the same byte cap
+// `readWorktreeFile` uses, `binary` for files with NULs in the sniff window,
+// and `text` otherwise. `git show <rev>:<path>` is the historical analogue of
+// reading the on-disk file.
+export async function readFileAtRevision(
+  worktreePath: string,
+  rev: string,
+  relPath: string,
+): Promise<WorktreeFileContent> {
+  if (!isSafeRepoRelativePath(relPath)) return { kind: "denied" };
+  if (!existsSync(worktreePath)) return { kind: "not-found" };
+
+  // ls-tree resolves the size and type of the blob without streaming its
+  // bytes — cheap enough to do as a precheck so a giant tracked file doesn't
+  // hit the in-memory cap below.
+  const lsProc = Bun.spawn(
+    ["git", "ls-tree", "-z", "--long", rev, "--", relPath],
+    { stdout: "pipe", stderr: "pipe", cwd: worktreePath, env: cleanGitEnv() },
+  );
+  const lsOut = await new Response(lsProc.stdout).text();
+  if ((await lsProc.exited) !== 0) return { kind: "not-found" };
+  const entry = lsOut.split("\0").find(line => line !== "");
+  if (!entry) return { kind: "not-found" };
+  // `<mode> SP <type> SP <object> SP <size> TAB <path>`. `size` is "-" for
+  // anything but a blob.
+  const match = /^\S+\s+(\S+)\s+\S+\s+(\S+)\t/.exec(entry);
+  if (!match) return { kind: "not-found" };
+  if (match[1] !== "blob") return { kind: "not-a-file" };
+  const size = Number(match[2]);
+  if (Number.isFinite(size) && size > MAX_VIEWABLE_FILE_BYTES) {
+    return { kind: "too-large", size };
+  }
+
+  const proc = Bun.spawn(
+    ["git", "show", `${rev}:${relPath}`],
+    { stdout: "pipe", stderr: "pipe", cwd: worktreePath, env: cleanGitEnv() },
+  );
+  const bytes = new Uint8Array(await new Response(proc.stdout).arrayBuffer());
+  if ((await proc.exited) !== 0) return { kind: "not-found" };
+  const sniffLen = Math.min(bytes.byteLength, BINARY_SNIFF_BYTES);
+  for (let i = 0; i < sniffLen; i++) {
+    if (bytes[i] === 0) return { kind: "binary" };
+  }
+  return { kind: "text", content: new TextDecoder().decode(bytes) };
+}
+
 // The worktree/git operations the web server depends on, gathered behind one
 // interface so tests can substitute an fs-only fake. The real binding lives in
 // `realWorktreeOps`; only the two things worqload genuinely couples to git for —
@@ -342,6 +424,8 @@ export interface WorktreeOps {
   gitDiff(worktreePath: string, target: string, contextLines?: number): Promise<string>;
   listWorktreeFiles(worktreePath: string): Promise<string[]>;
   readWorktreeFile(worktreePath: string, relPath: string): Promise<WorktreeFileContent>;
+  listFilesAtRevision(worktreePath: string, rev: string): Promise<string[]>;
+  readFileAtRevision(worktreePath: string, rev: string, relPath: string): Promise<WorktreeFileContent>;
   gitRemoteUrl(worktreePath: string): Promise<string | null>;
   gitHeadSha(worktreePath: string): Promise<string | null>;
 }
@@ -355,6 +439,8 @@ export const realWorktreeOps: WorktreeOps = {
   gitDiff,
   listWorktreeFiles,
   readWorktreeFile,
+  listFilesAtRevision,
+  readFileAtRevision,
   gitRemoteUrl,
   gitHeadSha,
 };

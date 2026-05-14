@@ -16,6 +16,7 @@ mock.module("../web/api.js", () => ({
   refreshDiff: async () => {},
   ensureFilesLoaded: async () => {},
   ensureStructureLoaded: async () => {},
+  ensureStructureBeforeLoaded: async () => {},
   ensureCallGraphLoaded: async () => {},
   selectFile: async () => {},
   searchFiles: async () => ({ matches: [], truncated: false }),

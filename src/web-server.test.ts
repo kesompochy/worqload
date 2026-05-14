@@ -960,6 +960,60 @@ test("GET /sessions/:id/structure with an anchor still tints diff-changed files 
   expect(res.changedFiles).toEqual(["web/greet.js"]);
 });
 
+test("GET /sessions/:id/structure?side=before draws the graph from the diff base's tree instead of the worktree", async () => {
+  // The diff renames greet.js's import: at the base it imports old.js, at HEAD
+  // it imports new.js. With ?side=before we expect the Before graph
+  // (greet.js → old.js), not the After graph the default returns.
+  const repoDir = makeTmpDir("repo");
+  const cannedDiff = [
+    "diff --git a/web/greet.js b/web/greet.js",
+    "index 1111111..2222222 100644",
+    "--- a/web/greet.js",
+    "+++ b/web/greet.js",
+    "@@ -1 +1 @@",
+    "-import \"./old.js\";",
+    "+import \"./new.js\";",
+  ].join("\n");
+
+  const beforeTree: Record<string, string> = {
+    "web/greet.js": `import "./old.js";\n`,
+    "web/old.js": ``,
+  };
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: {
+      ...fakeWorktreeOps(),
+      async gitDiff() { return cannedDiff; },
+      async listFilesAtRevision() { return Object.keys(beforeTree).sort(); },
+      async readFileAtRevision(_wt, _rev, relPath) {
+        const content = beforeTree[relPath];
+        return content === undefined ? { kind: "not-found" } : { kind: "text", content };
+      },
+    },
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+  mkdirSync(join(wt, "web"), { recursive: true });
+  writeFileSync(join(wt, "web", "greet.js"), `import "./new.js";\n`);
+  writeFileSync(join(wt, "web", "new.js"), ``);
+
+  const after = await fetch(`${baseUrl}/sessions/${sid}/structure`).then(r => r.json());
+  expect(after.side).toBe("after");
+  expect(after.graph.nodes.sort()).toEqual(["web/greet.js", "web/new.js"]);
+
+  const before = await fetch(`${baseUrl}/sessions/${sid}/structure?side=before`).then(r => r.json());
+  expect(before.side).toBe("before");
+  expect(before.graph.nodes.sort()).toEqual(["web/greet.js", "web/old.js"]);
+  expect(before.changedFiles).toEqual(["web/greet.js"]);
+});
+
 test("GET /sessions/:id/file returns text content of a worktree file", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

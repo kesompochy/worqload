@@ -113,6 +113,12 @@ export function fakeWorktreeOps(): WorktreeOps {
     // Reading a single file is pure fs (path-escape checks, binary sniff, size
     // limit) with no git, so the production implementation is the fake too.
     readWorktreeFile: realWorktreeOps.readWorktreeFile,
+    // The fake worktree isn't a git repo, so a revision-scoped tree query has
+    // nothing to return. Server endpoints that ask for the Before snapshot get
+    // back an empty file list / not-found, which is the same shape the real
+    // implementation produces for a missing `rev`.
+    async listFilesAtRevision() { return []; },
+    async readFileAtRevision() { return { kind: "not-found" }; },
     async gitRemoteUrl() { return "git@github.com:owner/repo.git"; },
     async gitHeadSha() { return "f".repeat(40); },
   };

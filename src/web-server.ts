@@ -1180,37 +1180,57 @@ async function getFiles(_req: Request, ctx: ServerContext, params: Record<string
 // still consulted, but only so changed files in the anchor neighbourhood keep
 // their "changed" emphasis. `?hops=<n>` (clamped to [0, 4]) overrides the
 // neighbourhood radius.
+//
+// `?side=before` switches the source corpus from the current worktree to the
+// diff base's tree: file list, file contents, and the import graph are all
+// computed at the base commit, so the Structure tab's split view can show the
+// graph as it was before the branch's changes. `after` (the default) keeps the
+// current behaviour.
 async function getStructure(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     try {
       const url = new URL(req.url);
       const anchorPath = (url.searchParams.get("anchorPath") || "").trim() || null;
       const hops = parseHopsParam(url.searchParams.get("hops"));
+      const side = parseSideParam(url.searchParams.get("side"));
       const diffBase = await ctx.worktreeOps.resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
       const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase);
-      const allPaths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
       const diffChanged = parseChangedFilePaths(diff);
+
+      const allPaths = side === "before"
+        ? await ctx.worktreeOps.listFilesAtRevision(meta.worktreePath, diffBase)
+        : await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
+      const readSource: (path: string) => Promise<string | null> = side === "before"
+        ? async path => {
+            const result = await ctx.worktreeOps.readFileAtRevision(meta.worktreePath, diffBase, path);
+            return result.kind === "text" ? result.content : null;
+          }
+        : async path => {
+            const result = await ctx.worktreeOps.readWorktreeFile(meta.worktreePath, path);
+            return result.kind === "text" ? result.content : null;
+          };
+
+      // In Before mode the diff's changed paths drive seeding, but a path that
+      // didn't exist at the base (a brand-new file) has no graph node there; we
+      // simply skip it. `buildStructureView` filters seeds through filesByPath
+      // anyway, so passing all of `diffChanged` is harmless.
       const roots = anchorPath ? [anchorPath] : diffChanged;
-      const view = await buildStructureView({
-        allPaths,
-        changedPaths: roots,
-        readSource: async path => {
-          const result = await ctx.worktreeOps.readWorktreeFile(meta.worktreePath, path);
-          return result.kind === "text" ? result.content : null;
-        },
-        hops,
-      });
+      const view = await buildStructureView({ allPaths, changedPaths: roots, readSource, hops });
       // changedFiles signals diff-emphasis (blue tint). In anchor mode we only
       // emphasise diff-changed files that ended up in the anchor neighbourhood.
       const nodeSet = new Set(view.graph.nodes);
       const changedFiles = diffChanged.filter(p => nodeSet.has(p)).sort();
-      return json({ ...view, changedFiles, anchorPath: anchorPath ?? undefined });
+      return json({ ...view, changedFiles, anchorPath: anchorPath ?? undefined, side });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[/sessions/${params.id}/structure] ${message}`);
       return json({ error: message }, 500);
     }
   });
+}
+
+function parseSideParam(raw: string | null): "before" | "after" {
+  return raw === "before" ? "before" : "after";
 }
 
 function parseHopsParam(raw: string | null): number | undefined {

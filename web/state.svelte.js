@@ -32,6 +32,13 @@ export const state = $state({
   codeNav: null,         // Files-tab code navigation popover: { symbol, path, rect:{top,bottom,left}, definitions:[{path,line,column?,text?}]|null, definitionsStatus:"loading"|"done", references:[{path,line,column?,text?}]|null, referencesStatus:"loading"|"done" } | null
   structure: null,       // Structure tab (file mode): { graph:{nodes:[path],edges:[{from,to,symbols}]}, cycles:[[path,...]], changedFiles:[path] } | { loading:true } | { error:string } | null
   structureLoaded: false,
+  // Structure tab "Before" snapshot (file mode): same payload shape as
+  // `structure`, but computed against the diff base's tree. Loaded only when
+  // `structureSplit` is on, so the canvas can render Before and After side by
+  // side. Stays null until the first split fetch resolves.
+  structureBefore: null,
+  structureBeforeLoaded: false,
+  structureSplit: false,       // Structure tab: split (Before | After) view toggle. File mode only — the call graph has no diff-base counterpart, so the toggle is hidden in function mode.
   callGraph: null,       // Structure tab (function mode): { graph, cycles, changedFunctions, nodeMeta } | { loading } | { error } | null — built from LSP callHierarchy
   callGraphLoaded: false,
   structureMode: "file", // Structure tab: "file" (import graph) | "function" (call graph via LSP)
