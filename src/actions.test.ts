@@ -428,6 +428,37 @@ test("sync-base-from-remote surfaces the git error when no origin remote is conf
   expect(errText).toMatch(/origin|remote/);
 });
 
+test("dirty-check treats files in .worqload-draft as not-the-agent's-work, so merge-to-base proceeds", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+
+  // Drafts live in .worqload-draft/ as session-private scratch space. They
+  // must not block merge-to-base or land in an auto-commit.
+  writeFileSync(join(meta.worktreePath, ".worqload-draft", "010-progress.md"), "draft body\n");
+  expect(worktreeStatus(meta.worktreePath)).toContain(".worqload-draft");
+
+  const res = await mergeToBaseAction.run({ meta, repoDir }, {});
+  expect(res.ok).toBe(true);
+});
+
+test("create-pr auto-commit leaves .worqload-draft contents out of the commit", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+
+  writeFileSync(join(meta.worktreePath, ".worqload-draft", "010-progress.md"), "draft body\n");
+  writeFileSync(join(meta.worktreePath, "feature.txt"), "real work\n");
+
+  const res = await createPrAction.run({ meta, repoDir }, { title: "pr title", body: "" });
+  expect(res.ok).toBe(false); // push fails: no origin remote
+  // the real change is committed...
+  expect(git(["show", "HEAD:feature.txt"], meta.worktreePath).exitCode).toBe(0);
+  // ...but the draft is not, and is left sitting untracked
+  expect(git(["show", "HEAD:.worqload-draft/010-progress.md"], meta.worktreePath).exitCode).not.toBe(0);
+  expect(worktreeStatus(meta.worktreePath)).toContain(".worqload-draft");
+});
+
 test("create-pr auto-commit excludes the .worqload-reports symlink even when the repo hasn't gitignored it", async () => {
   const repoDir = makeRepo({ gitignoreWorqloadReports: false });
   const sessionId = crypto.randomUUID();

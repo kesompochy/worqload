@@ -40,6 +40,13 @@ export async function createSessionWorktree(params: {
     symlinkSync(reportsDirAbsolute, symlinkPath);
   }
 
+  // session-private scratch for report/escalation drafts. The agent is told
+  // (in the session bootstrap) to Write its draft here and Read it back as the
+  // "推敲" step before submitting. We pre-create it so the path is well-defined
+  // from the agent's first turn; HIDDEN_WORKTREE_ENTRIES keeps it out of the
+  // explorer, the dirty-check, and the create-PR auto-commit.
+  await mkdir(join(worktreePath, ".worqload-draft"), { recursive: true });
+
   return { worktreePath, branchName };
 }
 
@@ -125,12 +132,24 @@ export async function currentBranch(repoDir: string): Promise<string> {
   return out.trim();
 }
 
-// worqload injects a `.worqload-reports` symlink at the worktree root; it points
-// outside the worktree (into .worqload/) so it isn't browsable anyway, and it's
-// not project content. Keep it out of the explorer, and out of the
-// uncommitted-changes check / auto-commit in actions.ts, even when the user
-// hasn't gitignored it.
-export const HIDDEN_WORKTREE_ENTRIES = new Set([".worqload-reports"]);
+// worqload injects two entries at the worktree root: the `.worqload-reports`
+// symlink (points into .worqload/ so the agent can read its own reports) and
+// the `.worqload-draft/` directory (session-private scratch where the agent
+// drafts reports before submitting them). Neither is project content. Keep
+// both out of the explorer, the uncommitted-changes check, and the create-PR
+// auto-commit, even when the user hasn't gitignored them.
+export const HIDDEN_WORKTREE_ENTRIES = new Set([".worqload-reports", ".worqload-draft"]);
+
+// True for the hidden entries themselves and for anything beneath them. The
+// explorer filter compares against worktree-relative file paths, so for a
+// directory entry like `.worqload-draft` we have to recognize its children too.
+export function isHiddenWorktreeEntry(relPath: string): boolean {
+  if (HIDDEN_WORKTREE_ENTRIES.has(relPath)) return true;
+  for (const entry of HIDDEN_WORKTREE_ENTRIES) {
+    if (relPath.startsWith(entry + "/")) return true;
+  }
+  return false;
+}
 
 // Files the agent can inspect in a session worktree: everything git tracks plus
 // new untracked files, minus anything .gitignore (and friends) excludes — so
@@ -148,7 +167,7 @@ export async function listWorktreeFiles(worktreePath: string): Promise<string[]>
     const err = await new Response(proc.stderr).text();
     throw new Error(`git ls-files failed: ${err.trim()}`);
   }
-  return out.split("\0").filter(p => p !== "" && !HIDDEN_WORKTREE_ENTRIES.has(p)).sort();
+  return out.split("\0").filter(p => p !== "" && !isHiddenWorktreeEntry(p)).sort();
 }
 
 // 2 MiB: large enough for any source file worth reading in a browser, small

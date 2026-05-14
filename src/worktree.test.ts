@@ -96,6 +96,24 @@ describe("createSessionWorktree", () => {
     expect(readlinkSync(linkPath)).toBe(reportsDir);
   });
 
+  test("creates an empty .worqload-draft directory at the worktree root for the agent's report drafts", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const sessionId = crypto.randomUUID();
+    const reportsDir = join(repoDir, ".worqload", "sessions", sessionId, "reports");
+
+    const { worktreePath } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      branchName: `test-${sessionId.slice(0, 8)}`,
+      reportsDirAbsolute: reportsDir,
+    });
+
+    const draftPath = join(worktreePath, ".worqload-draft");
+    expect(lstatSync(draftPath).isDirectory()).toBe(true);
+  });
+
   test("creates the reports directory if missing", async () => {
     const repoDir = createTempGitRepo();
     cleanupDirs.push(repoDir);
