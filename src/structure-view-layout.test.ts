@@ -1,7 +1,7 @@
 // Layout for the Structure tab's graph. Lives under src/ so `bun test` picks it
 // up (the module under test is web/structure-view.js, a plain ES module).
 import { test, expect } from "bun:test";
-import { buildStructureModel, edgeLabelText, edgeLabelWidth, effectiveNodeWidth, NODE_WIDTH, NODE_HEIGHT } from "../web/structure-view.js";
+import { buildStructureModel, edgeLabelText, edgeLabelWidth, effectiveNodeWidth, zoomAroundCursor, NODE_WIDTH, NODE_HEIGHT } from "../web/structure-view.js";
 
 test("buildStructureModel reports no graph for an empty payload", () => {
   const model = buildStructureModel({ graph: { nodes: [], edges: [] }, cycles: [], changedFiles: [] });
@@ -145,4 +145,19 @@ test("buildStructureModel does not loop forever on a cyclic subgraph with no acy
   });
   expect(model.hasGraph).toBe(true);
   expect(model.nodes.map(n => n.path).sort()).toEqual(["x.js", "y.js"]);
+});
+
+test("zoomAroundCursor keeps the model point under the cursor at the same screen position", () => {
+  // Cursor 100px from the canvas's left edge, canvas scrolled to 200px,
+  // current zoom 1× → cursor sits over model x = 300. Zoom to 2×: model x=300
+  // now lives at screen x = 600 from the SVG origin, so scrollLeft must be
+  // 600 − 100 = 500 to keep that model point at the same 100px cursor offset.
+  expect(zoomAroundCursor(200, 100, 1, 2)).toBe(500);
+  // Zooming out by half: model x=300 sits at screen x=150, so scrollLeft = 50.
+  expect(zoomAroundCursor(200, 100, 1, 0.5)).toBe(50);
+  // Same zoom in/out leaves the scroll offset unchanged.
+  expect(zoomAroundCursor(200, 100, 1, 1)).toBe(200);
+  // A degenerate prior zoom (shouldn't happen, but defend against it) returns
+  // the current scroll offset rather than dividing by zero.
+  expect(zoomAroundCursor(200, 100, 0, 2)).toBe(200);
 });
