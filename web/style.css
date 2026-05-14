@@ -89,8 +89,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .session-card-actions button { font-size: 11px; padding: .2rem .55rem; }
 .btn-card-resume { color: var(--running); border-color: rgba(63,185,80,.5); }
 .btn-card-resume:hover { background: rgba(63,185,80,.12); }
-.btn-card-wake { color: var(--accent); border-color: rgba(88,166,255,.5); }
-.btn-card-wake:hover { background: rgba(88,166,255,.12); }
+.btn-card-stop-resume { color: var(--accent); border-color: rgba(88,166,255,.5); }
+.btn-card-stop-resume:hover { background: rgba(88,166,255,.12); }
 .btn-card-unarchive { color: var(--running); border-color: rgba(63,185,80,.5); }
 .btn-card-unarchive:hover { background: rgba(63,185,80,.12); }
 .btn-card-delete { color: var(--crashed); border-color: rgba(248,81,73,.5); }
