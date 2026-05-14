@@ -830,8 +830,10 @@ test("GET /sessions/:id/files lists worktree files and hides the .worqload-repor
   const res = await fetch(`${baseUrl}/sessions/${sid}/files`).then(r => r.json());
   expect(res.paths).toContain("README.md");
   expect(res.paths).toContain("src/new.ts");
-  // the worqload-injected symlink is not project content and points outside the worktree
+  // worqload-injected entries (the reports symlink and the draft scratch dir)
+  // are not project content; they don't belong in the explorer.
   expect(res.paths).not.toContain(".worqload-reports");
+  expect(res.paths).not.toContain(".worqload-draft");
 });
 
 // What the import graph / cycle detection actually computes is import-graph's
