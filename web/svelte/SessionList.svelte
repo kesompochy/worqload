@@ -227,13 +227,15 @@
             onblur={(e) => onRenameCommit(session.id, e.currentTarget.value)}
           />
         {:else}
-          <p class="title"><span class="badge badge-{session.status}">{statusLabel(session.status)}</span>{session.title || session.prompt.slice(0, 80)}</p>
+          <div class="session-card-title-row">
+            <p class="title"><span class="badge badge-{session.status}">{statusLabel(session.status)}</span>{session.title || session.prompt.slice(0, 80)}</p>
+            {#if active}
+              <button class="btn-card-rename" onclick={(e) => { e.stopPropagation(); onRenameStart(session.id); }}>Rename</button>
+            {/if}
+          </div>
         {/if}
         <div class="meta">{session.baseBranch} · {formatRelative(session.createdAt)}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}</div>
         <div class="session-card-actions">
-          {#if active && !renaming}
-            <button class="btn-card-rename" onclick={(e) => { e.stopPropagation(); onRenameStart(session.id); }}>Rename</button>
-          {/if}
           {#if archivedView}
             <button class="btn-card-unarchive" onclick={(e) => { e.stopPropagation(); onUnarchive(session.id); }}>Unarchive</button>
             <button class="btn-card-delete" onclick={(e) => { e.stopPropagation(); onDeleteArchived(session.id); }}>Delete</button>
