@@ -526,7 +526,13 @@ export async function setStructureMode(mode) {
   });
   if (state.activeTab === "structure") {
     if (mode === "function") await ensureCallGraphLoaded();
-    else await ensureStructureLoaded();
+    else {
+      await ensureStructureLoaded();
+      // ensureStructureLoaded only chains to the Before fetch when the After
+      // payload was stale; coming back from function mode with both caches
+      // intact would otherwise leave Before unloaded.
+      if (state.structureSplit) await ensureStructureBeforeLoaded();
+    }
   }
 }
 
@@ -542,7 +548,10 @@ export async function switchTab(tab, { historyAction = "push" } = {}) {
   if (tab === "files") await ensureFilesLoaded();
   if (tab === "structure") {
     if (state.structureMode === "function") await ensureCallGraphLoaded();
-    else await ensureStructureLoaded();
+    else {
+      await ensureStructureLoaded();
+      if (state.structureSplit) await ensureStructureBeforeLoaded();
+    }
   }
 }
 
