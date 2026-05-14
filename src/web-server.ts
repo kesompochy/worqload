@@ -1152,31 +1152,54 @@ async function getFiles(_req: Request, ctx: ServerContext, params: Record<string
   });
 }
 
-// The Structure tab's import-dependency picture: the changeset's source files
-// plus the surrounding files that import them or that they import (a couple of
-// hops out), with import cycles flagged. Built from the same diff base as the
-// Diff tab; only JS/TS-family and `.svelte` files are graph nodes.
-async function getStructure(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+// The Structure tab's import-dependency picture: by default the changeset's
+// source files plus the surrounding files that import them or that they import
+// (a couple of hops out), with import cycles flagged. Built from the same diff
+// base as the Diff tab; only JS/TS-family and `.svelte` files are graph nodes.
+//
+// `?anchorPath=<path>` switches the graph's seed away from the diff to a
+// specific file (the human picked it from the Files or Diff tab); the diff is
+// still consulted, but only so changed files in the anchor neighbourhood keep
+// their "changed" emphasis. `?hops=<n>` (clamped to [0, 4]) overrides the
+// neighbourhood radius.
+async function getStructure(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     try {
+      const url = new URL(req.url);
+      const anchorPath = (url.searchParams.get("anchorPath") || "").trim() || null;
+      const hops = parseHopsParam(url.searchParams.get("hops"));
       const diffBase = await ctx.worktreeOps.resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
       const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase);
       const allPaths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
+      const diffChanged = parseChangedFilePaths(diff);
+      const roots = anchorPath ? [anchorPath] : diffChanged;
       const view = await buildStructureView({
         allPaths,
-        changedPaths: parseChangedFilePaths(diff),
+        changedPaths: roots,
         readSource: async path => {
           const result = await ctx.worktreeOps.readWorktreeFile(meta.worktreePath, path);
           return result.kind === "text" ? result.content : null;
         },
+        hops,
       });
-      return json(view);
+      // changedFiles signals diff-emphasis (blue tint). In anchor mode we only
+      // emphasise diff-changed files that ended up in the anchor neighbourhood.
+      const nodeSet = new Set(view.graph.nodes);
+      const changedFiles = diffChanged.filter(p => nodeSet.has(p)).sort();
+      return json({ ...view, changedFiles, anchorPath: anchorPath ?? undefined });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[/sessions/${params.id}/structure] ${message}`);
       return json({ error: message }, 500);
     }
   });
+}
+
+function parseHopsParam(raw: string | null): number | undefined {
+  if (raw === null || raw === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.max(0, Math.min(4, Math.floor(n)));
 }
 
 // The call-graph counterpart to /structure: function→function edges instead
@@ -1187,29 +1210,66 @@ async function getStructure(_req: Request, ctx: ServerContext, params: Record<st
 // changed files we process so a giant diff doesn't tie up the language server
 // long enough for the browser to give up on the response.
 const CALL_GRAPH_MAX_CHANGED_FILES = 40;
-async function getCallGraph(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+// `?anchorPath` (and optional `?anchorLine` / `?anchorCharacter`, LSP 0-based)
+// narrow the walk to one seed instead of the changeset. With `anchorPath`
+// alone the seeds are every callable symbol in that file; with `anchorLine`
+// they're just the symbol the human pinned from the code-nav popover.
+async function getCallGraph(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     try {
+      const url = new URL(req.url);
+      const anchorPath = (url.searchParams.get("anchorPath") || "").trim() || null;
+      const anchorLine = parseIntegerParam(url.searchParams.get("anchorLine"));
+      const anchorCharacter = parseIntegerParam(url.searchParams.get("anchorCharacter"));
       const diffBase = await ctx.worktreeOps.resolveDiffBase(meta.worktreePath, meta.baseBranch, meta.baseCommit);
       const diff = await ctx.worktreeOps.gitDiff(meta.worktreePath, diffBase);
       const allPaths = await ctx.worktreeOps.listWorktreeFiles(meta.worktreePath);
       const inWorktree = new Set(allPaths);
-      const allChanged = parseChangedFilePaths(diff)
-        .filter(p => inWorktree.has(p) && structureLanguageOf(p) !== null);
-      const truncated = allChanged.length > CALL_GRAPH_MAX_CHANGED_FILES;
-      const changedFiles = truncated ? allChanged.slice(0, CALL_GRAPH_MAX_CHANGED_FILES) : allChanged;
+
+      let changedFiles: string[];
+      let anchorSymbol: { path: string; line: number; character?: number } | undefined;
+      let totalChangedFiles: number;
+      let truncated: boolean;
+      if (anchorPath && anchorLine !== null) {
+        anchorSymbol = { path: anchorPath, line: anchorLine, character: anchorCharacter ?? undefined };
+        changedFiles = [];
+        truncated = false;
+        totalChangedFiles = 0;
+      } else if (anchorPath) {
+        changedFiles = inWorktree.has(anchorPath) && structureLanguageOf(anchorPath) !== null ? [anchorPath] : [];
+        truncated = false;
+        totalChangedFiles = changedFiles.length;
+      } else {
+        const allChanged = parseChangedFilePaths(diff)
+          .filter(p => inWorktree.has(p) && structureLanguageOf(p) !== null);
+        truncated = allChanged.length > CALL_GRAPH_MAX_CHANGED_FILES;
+        changedFiles = truncated ? allChanged.slice(0, CALL_GRAPH_MAX_CHANGED_FILES) : allChanged;
+        totalChangedFiles = allChanged.length;
+      }
+
       const view = await collectCallGraph({
         worktreePath: meta.worktreePath,
         changedFiles,
+        anchorSymbol,
         languageOf: p => structureLanguageOf(p) ?? null,
       });
-      return json({ ...view, truncated, totalChangedFiles: allChanged.length });
+      return json({
+        ...view, truncated, totalChangedFiles,
+        anchorPath: anchorPath ?? undefined,
+        anchorLine: anchorLine ?? undefined,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[/sessions/${params.id}/call-graph] ${message}`);
       return json({ error: message }, 500);
     }
   });
+}
+
+function parseIntegerParam(raw: string | null): number | null {
+  if (raw === null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.floor(n) : null;
 }
 
 async function getFile(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {

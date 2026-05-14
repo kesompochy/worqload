@@ -12,24 +12,38 @@ const VALID_TABS = new Set(["reports", "feedback", "diff", "files", "structure",
 const DEFAULT_TAB = "reports";
 
 export function readUrlState() {
-  if (typeof window === "undefined" || !window.location) return { sessionId: null, tab: null, focusStack: [] };
+  if (typeof window === "undefined" || !window.location) return { sessionId: null, tab: null, focusStack: [], structureAnchor: null, structureHops: null, structureMode: null };
   const params = new URLSearchParams(window.location.search);
   const sessionId = params.get("session");
   const tab = params.get("tab");
   // `focus` is repeated per stack level — the bottom of the stack first, the
   // current focus last — so a URL stays human-readable as paths drill in.
   const focusStack = params.getAll("focus");
+  const anchorPath = params.get("anchor");
+  const anchorLineRaw = params.get("anchorLine");
+  const anchorLine = anchorLineRaw == null ? null : Number(anchorLineRaw);
+  const hopsRaw = params.get("hops");
+  const hopsNum = hopsRaw == null ? null : Number(hopsRaw);
+  const mode = params.get("mode");
+  let structureAnchor = null;
+  if (anchorPath) {
+    if (Number.isFinite(anchorLine)) structureAnchor = { kind: "symbol", path: anchorPath, line: anchorLine };
+    else structureAnchor = { kind: "file", path: anchorPath };
+  }
   return {
     sessionId: sessionId || null,
     tab: tab && VALID_TABS.has(tab) ? tab : null,
     focusStack,
+    structureAnchor,
+    structureHops: Number.isFinite(hopsNum) ? hopsNum : null,
+    structureMode: mode === "function" ? "function" : null,
   };
 }
 
-function buildUrl({ sessionId, tab, focusStack }) {
+function buildUrl({ sessionId, tab, focusStack, structureAnchor, structureHops, structureMode }) {
   // Seed from the live query string so unrelated params (e.g. `?theme=dark`
-  // that some other layer set) survive across syncs. Only the three keys we
-  // own — session, tab, focus — get rewritten.
+  // that some other layer set) survive across syncs. Only the keys we own —
+  // session, tab, focus, anchor, anchorLine, hops, mode — get rewritten.
   const params = new URLSearchParams(window.location.search);
   if (sessionId) params.set("session", sessionId);
   else params.delete("session");
@@ -41,6 +55,24 @@ function buildUrl({ sessionId, tab, focusStack }) {
   for (const path of focusStack ?? []) {
     if (path) params.append("focus", path);
   }
+  if (structureAnchor && structureAnchor.path) {
+    params.set("anchor", structureAnchor.path);
+    if (structureAnchor.kind === "symbol" && typeof structureAnchor.line === "number") {
+      params.set("anchorLine", String(structureAnchor.line));
+    } else {
+      params.delete("anchorLine");
+    }
+  } else {
+    params.delete("anchor");
+    params.delete("anchorLine");
+  }
+  if (typeof structureHops === "number" && Number.isFinite(structureHops)) {
+    params.set("hops", String(structureHops));
+  } else {
+    params.delete("hops");
+  }
+  if (structureMode === "function") params.set("mode", "function");
+  else params.delete("mode");
   const queryString = params.toString();
   return `${window.location.pathname}${queryString ? `?${queryString}` : ""}${window.location.hash || ""}`;
 }

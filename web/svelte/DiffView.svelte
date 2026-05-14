@@ -48,6 +48,7 @@
             <span>{file.path}</span>
             <button type="button" class="copy-path-btn" data-copy-path={file.path} title="ファイル名をコピー">⧉</button>
             <button type="button" class="copy-path-btn" data-permalink-path={file.path} title="GitHub permalink をコピー">🔗</button>
+            <button type="button" class="copy-path-btn" data-structure-anchor={file.path} title="このファイルを起点に Structure を描画">⌘</button>
             <span class="diff-summary"><span class="add-count">+{file.adds}</span><span class="remove-count">−{file.removes}</span></span>
           </div>
           <div class="diff-file-body">

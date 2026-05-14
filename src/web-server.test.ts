@@ -841,6 +841,84 @@ test("GET /sessions/:id/structure returns the changeset's import-dependency neig
   expect(res.cycles).toEqual([["web/app.js", "web/greet.js", "web/util.js"]]);
 });
 
+test("GET /sessions/:id/structure?anchorPath=… re-seeds the graph from the given file and keeps diff-changed nodes highlighted", async () => {
+  // The diff only touches greet.js, but the human anchors on the disconnected
+  // elsewhere.js. The graph should now be elsewhere.js's neighbourhood
+  // (elsewhere → standalone), with anchorPath echoed back and changedFiles
+  // empty (greet.js isn't in this slice).
+  const repoDir = makeTmpDir("repo");
+  const cannedDiff = [
+    "diff --git a/web/greet.js b/web/greet.js",
+    "index 1111111..2222222 100644",
+    "--- a/web/greet.js",
+    "+++ b/web/greet.js",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+  ].join("\n");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: { ...fakeWorktreeOps(), async gitDiff() { return cannedDiff; } },
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+  mkdirSync(join(wt, "web"), { recursive: true });
+  writeFileSync(join(wt, "web", "app.js"), `import { greet } from "./greet.js";\n`);
+  writeFileSync(join(wt, "web", "greet.js"), `import { punctuate } from "./util.js";\n`);
+  writeFileSync(join(wt, "web", "util.js"), `import "./app.js";\n`);
+  writeFileSync(join(wt, "web", "elsewhere.js"), `import "./standalone.js";\n`);
+  writeFileSync(join(wt, "web", "standalone.js"), ``);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/structure?anchorPath=web/elsewhere.js&hops=1`).then(r => r.json());
+  expect(res.anchorPath).toBe("web/elsewhere.js");
+  expect(res.graph.nodes.sort()).toEqual(["web/elsewhere.js", "web/standalone.js"]);
+  expect(res.changedFiles).toEqual([]); // greet.js is changed but not in the anchored slice
+});
+
+test("GET /sessions/:id/structure with an anchor still tints diff-changed files that land in the anchor neighbourhood", async () => {
+  // Anchor on app.js: its neighbourhood pulls in greet.js (which the diff
+  // touches), so changedFiles should include greet.js for the blue-tint
+  // emphasis, while anchorPath echoes app.js for the anchor emphasis.
+  const repoDir = makeTmpDir("repo");
+  const cannedDiff = [
+    "diff --git a/web/greet.js b/web/greet.js",
+    "index 1111111..2222222 100644",
+    "--- a/web/greet.js",
+    "+++ b/web/greet.js",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+  ].join("\n");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: { ...fakeWorktreeOps(), async gitDiff() { return cannedDiff; } },
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
+  mkdirSync(join(wt, "web"), { recursive: true });
+  writeFileSync(join(wt, "web", "app.js"), `import { greet } from "./greet.js";\n`);
+  writeFileSync(join(wt, "web", "greet.js"), ``);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/structure?anchorPath=web/app.js&hops=1`).then(r => r.json());
+  expect(res.anchorPath).toBe("web/app.js");
+  expect(res.graph.nodes.sort()).toEqual(["web/app.js", "web/greet.js"]);
+  expect(res.changedFiles).toEqual(["web/greet.js"]);
+});
+
 test("GET /sessions/:id/file returns text content of a worktree file", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

@@ -36,6 +36,11 @@ if (urlState.tab && urlState.tab !== state.activeTab) {
 if (idMatchesUrl && urlState.focusStack.length > 0) {
   state.structureFocusStack = urlState.focusStack;
 }
+if (idMatchesUrl) {
+  state.structureAnchor = urlState.structureAnchor;
+  state.structureHops = urlState.structureHops;
+  if (urlState.structureMode === "function") state.structureMode = "function";
+}
 
 // Browser Back / Forward: walk the URL stack and bring the in-memory view in
 // line with whatever entry the browser navigated to.

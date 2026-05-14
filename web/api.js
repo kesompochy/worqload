@@ -134,16 +134,20 @@ export async function ensureFilesLoaded(force = false) {
   state.filesLoaded = true;
 }
 
-// The Structure tab's import-dependency graph for the selected session's
-// changeset. Sets `state.structure` to the payload, or `{ error }` on failure,
+// The Structure tab's import-dependency graph for the selected session.
+// By default the graph is scoped to the session's diff; if
+// `state.structureAnchor` is set the graph is rebuilt around that anchor file
+// instead, and `state.structureHops` (when set) overrides the neighbourhood
+// radius. Sets `state.structure` to the payload, or `{ error }` on failure,
 // so the view can show a message rather than nothing.
 export async function ensureStructureLoaded(force = false) {
   if (!state.selected) return;
   if (state.structureLoaded && !force) return;
   state.structure = { loading: true };
   const id = state.selected;
+  const path = `/sessions/${id}/structure${buildStructureQuery()}`;
   try {
-    const data = await api("GET", `/sessions/${id}/structure`);
+    const data = await api("GET", path);
     if (state.selected !== id) return;
     state.structure = data && data.error ? { error: data.error } : data;
   } catch (e) {
@@ -153,17 +157,32 @@ export async function ensureStructureLoaded(force = false) {
   state.structureLoaded = true;
 }
 
-// Function-mode counterpart: LSP-driven call graph for the changeset's
-// callable symbols. Slower than the import graph (each query goes out to a
-// language server), so it loads on demand when the user flips the toolbar
-// mode toggle.
+function buildStructureQuery() {
+  const params = new URLSearchParams();
+  if (state.structureAnchor && state.structureAnchor.kind === "file") {
+    params.set("anchorPath", state.structureAnchor.path);
+  }
+  if (typeof state.structureHops === "number") {
+    params.set("hops", String(state.structureHops));
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+// Function-mode counterpart: LSP-driven call graph. By default seeded by the
+// changeset's callable symbols; if `state.structureAnchor` is a symbol the
+// walk pins to that one function instead, and if it's a file the walk pins to
+// every callable symbol in that file. Slower than the import graph (each
+// query goes out to a language server), so it loads on demand when the user
+// flips the toolbar mode toggle.
 export async function ensureCallGraphLoaded(force = false) {
   if (!state.selected) return;
   if (state.callGraphLoaded && !force) return;
   state.callGraph = { loading: true };
   const id = state.selected;
+  const path = `/sessions/${id}/call-graph${buildCallGraphQuery()}`;
   try {
-    const data = await api("GET", `/sessions/${id}/call-graph`);
+    const data = await api("GET", path);
     if (state.selected !== id) return;
     state.callGraph = data && data.error ? { error: data.error } : data;
   } catch (e) {
@@ -171,6 +190,23 @@ export async function ensureCallGraphLoaded(force = false) {
     state.callGraph = { error: e.message };
   }
   state.callGraphLoaded = true;
+}
+
+function buildCallGraphQuery() {
+  const params = new URLSearchParams();
+  const anchor = state.structureAnchor;
+  if (anchor && anchor.path) {
+    params.set("anchorPath", anchor.path);
+    if (anchor.kind === "symbol" && typeof anchor.line === "number") {
+      // state stores 1-based line for human-readability; LSP wants 0-based.
+      params.set("anchorLine", String(anchor.line - 1));
+      if (typeof anchor.character === "number") {
+        params.set("anchorCharacter", String(anchor.character));
+      }
+    }
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
 export async function selectFile(path) {
