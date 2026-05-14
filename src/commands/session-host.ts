@@ -2,11 +2,11 @@ import type { Socket } from "bun";
 import { appendFileSync } from "node:fs";
 import { mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
-import { classifyClaudeLine, readLines } from "../claude-stream";
 import { appendEvent, readEvents } from "../event-log";
 import { exitWithUsage } from "./cli-helpers";
-import { buildProtocolPrefix, buildUserMessage, RESUME_KICKOFF } from "../session-bootstrap";
+import { buildProtocolPrefix, RESUME_KICKOFF } from "../session-bootstrap";
 import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
+import { claudePipeDriver, type SessionDriverFactory } from "../session-driver";
 import {
   encodeMessage,
   type HostToServeMessage,
@@ -30,6 +30,11 @@ export interface HostOptions {
   // claude.stdin write outcomes, etc). Falls back to process.stderr when unset
   // so tests don't litter the filesystem.
   logFile?: string;
+  // Driver factory used to spawn the claude session. Defaults to
+  // `claudePipeDriver` (a child process speaking stream-json over stdio).
+  // Tests inject a fake driver to bypass the real spawn; future drivers
+  // (e.g. tmux-interactive) will plug in here.
+  driver?: SessionDriverFactory;
 }
 
 type LogFn = (event: string, fields?: Record<string, unknown>) => void;
@@ -98,14 +103,6 @@ export async function runHost(opts: HostOptions): Promise<number> {
   claudeEnv.WORQLOAD_ENDPOINT = opts.agentEndpoint;
   claudeEnv.WORQLOAD_ENDPOINT_FILE = agentEndpointPath(opts.sessionsDir, opts.sessionId);
 
-  const claude = Bun.spawn(opts.spawnCommand, {
-    cwd: meta.worktreePath || undefined,
-    env: claudeEnv,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
   const sendToActive = (msg: HostToServeMessage): void => {
     if (!activeClient) return;
     try {
@@ -126,6 +123,14 @@ export async function runHost(opts: HostOptions): Promise<number> {
     }
   };
 
+  const driver = await (opts.driver ?? claudePipeDriver)({
+    cwd: meta.worktreePath || undefined,
+    env: claudeEnv,
+    spawnCommand: opts.spawnCommand,
+    onEvent: (event) => writeEvent(event),
+    log,
+  });
+
   const handleServeMessage = async (msg: ServeToHostMessage): Promise<void> => {
     switch (msg.type) {
       case "hello": {
@@ -136,24 +141,12 @@ export async function runHost(opts: HostOptions): Promise<number> {
         return;
       }
       case "send_user": {
-        const line = `${JSON.stringify(buildUserMessage(msg.text))}\n`;
-        log("send_user_received", { textLen: msg.text.length, preview: previewText(msg.text), wireBytes: line.length });
-        const start = Date.now();
-        try {
-          claude.stdin.write(line);
-          await claude.stdin.flush();
-          log("stdin_write", { ok: true, durationMs: Date.now() - start });
-        } catch (err) {
-          log("stdin_write", { ok: false, durationMs: Date.now() - start, error: String(err) });
-        }
+        log("send_user_received", { textLen: msg.text.length, preview: previewText(msg.text) });
+        await driver.sendUserMessage(msg.text, "send_user");
         return;
       }
       case "kill": {
-        try {
-          claude.kill(msg.signal === "SIGKILL" ? "SIGKILL" : "SIGTERM");
-        } catch {
-          // already dead
-        }
+        driver.kill(msg.signal === "SIGKILL" ? "SIGKILL" : "SIGTERM");
         return;
       }
     }
@@ -203,32 +196,10 @@ export async function runHost(opts: HostOptions): Promise<number> {
   // into the loop (any new instruction was queued to the feedback inbox).
   const firstMessage = opts.resume ? RESUME_KICKOFF : buildProtocolPrefix(meta.baseBranch) + meta.prompt;
   log("bootstrap_send", { textLen: firstMessage.length, resume: opts.resume === true });
-  const bootStart = Date.now();
-  try {
-    claude.stdin.write(`${JSON.stringify(buildUserMessage(firstMessage))}\n`);
-    await claude.stdin.flush();
-    log("stdin_write", { ok: true, durationMs: Date.now() - bootStart, source: "bootstrap" });
-  } catch (err) {
-    log("stdin_write", { ok: false, durationMs: Date.now() - bootStart, source: "bootstrap", error: String(err) });
-  }
+  await driver.sendUserMessage(firstMessage, "bootstrap");
 
-  const stdoutTask = readLines(claude.stdout, async (line) => {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      parsed = { type: "raw", raw: line };
-    }
-    await writeEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
-  });
-
-  const stderrTask = readLines(claude.stderr, async (line) => {
-    await writeEvent({ kind: "claude_system", payload: { type: "stderr", text: line } });
-  });
-
-  const exitCode = await claude.exited;
+  const exitCode = await driver.exited;
   log("claude_exited", { exitCode });
-  await Promise.allSettled([stdoutTask, stderrTask]);
 
   const final = await loadSessionMeta(opts.sessionId, opts.sessionsDir);
   const alreadyTerminal = final && (final.status === "stopped" || final.status === "crashed");
