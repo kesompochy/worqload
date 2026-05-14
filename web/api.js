@@ -276,11 +276,26 @@ export async function refreshDiff() {
   }
 }
 
+// `state.ws` is the live stream for the selected session. It silently dies on
+// network blips, server restarts, OS sleep/wake, or the server's idle timeout,
+// and the per-30s sidebar poll does not refresh the selected session's
+// reports / asking / feedback — so without a reconnect, new reports and acks
+// stop reaching the detail pane until the human reloads the tab. Reconnect
+// with exponential backoff; the server replays missed events from `lastSeq`,
+// and the existing message handler turns those into the same refreshDetail
+// calls a fresh connection would have driven.
+const WS_RECONNECT_BASE_MS = 1_000;
+const WS_RECONNECT_MAX_MS = 30_000;
+let wsReconnectAttempts = 0;
+let wsReconnectTimer = null;
+
 export function openWs(id) {
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${location.host}/sessions/${id}/stream`);
   state.ws = ws;
   ws.addEventListener("open", () => {
+    wsReconnectAttempts = 0;
     ws.send(JSON.stringify({ type: "subscribe", lastSeq: state.lastSeq }));
   });
   ws.addEventListener("message", async e => {
@@ -313,6 +328,16 @@ export function openWs(id) {
     }
   });
   ws.addEventListener("close", () => {
-    if (state.ws === ws) state.ws = null;
+    // A close fired on a ws that is no longer state.ws means selectSession
+    // already replaced it — don't reconnect that stale connection.
+    if (state.ws !== ws) return;
+    state.ws = null;
+    if (state.selected !== id) return;
+    const delay = Math.min(WS_RECONNECT_BASE_MS * 2 ** wsReconnectAttempts, WS_RECONNECT_MAX_MS);
+    wsReconnectAttempts++;
+    wsReconnectTimer = setTimeout(() => {
+      wsReconnectTimer = null;
+      if (state.selected === id && !state.ws) openWs(id);
+    }, delay);
   });
 }
