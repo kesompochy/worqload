@@ -1017,6 +1017,15 @@ async function deleteSession(_req: Request, ctx: ServerContext, params: Record<s
       // worktree already gone (manual cleanup, repo moved, ...) — keep going so
       // the session dir still gets cleared.
     }
+    // The structure tab's function-mode Before split may have materialised a
+    // sibling worktree at the diff base; remove it too. Detached, so no branch
+    // to delete. Best-effort: most sessions never create one.
+    try {
+      const basePath = ctx.worktreeOps.baseWorktreePathFor(meta.worktreePath);
+      await ctx.worktreeOps.removeWorktree(basePath, undefined, ctx.repoDir);
+    } catch {
+      /* base worktree was never created or already gone */
+    }
     await rm(join(ctx.sessionsDir, meta.id), { recursive: true, force: true });
     return json({ ok: true });
   });

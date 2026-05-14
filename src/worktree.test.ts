@@ -15,6 +15,8 @@ import {
   resolveDiffBase,
   listFilesAtRevision,
   readFileAtRevision,
+  ensureBaseWorktree,
+  baseWorktreePathFor,
 } from "./worktree";
 
 const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
@@ -570,6 +572,73 @@ describe("listFilesAtRevision / readFileAtRevision", () => {
     const worktreePath = await makeWorktree(repoDir);
 
     expect((await readFileAtRevision(worktreePath, baseCommit, "bin.dat")).kind).toBe("binary");
+  });
+});
+
+describe("ensureBaseWorktree", () => {
+  async function makeWorktree(repoDir: string): Promise<string> {
+    const sessionId = crypto.randomUUID();
+    const { worktreePath } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      branchName: `s-${sessionId.slice(0, 8)}`,
+      reportsDirAbsolute: join(repoDir, ".worqload", "sessions", sessionId, "reports"),
+    });
+    return worktreePath;
+  }
+
+  test("materialises a sibling worktree at the diff base, with files matching that revision", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    writeFileSync(join(repoDir, "tracked.txt"), "before\n");
+    git(["add", "tracked.txt"], repoDir);
+    git(["commit", "-m", "tracked v1"], repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+
+    const sessionWorktreePath = await makeWorktree(repoDir);
+    // Diverge the session worktree from the base; the base worktree must
+    // *not* see this change.
+    writeFileSync(join(sessionWorktreePath, "tracked.txt"), "after\n");
+    git(["add", "tracked.txt"], sessionWorktreePath);
+    git(["commit", "-m", "tracked v2"], sessionWorktreePath);
+
+    const basePath = await ensureBaseWorktree(sessionWorktreePath, repoDir, baseCommit);
+    expect(basePath).toBe(baseWorktreePathFor(sessionWorktreePath));
+    expect(existsSync(basePath)).toBe(true);
+    expect(await Bun.file(join(basePath, "tracked.txt")).text()).toBe("before\n");
+  });
+
+  test("re-uses the cached worktree on a second call with the same base commit", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const baseCommit = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+    const sessionWorktreePath = await makeWorktree(repoDir);
+
+    const first = await ensureBaseWorktree(sessionWorktreePath, repoDir, baseCommit);
+    // Drop a marker file in the base worktree; a re-add would wipe it.
+    writeFileSync(join(first, "marker.tmp"), "x");
+    const second = await ensureBaseWorktree(sessionWorktreePath, repoDir, baseCommit);
+    expect(second).toBe(first);
+    expect(existsSync(join(second, "marker.tmp"))).toBe(true);
+  });
+
+  test("recreates the worktree when the diff base has moved", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const firstBase = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+    const sessionWorktreePath = await makeWorktree(repoDir);
+    await ensureBaseWorktree(sessionWorktreePath, repoDir, firstBase);
+
+    // Advance the base branch and resolve a fresh base commit.
+    writeFileSync(join(repoDir, "advance.txt"), "x\n");
+    git(["add", "advance.txt"], repoDir);
+    git(["commit", "-m", "advance trunk"], repoDir);
+    const secondBase = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+    expect(secondBase).not.toBe(firstBase);
+
+    const updated = await ensureBaseWorktree(sessionWorktreePath, repoDir, secondBase);
+    expect(existsSync(join(updated, "advance.txt"))).toBe(true);
   });
 });
 

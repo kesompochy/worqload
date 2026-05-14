@@ -119,6 +119,13 @@ export function fakeWorktreeOps(): WorktreeOps {
     // implementation produces for a missing `rev`.
     async listFilesAtRevision() { return []; },
     async readFileAtRevision() { return { kind: "not-found" }; },
+    // The fake doesn't have a real git layer to materialise a sibling worktree
+    // from, so we return a stub path the tests can detect (`<wt>-base`) without
+    // actually creating directories. The endpoints that need this only do so
+    // via the LSP-driven Before call graph, which isn't wired through the
+    // server tests today.
+    async ensureBaseWorktree(sessionWorktreePath) { return `${sessionWorktreePath}-base`; },
+    baseWorktreePathFor(sessionWorktreePath) { return `${sessionWorktreePath}-base`; },
     async gitRemoteUrl() { return "git@github.com:owner/repo.git"; },
     async gitHeadSha() { return "f".repeat(40); },
   };
