@@ -12,6 +12,7 @@
     selectSession,
     onStop,
     onStopAndMarkRead,
+    onWake,
     onArchive,
     onUnarchive,
     onResume,
@@ -240,6 +241,7 @@
             {#if terminal}
               <button class="btn-card-resume" onclick={(e) => { e.stopPropagation(); onResume(session.id); }}>Resume</button>
             {:else}
+              <button class="btn-card-wake" title="Re-send the stdin wake — for the case where the session is RUNNING but the agent has stopped consuming stdin" onclick={(e) => { e.stopPropagation(); onWake(session.id); }}>Wake</button>
               <button class="btn-card-stop" onclick={(e) => { e.stopPropagation(); onStop(session.id); }}>Stop</button>
               <button class="btn-card-stop-ack" title="Mark every report read, then stop the session" onclick={(e) => { e.stopPropagation(); onStopAndMarkRead(session.id); }}>Stop &amp; ack all</button>
             {/if}
