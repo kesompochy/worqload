@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "bin": {
-    "worqload": "src/cli.ts"
+    "worqload": "src/cli.ts",
+    "wq-issue-comment": "bin/wq-issue-comment"
   },
   "scripts": {
     "start": "bun src/cli.ts",
