@@ -61,6 +61,18 @@ export function effectiveNodeWidth(path, expanded, labelText = path) {
   return Math.max(NODE_WIDTH, labelText.length * NODE_CHAR_WIDTH + NODE_PADDING);
 }
 
+// Scroll offset that keeps the model point currently under the cursor pinned to
+// the same screen position when zoom changes from `oldZoom` to `newZoom`. The
+// SVG renders at model-units × zoom, so a cursor at `cursorOffset` pixels from
+// the visible-canvas edge sits over model coordinate `(scrollOffset +
+// cursorOffset) / oldZoom`; after the zoom change, that same model coordinate
+// must end up `cursorOffset` pixels from the edge again.
+export function zoomAroundCursor(scrollOffset, cursorOffset, oldZoom, newZoom) {
+  if (oldZoom <= 0) return scrollOffset;
+  const modelPoint = (scrollOffset + cursorOffset) / oldZoom;
+  return modelPoint * newZoom - cursorOffset;
+}
+
 // Longest-path layering: a node's layer is 1 + the max layer of the files that
 // import it (0 when nothing in the subgraph imports it). Cycles are tolerated —
 // a node reached while it is still being computed contributes 0 — so members of

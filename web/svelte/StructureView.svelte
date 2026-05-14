@@ -20,7 +20,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { buildStructureModel } from "../structure-view.js";
+  import { buildStructureModel, zoomAroundCursor } from "../structure-view.js";
   import {
     openFileFromStructure,
     pushStructureFocus,
@@ -195,6 +195,65 @@
   function zoomBy(factor) { manualZoom = clampZoom(zoom * factor); }
   function fitZoom() { manualZoom = null; }
 
+  // Trackpad pinch-to-zoom and Cmd/Ctrl+scroll on the canvas: without this the
+  // browser would zoom the whole page (the default action for ctrlKey-wheel
+  // and Safari's gesture events). We claim those gestures for the canvas,
+  // anchor the new zoom on the cursor so the point under the fingers stays
+  // put, and leave plain wheel events alone so two-finger scroll still pans.
+  let canvasEl = $state();
+  $effect(() => {
+    const el = canvasEl;
+    if (!el) return;
+    function applyZoom(nextZoom, clientX, clientY) {
+      const oldZoom = zoom;
+      const target = clampZoom(nextZoom);
+      if (target === oldZoom) return;
+      const rect = el.getBoundingClientRect();
+      const cursorX = clientX - rect.left;
+      const cursorY = clientY - rect.top;
+      const newScrollLeft = zoomAroundCursor(el.scrollLeft, cursorX, oldZoom, target);
+      const newScrollTop = zoomAroundCursor(el.scrollTop, cursorY, oldZoom, target);
+      manualZoom = target;
+      // Wait for Svelte to apply the new SVG size before adjusting scroll —
+      // setting it before the SVG grows would clamp to the old max.
+      requestAnimationFrame(() => {
+        el.scrollLeft = newScrollLeft;
+        el.scrollTop = newScrollTop;
+      });
+    }
+    function onWheel(event) {
+      // Trackpad pinch is reported as wheel + ctrlKey across browsers; metaKey
+      // covers Cmd+scroll for users without a pinch-capable device. Plain
+      // scroll falls through to the canvas's native pan.
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      applyZoom(zoom * Math.exp(-event.deltaY * 0.01), event.clientX, event.clientY);
+    }
+    // WebKit-only pinch events (Safari). `scale` is cumulative from gesture
+    // start, so anchor the base zoom there and multiply through each change.
+    let gestureBaseZoom = null;
+    function onGestureStart(event) {
+      event.preventDefault();
+      gestureBaseZoom = zoom;
+    }
+    function onGestureChange(event) {
+      event.preventDefault();
+      if (gestureBaseZoom == null) return;
+      applyZoom(gestureBaseZoom * event.scale, event.clientX, event.clientY);
+    }
+    function onGestureEnd() { gestureBaseZoom = null; }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("gesturestart", onGestureStart);
+    el.addEventListener("gesturechange", onGestureChange);
+    el.addEventListener("gestureend", onGestureEnd);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("gesturestart", onGestureStart);
+      el.removeEventListener("gesturechange", onGestureChange);
+      el.removeEventListener("gestureend", onGestureEnd);
+    };
+  });
+
   // A short cubic between two box-edge anchor points. Forward edges (top→bottom,
   // following the import) curve gently; a back/same-layer edge bows out to the
   // right so it reads as "closes a loop" rather than running straight through
@@ -279,7 +338,7 @@
         <button type="button" class="structure-zoom-btn structure-zoom-readout" title="Reset zoom to 100%" onclick={() => (manualZoom = 1)}>{Math.round(zoom * 100)}%</button>
       </span>
     </div>
-    <div class="structure-canvas" class:structure-focusing={related != null} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>
+    <div class="structure-canvas" class:structure-focusing={related != null} bind:this={canvasEl} bind:clientWidth={canvasW} bind:clientHeight={canvasH}>
       <svg width={model.width * zoom} height={model.height * zoom} viewBox="0 0 {model.width} {model.height}" role="img" aria-label="import dependency graph">
         <defs>
           <marker id="structure-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
