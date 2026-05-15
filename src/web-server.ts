@@ -1951,6 +1951,16 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
   });
 }
 
+// Trailing section appended to a feedback message body whenever the human
+// attached one or more images. Phrased so the agent reaches for the Read tool
+// (which renders images as multimodal input) without guessing at intent.
+function formatAttachmentsSection(absolutePaths: string[]): string {
+  const noun = absolutePaths.length === 1 ? "1 image" : `${absolutePaths.length} images`;
+  const lead = `The human attached ${noun}. Read each with the Read tool:`;
+  const lines = absolutePaths.map(p => `- ${p}`).join("\n");
+  return `## Attachments\n\n${lead}\n\n${lines}`;
+}
+
 async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const inbox = feedbackInboxDirFor(ctx, meta.id);
@@ -1963,12 +1973,19 @@ async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Re
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_fetched", payload: { count: messages.length } });
     }
     return json({
-      messages: messages.map(m => ({
-        filename: m.filename,
+      messages: messages.map(m => {
         // The anchor lives in a sidecar now; re-derive the `Re:` line the agent
         // is told to expect at the head of an anchored message.
-        content: m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content,
-      })),
+        let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
+        if (m.attachments && m.attachments.length > 0) {
+          // Paths must reflect the post-move location so the agent's Read finds
+          // the files; the listing was taken from inbox a moment ago.
+          const dir = join(readDir, attachmentsDirNameFor(m.filename));
+          const paths = m.attachments.map(name => join(dir, name));
+          content = `${content}\n\n${formatAttachmentsSection(paths)}`;
+        }
+        return { filename: m.filename, content };
+      }),
     });
   });
 }
