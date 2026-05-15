@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { existsSync } from "fs";
-import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, metaFilenameFor, readReadState, setReadState, markAllRead } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, metaFilenameFor, attachmentsDirNameFor, readReadState, setReadState, markAllRead } from "./file-store";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -210,4 +210,76 @@ test("moveNumberedFile tolerates a missing sidecar", async () => {
 
   expect(existsSync(join(read, filename))).toBe(true);
   expect(existsSync(join(read, metaFilenameFor(filename)))).toBe(false);
+});
+
+test("writeNumberedFile writes attachments to a sibling .attachments dir", async () => {
+  const dir = makeTmpDir("file-store");
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const txt = new Uint8Array([0x68, 0x69]);
+  const { filename } = await writeNumberedFile(dir, "msg", "the body", {
+    attachments: [
+      { name: "01-screenshot.png", bytes: png },
+      { name: "02-note.png", bytes: txt },
+    ],
+  });
+
+  expect(filename).toBe("001-msg.md");
+  const attachDir = join(dir, attachmentsDirNameFor(filename));
+  expect(existsSync(attachDir)).toBe(true);
+  expect(new Uint8Array(await Bun.file(join(attachDir, "01-screenshot.png")).arrayBuffer())).toEqual(png);
+  expect(new Uint8Array(await Bun.file(join(attachDir, "02-note.png")).arrayBuffer())).toEqual(txt);
+});
+
+test("writeNumberedFile creates no attachments dir when option is omitted or empty", async () => {
+  const dir = makeTmpDir("file-store");
+  await writeNumberedFile(dir, "a", "body");
+  await writeNumberedFile(dir, "b", "body", { attachments: [] });
+
+  expect(existsSync(join(dir, attachmentsDirNameFor("001-a.md")))).toBe(false);
+  expect(existsSync(join(dir, attachmentsDirNameFor("002-b.md")))).toBe(false);
+});
+
+test("listAllFiles surfaces attachment names sorted; absent attachments leave the field undefined", async () => {
+  const dir = makeTmpDir("file-store");
+  await writeNumberedFile(dir, "withatt", "body", {
+    attachments: [
+      { name: "02-b.png", bytes: new Uint8Array([1]) },
+      { name: "01-a.png", bytes: new Uint8Array([2]) },
+    ],
+  });
+  await writeNumberedFile(dir, "plain", "body");
+
+  const files = await listAllFiles(dir);
+  const byName = Object.fromEntries(files.map(f => [f.filename, f]));
+  expect(byName["001-withatt.md"].attachments).toEqual(["01-a.png", "02-b.png"]);
+  expect(byName["002-plain.md"].attachments).toBeUndefined();
+});
+
+test("moveNumberedFile relocates the attachments dir along with the file", async () => {
+  const dir = makeTmpDir("file-store");
+  const inbox = join(dir, "inbox");
+  const read = join(dir, "read");
+  const { filename } = await writeNumberedFile(inbox, "msg", "hello", {
+    attachments: [{ name: "01-image.png", bytes: new Uint8Array([0x89]) }],
+  });
+
+  await moveNumberedFile(inbox, read, filename);
+
+  const srcAttach = join(inbox, attachmentsDirNameFor(filename));
+  const dstAttach = join(read, attachmentsDirNameFor(filename));
+  expect(existsSync(srcAttach)).toBe(false);
+  expect(existsSync(dstAttach)).toBe(true);
+  expect(existsSync(join(dstAttach, "01-image.png"))).toBe(true);
+});
+
+test("moveNumberedFile tolerates a missing attachments dir", async () => {
+  const dir = makeTmpDir("file-store");
+  const inbox = join(dir, "inbox");
+  const read = join(dir, "read");
+  const { filename } = await writeNumberedFile(inbox, "msg", "hello");
+
+  await moveNumberedFile(inbox, read, filename);
+
+  expect(existsSync(join(read, filename))).toBe(true);
+  expect(existsSync(join(read, attachmentsDirNameFor(filename)))).toBe(false);
 });
