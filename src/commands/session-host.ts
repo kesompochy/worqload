@@ -234,8 +234,19 @@ export async function runHost(opts: HostOptions): Promise<number> {
         opts.sessionsDir,
       );
     }
+    // serve's connectToHost polls the socket every 50ms with a 5s timeout.
+    // Driver failures here can resolve in well under that — if we tear the
+    // listener down immediately, serve misses the existence window and
+    // surfaces a "timed out connecting to host socket" 500 instead of the
+    // crash we just persisted. Hold the listener open until either a client
+    // attaches or a generous deadline elapses; once attached, send `exited`
+    // so the connection unwinds cleanly.
+    const giveUpAt = Date.now() + 10_000;
+    while (!activeClient && Date.now() < giveUpAt) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
     sendToActive({ type: "exited", code: 1 });
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 100));
     listener.stop(true);
     try {
       await unlink(opts.socketPath);

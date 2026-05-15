@@ -208,3 +208,55 @@ test("runHost routes bootstrap, send_user and kill through an injected SessionDr
   const code = await hostExit;
   expect(code).toBe(0);
 });
+
+test("when the driver factory throws, runHost keeps the listener up so a late-connecting client still sees session_crashed and exited", async () => {
+  const sessionsDir = makeTmpDir("driver-fail-test");
+  const worktree = makeTmpDir("driver-fail-test-wt");
+  const meta = createSession({
+    prompt: "do thing",
+    baseBranch: "main",
+    baseCommit: "abc123",
+    worktreePath: worktree,
+    branchName: "driver-fail-test",
+  });
+  await saveSessionMeta(meta, sessionsDir);
+  mkdirSync(join(sessionsDir, meta.id), { recursive: true });
+  const socketPath = join(makeTmpDir("driver-fail-sock"), `${meta.id.slice(0, 8)}.sock`);
+
+  // Factory that always throws synchronously.
+  const failingFactory: SessionDriverFactory = async () => {
+    throw new Error("tmux not installed");
+  };
+
+  const hostExit = runHost({
+    sessionId: meta.id,
+    sessionsDir,
+    socketPath,
+    agentEndpoint: "http://127.0.0.1:0",
+    spawnCommand: ["unused"],
+    driver: failingFactory,
+  });
+
+  // Connect (with retries — listener may not yet be up on the first attempt).
+  const client = await connectClient(socketPath);
+  client.send({ type: "hello", sinceSeq: 0 });
+
+  // The crash event should arrive as part of the replay stream (it was
+  // written to disk before the host began waiting for a client).
+  const crashed = await client.next(
+    (m) => m.type === "event" && m.event.kind === "session_crashed",
+  );
+  if (crashed.type !== "event") throw new Error("unreachable");
+  const payload = crashed.event.payload as { reason?: string; error?: string };
+  expect(payload.reason).toBe("driver_factory_failed");
+  expect(payload.error).toContain("tmux not installed");
+
+  // Then the host sends `exited` and shuts down.
+  const exited = await client.next((m) => m.type === "exited");
+  expect(exited.type).toBe("exited");
+  if (exited.type !== "exited") throw new Error("unreachable");
+  expect(exited.code).toBe(1);
+
+  const code = await hostExit;
+  expect(code).toBe(1);
+});
