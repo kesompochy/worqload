@@ -6,7 +6,7 @@ import { appendEvent, readEvents } from "../event-log";
 import { exitWithUsage } from "./cli-helpers";
 import { buildProtocolPrefix, RESUME_KICKOFF } from "../session-bootstrap";
 import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
-import { claudePipeDriver, type SessionDriverFactory } from "../session-driver";
+import { claudePipeDriver, type SessionDriver, type SessionDriverFactory } from "../session-driver";
 import { tmuxClaudeDriver } from "../session-driver-tmux";
 import {
   encodeMessage,
@@ -137,23 +137,11 @@ export async function runHost(opts: HostOptions): Promise<number> {
     }
   };
 
-  let driver;
-  try {
-    driver = await (opts.driver ?? claudePipeDriver)({
-      cwd: meta.worktreePath || undefined,
-      env: claudeEnv,
-      spawnCommand: opts.spawnCommand,
-      onEvent: (event) => writeEvent(event),
-      log,
-    });
-  } catch (err) {
-    // The detached host's stderr is /dev/null, so an exception thrown from
-    // the driver factory would otherwise vanish — serve would only see the
-    // socket connect timeout. Persist the cause so the human can diagnose
-    // from host.log.
-    log("driver_factory_failed", { error: err instanceof Error ? err.message : String(err) });
-    throw err;
-  }
+  // Driver is created AFTER the listener is up so serve never sees a socket
+  // timeout when driver setup is slow (e.g. tmux new-session) or throws
+  // (e.g. tmux not on PATH). Mutable so handleServeMessage can guard against
+  // messages arriving before the driver is ready.
+  let driver: SessionDriver | undefined;
 
   const handleServeMessage = async (msg: ServeToHostMessage): Promise<void> => {
     switch (msg.type) {
@@ -165,11 +153,19 @@ export async function runHost(opts: HostOptions): Promise<number> {
         return;
       }
       case "send_user": {
+        if (!driver) {
+          log("send_user_dropped_driver_not_ready", { textLen: msg.text.length });
+          return;
+        }
         log("send_user_received", { textLen: msg.text.length, preview: previewText(msg.text) });
         await driver.sendUserMessage(msg.text, "send_user");
         return;
       }
       case "kill": {
+        if (!driver) {
+          log("kill_before_driver_ready", { signal: msg.signal });
+          return;
+        }
         driver.kill(msg.signal === "SIGKILL" ? "SIGKILL" : "SIGTERM");
         return;
       }
@@ -203,11 +199,51 @@ export async function runHost(opts: HostOptions): Promise<number> {
       },
     },
   });
+  log("host_listening", { socketPath: opts.socketPath });
 
+  // Mark the session as running before driver setup so the UI shows the
+  // session even if driver init takes a while.
   await saveSessionMeta(
     { ...meta, hostPid: process.pid, hostSocketPath: opts.socketPath, status: "running" },
     opts.sessionsDir,
   );
+
+  try {
+    driver = await (opts.driver ?? claudePipeDriver)({
+      cwd: meta.worktreePath || undefined,
+      env: claudeEnv,
+      spawnCommand: opts.spawnCommand,
+      onEvent: (event) => writeEvent(event),
+      log,
+    });
+  } catch (err) {
+    // The detached host's stderr is /dev/null, so an exception thrown from
+    // the driver factory would otherwise vanish. Surface it: persist the
+    // cause in host.log AND mark the session crashed so the UI shows it
+    // instead of an idle "running" row.
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    log("driver_factory_failed", { error: errorMessage });
+    await writeEvent({
+      kind: "session_crashed",
+      payload: { reason: "driver_factory_failed", error: errorMessage },
+    });
+    const final = await loadSessionMeta(opts.sessionId, opts.sessionsDir);
+    if (final) {
+      await saveSessionMeta(
+        { ...final, status: "crashed", endedAt: new Date().toISOString() },
+        opts.sessionsDir,
+      );
+    }
+    sendToActive({ type: "exited", code: 1 });
+    await new Promise((r) => setTimeout(r, 20));
+    listener.stop(true);
+    try {
+      await unlink(opts.socketPath);
+    } catch {
+      // socket already gone
+    }
+    return 1;
+  }
 
   await writeEvent({
     kind: opts.resume ? "session_resumed" : "session_started",

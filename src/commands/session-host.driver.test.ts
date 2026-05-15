@@ -171,9 +171,13 @@ test("runHost routes bootstrap, send_user and kill through an injected SessionDr
   client.send({ type: "hello", sinceSeq: 0 });
   await client.next((m) => m.type === "replay_done");
 
-  // Bootstrap message must already have reached the driver by now (runHost
-  // calls sendUserMessage between session_started and the listen handshake).
-  expect(fake.sent.length).toBeGreaterThanOrEqual(1);
+  // Bootstrap is sent asynchronously after the driver factory returns; runHost
+  // now opens the unix listener BEFORE the factory, so replay_done can arrive
+  // before bootstrap reaches the driver. Wait for it.
+  const bootstrapDeadline = Date.now() + 2000;
+  while (fake.sent.length < 1 && Date.now() < bootstrapDeadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
   const bootstrap = fake.sent[0];
   if (!bootstrap) throw new Error("bootstrap message was not delivered");
   expect(bootstrap.source).toBe("bootstrap");

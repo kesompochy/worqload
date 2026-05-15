@@ -59,18 +59,22 @@ export interface TmuxDriverDeps {
 
 export const defaultTmuxDeps: TmuxDriverDeps = {
   async tmuxRun(args, opts) {
+    // tmux's `new-session` forks a server daemon that inherits the spawned
+    // client's stdout/stderr file descriptors. If we pipe them and read until
+    // EOF (the natural shape of `new Response(stream).text()`), the daemon
+    // holds the write end open forever and the read never returns — the
+    // client command's quick exit doesn't help us. We sacrifice tmux's
+    // diagnostic stderr to avoid that hang; the exit code is enough for our
+    // success/failure check, and a human can re-run the command manually if
+    // they need to see what tmux said.
     const stdin = opts?.stdin === undefined ? "ignore" : new TextEncoder().encode(opts.stdin);
     const proc = Bun.spawn(["tmux", ...args], {
       stdin,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
     });
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { exitCode: code ?? 0, stdout, stderr };
+    const code = await proc.exited;
+    return { exitCode: code ?? 0, stdout: "", stderr: "" };
   },
   resolveTranscriptDir(cwd) {
     return join(homedir(), ".claude", "projects", encodeCwdForClaudeProjects(cwd));
@@ -203,7 +207,10 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
       ...opts.spawnCommand,
     ]);
     if (spawnRes.exitCode !== 0) {
-      throw new Error(`tmux new-session failed (${spawnRes.exitCode}): ${spawnRes.stderr.trim()}`);
+      throw new Error(
+        `tmux new-session failed (exit ${spawnRes.exitCode}). Re-run manually to see tmux's stderr: ` +
+        `tmux new-session -d -s ${sessionName} -c ${cwd} -- ${opts.spawnCommand.join(" ")}`,
+      );
     }
     opts.log("tmux_spawned", { sessionName, cwd, argv: opts.spawnCommand });
 
