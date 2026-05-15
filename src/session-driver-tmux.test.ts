@@ -155,6 +155,10 @@ test("driver sends a user message via load-buffer, paste-buffer, Enter", async (
   expect(sendCalls[1]?.args[0]).toBe("paste-buffer");
   expect(sendCalls[1]?.args).toContain("-t");
   expect(sendCalls[1]?.args[sendCalls[1].args.indexOf("-t") + 1]).toBe("worqload-abcd1234");
+  // -p enables bracketed paste so claude's TUI collapses the multi-line input
+  // into a single paste event; without it, Enter is interpreted as a newline
+  // insertion and the bootstrap message never gets submitted.
+  expect(sendCalls[1]?.args).toContain("-p");
   expect(sendCalls[2]?.args[0]).toBe("send-keys");
   expect(sendCalls[2]?.args).toContain("Enter");
 
