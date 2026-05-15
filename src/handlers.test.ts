@@ -42,7 +42,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback, onResume, onStopAndResume } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -1061,6 +1061,145 @@ test("onFeedback bails when both the textarea and the attachment list are empty"
   try {
     await onFeedback();
     expect(submitFeedbackCalls).toEqual([]);
+  } finally {
+    globalThis.document = saved.document;
+  }
+});
+
+// Wraps a test that needs a custom api() mock. The top-level mock above stays
+// the default; this temporarily swaps in a per-test impl, then restores it.
+// `mock.module` itself doesn't return a restore handle, so we re-mock with the
+// default afterwards.
+async function withApiMock(
+  apiImpl: (method: string, path: string, body?: unknown) => Promise<unknown>,
+  body: () => Promise<void>,
+) {
+  mock.module("../web/api.js", () => ({
+    api: apiImpl,
+    submitFeedback: async (sessionId: string, payload: unknown, attachments: unknown) => {
+      submitFeedbackCalls.push({ sessionId, payload, attachments });
+      return { filename: "001-x.md", seq: 1 };
+    },
+    fetchSessions: async () => { fetchSessionsCalls++; },
+    fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
+    fetchActions: async () => {},
+    reorderSessions: async (ids: string[]) => { reorderSessionsCalls.push(ids); },
+    refreshDetail: async () => {},
+    refreshDiff: async () => {},
+    ensureFilesLoaded: async () => {},
+    ensureStructureLoaded: async () => {},
+    ensureStructureBeforeLoaded: async () => {},
+    ensureCallGraphLoaded: async () => {},
+    ensureCallGraphBeforeLoaded: async () => {},
+    ensureStructureViewLoaded: async () => {},
+    selectFile: async () => {},
+    searchFiles: async () => ({ matches: [], truncated: false }),
+    fetchCodeNavLocations: async () => ({ available: false }),
+    openWs() {},
+  }));
+  try {
+    await body();
+  } finally {
+    mock.module("../web/api.js", () => ({
+      api: async (method: string, path: string, body?: unknown) => { apiCalls.push({ method, path, body }); return {}; },
+      submitFeedback: async (sessionId: string, payload: unknown, attachments: unknown) => {
+        submitFeedbackCalls.push({ sessionId, payload, attachments });
+        return { filename: "001-x.md", seq: 1 };
+      },
+      fetchSessions: async () => { fetchSessionsCalls++; },
+      fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
+      fetchActions: async () => {},
+      reorderSessions: async (ids: string[]) => { reorderSessionsCalls.push(ids); },
+      refreshDetail: async () => {},
+      refreshDiff: async () => {},
+      ensureFilesLoaded: async () => {},
+      ensureStructureLoaded: async () => {},
+      ensureStructureBeforeLoaded: async () => {},
+      ensureCallGraphLoaded: async () => {},
+      ensureCallGraphBeforeLoaded: async () => {},
+      ensureStructureViewLoaded: async () => {},
+      selectFile: async () => {},
+      searchFiles: async () => ({ matches: [], truncated: false }),
+      fetchCodeNavLocations: async () => ({ available: false }),
+      openWs() {},
+    }));
+  }
+}
+
+test("onResume clears the textarea before the await, so a re-render mid-flight can't strand the prompt", async () => {
+  state.selected = "session-r";
+
+  const inputEl = { value: "carry on" };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  let valueWhenApiSeen: string | null = null;
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : toastEl),
+  } as unknown as Document;
+  try {
+    await withApiMock(async (method, path, body) => {
+      calls.push({ method, path, body });
+      valueWhenApiSeen = inputEl.value;
+      return {};
+    }, async () => {
+      await onResume();
+    });
+    expect(calls).toEqual([{ method: "POST", path: "/sessions/session-r/resume", body: { prompt: "carry on" } }]);
+    expect(valueWhenApiSeen).toBe("");
+    expect(inputEl.value).toBe("");
+  } finally {
+    globalThis.document = saved.document;
+  }
+});
+
+test("onResume restores the prompt when the API call fails, so a long message isn't lost", async () => {
+  state.selected = "session-r";
+
+  const inputEl = { value: "important note" };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : toastEl),
+  } as unknown as Document;
+  try {
+    await withApiMock(async () => { throw new Error("boom"); }, async () => {
+      await onResume();
+    });
+    expect(inputEl.value).toBe("important note");
+  } finally {
+    globalThis.document = saved.document;
+  }
+});
+
+test("onStopAndResume clears the textarea before the stop/resume awaits", async () => {
+  state.selected = "session-s";
+
+  const inputEl = { value: "go again" };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  let valueAtFirstApi: string | null = null;
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : toastEl),
+  } as unknown as Document;
+  try {
+    await withApiMock(async (method, path, body) => {
+      calls.push({ method, path, body });
+      if (calls.length === 1) valueAtFirstApi = inputEl.value;
+      return {};
+    }, async () => {
+      await onStopAndResume();
+    });
+    expect(calls.map(c => c.path)).toEqual([
+      "/sessions/session-s/stop",
+      "/sessions/session-s/resume",
+    ]);
+    expect(valueAtFirstApi).toBe("");
+    expect(inputEl.value).toBe("");
   } finally {
     globalThis.document = saved.document;
   }
