@@ -281,7 +281,15 @@ function renderParagraph(block, ctx) {
 function renderCode(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
   const langAttr = block.lang ? ` class="language-${escapeAttr(block.lang)}"` : "";
-  return `<pre${attrs}><code${langAttr}>${escapeHtml(block.content)}</code></pre>`;
+  // The button is a sibling of the `<pre>` rather than a child so the line-anchor
+  // and feedback-preview attributes (which onLineClick / hover delegation read off
+  // the closest `[data-anchor-line]` / `[data-feedback-preview]`) stay on the
+  // `<pre>` and aren't reached through the button. The handler reads the raw
+  // text off the inner `<code>`'s textContent — no second escape pass needed.
+  return `<div class="md-code-block">`
+       + `<pre${attrs}><code${langAttr}>${escapeHtml(block.content)}</code></pre>`
+       + `<button type="button" class="md-code-copy-btn" data-copy-code title="コードをコピー">⧉</button>`
+       + `</div>`;
 }
 
 function renderHr(block, ctx) {
