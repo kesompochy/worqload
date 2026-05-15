@@ -83,8 +83,20 @@ async function buildLaunchOptions(
   };
 }
 
-test("encodeCwdForClaudeProjects replaces slashes with hyphens", () => {
+test("encodeCwdForClaudeProjects replaces slashes AND dots with hyphens (matches Claude Code's own encoding)", () => {
   expect(encodeCwdForClaudeProjects("/Users/foo/repo")).toBe("-Users-foo-repo");
+  // Dot-containing path components (e.g. "git.pepabo.com").
+  expect(encodeCwdForClaudeProjects("/Users/me/ghq/git.pepabo.com/hosting/gulliver")).toBe(
+    "-Users-me-ghq-git-pepabo-com-hosting-gulliver",
+  );
+  // Leading-dot directories (e.g. ".worktrees") collapse "/." into "--".
+  expect(encodeCwdForClaudeProjects("/Users/me/repo/.worktrees/abc")).toBe(
+    "-Users-me-repo--worktrees-abc",
+  );
+  // Both together — the actual gulliver worktree shape that exposed the bug.
+  expect(encodeCwdForClaudeProjects("/Users/me/ghq/git.pepabo.com/hosting/gulliver/.worktrees/6814b538")).toBe(
+    "-Users-me-ghq-git-pepabo-com-hosting-gulliver--worktrees-6814b538",
+  );
 });
 
 test("tmuxSessionName derives a short, prefixed session name", () => {

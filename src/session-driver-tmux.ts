@@ -27,9 +27,12 @@ import type {
 
 // Claude Code stores transcripts at
 //   ~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl
-// where encoded-cwd is the absolute cwd with '/' replaced by '-'.
+// where encoded-cwd is the absolute cwd with both '/' and '.' replaced by
+// '-'. Verified against ~/.claude/projects/ on a real machine:
+//   /Users/.../foo.bar/.worktrees/abc → -Users-...-foo-bar--worktrees-abc
+// (note the double-dash where '/.' appears in the original path).
 export function encodeCwdForClaudeProjects(cwd: string): string {
-  return cwd.replace(/\//g, "-");
+  return cwd.replace(/[/.]/g, "-");
 }
 
 export function tmuxSessionName(sessionId: string): string {
