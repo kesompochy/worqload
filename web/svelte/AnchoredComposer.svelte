@@ -17,7 +17,7 @@
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
   import { state as appState } from "../state.svelte.js";
-  import { onAnchoredFeedback, clearAnchor, copyAnchorPermalink } from "../handlers.js";
+  import { onAnchoredFeedback, clearAnchor, copyAnchorPermalink, onAnchorOutsideClick } from "../handlers.js";
 
   let anchorRect = $state(null);
   let textareaEl = $state();
@@ -92,15 +92,21 @@
 
   // Track the line on scroll (any scroll container — the detail body has its
   // own) and on resize, so the box stays glued to it while the human types.
+  // mousedown (capture, primary button only) dismisses the popover when the
+  // click lands outside the floating composer; the predicate in
+  // onAnchorOutsideClick decides which targets preserve the anchor.
   $effect(() => {
     if (!appState.anchor) return;
     const onScroll = () => recomputeRect();
     const onResize = () => recomputeRect();
+    const onMousedown = (e) => { if (e.button === 0) onAnchorOutsideClick(e.target); };
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onResize);
+    window.addEventListener("mousedown", onMousedown, true);
     return () => {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("mousedown", onMousedown, true);
     };
   });
 
