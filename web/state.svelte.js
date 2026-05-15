@@ -10,6 +10,7 @@ export const state = $state({
   archivedSessions: [],  // archived-only feed: drives the archived sidebar tab. Populated when that tab is shown / polled.
   archivedSelection: new Set(),  // ids of archived sessions checked for bulk delete. Cleared on tab switch away from archived. Reassigned wholesale (Svelte 5's $state doesn't proxy Set).
   sidebarTab: "active",  // "active" | "archived": which feed the sidebar renders. Archived cards swap Stop/Archive for a permanent Delete (see SessionList.svelte / handlers.js).
+  sidebarHidden: false,  // Whether the left sidebar (.sidebar) is collapsed out of the layout. Persisted in localStorage under "worqload:sidebar-hidden"; toggled via the in-sidebar « button and the fixed-position » button surfaced when hidden.
   selected: null,        // session id
   detail: null,          // { meta, events }
   reports: [],

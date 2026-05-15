@@ -819,6 +819,19 @@ export async function onSidebarTab(tab) {
   }
 }
 
+// Left-sidebar visibility toggle. The flag drives a class on .layout
+// (main.ts mirrors state.sidebarHidden onto the DOM) and is persisted in
+// localStorage so the preference survives reloads — same pattern as the
+// notification bell.
+export const SIDEBAR_HIDDEN_KEY = "worqload:sidebar-hidden";
+
+export function toggleSidebar() {
+  state.sidebarHidden = !state.sidebarHidden;
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(SIDEBAR_HIDDEN_KEY, state.sidebarHidden ? "1" : "0");
+  }
+}
+
 // Multi-select checkbox toggle in the archived feed. The selection drives the
 // bulk-delete bar in SessionList.svelte. Reassigning the Set wholesale rather
 // than mutating it lets Svelte 5's $state notice the change (it doesn't proxy

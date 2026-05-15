@@ -5,6 +5,7 @@ import "./style.css";
 import "./app.js";
 import { mount } from "svelte";
 import { state } from "./state.svelte.js";
+import { toggleSidebar, SIDEBAR_HIDDEN_KEY } from "./handlers.js";
 import NewSessionModal from "./svelte/NewSessionModal.svelte";
 import FileSearchModal from "./svelte/FileSearchModal.svelte";
 import CodeNavPopover from "./svelte/CodeNavPopover.svelte";
@@ -18,6 +19,23 @@ import Composer from "./svelte/Composer.svelte";
 
 const newSessionModal = mount(NewSessionModal, { target: document.body });
 document.getElementById("btnNew")?.addEventListener("click", () => newSessionModal.open());
+
+// Restore the sidebar visibility from the persisted preference, then keep the
+// .layout class in sync with state.sidebarHidden. The state itself lives in
+// state.svelte.js so any future reader (a Svelte component, a keyboard
+// shortcut) can read or flip it; this glue only owns the DOM-class mirror.
+const layoutEl = document.getElementById("layout");
+function applySidebarClass() {
+  layoutEl?.classList.toggle("sidebar-hidden", state.sidebarHidden);
+}
+state.sidebarHidden = localStorage.getItem(SIDEBAR_HIDDEN_KEY) === "1";
+applySidebarClass();
+function onToggleSidebar() {
+  toggleSidebar();
+  applySidebarClass();
+}
+document.getElementById("btnHideSidebar")?.addEventListener("click", onToggleSidebar);
+document.getElementById("btnShowSidebar")?.addEventListener("click", onToggleSidebar);
 
 // Ctrl/Cmd+Shift+F opens the Files-tab full-text search over the selected
 // session's worktree; Ctrl/Cmd+Shift+P opens the filename search over the same

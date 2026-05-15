@@ -25,7 +25,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -578,6 +578,27 @@ test("onSidebarTab flips to the archived feed and pulls it from the server", asy
   expect(state.sidebarTab).toBe("active");
   expect(fetchSessionsCalls).toBe(1);
   expect(fetchArchivedSessionsCalls).toBe(1);
+});
+
+test("toggleSidebar flips state.sidebarHidden and persists the new value to localStorage", () => {
+  state.sidebarHidden = false;
+  const writes: Array<[string, string]> = [];
+  const savedLocalStorage = (globalThis as unknown as { localStorage?: unknown }).localStorage;
+  (globalThis as unknown as { localStorage: unknown }).localStorage = {
+    setItem: (k: string, v: string) => { writes.push([k, v]); },
+  };
+  try {
+    toggleSidebar();
+    expect(state.sidebarHidden).toBe(true);
+    expect(writes).toEqual([["worqload:sidebar-hidden", "1"]]);
+
+    toggleSidebar();
+    expect(state.sidebarHidden).toBe(false);
+    expect(writes[1]).toEqual(["worqload:sidebar-hidden", "0"]);
+  } finally {
+    if (savedLocalStorage === undefined) delete (globalThis as unknown as { localStorage?: unknown }).localStorage;
+    else (globalThis as unknown as { localStorage: unknown }).localStorage = savedLocalStorage;
+  }
 });
 
 test("onSidebarTab does nothing when the requested tab is already shown", async () => {
