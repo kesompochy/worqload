@@ -171,6 +171,8 @@
     {@const terminal = isTerminal(session)}
     {@const renaming = active && session.id === appState.renamingSessionId}
     {@const unread = Number(session.unreadReportCount) || 0}
+    {@const unresolvedEscalations = Number(session.unresolvedEscalationCount) || 0}
+    {@const attention = unread + unresolvedEscalations}
     {@const isLast = index === visibleSessions.length - 1}
     {@const selected = archivedView && appState.archivedSelection.has(session.id)}
     <div
@@ -251,8 +253,9 @@
           {/if}
         </div>
       </div>
-      {#if unread > 0}
-        <span class="unread-badge" aria-label="{unread} unread report{unread === 1 ? '' : 's'}" title="{unread} unread report{unread === 1 ? '' : 's'}">{unread > 99 ? "99+" : unread}</span>
+      {#if attention > 0}
+        {@const label = `未読レポート ${unread} + 未解決エスカレ ${unresolvedEscalations}`}
+        <span class="unread-badge" aria-label={label} title={label}>{attention > 99 ? "99+" : attention}</span>
       {/if}
     </div>
   {/each}

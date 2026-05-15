@@ -930,17 +930,19 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
       : sessions.filter(s => !s.archivedAt);
   const decorated = await Promise.all(filtered.map(async meta => {
     const dir = reportsDirFor(ctx, meta.id);
-    const [reports, readSet, events] = await Promise.all([
+    const [reports, readSet, events, asking] = await Promise.all([
       listAllFiles(dir),
       readReadState(dir),
       readEvents(meta.id, 1, ctx.sessionsDir),
+      listAllFiles(askingDirFor(ctx, meta.id)),
     ]);
     const unreadReportCount = reports.reduce((n, r) => n + (readSet.has(r.filename) ? 0 : 1), 0);
+    const unresolvedEscalationCount = asking.length;
     // The sidebar's liveness signal: when the agent last did something — its run
     // or a step within it, not a report/feedback/escalation. Undefined until the
     // session has produced one.
     const lastAgentEventAt = events.filter(isAgentWorkEvent).at(-1)?.timestamp;
-    return { ...meta, unreadReportCount, lastAgentEventAt };
+    return { ...meta, unreadReportCount, unresolvedEscalationCount, lastAgentEventAt };
   }));
   return json({ sessions: decorated });
 }

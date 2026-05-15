@@ -251,6 +251,25 @@ test("GET /sessions exposes unread report counts per session", async () => {
   expect(byId[bid].unreadReportCount).toBe(0);
 });
 
+test("GET /sessions exposes unresolved escalation counts per session", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const a = await postJson(baseUrl, "/sessions", { prompt: "with escalations", baseBranch: TEST_BASE }).then(r => r.json());
+  const b = await postJson(baseUrl, "/sessions", { prompt: "none", baseBranch: TEST_BASE }).then(r => r.json());
+  const aid = a.meta.id;
+  const bid = b.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${aid}/escalations`, { slug: "first", content: "A?" });
+  await postJson(baseUrl, `/internal/sessions/${aid}/escalations`, { slug: "second", content: "B?" });
+  await postJson(baseUrl, `/sessions/${aid}/escalations/001-first.md/resolve`, { content: "answer A" });
+
+  const body = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const byId = Object.fromEntries(body.sessions.map((s: { id: string; unresolvedEscalationCount: number }) => [s.id, s]));
+  expect(byId[aid].unresolvedEscalationCount).toBe(1);
+  expect(byId[bid].unresolvedEscalationCount).toBe(0);
+});
+
 test("GET /sessions exposes the last agent-work event timestamp, ignoring reports", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
