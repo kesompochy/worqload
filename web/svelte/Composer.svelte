@@ -9,7 +9,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState, anchorLabel } from "../state.svelte.js";
-  import { onFeedback, onResume, clearAnchor, copyAnchorPermalink } from "../handlers.js";
+  import { onFeedback, onResume, clearAnchor, copyAnchorPermalink, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
   // Tracked across the textarea's keydowns so a confirming Enter mid-IME
   // composition doesn't also submit (same guard as dom.js's bindInlineEdit).
@@ -43,17 +43,33 @@
            (terminal sessions) sends a plain prompt, so the chip is hidden there. -->
       <div class="anchor-chip">Re: {anchorLabel(appState.anchor)} <button type="button" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button> <button type="button" title="clear anchor" onclick={clearAnchor}>×</button></div>
     {/if}
+    {#if !isTerminal && appState.pendingAttachments.length > 0}
+      <!-- Image chips queued for the next submit. The list is shared with the
+           floating anchored composer; whichever submits empties it. -->
+      <div class="attachment-chips">
+        {#each appState.pendingAttachments as att (att.id)}
+          <span class="attachment-chip" title="{att.file.name}">
+            <img src={att.previewUrl} alt={att.file.name} />
+            <span class="attachment-chip-name">{att.file.name}</span>
+            <button type="button" title="remove" onclick={() => removeAttachment(att.id)}>×</button>
+          </span>
+        {/each}
+      </div>
+    {/if}
     <textarea
       id="feedbackInput"
       rows="3"
       placeholder={isTerminal
         ? "Instructions for the resumed session (optional — picked up via worqload feedback fetch). Enter で再開 / Shift+Enter で改行"
         : appState.anchor
-          ? "Comment on the selected lines... (Enter で送信 / Shift+Enter で改行)"
-          : "Plain feedback (picked up at the agent's next turn). Click a diff, file, or report line to anchor. (Enter で送信 / Shift+Enter で改行)"}
+          ? "Comment on the selected lines... (Enter で送信 / Shift+Enter で改行 / 画像はペースト・ドロップで添付)"
+          : "Plain feedback (picked up at the agent's next turn). Click a diff, file, or report line to anchor. (Enter で送信 / Shift+Enter で改行 / 画像はペースト・ドロップで添付)"}
       oncompositionstart={() => (composing = true)}
       oncompositionend={() => (composing = false)}
       onkeydown={(e) => onKeydown(e, isTerminal)}
+      onpaste={(e) => { if (!isTerminal) onComposerPaste(e); }}
+      ondragover={(e) => { if (!isTerminal) e.preventDefault(); }}
+      ondrop={(e) => { if (!isTerminal) onComposerDrop(e); }}
     ></textarea>
     <div class="row">
       <span class="spacer"></span>

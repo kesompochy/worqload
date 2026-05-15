@@ -15,6 +15,24 @@ export async function api(method, path, body) {
   return res.json();
 }
 
+// Posts a feedback message, choosing JSON or multipart/form-data based on
+// whether attachments are queued. The server accepts both shapes; the
+// multipart branch wraps the existing payload as a single `payload` JSON field
+// alongside one `attachment` field per file, which avoids base64 inflating the
+// uploads.
+export async function submitFeedback(sessionId, payload, attachments) {
+  if (!attachments || attachments.length === 0) {
+    return api("POST", `/sessions/${sessionId}/feedback`, payload);
+  }
+  const form = new FormData();
+  form.set("payload", JSON.stringify(payload));
+  for (const att of attachments) form.append("attachment", att.file);
+  const path = `/sessions/${sessionId}/feedback`;
+  const res = await fetch(path, { method: "POST", body: form });
+  if (!res.ok) throw new Error(`POST ${path} → ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
 export async function fetchSessions() {
   const { sessions } = await api("GET", "/sessions");
   const previous = state.sessions;

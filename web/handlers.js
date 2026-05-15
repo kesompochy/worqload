@@ -4,12 +4,13 @@
 // and/or calls the data layer; the Svelte components re-render reactively.
 
 import { $, toast } from "./dom.js";
-import { state, isReportExpanded, isFeedbackExpanded, feedbackPreviewEntries, DIFF_EXPAND_CHUNK } from "./state.svelte.js";
+import { state, isReportExpanded, isFeedbackExpanded, feedbackPreviewEntries, DIFF_EXPAND_CHUNK, ATTACHMENT_ALLOWED_MIMES, ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT } from "./state.svelte.js";
 import { parseDiffFiles, mergeLineRanges } from "./diff-view.js";
 import { languageForPath } from "./syntax-highlight.js";
 import { isIdentifierName, resolveDefinitions, resolveReferences } from "./code-nav.js";
 import {
   api,
+  submitFeedback,
   fetchSessions,
   fetchArchivedSessions,
   fetchActions,
@@ -79,6 +80,10 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   state.actionResults = new Map();
   state.pendingScrollTo = null;
   state.feedbackPinAt = null;
+  // Image attachments staged in either composer belong to the previous session
+  // (the multipart POST targets that session's id). Drop them and revoke the
+  // blob URLs so the chips don't leak across sessions or memory.
+  clearAttachments();
   if (!id) return;
   await refreshDetail();
   await fetchActions(id);
@@ -1055,7 +1060,10 @@ export async function onFeedback(inputId = "feedbackInput") {
   const inputEl = $("#" + inputId);
   if (!inputEl) return;
   const text = inputEl.value.trim();
-  if (text === "") return;
+  const attachments = state.pendingAttachments;
+  // Plain feedback needs body text. A composer that only has attachments still
+  // needs a one-line note from the human; require at least one of the two.
+  if (text === "" && attachments.length === 0) return;
   const body = { content: text, slug: state.anchor ? "anchored" : "feedback" };
   if (state.anchor) {
     body.anchor = {
@@ -1065,9 +1073,10 @@ export async function onFeedback(inputId = "feedbackInput") {
     };
   }
   try {
-    await api("POST", `/sessions/${state.selected}/feedback`, body);
+    await submitFeedback(state.selected, body, attachments);
     inputEl.value = "";
     state.anchor = null;
+    clearAttachments();
     // Stay on whatever tab the human was reading (often the diff/file/report the
     // anchor points at): the sent feedback now shows at its anchor and in the
     // Feedbacks tab, so yanking the view away to the list is just disruptive.
@@ -1076,6 +1085,103 @@ export async function onFeedback(inputId = "feedbackInput") {
   } catch (e) {
     toast(`failed: ${e.message}`);
   }
+}
+
+// --- composer attachment management (paste/drop image chips) ---------------
+// Two composers (the bottom-fixed one and the floating anchored one) share
+// `state.pendingAttachments`. Whichever submits sends the queued files; the
+// other empties when the submit clears them. selectSession also clears the
+// list so attachments don't leak across sessions.
+
+let nextAttachmentId = 0;
+
+// True when this File looks like a usable attachment to the server. The browser
+// sets `type` from the clipboard/drag data; an empty type means we couldn't
+// confirm the MIME and shouldn't gamble.
+function isAcceptableAttachmentFile(file) {
+  return ATTACHMENT_ALLOWED_MIMES.has(file.type);
+}
+
+// Ingest a list of File objects (from a paste, drop, or file picker). Skips
+// files that don't pass the MIME / size checks and toasts what was rejected so
+// the human knows. The per-feedback count cap is enforced together with what
+// is already staged.
+export function addAttachmentFiles(files) {
+  const additions = [];
+  for (const file of files) {
+    if (state.pendingAttachments.length + additions.length >= ATTACHMENT_MAX_COUNT) {
+      toast(`max ${ATTACHMENT_MAX_COUNT} attachments per feedback`);
+      break;
+    }
+    if (!isAcceptableAttachmentFile(file)) {
+      toast(`skipped ${file.name || "(unnamed)"}: not an allowed image type`);
+      continue;
+    }
+    if (file.size > ATTACHMENT_MAX_BYTES) {
+      toast(`skipped ${file.name}: exceeds ${Math.round(ATTACHMENT_MAX_BYTES / (1024 * 1024))} MiB`);
+      continue;
+    }
+    additions.push({
+      id: ++nextAttachmentId,
+      file,
+      previewUrl: URL.createObjectURL(file),
+    });
+  }
+  if (additions.length === 0) return;
+  state.pendingAttachments = [...state.pendingAttachments, ...additions];
+}
+
+export function removeAttachment(id) {
+  const next = [];
+  for (const att of state.pendingAttachments) {
+    if (att.id === id) {
+      try { URL.revokeObjectURL(att.previewUrl); } catch { /* already revoked */ }
+    } else {
+      next.push(att);
+    }
+  }
+  state.pendingAttachments = next;
+}
+
+export function clearAttachments() {
+  if (state.pendingAttachments.length === 0) return;
+  for (const att of state.pendingAttachments) {
+    try { URL.revokeObjectURL(att.previewUrl); } catch { /* already revoked */ }
+  }
+  state.pendingAttachments = [];
+}
+
+// Composer paste handler: pull every image out of the clipboard. Returns true
+// when at least one image was ingested, so the caller can preventDefault to
+// stop the browser also pasting the binary as garbage text.
+export function onComposerPaste(event) {
+  const items = event.clipboardData?.items;
+  if (!items || items.length === 0) return false;
+  const files = [];
+  for (const item of items) {
+    if (item.kind === "file" && typeof item.getAsFile === "function") {
+      const f = item.getAsFile();
+      if (f && ATTACHMENT_ALLOWED_MIMES.has(f.type)) files.push(f);
+    }
+  }
+  if (files.length === 0) return false;
+  event.preventDefault();
+  addAttachmentFiles(files);
+  return true;
+}
+
+// Composer drop handler: take any image files dropped on the composer.
+export function onComposerDrop(event) {
+  const dt = event.dataTransfer;
+  if (!dt || !dt.files || dt.files.length === 0) return false;
+  const files = [];
+  for (const f of dt.files) {
+    if (ATTACHMENT_ALLOWED_MIMES.has(f.type)) files.push(f);
+  }
+  if (files.length === 0) return false;
+  event.preventDefault();
+  addAttachmentFiles(files);
+  return true;
 }
 
 // The floating composer that surfaces next to an anchored line/block (so the
