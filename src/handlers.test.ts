@@ -1,13 +1,30 @@
 import { test, expect, mock } from "bun:test";
 
+// addAttachmentFiles calls URL.createObjectURL on each accepted File and
+// removeAttachment / clearAttachments call revokeObjectURL on the resulting
+// blob URL. Bun's URL global lacks both, so stub them with counters the tests
+// can read back. Counter shape lets a test assert "every created URL was
+// revoked exactly once" without bookkeeping per call site.
+let createObjectURLCount = 0;
+const revokedObjectURLs: string[] = [];
+(URL as unknown as { createObjectURL: (file: unknown) => string }).createObjectURL =
+  () => `blob:fake/${++createObjectURLCount}`;
+(URL as unknown as { revokeObjectURL: (url: string) => void }).revokeObjectURL =
+  (url: string) => { revokedObjectURLs.push(url); };
+
 // selectSession reaches into the network (api); stub it so the per-session
 // state reset can be asserted in isolation.
 const reorderSessionsCalls: string[][] = [];
 let fetchSessionsCalls = 0;
 let fetchArchivedSessionsCalls = 0;
 const apiCalls: Array<{ method: string; path: string; body?: unknown }> = [];
+const submitFeedbackCalls: Array<{ sessionId: string; payload: unknown; attachments: unknown }> = [];
 mock.module("../web/api.js", () => ({
   api: async (method: string, path: string, body?: unknown) => { apiCalls.push({ method, path, body }); return {}; },
+  submitFeedback: async (sessionId: string, payload: unknown, attachments: unknown) => {
+    submitFeedbackCalls.push({ sessionId, payload, attachments });
+    return { filename: "001-x.md", seq: 1 };
+  },
   fetchSessions: async () => { fetchSessionsCalls++; },
   fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
   fetchActions: async () => {},
@@ -25,7 +42,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -891,4 +908,160 @@ test("onUnarchive bails when called with no id", async () => {
   expect(apiCalls).toEqual([]);
   expect(fetchArchivedSessionsCalls).toBe(0);
   expect(fetchSessionsCalls).toBe(0);
+});
+
+// --- attachments ----------------------------------------------------------
+
+// Build a File-like object that addAttachmentFiles can validate. Real File
+// constructors work in Bun too, but going through the constructor allocates
+// the bytes and slows the test for nothing — only `name`, `type`, `size` are
+// read by the validation path, plus identity in the chip rendering.
+function fakeFile(name: string, type: string, size: number) {
+  return { name, type, size } as unknown as File;
+}
+
+// Reject paths in addAttachmentFiles fire toast(), which does
+// document.querySelector("#toast"). The other test files manage their own
+// document fakes, so install one only for the duration of the callback.
+async function withFakeDocument<T>(fn: () => T | Promise<T>): Promise<T> {
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = globalThis.document;
+  globalThis.document = {
+    querySelector: () => toastEl,
+  } as unknown as Document;
+  try {
+    return await fn();
+  } finally {
+    globalThis.document = saved;
+  }
+}
+
+test("addAttachmentFiles accepts allowed image types and stages chips with preview URLs", () => {
+  clearAttachments();
+  addAttachmentFiles([
+    fakeFile("a.png", "image/png", 1234),
+    fakeFile("b.webp", "image/webp", 9999),
+  ]);
+  expect(state.pendingAttachments).toHaveLength(2);
+  expect(state.pendingAttachments[0].file.name).toBe("a.png");
+  expect(state.pendingAttachments[0].previewUrl).toMatch(/^blob:fake\//);
+  expect(state.pendingAttachments[1].file.name).toBe("b.webp");
+});
+
+test("addAttachmentFiles skips non-image MIME types", async () => {
+  clearAttachments();
+  await withFakeDocument(() => {
+    addAttachmentFiles([
+      fakeFile("doc.pdf", "application/pdf", 100),
+      fakeFile("good.png", "image/png", 100),
+    ]);
+  });
+  expect(state.pendingAttachments.map(a => a.file.name)).toEqual(["good.png"]);
+});
+
+test("addAttachmentFiles skips files exceeding the byte cap", async () => {
+  clearAttachments();
+  await withFakeDocument(() => {
+    addAttachmentFiles([
+      fakeFile("huge.png", "image/png", 11 * 1024 * 1024),  // > 10 MiB cap
+      fakeFile("ok.png", "image/png", 100),
+    ]);
+  });
+  expect(state.pendingAttachments.map(a => a.file.name)).toEqual(["ok.png"]);
+});
+
+test("addAttachmentFiles stops once the per-feedback count cap is reached", async () => {
+  clearAttachments();
+  await withFakeDocument(() => {
+    addAttachmentFiles(Array.from({ length: 7 }, (_, i) => fakeFile(`img${i}.png`, "image/png", 10)));
+  });
+  expect(state.pendingAttachments).toHaveLength(5);  // ATTACHMENT_MAX_COUNT
+});
+
+test("removeAttachment splices by id and revokes its preview URL", () => {
+  clearAttachments();
+  revokedObjectURLs.length = 0;
+  addAttachmentFiles([
+    fakeFile("a.png", "image/png", 1),
+    fakeFile("b.png", "image/png", 1),
+  ]);
+  const idA = state.pendingAttachments[0].id;
+  const urlA = state.pendingAttachments[0].previewUrl;
+
+  removeAttachment(idA);
+
+  expect(state.pendingAttachments.map(a => a.file.name)).toEqual(["b.png"]);
+  expect(revokedObjectURLs).toEqual([urlA]);
+});
+
+test("clearAttachments empties the list and revokes every preview URL", () => {
+  clearAttachments();
+  revokedObjectURLs.length = 0;
+  addAttachmentFiles([
+    fakeFile("a.png", "image/png", 1),
+    fakeFile("b.png", "image/png", 1),
+  ]);
+  const urls = state.pendingAttachments.map(a => a.previewUrl);
+
+  clearAttachments();
+
+  expect(state.pendingAttachments).toEqual([]);
+  expect(revokedObjectURLs.sort()).toEqual(urls.sort());
+});
+
+test("selectSession clears pendingAttachments so they don't leak across sessions", async () => {
+  clearAttachments();
+  addAttachmentFiles([fakeFile("a.png", "image/png", 1)]);
+  expect(state.pendingAttachments).toHaveLength(1);
+
+  await selectSession("session-other");
+
+  expect(state.pendingAttachments).toEqual([]);
+});
+
+test("onFeedback hands the textarea text and queued attachments to submitFeedback, then clears both", async () => {
+  clearAttachments();
+  state.selected = "session-x";
+  state.anchor = null;
+  state.pendingAttachments = [];
+  submitFeedbackCalls.length = 0;
+
+  const inputEl = { value: "look at this" };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : toastEl),
+  } as unknown as Document;
+  try {
+    addAttachmentFiles([fakeFile("a.png", "image/png", 10)]);
+    await onFeedback();
+
+    expect(submitFeedbackCalls).toHaveLength(1);
+    expect(submitFeedbackCalls[0].sessionId).toBe("session-x");
+    expect(submitFeedbackCalls[0].payload).toEqual({ content: "look at this", slug: "feedback" });
+    expect((submitFeedbackCalls[0].attachments as unknown[]).length).toBe(1);
+    expect(state.pendingAttachments).toEqual([]);
+    expect(inputEl.value).toBe("");
+  } finally {
+    globalThis.document = saved.document;
+  }
+});
+
+test("onFeedback bails when both the textarea and the attachment list are empty", async () => {
+  clearAttachments();
+  state.selected = "session-x";
+  state.anchor = null;
+  submitFeedbackCalls.length = 0;
+
+  const inputEl = { value: "   " };
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : null),
+  } as unknown as Document;
+  try {
+    await onFeedback();
+    expect(submitFeedbackCalls).toEqual([]);
+  } finally {
+    globalThis.document = saved.document;
+  }
 });

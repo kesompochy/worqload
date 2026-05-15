@@ -1,4 +1,5 @@
 import { mkdir, readdir, rename } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { withLock } from "./lock";
 
@@ -67,8 +68,23 @@ export function metaFilenameFor(mdFilename: string): string {
   return mdFilename.replace(/\.md$/, ".meta.json");
 }
 
+// Sibling directory holding raw attachments (e.g. images pasted into the
+// feedback composer) for a numbered .md file. Same naming convention as the
+// .meta.json sidecar so the .md, the meta, and the attachments stay grouped.
+export function attachmentsDirNameFor(mdFilename: string): string {
+  return mdFilename.replace(/\.md$/, ".attachments");
+}
+
 function isEmptyMeta(meta: NumberedFileMeta): boolean {
   return Object.values(meta).every(v => v === undefined);
+}
+
+export interface AttachmentInput {
+  // The on-disk filename inside `<base>.attachments/`. Callers are expected to
+  // hand over already-deduplicated names (the feedback POST handler prefixes
+  // each upload with a numeric counter to keep them collision-free).
+  name: string;
+  bytes: Uint8Array | ArrayBuffer | Blob;
 }
 
 export interface WriteNumberedFileOptions {
@@ -80,6 +96,9 @@ export interface WriteNumberedFileOptions {
   // Structured side data written to a `<base>.meta.json` sidecar. Omitted (or
   // empty) means no sidecar is created.
   meta?: NumberedFileMeta;
+  // Files written into a sibling `<base>.attachments/` directory. Omitted or
+  // empty means no directory is created.
+  attachments?: AttachmentInput[];
 }
 
 export async function writeNumberedFile(
@@ -100,6 +119,13 @@ export async function writeNumberedFile(
     if (options.meta && !isEmptyMeta(options.meta)) {
       await Bun.write(join(dir, metaFilenameFor(filename)), JSON.stringify(options.meta, null, 2));
     }
+    if (options.attachments && options.attachments.length > 0) {
+      const attachDir = join(dir, attachmentsDirNameFor(filename));
+      await mkdir(attachDir, { recursive: true });
+      for (const att of options.attachments) {
+        await Bun.write(join(attachDir, att.name), att.bytes);
+      }
+    }
     return { filename, seq, path };
   });
 }
@@ -109,6 +135,9 @@ export interface ReadFile {
   content: string;
   path: string;
   meta?: NumberedFileMeta;
+  // Sorted names found inside the sibling `<base>.attachments/` dir, omitted
+  // when the dir is missing or empty.
+  attachments?: string[];
 }
 
 async function readMetaSidecar(dir: string, mdFilename: string): Promise<NumberedFileMeta | undefined> {
@@ -120,6 +149,19 @@ async function readMetaSidecar(dir: string, mdFilename: string): Promise<Numbere
   } catch {
     return undefined;  // corrupt sidecar: treat as absent
   }
+}
+
+async function listAttachments(dir: string, mdFilename: string): Promise<string[] | undefined> {
+  const attachDir = join(dir, attachmentsDirNameFor(mdFilename));
+  let entries: string[];
+  try {
+    entries = await readdir(attachDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+  if (entries.length === 0) return undefined;
+  return entries.sort();
 }
 
 export async function listAllFiles(dir: string): Promise<ReadFile[]> {
@@ -136,7 +178,11 @@ export async function listAllFiles(dir: string): Promise<ReadFile[]> {
     const path = join(dir, filename);
     const content = await Bun.file(path).text();
     const meta = await readMetaSidecar(dir, filename);
-    result.push(meta ? { filename, content, path, meta } : { filename, content, path });
+    const attachments = await listAttachments(dir, filename);
+    const entry: ReadFile = { filename, content, path };
+    if (meta) entry.meta = meta;
+    if (attachments) entry.attachments = attachments;
+    result.push(entry);
   }
   return result;
 }
@@ -146,15 +192,20 @@ export async function moveFile(srcPath: string, destPath: string): Promise<void>
   await rename(srcPath, destPath);
 }
 
-// Moves a numbered file and, if present, its `.meta.json` sidecar from one
-// directory to another (keeping the filename). Used to archive a drained
-// feedback inbox into the "read" directory.
+// Moves a numbered file together with its `.meta.json` sidecar and
+// `.attachments/` directory (when each is present), keeping the filename. Used
+// to archive a drained feedback inbox into the "read" directory.
 export async function moveNumberedFile(srcDir: string, destDir: string, filename: string): Promise<void> {
   await mkdir(destDir, { recursive: true });
   await rename(join(srcDir, filename), join(destDir, filename));
   const metaName = metaFilenameFor(filename);
   if (await Bun.file(join(srcDir, metaName)).exists()) {
     await rename(join(srcDir, metaName), join(destDir, metaName));
+  }
+  const attachDirName = attachmentsDirNameFor(filename);
+  const srcAttachDir = join(srcDir, attachDirName);
+  if (existsSync(srcAttachDir)) {
+    await rename(srcAttachDir, join(destDir, attachDirName));
   }
 }
 

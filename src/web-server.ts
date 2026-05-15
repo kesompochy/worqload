@@ -22,7 +22,7 @@ import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktre
 import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
 import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
-import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead, attachmentsDirNameFor } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
@@ -153,6 +153,10 @@ export interface ServerContext {
   lastClaudeActivityAt: Map<string, number>;
   // Watchdog threshold. Zero (or negative) disables the watchdog entirely.
   wakeWatchdogMs: number;
+  // Per-attachment byte cap and per-feedback-message attachment count cap.
+  // Attachments above either limit are rejected with 400 at the POST.
+  feedbackAttachmentMaxBytes: number;
+  feedbackAttachmentMaxCount: number;
 }
 
 export interface StartServerOptions {
@@ -176,6 +180,10 @@ export interface StartServerOptions {
   // window, it tears down the host and re-spawns with --continue. Zero or
   // negative disables it. Production default is 90s; tests override down.
   wakeWatchdogMs?: number;
+  // Per-attachment byte cap and per-feedback-message attachment count cap.
+  // Tests use these to keep size-limit assertions cheap.
+  feedbackAttachmentMaxBytes?: number;
+  feedbackAttachmentMaxCount?: number;
 }
 
 export interface ShutdownOptions {
@@ -593,6 +601,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     wsClients: new Set(),
     lastClaudeActivityAt: new Map(),
     wakeWatchdogMs: opts.wakeWatchdogMs ?? DEFAULT_WAKE_WATCHDOG_MS,
+    feedbackAttachmentMaxBytes: opts.feedbackAttachmentMaxBytes ?? DEFAULT_FEEDBACK_ATTACHMENT_MAX_BYTES,
+    feedbackAttachmentMaxCount: opts.feedbackAttachmentMaxCount ?? DEFAULT_FEEDBACK_ATTACHMENT_MAX_COUNT,
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -665,6 +675,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
+  defineRoute("GET",  "/sessions/:id/feedback/:filename/attachments/:name", getFeedbackAttachment),
   defineRoute("POST", "/sessions/:id/escalations/:filename/resolve", postEscalationResolve),
   defineRoute("GET",  "/sessions/:id/reports", getReports),
   defineRoute("POST", "/sessions/:id/reports/read-all", postReportsReadAll),
@@ -1059,11 +1070,57 @@ async function getFeedbackHistory(_req: Request, ctx: ServerContext, params: Rec
     const inbox = await listAllFiles(feedbackInboxDirFor(ctx, meta.id));
     const read = await listAllFiles(feedbackReadDirFor(ctx, meta.id));
     const all = [
-      ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const, anchor: f.meta?.anchor })),
-      ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const, anchor: f.meta?.anchor })),
+      ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const, anchor: f.meta?.anchor, attachments: f.attachments })),
+      ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const, anchor: f.meta?.anchor, attachments: f.attachments })),
     ];
     all.sort((a, b) => b.filename.localeCompare(a.filename));
     return json({ messages: all });
+  });
+}
+
+// Whether `name` is a single safe filename (no path separators, no `..`, no
+// hidden-prefix). Used to gate the attachment GET against arbitrary disk reads.
+function isSafeAttachmentName(name: string): boolean {
+  if (name === "" || name === "." || name === "..") return false;
+  if (name.startsWith(".")) return false;
+  if (name.includes("/") || name.includes("\\")) return false;
+  return true;
+}
+
+const ATTACHMENT_CONTENT_TYPE_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+function attachmentContentTypeFor(name: string): string {
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return "application/octet-stream";
+  const ext = name.slice(dot + 1).toLowerCase();
+  return ATTACHMENT_CONTENT_TYPE_BY_EXT[ext] ?? "application/octet-stream";
+}
+
+async function getFeedbackAttachment(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    const name = decodeURIComponent(params.name);
+    if (!isSafeAttachmentName(filename) || !filename.endsWith(".md")) {
+      return json({ error: "invalid feedback filename" }, 400);
+    }
+    if (!isSafeAttachmentName(name)) {
+      return json({ error: "invalid attachment name" }, 400);
+    }
+    const dirName = attachmentsDirNameFor(filename);
+    for (const base of [feedbackInboxDirFor(ctx, meta.id), feedbackReadDirFor(ctx, meta.id)]) {
+      const path = join(base, dirName, name);
+      const file = Bun.file(path);
+      if (await file.exists()) {
+        return new Response(file, { headers: { "content-type": attachmentContentTypeFor(name) } });
+      }
+    }
+    return json({ error: "attachment not found" }, 404);
   });
 }
 
@@ -1532,18 +1589,96 @@ interface FeedbackBody {
   slug?: string;
 }
 
+// Production defaults for image-attached feedback. The browser caps as well so
+// the human gets immediate "too big" feedback; the server cap is the
+// authoritative limit and rejects anything that slips past.
+const DEFAULT_FEEDBACK_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const DEFAULT_FEEDBACK_ATTACHMENT_MAX_COUNT = 5;
+const ALLOWED_ATTACHMENT_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+const ATTACHMENT_NAME_BAD_CHARS = /[^a-zA-Z0-9._-]+/g;
+const ATTACHMENT_NAME_EDGE_DASHES = /^-+|-+$/g;
+
+// Strip directory parts (browsers occasionally include them) and reduce the
+// basename to a safe set. The numeric prefix is added by the caller.
+function sanitiseAttachmentBasename(rawName: string): string {
+  const base = rawName.split(/[\\/]/).pop() ?? "";
+  const cleaned = base.replace(ATTACHMENT_NAME_BAD_CHARS, "-").replace(ATTACHMENT_NAME_EDGE_DASHES, "");
+  return cleaned === "" ? "attachment" : cleaned;
+}
+
+interface ParsedFeedbackRequest {
+  body: FeedbackBody;
+  attachments: { name: string; bytes: Uint8Array }[];
+}
+
+// A 400 response to send back to the human, paired with no body so the caller
+// can `return` it directly.
+type FeedbackParseError = { error: string };
+
+async function parseFeedbackRequest(req: Request, ctx: ServerContext): Promise<ParsedFeedbackRequest | FeedbackParseError> {
+  const contentType = req.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+    const body = (await req.json().catch(() => null)) as FeedbackBody | null;
+    if (!body || typeof body.content !== "string" || body.content === "") {
+      return { error: "content is required" };
+    }
+    return { body, attachments: [] };
+  }
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (err) {
+    return { error: `invalid multipart body: ${(err as Error).message}` };
+  }
+  const payloadField = form.get("payload");
+  if (typeof payloadField !== "string" || payloadField === "") {
+    return { error: "payload field is required" };
+  }
+  let body: FeedbackBody;
+  try {
+    body = JSON.parse(payloadField) as FeedbackBody;
+  } catch (err) {
+    return { error: `payload is not valid JSON: ${(err as Error).message}` };
+  }
+  if (!body || typeof body.content !== "string" || body.content === "") {
+    return { error: "content is required" };
+  }
+
+  const files = form.getAll("attachment").filter((v): v is File => v instanceof File);
+  if (files.length > ctx.feedbackAttachmentMaxCount) {
+    return { error: `too many attachments (max ${ctx.feedbackAttachmentMaxCount})` };
+  }
+  const attachments: { name: string; bytes: Uint8Array }[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const mime = (file.type ?? "").toLowerCase();
+    if (!ALLOWED_ATTACHMENT_MIMES.has(mime)) {
+      return { error: `attachment ${i + 1} is not an allowed image type (${mime || "unknown"})` };
+    }
+    if (file.size > ctx.feedbackAttachmentMaxBytes) {
+      return { error: `attachment ${i + 1} exceeds the size cap (${file.size} > ${ctx.feedbackAttachmentMaxBytes} bytes)` };
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const prefix = String(i + 1).padStart(2, "0");
+    attachments.push({ name: `${prefix}-${sanitiseAttachmentBasename(file.name)}`, bytes });
+  }
+  return { body, attachments };
+}
+
 async function postFeedback(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const body = (await req.json()) as FeedbackBody;
-    if (!body || typeof body.content !== "string" || body.content === "") {
-      return json({ error: "content is required" }, 400);
-    }
+    const parsed = await parseFeedbackRequest(req, ctx);
+    if ("error" in parsed) return json(parsed, 400);
+    const { body, attachments } = parsed;
     const slug = body.slug ?? "feedback";
     const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
     if (body.anchor) {
       const { path, lineStart, lineEnd } = body.anchor;
       writeOpts.meta = { anchor: { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart } };
     }
+    if (attachments.length > 0) writeOpts.attachments = attachments;
     const inbox = feedbackInboxDirFor(ctx, meta.id);
     const file = await writeNumberedFile(inbox, slug, body.content, writeOpts);
     await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
@@ -1816,6 +1951,16 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
   });
 }
 
+// Trailing section appended to a feedback message body whenever the human
+// attached one or more images. Phrased so the agent reaches for the Read tool
+// (which renders images as multimodal input) without guessing at intent.
+function formatAttachmentsSection(absolutePaths: string[]): string {
+  const noun = absolutePaths.length === 1 ? "1 image" : `${absolutePaths.length} images`;
+  const lead = `The human attached ${noun}. Read each with the Read tool:`;
+  const lines = absolutePaths.map(p => `- ${p}`).join("\n");
+  return `## Attachments\n\n${lead}\n\n${lines}`;
+}
+
 async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const inbox = feedbackInboxDirFor(ctx, meta.id);
@@ -1828,12 +1973,19 @@ async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Re
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_fetched", payload: { count: messages.length } });
     }
     return json({
-      messages: messages.map(m => ({
-        filename: m.filename,
+      messages: messages.map(m => {
         // The anchor lives in a sidecar now; re-derive the `Re:` line the agent
         // is told to expect at the head of an anchored message.
-        content: m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content,
-      })),
+        let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
+        if (m.attachments && m.attachments.length > 0) {
+          // Paths must reflect the post-move location so the agent's Read finds
+          // the files; the listing was taken from inbox a moment ago.
+          const dir = join(readDir, attachmentsDirNameFor(m.filename));
+          const paths = m.attachments.map(name => join(dir, name));
+          content = `${content}\n\n${formatAttachmentsSection(paths)}`;
+        }
+        return { filename: m.filename, content };
+      }),
     });
   });
 }

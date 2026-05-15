@@ -337,6 +337,211 @@ test("feedback inbox round trip: POST writes, GET fetches and moves to read", as
   expect(readdirSync(readDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md", "002-fix-this.meta.json"]);
 });
 
+test("worqload feedback fetch surfaces absolute attachment paths in the message body", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "see the screenshot", slug: "look" }));
+  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
+  form.append("attachment", new File([png], "design.webp", { type: "image/webp" }));
+  await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+
+  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  expect(fetched.messages).toHaveLength(1);
+  const expectedDir = join(ctx.sessionsDir, sid, "feedback", "read", "001-look.attachments");
+  expect(fetched.messages[0].content).toBe(
+    `see the screenshot\n\n## Attachments\n\n` +
+    `The human attached 2 images. Read each with the Read tool:\n\n` +
+    `- ${expectedDir}/01-shot.png\n` +
+    `- ${expectedDir}/02-design.webp`,
+  );
+});
+
+test("worqload feedback fetch leaves the body untouched when no attachments are present", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "plain message", slug: "plain" });
+
+  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  expect(fetched.messages[0].content).toBe("plain message");
+});
+
+test("GET /sessions/:id/feedback exposes attachments on each message", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "look", slug: "look" }));
+  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
+  await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+
+  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then(r => r.json());
+  expect(history.messages).toHaveLength(1);
+  expect(history.messages[0].filename).toBe("001-look.md");
+  expect(history.messages[0].attachments).toEqual(["01-shot.png"]);
+});
+
+test("GET /sessions/:id/feedback/:filename/attachments/:name streams the bytes", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "see", slug: "see" }));
+  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
+  await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/001-see.md/attachments/01-shot.png`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toBe("image/png");
+  const body = new Uint8Array(await res.arrayBuffer());
+  expect(body).toEqual(png);
+});
+
+test("GET attachments endpoint also serves files moved into the read dir", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "see", slug: "see" }));
+  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
+  await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+
+  // Drain the inbox into read.
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/001-see.md/attachments/01-shot.png`);
+  expect(res.status).toBe(200);
+  expect(new Uint8Array(await res.arrayBuffer())).toEqual(png);
+});
+
+test("GET attachments endpoint rejects path traversal in :name", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/001-x.md/attachments/${encodeURIComponent("../../../etc/passwd")}`);
+  expect(res.status).toBe(400);
+});
+
+test("POST /feedback (multipart) stores attachments in a sibling .attachments dir", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "see screenshot", slug: "look" }));
+  form.append("attachment", new File([png], "Screenshot 2026-05-15.png", { type: "image/png" }));
+  form.append("attachment", new File([png], "design.webp", { type: "image/webp" }));
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.filename).toBe("001-look.md");
+
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  expect(readFileSync(join(inboxDir, "001-look.md"), "utf8")).toBe("see screenshot");
+  const attachDir = join(inboxDir, "001-look.attachments");
+  expect(readdirSync(attachDir).sort()).toEqual(["01-Screenshot-2026-05-15.png", "02-design.webp"]);
+  expect(new Uint8Array(readFileSync(join(attachDir, "01-Screenshot-2026-05-15.png")))).toEqual(png);
+});
+
+test("POST /feedback (multipart) rejects non-image MIME types", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "evil pdf", slug: "bad" }));
+  form.append("attachment", new File([new Uint8Array([1, 2, 3])], "doc.pdf", { type: "application/pdf" }));
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toMatch(/image/);
+});
+
+test("POST /feedback (multipart) rejects an attachment exceeding the size cap", async () => {
+  const repoDir = makeTmpDir("repo");
+  // Tiny cap so the test stays fast and the body doesn't allocate megabytes.
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    feedbackAttachmentMaxBytes: 16,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const oversized = new Uint8Array(32);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "too big", slug: "big" }));
+  form.append("attachment", new File([oversized], "big.png", { type: "image/png" }));
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toMatch(/size/i);
+});
+
+test("POST /feedback (multipart) rejects more attachments than the per-request cap", async () => {
+  const repoDir = makeTmpDir("repo");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    feedbackAttachmentMaxCount: 2,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "many", slug: "many" }));
+  form.append("attachment", new File([png], "a.png", { type: "image/png" }));
+  form.append("attachment", new File([png], "b.png", { type: "image/png" }));
+  form.append("attachment", new File([png], "c.png", { type: "image/png" }));
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toMatch(/too many/i);
+});
+
 test("POST /feedback appends a wake_sent entry to host.log", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
