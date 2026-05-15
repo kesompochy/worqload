@@ -470,6 +470,40 @@ async function runWakeWatchdog(
   }
 }
 
+// Respawn the host for a session that says "running" but has no attached
+// client. The wake watchdog handles the "client present but claude is silent"
+// case; this handles its peer — "wake fired but ctx.clients is empty," which
+// otherwise would silently swallow the wake. Best-effort kill of any leftover
+// host PID, then `resume: true` so the new host's RESUME_KICKOFF makes the
+// agent fetch whatever the caller just queued into the inbox.
+async function respawnMissingClient(
+  ctx: ServerContext,
+  meta: SessionMeta,
+  reason: string,
+): Promise<void> {
+  appendHostLog(ctx, meta.id, "auto_resume_missing_client", {
+    hostPid: meta.hostPid,
+    reason,
+    status: meta.status,
+  });
+  await appendAndBroadcast(ctx, meta.id, {
+    kind: "session_auto_resumed",
+    payload: { reason },
+  });
+  if (meta.hostPid !== undefined) {
+    // Fire-and-forget: if the PID is dead, kill returns ESRCH and we ignore it.
+    try { process.kill(meta.hostPid, "SIGTERM"); } catch {}
+  }
+  const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = meta;
+  const resumed: SessionMeta = { ...rest, status: "running" };
+  await saveSessionMeta(resumed, ctx.sessionsDir);
+  try {
+    await spawnAndAttachHost(ctx, resumed, { resume: true });
+  } catch (err) {
+    appendHostLog(ctx, meta.id, "auto_resume_failed", { error: String(err) });
+  }
+}
+
 async function spawnAndAttachHost(
   ctx: ServerContext,
   meta: SessionMeta,
@@ -1698,6 +1732,11 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     if (att) {
       att.client.send("[wake] check feedback inbox").catch(() => {});
       scheduleWakeWatchdog(ctx, meta.id, att);
+    } else if (!isTerminal(meta.status)) {
+      // The session is non-terminal but we have no live attachment — the wake
+      // would otherwise be silently dropped. Respawn so the agent picks up the
+      // feedback we just queued.
+      await respawnMissingClient(ctx, meta, "feedback_no_client");
     }
 
     return json({ filename: file.filename, seq: file.seq });
