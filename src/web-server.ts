@@ -153,6 +153,10 @@ export interface ServerContext {
   lastClaudeActivityAt: Map<string, number>;
   // Watchdog threshold. Zero (or negative) disables the watchdog entirely.
   wakeWatchdogMs: number;
+  // Per-attachment byte cap and per-feedback-message attachment count cap.
+  // Attachments above either limit are rejected with 400 at the POST.
+  feedbackAttachmentMaxBytes: number;
+  feedbackAttachmentMaxCount: number;
 }
 
 export interface StartServerOptions {
@@ -176,6 +180,10 @@ export interface StartServerOptions {
   // window, it tears down the host and re-spawns with --continue. Zero or
   // negative disables it. Production default is 90s; tests override down.
   wakeWatchdogMs?: number;
+  // Per-attachment byte cap and per-feedback-message attachment count cap.
+  // Tests use these to keep size-limit assertions cheap.
+  feedbackAttachmentMaxBytes?: number;
+  feedbackAttachmentMaxCount?: number;
 }
 
 export interface ShutdownOptions {
@@ -593,6 +601,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     wsClients: new Set(),
     lastClaudeActivityAt: new Map(),
     wakeWatchdogMs: opts.wakeWatchdogMs ?? DEFAULT_WAKE_WATCHDOG_MS,
+    feedbackAttachmentMaxBytes: opts.feedbackAttachmentMaxBytes ?? DEFAULT_FEEDBACK_ATTACHMENT_MAX_BYTES,
+    feedbackAttachmentMaxCount: opts.feedbackAttachmentMaxCount ?? DEFAULT_FEEDBACK_ATTACHMENT_MAX_COUNT,
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -1532,18 +1542,96 @@ interface FeedbackBody {
   slug?: string;
 }
 
+// Production defaults for image-attached feedback. The browser caps as well so
+// the human gets immediate "too big" feedback; the server cap is the
+// authoritative limit and rejects anything that slips past.
+const DEFAULT_FEEDBACK_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const DEFAULT_FEEDBACK_ATTACHMENT_MAX_COUNT = 5;
+const ALLOWED_ATTACHMENT_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+const ATTACHMENT_NAME_BAD_CHARS = /[^a-zA-Z0-9._-]+/g;
+const ATTACHMENT_NAME_EDGE_DASHES = /^-+|-+$/g;
+
+// Strip directory parts (browsers occasionally include them) and reduce the
+// basename to a safe set. The numeric prefix is added by the caller.
+function sanitiseAttachmentBasename(rawName: string): string {
+  const base = rawName.split(/[\\/]/).pop() ?? "";
+  const cleaned = base.replace(ATTACHMENT_NAME_BAD_CHARS, "-").replace(ATTACHMENT_NAME_EDGE_DASHES, "");
+  return cleaned === "" ? "attachment" : cleaned;
+}
+
+interface ParsedFeedbackRequest {
+  body: FeedbackBody;
+  attachments: { name: string; bytes: Uint8Array }[];
+}
+
+// A 400 response to send back to the human, paired with no body so the caller
+// can `return` it directly.
+type FeedbackParseError = { error: string };
+
+async function parseFeedbackRequest(req: Request, ctx: ServerContext): Promise<ParsedFeedbackRequest | FeedbackParseError> {
+  const contentType = req.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+    const body = (await req.json().catch(() => null)) as FeedbackBody | null;
+    if (!body || typeof body.content !== "string" || body.content === "") {
+      return { error: "content is required" };
+    }
+    return { body, attachments: [] };
+  }
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (err) {
+    return { error: `invalid multipart body: ${(err as Error).message}` };
+  }
+  const payloadField = form.get("payload");
+  if (typeof payloadField !== "string" || payloadField === "") {
+    return { error: "payload field is required" };
+  }
+  let body: FeedbackBody;
+  try {
+    body = JSON.parse(payloadField) as FeedbackBody;
+  } catch (err) {
+    return { error: `payload is not valid JSON: ${(err as Error).message}` };
+  }
+  if (!body || typeof body.content !== "string" || body.content === "") {
+    return { error: "content is required" };
+  }
+
+  const files = form.getAll("attachment").filter((v): v is File => v instanceof File);
+  if (files.length > ctx.feedbackAttachmentMaxCount) {
+    return { error: `too many attachments (max ${ctx.feedbackAttachmentMaxCount})` };
+  }
+  const attachments: { name: string; bytes: Uint8Array }[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const mime = (file.type ?? "").toLowerCase();
+    if (!ALLOWED_ATTACHMENT_MIMES.has(mime)) {
+      return { error: `attachment ${i + 1} is not an allowed image type (${mime || "unknown"})` };
+    }
+    if (file.size > ctx.feedbackAttachmentMaxBytes) {
+      return { error: `attachment ${i + 1} exceeds the size cap (${file.size} > ${ctx.feedbackAttachmentMaxBytes} bytes)` };
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const prefix = String(i + 1).padStart(2, "0");
+    attachments.push({ name: `${prefix}-${sanitiseAttachmentBasename(file.name)}`, bytes });
+  }
+  return { body, attachments };
+}
+
 async function postFeedback(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const body = (await req.json()) as FeedbackBody;
-    if (!body || typeof body.content !== "string" || body.content === "") {
-      return json({ error: "content is required" }, 400);
-    }
+    const parsed = await parseFeedbackRequest(req, ctx);
+    if ("error" in parsed) return json(parsed, 400);
+    const { body, attachments } = parsed;
     const slug = body.slug ?? "feedback";
     const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
     if (body.anchor) {
       const { path, lineStart, lineEnd } = body.anchor;
       writeOpts.meta = { anchor: { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart } };
     }
+    if (attachments.length > 0) writeOpts.attachments = attachments;
     const inbox = feedbackInboxDirFor(ctx, meta.id);
     const file = await writeNumberedFile(inbox, slug, body.content, writeOpts);
     await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
