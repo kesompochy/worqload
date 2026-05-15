@@ -22,24 +22,29 @@ textarea, input { background: var(--bg); border: 1px solid var(--border); paddin
 textarea { resize: vertical; min-height: 4rem; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
 .layout { display: grid; grid-template-columns: 320px 1fr; height: 100%; }
-.layout.sidebar-hidden { grid-template-columns: 0 1fr; }
+/* When the sidebar is hidden, the .sidebar aside drops out of flow
+   (display:none) and a thin strip on column 1 holds the » re-entry button.
+   The strip stays in the grid so .detail keeps its column-2 placement —
+   without the explicit grid-column anchors below, a sole remaining
+   .detail would auto-place into column 1 (and lose its width). */
+.layout.sidebar-hidden { grid-template-columns: 36px 1fr; }
 .layout.sidebar-hidden .sidebar { display: none; }
-.sidebar { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.sidebar { grid-column: 1; border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.detail { grid-column: 2; }
 .btn-hide-sidebar { padding: .35rem .45rem; line-height: 1; font-size: 14px; color: var(--text-dim); }
 .btn-hide-sidebar:hover { color: var(--text); }
-/* Re-entry point when the sidebar is hidden: a small pinned chevron at the
-   top-left of the viewport. Hidden by default; .layout.sidebar-hidden flips
-   it on. position:fixed keeps it reachable regardless of whether a session
-   is selected (so the detail header — which only renders with a selection —
-   isn't a prerequisite for un-collapsing). */
+/* Re-entry point when the sidebar is hidden: a column-1 strip with a »
+   button at the top. Hidden in normal layout; .layout.sidebar-hidden flips
+   it on. Keeping it as a grid item (rather than position:fixed) means the
+   detail content begins to its right with no overlap. */
 .show-sidebar-btn {
-  display: none; position: fixed; top: .5rem; left: .5rem; z-index: 40;
-  padding: .25rem .55rem; line-height: 1; font-size: 14px;
-  background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim);
-  border-radius: 4px; cursor: pointer;
+  display: none; grid-column: 1; align-self: start;
+  width: 100%; padding: .5rem 0; line-height: 1; font-size: 14px;
+  background: var(--panel); border: 0; border-right: 1px solid var(--border);
+  color: var(--text-dim); cursor: pointer;
 }
-.show-sidebar-btn:hover { color: var(--text); background: #232b3a; }
-.layout.sidebar-hidden .show-sidebar-btn { display: inline-flex; }
+.show-sidebar-btn:hover { color: var(--text); background: var(--panel-2); }
+.layout.sidebar-hidden .show-sidebar-btn { display: block; }
 .sidebar-header { padding: .75rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .sidebar-actions { display: flex; align-items: center; gap: .4rem; flex: 0 0 auto; }
 .load-average { flex: 0 0 auto; padding: .25rem .4rem; border: 1px solid var(--border); border-radius: 3px; background: var(--panel-2); color: var(--text); font-size: 12px; line-height: 1; white-space: nowrap; cursor: default; }
