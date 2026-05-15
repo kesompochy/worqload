@@ -100,6 +100,16 @@
             💬 {entry.feedback.filename}{#if entry.feedback.anchor}<span class="fb-preview-anchor"> · {anchorLabel(entry.feedback.anchor)}</span>{/if}
           </button>
           <div class="md fb-preview-md">{@html renderMarkdown(entry.feedback.content)}</div>
+          {#if entry.feedback.attachments && entry.feedback.attachments.length > 0}
+            <div class="feedback-attachment-strip">
+              {#each entry.feedback.attachments as name (name)}
+                {@const url = `/sessions/${appState.selected}/feedback/${encodeURIComponent(entry.feedback.filename)}/attachments/${encodeURIComponent(name)}`}
+                <a href={url} target="_blank" rel="noopener" title={name}>
+                  <img class="feedback-attachment-thumb" src={url} alt={name} />
+                </a>
+              {/each}
+            </div>
+          {/if}
           {#each entry.replies as reply (reply.filename)}
             <button type="button" class="fb-preview-title fb-preview-reply" onclick={() => openReportCard(reply.filename)} title="Reports タブで開く">
               ↩ {reply.filename}

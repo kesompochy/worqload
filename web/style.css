@@ -376,6 +376,18 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
   padding: 0 .2rem; cursor: pointer; font-size: 14px; line-height: 1;
 }
 .attachment-chip button:hover { color: var(--text); }
+/* Image attachments rendered inline on a sent feedback (Feedback tab body and
+   the anchored-feedback popover). Each thumbnail links to the raw image so a
+   click opens the full-size version in a new tab. */
+.feedback-attachment-strip { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .55rem; }
+.feedback-attachment-thumb {
+  max-width: 220px; max-height: 160px; object-fit: cover;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+  display: block;
+}
+.fb-preview-md + .feedback-attachment-strip,
+.feedback-attachment-strip { margin-top: .35rem; }
+.feedback-attachment-strip a { text-decoration: none; line-height: 0; }
 /* Floating composer pinned next to the anchored line/block — the cursor stays
    near where it just clicked. No container chrome (the chip, textarea, and
    button each carry their own); a drop shadow on the textarea lifts the
