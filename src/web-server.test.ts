@@ -337,6 +337,77 @@ test("feedback inbox round trip: POST writes, GET fetches and moves to read", as
   expect(readdirSync(readDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md", "002-fix-this.meta.json"]);
 });
 
+test("GET /sessions/:id/feedback exposes attachments on each message", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "look", slug: "look" }));
+  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
+  await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+
+  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then(r => r.json());
+  expect(history.messages).toHaveLength(1);
+  expect(history.messages[0].filename).toBe("001-look.md");
+  expect(history.messages[0].attachments).toEqual(["01-shot.png"]);
+});
+
+test("GET /sessions/:id/feedback/:filename/attachments/:name streams the bytes", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "see", slug: "see" }));
+  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
+  await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/001-see.md/attachments/01-shot.png`);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toBe("image/png");
+  const body = new Uint8Array(await res.arrayBuffer());
+  expect(body).toEqual(png);
+});
+
+test("GET attachments endpoint also serves files moved into the read dir", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "see", slug: "see" }));
+  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
+  await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+
+  // Drain the inbox into read.
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/001-see.md/attachments/01-shot.png`);
+  expect(res.status).toBe(200);
+  expect(new Uint8Array(await res.arrayBuffer())).toEqual(png);
+});
+
+test("GET attachments endpoint rejects path traversal in :name", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/001-x.md/attachments/${encodeURIComponent("../../../etc/passwd")}`);
+  expect(res.status).toBe(400);
+});
+
 test("POST /feedback (multipart) stores attachments in a sibling .attachments dir", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

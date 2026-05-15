@@ -22,7 +22,7 @@ import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktre
 import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
 import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
-import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead, attachmentsDirNameFor } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
@@ -675,6 +675,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
+  defineRoute("GET",  "/sessions/:id/feedback/:filename/attachments/:name", getFeedbackAttachment),
   defineRoute("POST", "/sessions/:id/escalations/:filename/resolve", postEscalationResolve),
   defineRoute("GET",  "/sessions/:id/reports", getReports),
   defineRoute("POST", "/sessions/:id/reports/read-all", postReportsReadAll),
@@ -1069,11 +1070,57 @@ async function getFeedbackHistory(_req: Request, ctx: ServerContext, params: Rec
     const inbox = await listAllFiles(feedbackInboxDirFor(ctx, meta.id));
     const read = await listAllFiles(feedbackReadDirFor(ctx, meta.id));
     const all = [
-      ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const, anchor: f.meta?.anchor })),
-      ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const, anchor: f.meta?.anchor })),
+      ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const, anchor: f.meta?.anchor, attachments: f.attachments })),
+      ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const, anchor: f.meta?.anchor, attachments: f.attachments })),
     ];
     all.sort((a, b) => b.filename.localeCompare(a.filename));
     return json({ messages: all });
+  });
+}
+
+// Whether `name` is a single safe filename (no path separators, no `..`, no
+// hidden-prefix). Used to gate the attachment GET against arbitrary disk reads.
+function isSafeAttachmentName(name: string): boolean {
+  if (name === "" || name === "." || name === "..") return false;
+  if (name.startsWith(".")) return false;
+  if (name.includes("/") || name.includes("\\")) return false;
+  return true;
+}
+
+const ATTACHMENT_CONTENT_TYPE_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+function attachmentContentTypeFor(name: string): string {
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return "application/octet-stream";
+  const ext = name.slice(dot + 1).toLowerCase();
+  return ATTACHMENT_CONTENT_TYPE_BY_EXT[ext] ?? "application/octet-stream";
+}
+
+async function getFeedbackAttachment(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    const name = decodeURIComponent(params.name);
+    if (!isSafeAttachmentName(filename) || !filename.endsWith(".md")) {
+      return json({ error: "invalid feedback filename" }, 400);
+    }
+    if (!isSafeAttachmentName(name)) {
+      return json({ error: "invalid attachment name" }, 400);
+    }
+    const dirName = attachmentsDirNameFor(filename);
+    for (const base of [feedbackInboxDirFor(ctx, meta.id), feedbackReadDirFor(ctx, meta.id)]) {
+      const path = join(base, dirName, name);
+      const file = Bun.file(path);
+      if (await file.exists()) {
+        return new Response(file, { headers: { "content-type": attachmentContentTypeFor(name) } });
+      }
+    }
+    return json({ error: "attachment not found" }, 404);
   });
 }
 
