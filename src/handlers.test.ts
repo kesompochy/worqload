@@ -25,7 +25,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -103,6 +103,54 @@ test("selectSession drops a line anchor left over from the previously viewed ses
   await selectSession("session-b");
 
   expect(state.selected).toBe("session-b");
+  expect(state.anchor).toBeNull();
+});
+
+// Fake DOM target whose `closest(sel)` resolves only the selectors listed in
+// `ancestors`. Mirrors the way real `Element#closest` walks the DOM tree.
+function targetIn(ancestors: string[]) {
+  return {
+    closest: (sel: string) => (ancestors.includes(sel) ? {} : null),
+  };
+}
+
+test("onAnchorOutsideClick clears the anchor when the click target sits outside the floating composer", () => {
+  state.anchor = { path: "lib/app.js", lineStart: 1, lineEnd: 1 };
+
+  onAnchorOutsideClick(targetIn([]));
+
+  expect(state.anchor).toBeNull();
+});
+
+test("onAnchorOutsideClick keeps the anchor when the click is inside the floating composer", () => {
+  state.anchor = { path: "lib/app.js", lineStart: 1, lineEnd: 1 };
+
+  onAnchorOutsideClick(targetIn([".anchored-composer"]));
+
+  expect(state.anchor).toEqual({ path: "lib/app.js", lineStart: 1, lineEnd: 1 });
+});
+
+test("onAnchorOutsideClick keeps the anchor when the click is inside the bottom composer (the chip's permalink/×, or the bottom textarea, share the same anchor)", () => {
+  state.anchor = { path: "lib/app.js", lineStart: 1, lineEnd: 1 };
+
+  onAnchorOutsideClick(targetIn([".feedback-form"]));
+
+  expect(state.anchor).not.toBeNull();
+});
+
+test("onAnchorOutsideClick keeps the anchor when the click lands on another anchorable line (the line click handler will reset it)", () => {
+  state.anchor = { path: "lib/app.js", lineStart: 1, lineEnd: 1 };
+
+  onAnchorOutsideClick(targetIn(["[data-anchor-line]"]));
+
+  expect(state.anchor).not.toBeNull();
+});
+
+test("onAnchorOutsideClick is a no-op when there is no anchor", () => {
+  state.anchor = null;
+
+  onAnchorOutsideClick(targetIn([]));
+
   expect(state.anchor).toBeNull();
 });
 

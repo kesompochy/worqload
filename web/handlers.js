@@ -494,6 +494,20 @@ export function clearAnchor() {
   state.anchor = null;
 }
 
+// Window-level mousedown handler the floating anchored composer installs while
+// an anchor is live: a click outside the composer dismisses it. The bottom
+// fixed composer (`.feedback-form`) shares the same anchor, so clicks there are
+// preserved; clicks on an anchorable line are preserved too because the line
+// click handler will reset the anchor to the new target.
+export function onAnchorOutsideClick(target) {
+  if (!state.anchor) return;
+  if (!target || typeof target.closest !== "function") return;
+  if (target.closest(".anchored-composer")) return;
+  if (target.closest(".feedback-form")) return;
+  if (target.closest("[data-anchor-line]")) return;
+  state.anchor = null;
+}
+
 // Copy a GitHub-style permalink to a worktree file (and optional line range) at
 // the session's current HEAD. The server resolves the remote and sha; we just
 // surface the URL or the reason it couldn't. The link only works once the
