@@ -24,3 +24,11 @@ test("protocol prefix defines the revision step as drafting to .worqload-draft/ 
   expect(prefix.toLowerCase()).toContain("write");
   expect(prefix.toLowerCase()).toContain("read");
 });
+
+test("protocol prefix tells the agent to lead with the conclusion to respect the human's time", () => {
+  const prefix = buildProtocolPrefix("main");
+  // 結論ファースト. The human reads many reports; burying the point under
+  // preamble steals time they cannot get back. Name the principle explicitly
+  // so the agent cannot rationalize a long lead-in.
+  expect(prefix.toLowerCase()).toContain("lead with the conclusion");
+});
