@@ -167,6 +167,18 @@ export function onDetailBodyClick(e) {
     navigator.clipboard.writeText(path).then(() => toast("path copied")).catch(() => toast("copy failed"));
     return;
   }
+  // The markdown-rendered fenced-code wrapper's copy button (renderMarkdown wraps
+  // `<pre><code>` in `.md-code-block`). The raw code is read from the inner
+  // `<code>` element's textContent — escapeHtml affects the source string, not
+  // what the DOM hands back via textContent.
+  const copyCodeBtn = e.target.closest("[data-copy-code]");
+  if (copyCodeBtn) {
+    e.stopPropagation();
+    const codeEl = copyCodeBtn.closest(".md-code-block")?.querySelector("pre code");
+    const text = codeEl ? codeEl.textContent : "";
+    navigator.clipboard.writeText(text).then(() => toast("code copied")).catch(() => toast("copy failed"));
+    return;
+  }
   // Lives inside the click-to-collapse diff-file header too — same as copy-path,
   // stop before the data-diff-toggle branch folds the file.
   const permalinkBtn = e.target.closest("[data-permalink-path]");

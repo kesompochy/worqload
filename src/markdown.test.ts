@@ -24,6 +24,21 @@ test("fenced code block preserves content and lang class", () => {
   expect(html).toContain(`<code class="language-ts">const a = 1;</code>`);
 });
 
+test("fenced code block is wrapped with a copy button", () => {
+  const html = renderMarkdown("```\nhello\n```\n");
+  // The wrapper hosts the absolutely-positioned copy button (the button reads
+  // the raw text off the `<pre><code>` inside the same wrapper at click time).
+  expect(html).toMatch(/<div class="md-code-block">[\s\S]*<pre[\s\S]*<\/pre>[\s\S]*<button[\s\S]*data-copy-code[\s\S]*<\/button>[\s\S]*<\/div>/);
+});
+
+test("the copy button sits outside the anchored pre so block anchors stay on pre", () => {
+  const html = renderMarkdown("```\nx\n```\n", { anchorPath: "./r.md" });
+  expect(html).toMatch(/<pre [^>]*data-anchor-line/);
+  // Bare button — anchor attributes don't leak onto it.
+  expect(html).toMatch(/<button [^>]*data-copy-code[^>]*>[^<]*<\/button>/);
+  expect(html).not.toMatch(/<button [^>]*data-anchor-line/);
+});
+
 test("inline code is preserved verbatim", () => {
   const html = renderMarkdown("use `foo` here");
   expect(html).toContain("<code>foo</code>");

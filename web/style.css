@@ -251,6 +251,13 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .md code { background: rgba(110,118,129,.18); padding: .05rem .35rem; border-radius: 3px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
 .md pre { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .55rem .75rem; overflow-x: auto; }
 .md pre code { background: transparent; padding: 0; border-radius: 0; font-size: 12.5px; white-space: pre; display: block; }
+/* Fenced code block wrapper: hosts the absolutely-positioned copy button at the
+   top-right. The button matches `.copy-path-btn`'s hover-to-reveal behavior so
+   it stays out of the way until the user reaches for it. */
+.md-code-block { position: relative; }
+.md-code-copy-btn { position: absolute; top: .3rem; right: .35rem; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; padding: .1rem .35rem; font-size: 12px; line-height: 1; border-radius: 3px; opacity: 0; transition: opacity .12s ease, color .08s ease; }
+.md-code-block:hover .md-code-copy-btn { opacity: .7; }
+.md-code-copy-btn:hover { opacity: 1; color: var(--accent); }
 .md a { color: var(--accent); }
 .md [data-anchor-line] { cursor: pointer; border-radius: 3px; padding-left: .25rem; padding-right: .25rem; margin-left: -.25rem; margin-right: -.25rem; transition: background-color .08s ease; }
 .md [data-anchor-line]:hover { background: rgba(88,166,255,.08); }
