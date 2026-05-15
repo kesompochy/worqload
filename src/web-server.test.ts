@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync } from "fs";
-import { startServer } from "./web-server";
+import { startServer, type HostLauncher } from "./web-server";
 import { agentEndpointPath, hostLogPath, loadSessionMeta } from "./session";
 import { appendEvent, readEvents } from "./event-log";
 import {
@@ -582,6 +582,55 @@ test("POST /feedback appends a wake_sent entry to host.log", async () => {
   expect(wake?.filename).toBe("001-wake.md");
   expect(wake?.hasClient).toBe(true);
   expect(wake?.status).toBe("running");
+});
+
+// Regression: previously the wake was logged-and-dropped when `ctx.clients` had
+// no entry for the session — the file got into the inbox but the agent never
+// learned about it until something else (a future fetch, a manual resume) ran.
+// Now we treat the missing attachment the same way the wake watchdog treats a
+// silent claude: respawn the host with `resume: true` so RESUME_KICKOFF makes
+// the new agent pick up the feedback inbox immediately.
+test("POST /feedback respawns the host when the session is running but the client attachment is gone", async () => {
+  const repoDir = makeTmpDir("repo");
+  const launches: { resume: boolean }[] = [];
+  const baseLauncher = inProcessHostLauncher();
+  const countingLauncher: HostLauncher = async (req) => {
+    launches.push({ resume: req.resume });
+    return baseLauncher(req);
+  };
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: countingLauncher,
+    worktreeOps: fakeWorktreeOps(),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  expect(launches).toEqual([{ resume: false }]);
+
+  // Simulate the unix socket between serve and host dropping without the host
+  // process dying: the entry in ctx.clients disappears, but meta.status stays
+  // "running". This is the shape host.log entries with `hasClient: false`
+  // record post-hoc.
+  ctx.clients.delete(sid);
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
+
+  // Respawn fired with resume=true. The new host's RESUME_KICKOFF will make
+  // claude `worqload feedback fetch`, picking up the message we just wrote.
+  expect(launches).toEqual([{ resume: false }, { resume: true }]);
+  expect(ctx.clients.has(sid)).toBe(true);
+
+  const meta = await loadSessionMeta(sid, ctx.sessionsDir);
+  expect(meta?.status).toBe("running");
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.some(e => e.kind === "session_auto_resumed")).toBe(true);
 });
 
 test("wake watchdog auto-resumes when no claude_* event arrives within the threshold", async () => {
