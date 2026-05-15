@@ -50,6 +50,11 @@ export interface TmuxDriverDeps {
   resolveTranscriptDir: (cwd: string) => string;
   // Polling cadence for the transcript-tail and has-session loops.
   pollIntervalMs: number;
+  // How long to wait for claude to create the transcript JSONL after spawn.
+  // claude only writes the file once it processes its first message, so 30s
+  // gives plenty of slack for slow startup. If exceeded, the driver resolves
+  // exited with non-zero.
+  transcriptWaitTimeoutMs: number;
 }
 
 export const defaultTmuxDeps: TmuxDriverDeps = {
@@ -71,6 +76,7 @@ export const defaultTmuxDeps: TmuxDriverDeps = {
     return join(homedir(), ".claude", "projects", encodeCwdForClaudeProjects(cwd));
   },
   pollIntervalMs: 250,
+  transcriptWaitTimeoutMs: 30_000,
 };
 
 function sleep(ms: number): Promise<void> {
@@ -102,16 +108,18 @@ async function snapshotJsonl(dir: string): Promise<JsonlSnapshot> {
   return { files };
 }
 
-// Returns the absolute path of the first jsonl in `dir` that is either new
-// (absent from `before`) or touched after spawn. Polls until it finds one or
-// hits the deadline.
+// Polls `dir` until a jsonl that is either new (absent from `before`) or
+// touched after spawn appears. Returns null if `shouldStop` becomes true or
+// the deadline elapses — the caller distinguishes the two via its own state.
 async function waitForTranscript(
   dir: string,
   before: JsonlSnapshot,
   deps: TmuxDriverDeps,
   deadlineMs: number,
-): Promise<string> {
+  shouldStop: () => boolean,
+): Promise<string | null> {
   while (Date.now() < deadlineMs) {
+    if (shouldStop()) return null;
     const now = await snapshotJsonl(dir);
     for (const [name, mtime] of now.files) {
       const prev = before.files.get(name);
@@ -121,7 +129,7 @@ async function waitForTranscript(
     }
     await sleep(deps.pollIntervalMs);
   }
-  throw new Error(`timed out waiting for claude transcript under ${dir}`);
+  return null;
 }
 
 // Tails `path` line-by-line until `shouldStop()` returns true. Each non-empty
@@ -199,9 +207,6 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
     }
     opts.log("tmux_spawned", { sessionName, cwd, argv: opts.spawnCommand });
 
-    const transcriptPath = await waitForTranscript(transcriptDir, before, deps, Date.now() + 30_000);
-    opts.log("transcript_attached", { transcriptPath });
-
     let exitedFlag = false;
     let exitResolve!: (code: number) => void;
     const exitedPromise = new Promise<number>((r) => {
@@ -213,14 +218,39 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
       exitResolve(code);
     };
 
-    const tailTask = tailJsonl(
-      transcriptPath,
-      deps,
-      () => exitedFlag,
-      async (parsed) => {
-        await opts.onEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
-      },
-    );
+    // Run transcript discovery and tailing in the background. Blocking the
+    // factory here would delay runHost's unix listen() past serve's connect
+    // timeout (claude only writes the transcript after it processes its
+    // first message, which we cannot send until the factory has returned).
+    // If discovery never finds a transcript the session is effectively dead,
+    // so resolve exited with a non-zero code so runHost marks it as crashed.
+    const tailTask = (async () => {
+      const transcriptPath = await waitForTranscript(
+        transcriptDir,
+        before,
+        deps,
+        Date.now() + deps.transcriptWaitTimeoutMs,
+        () => exitedFlag,
+      );
+      if (transcriptPath === null) {
+        // Either kill arrived first (exitedFlag set) or we hit the deadline.
+        // Only the latter is a failure worth surfacing.
+        if (!exitedFlag) {
+          opts.log("transcript_discovery_failed", { transcriptDir, timeoutMs: deps.transcriptWaitTimeoutMs });
+          resolveExit(1);
+        }
+        return;
+      }
+      opts.log("transcript_attached", { transcriptPath });
+      await tailJsonl(
+        transcriptPath,
+        deps,
+        () => exitedFlag,
+        async (parsed) => {
+          await opts.onEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
+        },
+      );
+    })();
 
     // Background loop: notice when the tmux session disappears (claude
     // exited on its own).

@@ -137,13 +137,23 @@ export async function runHost(opts: HostOptions): Promise<number> {
     }
   };
 
-  const driver = await (opts.driver ?? claudePipeDriver)({
-    cwd: meta.worktreePath || undefined,
-    env: claudeEnv,
-    spawnCommand: opts.spawnCommand,
-    onEvent: (event) => writeEvent(event),
-    log,
-  });
+  let driver;
+  try {
+    driver = await (opts.driver ?? claudePipeDriver)({
+      cwd: meta.worktreePath || undefined,
+      env: claudeEnv,
+      spawnCommand: opts.spawnCommand,
+      onEvent: (event) => writeEvent(event),
+      log,
+    });
+  } catch (err) {
+    // The detached host's stderr is /dev/null, so an exception thrown from
+    // the driver factory would otherwise vanish — serve would only see the
+    // socket connect timeout. Persist the cause so the human can diagnose
+    // from host.log.
+    log("driver_factory_failed", { error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
 
   const handleServeMessage = async (msg: ServeToHostMessage): Promise<void> => {
     switch (msg.type) {

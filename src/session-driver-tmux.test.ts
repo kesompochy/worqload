@@ -55,6 +55,7 @@ function makeFakeTmuxDeps(transcriptDir: string): { deps: TmuxDriverDeps; state:
       tmuxRun,
       resolveTranscriptDir: () => transcriptDir,
       pollIntervalMs: 10,
+      transcriptWaitTimeoutMs: 5_000,
     },
     state,
   };
@@ -93,40 +94,28 @@ test("tmuxSessionName derives a short, prefixed session name", () => {
 test("driver spawns a detached tmux session with the cwd, env, and spawnCommand", async () => {
   const cwd = makeTmpDir("tmux-driver-cwd");
   const transcriptDir = makeTmpDir("tmux-driver-tx");
-  // Pre-create a transcript so the driver doesn't block looking for one.
-  await writeFile(join(transcriptDir, "preexisting.jsonl"), "");
   const { deps, state } = makeFakeTmuxDeps(transcriptDir);
 
   const events: SessionDriverEvent[] = [];
   const launch = await buildLaunchOptions(cwd, events);
   const factory = makeTmuxClaudeDriverFactory(deps);
 
-  // Make a fresh transcript file appear *after* spawn so the wait loop returns.
-  const driverPromise = factory(launch);
-  setTimeout(() => {
-    void writeFile(join(transcriptDir, "new-session.jsonl"), "");
-  }, 30);
-  const driver = await driverPromise;
+  const driver = await factory(launch);
 
   // The first call must be new-session with the expected basic shape.
   const spawnCall = state.calls[0];
   if (!spawnCall) throw new Error("no tmux call recorded");
   expect(spawnCall.args[0]).toBe("new-session");
   expect(spawnCall.args).toContain("-d");
-  // Session naming
   const nameIdx = spawnCall.args.indexOf("-s");
   expect(nameIdx).toBeGreaterThan(-1);
   expect(spawnCall.args[nameIdx + 1]).toBe("worqload-abcd1234");
-  // cwd
   const cwdIdx = spawnCall.args.indexOf("-c");
   expect(spawnCall.args[cwdIdx + 1]).toBe(cwd);
-  // env: WORQLOAD_SESSION_ID must be forwarded via `-e`
   expect(spawnCall.args.some((a) => a === "WORQLOAD_SESSION_ID=abcd1234-0000-0000-0000-000000000000")).toBe(true);
-  // The spawn argv tail is the claude command.
   const lastTwo = spawnCall.args.slice(-2);
   expect(lastTwo).toEqual(["claude", "--dangerously-skip-permissions"]);
 
-  // Cleanup.
   driver.kill("SIGTERM");
   await driver.exited;
 });
@@ -134,17 +123,12 @@ test("driver spawns a detached tmux session with the cwd, env, and spawnCommand"
 test("driver sends a user message via load-buffer, paste-buffer, Enter", async () => {
   const cwd = makeTmpDir("tmux-driver-cwd");
   const transcriptDir = makeTmpDir("tmux-driver-tx");
-  await writeFile(join(transcriptDir, "active.jsonl"), "");
   const { deps, state } = makeFakeTmuxDeps(transcriptDir);
 
   const events: SessionDriverEvent[] = [];
   const launch = await buildLaunchOptions(cwd, events);
   const factory = makeTmuxClaudeDriverFactory(deps);
 
-  // Trigger a new transcript so spawn finishes.
-  setTimeout(() => {
-    void writeFile(join(transcriptDir, "fresh.jsonl"), "");
-  }, 30);
   const driver = await factory(launch);
 
   const initialCallCount = state.calls.length;
@@ -169,16 +153,12 @@ test("driver sends a user message via load-buffer, paste-buffer, Enter", async (
 test("kill issues tmux kill-session and resolves exited", async () => {
   const cwd = makeTmpDir("tmux-driver-cwd");
   const transcriptDir = makeTmpDir("tmux-driver-tx");
-  await writeFile(join(transcriptDir, "active.jsonl"), "");
   const { deps, state } = makeFakeTmuxDeps(transcriptDir);
 
   const events: SessionDriverEvent[] = [];
   const launch = await buildLaunchOptions(cwd, events);
   const factory = makeTmuxClaudeDriverFactory(deps);
 
-  setTimeout(() => {
-    void writeFile(join(transcriptDir, "fresh.jsonl"), "");
-  }, 30);
   const driver = await factory(launch);
 
   driver.kill("SIGTERM");
@@ -198,12 +178,12 @@ test("driver tails the freshly-created transcript jsonl and emits classified eve
   const launch = await buildLaunchOptions(cwd, events);
   const factory = makeTmuxClaudeDriverFactory(deps);
 
-  // After spawn, write the new transcript with one assistant message.
-  const newTranscript = join(transcriptDir, "new.jsonl");
-  setTimeout(() => {
-    void writeFile(newTranscript, `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}\n`);
-  }, 30);
   const driver = await factory(launch);
+
+  // After the factory has returned (and the background tail is polling),
+  // create the new transcript that claude would have written.
+  const newTranscript = join(transcriptDir, "new.jsonl");
+  await writeFile(newTranscript, `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}\n`);
 
   // Wait for the first event to arrive.
   const deadline = Date.now() + 2000;
@@ -229,6 +209,51 @@ test("driver tails the freshly-created transcript jsonl and emits classified eve
   await driver.exited;
 });
 
+test("driver factory returns immediately after tmux new-session, without waiting for the transcript file", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  // Intentionally do NOT create any transcript file. With the factory's
+  // discovery moved to a background task, this must not block.
+  const { deps } = makeFakeTmuxDeps(transcriptDir);
+
+  const events: SessionDriverEvent[] = [];
+  const launch = await buildLaunchOptions(cwd, events);
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const t0 = Date.now();
+  const driver = await factory(launch);
+  const elapsed = Date.now() - t0;
+  // 200ms is well under the test's 5s transcriptWaitTimeoutMs but well over
+  // what the synchronous spawn portion needs.
+  expect(elapsed).toBeLessThan(200);
+
+  // kill short-circuits the background transcript wait so the test finishes
+  // promptly instead of waiting out transcriptWaitTimeoutMs.
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
+test("if no transcript file ever appears, exited resolves with non-zero and the failure is logged", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  const { deps } = makeFakeTmuxDeps(transcriptDir);
+  // Shrink the timeout for this test so we don't wait the default budget.
+  deps.transcriptWaitTimeoutMs = 80;
+
+  const events: SessionDriverEvent[] = [];
+  const launch = await buildLaunchOptions(cwd, events);
+  const logEntries: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+  launch.log = (event, fields) => {
+    logEntries.push({ event, fields });
+  };
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const driver = await factory(launch);
+  const code = await driver.exited;
+  expect(code).toBe(1);
+  expect(logEntries.some((e) => e.event === "transcript_discovery_failed")).toBe(true);
+});
+
 test("exited resolves when tmux has-session returns non-zero (claude exited externally)", async () => {
   const cwd = makeTmpDir("tmux-driver-cwd");
   const transcriptDir = makeTmpDir("tmux-driver-tx");
@@ -241,9 +266,6 @@ test("exited resolves when tmux has-session returns non-zero (claude exited exte
   const launch = await buildLaunchOptions(cwd, events);
   const factory = makeTmuxClaudeDriverFactory(deps);
 
-  setTimeout(() => {
-    void writeFile(join(transcriptDir, "fresh.jsonl"), "");
-  }, 30);
   const driver = await factory(launch);
 
   const code = await driver.exited;
