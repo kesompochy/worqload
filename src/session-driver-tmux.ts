@@ -1,22 +1,26 @@
 // PoC: a SessionDriver implementation that drives interactive `claude` from
 // inside a tmux session, so the work draws from interactive usage limits
 // instead of the Agent SDK credit pool that `claude -p` will consume starting
-// 2026-06-15. Output is read from claude's own JSONL transcript under
+// 2026-06-15. Output is read from claude's own JSONL transcript at
 // ~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl (same structure as
-// stream-json), input is delivered via tmux's paste-buffer + Enter.
+// stream-json); the first message is delivered as claude's positional
+// `[prompt]` argument (so we don't have to race claude's TUI initialization
+// with tmux paste-buffer), and subsequent messages go via bracketed paste.
 //
 // Not yet a drop-in replacement for the pipe driver. Known PoC limits:
 //   - Permission prompts. Assumes --dangerously-skip-permissions is honored
 //     in the TUI. If a prompt does appear the session stalls until manually
 //     dismissed.
-//   - Transcript path discovery. Polls the projects dir for the new jsonl
-//     after spawn; on resume this picks whatever is newest, which is right
-//     only if no concurrent run is touching the same cwd.
+//   - Subsequent-message timing. Paste-into-TUI only works once claude's
+//     bracketed-paste mode is active; that's true by the time the first
+//     message has been processed (because we know claude's TUI is running),
+//     but the first user message is sent as a CLI arg specifically to dodge
+//     the startup race.
 //   - Backpressure. The tail loop reads the entire file each tick. Fine for
 //     a PoC but not for very long sessions.
 
-import { readdir, readFile, stat } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyClaudeLine } from "./claude-stream";
 import type {
@@ -58,6 +62,9 @@ export interface TmuxDriverDeps {
   // gives plenty of slack for slow startup. If exceeded, the driver resolves
   // exited with non-zero.
   transcriptWaitTimeoutMs: number;
+  // Directory for the temp file we write the bootstrap text to before passing
+  // it to claude via $(cat <file>). Defaults to the OS tmpdir.
+  bootstrapFileDir: string;
 }
 
 export const defaultTmuxDeps: TmuxDriverDeps = {
@@ -84,64 +91,16 @@ export const defaultTmuxDeps: TmuxDriverDeps = {
   },
   pollIntervalMs: 250,
   transcriptWaitTimeoutMs: 30_000,
+  bootstrapFileDir: tmpdir(),
 };
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-interface JsonlSnapshot {
-  // filename → mtimeMs
-  files: Map<string, number>;
-}
-
-async function snapshotJsonl(dir: string): Promise<JsonlSnapshot> {
-  const files = new Map<string, number>();
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return { files };
-  }
-  for (const name of names) {
-    if (!name.endsWith(".jsonl")) continue;
-    try {
-      const st = await stat(join(dir, name));
-      files.set(name, st.mtimeMs);
-    } catch {
-      // race with deletion
-    }
-  }
-  return { files };
-}
-
-// Polls `dir` until a jsonl that is either new (absent from `before`) or
-// touched after spawn appears. Returns null if `shouldStop` becomes true or
-// the deadline elapses — the caller distinguishes the two via its own state.
-async function waitForTranscript(
-  dir: string,
-  before: JsonlSnapshot,
-  deps: TmuxDriverDeps,
-  deadlineMs: number,
-  shouldStop: () => boolean,
-): Promise<string | null> {
-  while (Date.now() < deadlineMs) {
-    if (shouldStop()) return null;
-    const now = await snapshotJsonl(dir);
-    for (const [name, mtime] of now.files) {
-      const prev = before.files.get(name);
-      if (prev === undefined || mtime > prev) {
-        return join(dir, name);
-      }
-    }
-    await sleep(deps.pollIntervalMs);
-  }
-  return null;
-}
-
-// Tails `path` line-by-line until `shouldStop()` returns true. Each non-empty
-// line is JSON-parsed and forwarded; unparseable lines are wrapped in a
-// `{ type: "raw", raw: <line> }` envelope so they still appear downstream.
+// Wait for `path` to appear, then tail it line-by-line. Each non-empty line is
+// JSON-parsed and forwarded; unparseable lines are wrapped in a `{ type: "raw",
+// raw: <line> }` envelope so they still appear downstream.
 async function tailJsonl(
   path: string,
   deps: TmuxDriverDeps,
@@ -185,37 +144,35 @@ function nextPasteBufferName(sessionName: string): string {
   return `${sessionName}-${pasteBufferCounter}`;
 }
 
+// Wrap a string for safe use inside a single-quoted shell argument. We use
+// single quotes everywhere we construct shell commands to avoid metachar
+// interpretation; the only escape needed is closing the quote, slipping in a
+// backslash-escaped single quote, and reopening.
+function shellSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
 export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriverFactory {
   return async (opts: SessionDriverLaunchOptions): Promise<SessionDriver> => {
     const sessionId = opts.env.WORQLOAD_SESSION_ID ?? `anon-${Date.now()}`;
     const sessionName = tmuxSessionName(sessionId);
     const cwd = opts.cwd ?? process.cwd();
     const transcriptDir = deps.resolveTranscriptDir(cwd);
+    // Claude writes the transcript at <projects>/<encoded-cwd>/<session-id>.jsonl.
+    // By passing --session-id (fresh) or --resume <id> (resume) we control
+    // the filename, so the tail can attach to a known path instead of
+    // polling for "the new jsonl that appears" — which was unreliable when
+    // multiple sessions raced in the same cwd.
+    const transcriptPath = join(transcriptDir, `${sessionId}.jsonl`);
 
-    // Snapshot the projects dir so we can pick out claude's new transcript
-    // file once it appears.
-    const before = await snapshotJsonl(transcriptDir);
-
-    // Forward each env var into the tmux session.
-    const envArgs: string[] = [];
-    for (const [k, v] of Object.entries(opts.env)) {
-      envArgs.push("-e", `${k}=${v}`);
-    }
-
-    const spawnRes = await deps.tmuxRun([
-      "new-session", "-d",
-      "-s", sessionName,
-      "-c", cwd,
-      ...envArgs,
-      ...opts.spawnCommand,
-    ]);
-    if (spawnRes.exitCode !== 0) {
-      throw new Error(
-        `tmux new-session failed (exit ${spawnRes.exitCode}). Re-run manually to see tmux's stderr: ` +
-        `tmux new-session -d -s ${sessionName} -c ${cwd} -- ${opts.spawnCommand.join(" ")}`,
-      );
-    }
-    opts.log("tmux_spawned", { sessionName, cwd, argv: opts.spawnCommand });
+    // Detect resume mode by inspecting spawnCommand. web-server's host
+    // launcher appends `--continue` when serve is resuming a session. We
+    // strip it here because claude's interactive mode only honors --resume
+    // <uuid> for explicit resumption; --continue is just "the most recent in
+    // this cwd", which is wrong if multiple worqload sessions ever share a
+    // cwd.
+    const isResume = opts.spawnCommand.includes("--continue");
+    const cleanedSpawn = opts.spawnCommand.filter((a) => a !== "--continue");
 
     let exitedFlag = false;
     let exitResolve!: (code: number) => void;
@@ -228,27 +185,29 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
       exitResolve(code);
     };
 
-    // Run transcript discovery and tailing in the background. Blocking the
-    // factory here would delay runHost's unix listen() past serve's connect
-    // timeout (claude only writes the transcript after it processes its
-    // first message, which we cannot send until the factory has returned).
-    // If discovery never finds a transcript the session is effectively dead,
-    // so resolve exited with a non-zero code so runHost marks it as crashed.
+    let spawned = false;
+
+    // Start the tail in the background. It waits for `transcriptPath` to
+    // appear (which only happens once claude is actually running and has
+    // processed the first message), then streams JSONL entries through
+    // classifyClaudeLine.
     const tailTask = (async () => {
-      const transcriptPath = await waitForTranscript(
-        transcriptDir,
-        before,
-        deps,
-        Date.now() + deps.transcriptWaitTimeoutMs,
-        () => exitedFlag,
-      );
-      if (transcriptPath === null) {
-        // Either kill arrived first (exitedFlag set) or we hit the deadline.
-        // Only the latter is a failure worth surfacing.
-        if (!exitedFlag) {
-          opts.log("transcript_discovery_failed", { transcriptDir, timeoutMs: deps.transcriptWaitTimeoutMs });
-          resolveExit(1);
+      const deadline = Date.now() + deps.transcriptWaitTimeoutMs;
+      while (!exitedFlag && Date.now() < deadline) {
+        try {
+          await readFile(transcriptPath, { encoding: "utf8" });
+          break;
+        } catch {
+          await sleep(deps.pollIntervalMs);
         }
+      }
+      if (exitedFlag) return;
+      if (Date.now() >= deadline) {
+        opts.log("transcript_discovery_failed", {
+          transcriptPath,
+          timeoutMs: deps.transcriptWaitTimeoutMs,
+        });
+        resolveExit(1);
         return;
       }
       opts.log("transcript_attached", { transcriptPath });
@@ -262,12 +221,14 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
       );
     })();
 
-    // Background loop: notice when the tmux session disappears (claude
-    // exited on its own).
+    // Background loop: notice when the tmux session disappears (claude exited
+    // on its own). Idle until the tmux session is actually spawned by the
+    // first sendUserMessage("bootstrap") call.
     void (async () => {
       while (!exitedFlag) {
         await sleep(deps.pollIntervalMs);
         if (exitedFlag) break;
+        if (!spawned) continue;
         const res = await deps.tmuxRun(["has-session", "-t", sessionName]);
         if (res.exitCode !== 0) {
           opts.log("tmux_session_gone", { sessionName });
@@ -277,20 +238,82 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
       }
     })();
 
+    // Spawns the tmux session with claude inside, using the bootstrap text
+    // as claude's positional [prompt] argument. The prompt goes through a
+    // temp file + $(cat <file>) so multi-line content and shell metachars
+    // pass through cleanly regardless of size.
+    let bootstrapFile: string | null = null;
+    const spawnTmux = async (bootstrap: string): Promise<void> => {
+      await mkdir(transcriptDir, { recursive: true });
+      bootstrapFile = join(deps.bootstrapFileDir, `worqload-bootstrap-${sessionId}.txt`);
+      await writeFile(bootstrapFile, bootstrap);
+
+      // Forward each env var into the tmux session.
+      const envArgs: string[] = [];
+      for (const [k, v] of Object.entries(opts.env)) {
+        envArgs.push("-e", `${k}=${v}`);
+      }
+
+      // For fresh sessions: --session-id <uuid> pins the transcript filename.
+      // For resume: --resume <uuid> tells claude to reopen that exact session
+      // from the existing transcript.
+      const idFlag = isResume ? "--resume" : "--session-id";
+      const claudeArgvWithId = [...cleanedSpawn, idFlag, sessionId];
+
+      // Build the shell command. Wrap each fragment in single quotes; pass
+      // the prompt via $(cat <file>) inside a single double-quoted positional
+      // so newlines and shell metachars in the bootstrap pass through
+      // unevaluated.
+      const claudePrefix = claudeArgvWithId.map(shellSingleQuote).join(" ");
+      const fileArg = shellSingleQuote(bootstrapFile);
+      const shellCmd = `exec ${claudePrefix} "$(cat ${fileArg})"`;
+
+      const spawnRes = await deps.tmuxRun([
+        "new-session", "-d",
+        "-s", sessionName,
+        "-c", cwd,
+        ...envArgs,
+        "bash", "-c", shellCmd,
+      ]);
+      if (spawnRes.exitCode !== 0) {
+        throw new Error(
+          `tmux new-session failed (exit ${spawnRes.exitCode}). To reproduce: ` +
+          `tmux new-session -d -s ${sessionName} -c ${cwd} -- bash -c ${shellSingleQuote(shellCmd)}`,
+        );
+      }
+      spawned = true;
+      opts.log("tmux_spawned", {
+        sessionName,
+        cwd,
+        claudeArgv: claudeArgvWithId,
+        bootstrapBytes: bootstrap.length,
+        resume: isResume,
+      });
+    };
+
+    const sendViaPaste = async (text: string): Promise<void> => {
+      const bufName = nextPasteBufferName(sessionName);
+      await deps.tmuxRun(["load-buffer", "-b", bufName, "-"], { stdin: text });
+      // -p wraps the paste in bracketed-paste escape codes; claude's TUI
+      // collapses it into a paste placeholder and Enter submits the whole
+      // thing as one message. Required for any message after the first one
+      // (the first arrives via the CLI prompt arg, not via paste).
+      await deps.tmuxRun(["paste-buffer", "-d", "-p", "-b", bufName, "-t", sessionName]);
+      await deps.tmuxRun(["send-keys", "-t", sessionName, "Enter"]);
+    };
+
     return {
       async sendUserMessage(text, source) {
-        const bufName = nextPasteBufferName(sessionName);
         const start = Date.now();
         try {
-          await deps.tmuxRun(["load-buffer", "-b", bufName, "-"], { stdin: text });
-          // -p wraps the paste in bracketed-paste escape codes. Without it,
-          // newlines in the buffer are delivered as literal newline keys —
-          // claude's TUI then treats each one as "insert newline in the
-          // composer" and the message never gets submitted. With -p, claude
-          // sees a single paste event, collapses it into a placeholder, and
-          // a subsequent Enter submits the whole thing.
-          await deps.tmuxRun(["paste-buffer", "-d", "-p", "-b", bufName, "-t", sessionName]);
-          await deps.tmuxRun(["send-keys", "-t", sessionName, "Enter"]);
+          if (!spawned) {
+            // First message: spawn tmux with claude already configured to
+            // process this text as its first prompt. Both bootstrap and the
+            // resume kickoff arrive here.
+            await spawnTmux(text);
+          } else {
+            await sendViaPaste(text);
+          }
           opts.log("tmux_send_user_message", {
             ok: true,
             durationMs: Date.now() - start,
@@ -302,7 +325,7 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
             ok: false,
             durationMs: Date.now() - start,
             source,
-            error: String(err),
+            error: err instanceof Error ? err.message : String(err),
           });
         }
       },
@@ -318,6 +341,14 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
       exited: (async () => {
         const code = await exitedPromise;
         await tailTask;
+        // Clean up the bootstrap file we wrote (best-effort).
+        if (bootstrapFile) {
+          try {
+            await unlink(bootstrapFile);
+          } catch {
+            // already gone, or never created
+          }
+        }
         return code;
       })(),
     };
