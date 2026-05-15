@@ -283,7 +283,13 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
         const start = Date.now();
         try {
           await deps.tmuxRun(["load-buffer", "-b", bufName, "-"], { stdin: text });
-          await deps.tmuxRun(["paste-buffer", "-d", "-b", bufName, "-t", sessionName]);
+          // -p wraps the paste in bracketed-paste escape codes. Without it,
+          // newlines in the buffer are delivered as literal newline keys —
+          // claude's TUI then treats each one as "insert newline in the
+          // composer" and the message never gets submitted. With -p, claude
+          // sees a single paste event, collapses it into a placeholder, and
+          // a subsequent Enter submits the whole thing.
+          await deps.tmuxRun(["paste-buffer", "-d", "-p", "-b", bufName, "-t", sessionName]);
           await deps.tmuxRun(["send-keys", "-t", sessionName, "Enter"]);
           opts.log("tmux_send_user_message", {
             ok: true,
