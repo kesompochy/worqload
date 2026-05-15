@@ -1230,15 +1230,21 @@ export async function onResume(id = state.selected) {
   // event (which arrives between the POST and the post-await clear that used
   // to live here) can't leave the user's prompt sitting in the textarea.
   if (input) input.value = "";
+  let resumePosted = false;
   try {
     await api("POST", `/sessions/${id}/resume`, prompt ? { prompt } : {});
+    // Past this point the resume has committed server-side; refreshDetail /
+    // fetchSessions are best-effort UI follow-ups whose failures must NOT drag
+    // the captured prompt back into the textarea — that's the bug the human
+    // saw as "Resume したのに textarea が残る".
+    resumePosted = true;
     toast("session resumed");
     if (id === state.selected) await refreshDetail();
     await fetchSessions();
   } catch (e) {
-    // Restore only if the user hasn't typed something new while the request
-    // was in flight, so their long prompt isn't lost on a transient failure.
-    if (input && input.value === "") input.value = prompt;
+    // Restore only if the POST itself failed AND the user hasn't typed
+    // something new while the request was in flight.
+    if (!resumePosted && input && input.value === "") input.value = prompt;
     toast(`failed: ${e.message}`);
   }
 }
@@ -1254,14 +1260,18 @@ export async function onStopAndResume(id = state.selected) {
   // emits two WS events back-to-back, so the window for a re-render between
   // capture and clear is wider.
   if (input) input.value = "";
+  let resumePosted = false;
   try {
     await api("POST", `/sessions/${id}/stop`, {});
     await api("POST", `/sessions/${id}/resume`, prompt ? { prompt } : {});
+    // Resume POST committed; subsequent refresh/fetch failures must not put
+    // the prompt back into the textarea (see onResume for the rationale).
+    resumePosted = true;
     toast("session stopped & resumed");
     if (id === state.selected) await refreshDetail();
     await fetchSessions();
   } catch (e) {
-    if (input && input.value === "") input.value = prompt;
+    if (!resumePosted && input && input.value === "") input.value = prompt;
     toast(`failed: ${e.message}`);
   }
 }
