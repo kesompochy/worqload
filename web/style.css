@@ -354,6 +354,40 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .event-section-code { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .45rem .65rem; font-size: 12.5px; max-height: 26em; overflow: auto; }
 .feedback-form { border-top: 1px solid var(--border); padding: .9rem 1.1rem; background: var(--panel); }
 .feedback-form textarea { margin-bottom: .5rem; }
+/* Image attachments staged in either composer. The chips strip sits above the
+   textarea; in the floating anchored composer it sits above its own textarea
+   too. Each chip is a thumbnail + truncated filename + remove button. */
+.attachment-chips { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .45rem; }
+.attachment-chip {
+  display: inline-flex; align-items: center; gap: .35rem;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: .15rem .35rem; font-size: 11.5px;
+}
+.attachment-chip img {
+  width: 28px; height: 28px; object-fit: cover; border-radius: 2px;
+  background: var(--bg);
+}
+.attachment-chip-name {
+  max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-dim); font-family: ui-monospace, monospace;
+}
+.attachment-chip button {
+  background: transparent; border: none; color: var(--text-dim);
+  padding: 0 .2rem; cursor: pointer; font-size: 14px; line-height: 1;
+}
+.attachment-chip button:hover { color: var(--text); }
+/* Image attachments rendered inline on a sent feedback (Feedback tab body and
+   the anchored-feedback popover). Each thumbnail links to the raw image so a
+   click opens the full-size version in a new tab. */
+.feedback-attachment-strip { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .55rem; }
+.feedback-attachment-thumb {
+  max-width: 220px; max-height: 160px; object-fit: cover;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+  display: block;
+}
+.fb-preview-md + .feedback-attachment-strip,
+.feedback-attachment-strip { margin-top: .35rem; }
+.feedback-attachment-strip a { text-decoration: none; line-height: 0; }
 /* Floating composer pinned next to the anchored line/block — the cursor stays
    near where it just clicked. No container chrome (the chip, textarea, and
    button each carry their own); a drop shadow on the textarea lifts the

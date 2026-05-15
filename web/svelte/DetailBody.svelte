@@ -210,6 +210,16 @@
             </div>
             <div class="report-body">
               <div class="md">{@html renderMarkdown(f.content)}</div>
+              {#if f.attachments && f.attachments.length > 0}
+                <div class="feedback-attachment-strip">
+                  {#each f.attachments as name (name)}
+                    {@const url = `/sessions/${appState.selected}/feedback/${encodeURIComponent(f.filename)}/attachments/${encodeURIComponent(name)}`}
+                    <a href={url} target="_blank" rel="noopener" title={name}>
+                      <img class="feedback-attachment-thumb" src={url} alt={name} />
+                    </a>
+                  {/each}
+                </div>
+              {/if}
             </div>
           </article>
         {/each}

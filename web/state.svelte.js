@@ -64,7 +64,20 @@ export const state = $state({
   renamingSessionId: null,   // session id whose sidebar title is being edited inline (null = none)
   pendingScrollTo: null,     // { anchor: {path,lineStart,lineEnd} } | { article: {attr,value} } | null: a "go to" request DetailBody resolves (scroll + flash) after the next render
   feedbackPinAt: null,       // { key, filenames: [...], x, y } | null: hovering a left-striped anchored line/block surfaces a 💬 pin at the cursor; hovering that pin opens the preview popover (see handlers.js / AnchoredFeedbackOverlay.svelte)
+  // Image attachments the human pasted/dropped into either composer (the bottom
+  // one and the floating anchored one share this list — only one composer
+  // submits, and that submit takes whatever is queued). Each entry is
+  // { id, file, previewUrl }; previewUrl is a blob: URL the chip <img> renders
+  // and is revoked when the entry is removed or cleared.
+  pendingAttachments: [],
 });
+
+// Image-only attachments, capped per-file and per-feedback. The browser does
+// the same checks on the server (see web-server.ts); these are the immediate
+// feedback the human gets while staging chips.
+export const ATTACHMENT_ALLOWED_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+export const ATTACHMENT_MAX_COUNT = 5;
 
 // Diff view: the server hands us full file context; we collapse unchanged
 // stretches by default and let the human expand them GitHub-style.
