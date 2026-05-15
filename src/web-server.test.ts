@@ -337,6 +337,44 @@ test("feedback inbox round trip: POST writes, GET fetches and moves to read", as
   expect(readdirSync(readDir).sort()).toEqual(["001-say-hi.md", "002-fix-this.md", "002-fix-this.meta.json"]);
 });
 
+test("worqload feedback fetch surfaces absolute attachment paths in the message body", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ content: "see the screenshot", slug: "look" }));
+  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
+  form.append("attachment", new File([png], "design.webp", { type: "image/webp" }));
+  await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
+
+  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  expect(fetched.messages).toHaveLength(1);
+  const expectedDir = join(ctx.sessionsDir, sid, "feedback", "read", "001-look.attachments");
+  expect(fetched.messages[0].content).toBe(
+    `see the screenshot\n\n## Attachments\n\n` +
+    `The human attached 2 images. Read each with the Read tool:\n\n` +
+    `- ${expectedDir}/01-shot.png\n` +
+    `- ${expectedDir}/02-design.webp`,
+  );
+});
+
+test("worqload feedback fetch leaves the body untouched when no attachments are present", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "plain message", slug: "plain" });
+
+  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  expect(fetched.messages[0].content).toBe("plain message");
+});
+
 test("GET /sessions/:id/feedback exposes attachments on each message", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
