@@ -1225,13 +1225,20 @@ export async function onResume(id = state.selected) {
   // pane; resuming a different card from its hover button carries no prompt.
   const input = id === state.selected ? $("#feedbackInput") : null;
   const prompt = input ? input.value.trim() : "";
+  // Clear synchronously on submit, so the textarea visibly empties before the
+  // network round-trip — and so a re-render driven by the session_resumed WS
+  // event (which arrives between the POST and the post-await clear that used
+  // to live here) can't leave the user's prompt sitting in the textarea.
+  if (input) input.value = "";
   try {
     await api("POST", `/sessions/${id}/resume`, prompt ? { prompt } : {});
-    if (input) input.value = "";
     toast("session resumed");
     if (id === state.selected) await refreshDetail();
     await fetchSessions();
   } catch (e) {
+    // Restore only if the user hasn't typed something new while the request
+    // was in flight, so their long prompt isn't lost on a transient failure.
+    if (input && input.value === "") input.value = prompt;
     toast(`failed: ${e.message}`);
   }
 }
@@ -1243,14 +1250,18 @@ export async function onStopAndResume(id = state.selected) {
   if (!id) return;
   const input = id === state.selected ? $("#feedbackInput") : null;
   const prompt = input ? input.value.trim() : "";
+  // Same as onResume: clear before the awaits. The stop + resume sequence
+  // emits two WS events back-to-back, so the window for a re-render between
+  // capture and clear is wider.
+  if (input) input.value = "";
   try {
     await api("POST", `/sessions/${id}/stop`, {});
     await api("POST", `/sessions/${id}/resume`, prompt ? { prompt } : {});
-    if (input) input.value = "";
     toast("session stopped & resumed");
     if (id === state.selected) await refreshDetail();
     await fetchSessions();
   } catch (e) {
+    if (input && input.value === "") input.value = prompt;
     toast(`failed: ${e.message}`);
   }
 }
