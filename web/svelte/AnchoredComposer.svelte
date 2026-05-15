@@ -17,7 +17,7 @@
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
   import { state as appState } from "../state.svelte.js";
-  import { onAnchoredFeedback, clearAnchor, copyAnchorPermalink, onAnchorOutsideClick } from "../handlers.js";
+  import { onAnchoredFeedback, clearAnchor, copyAnchorPermalink, onAnchorOutsideClick, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
   let anchorRect = $state(null);
   let textareaEl = $state();
@@ -185,14 +185,28 @@
     style={style}
     onsubmit={(e) => { e.preventDefault(); onAnchoredFeedback(); }}
   >
+    {#if appState.pendingAttachments.length > 0}
+      <div class="attachment-chips">
+        {#each appState.pendingAttachments as att (att.id)}
+          <span class="attachment-chip" title="{att.file.name}">
+            <img src={att.previewUrl} alt={att.file.name} />
+            <span class="attachment-chip-name">{att.file.name}</span>
+            <button type="button" title="remove" onclick={() => removeAttachment(att.id)}>×</button>
+          </span>
+        {/each}
+      </div>
+    {/if}
     <textarea
       id="anchoredFeedbackInput"
       bind:this={textareaEl}
       rows="3"
-      placeholder="Comment on the selected lines... (Enter で送信 / Shift+Enter で改行 / Esc で解除)"
+      placeholder="Comment on the selected lines... (Enter で送信 / Shift+Enter で改行 / Esc で解除 / 画像はペースト・ドロップで添付)"
       oncompositionstart={() => (composing = true)}
       oncompositionend={() => (composing = false)}
       onkeydown={onKeydown}
+      onpaste={onComposerPaste}
+      ondragover={(e) => e.preventDefault()}
+      ondrop={onComposerDrop}
     ></textarea>
     <div class="row">
       <button type="button" class="anchored-composer-permalink" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button>
