@@ -1845,6 +1845,73 @@ test("POST /sessions/:id/resume respawns the host and returns the session to run
   expect(meta?.endedAt).toBeUndefined();
 });
 
+// Regression: Stop&Resume is two sequential POSTs. postStop kills the old
+// host and drops ctx.clients[sid]; the old host's unix socket then tears down
+// a beat LATER (it sends `exited`, sleeps ~20ms, stops its listener). By then
+// postResume has already attached the NEW host and set ctx.clients[sid]. The
+// old client's onDisconnect — which used to `ctx.clients.delete(sid)`
+// unconditionally — would evict the freshly-attached new host, leaving the
+// session "running" with no client. Every later feedback then logged
+// hasClient:false and the agent never woke. onDisconnect must identity-check.
+test("a stopped host's late socket teardown does not evict the resumed attachment", async () => {
+  const repoDir = makeTmpDir("repo");
+  const launches: { resume: boolean; onDisconnect: () => void }[] = [];
+  const captureLauncher: HostLauncher = async ({ meta, sessionsDir, resume, onEvent, onDisconnect }) => {
+    const event = await appendEvent(
+      meta.id,
+      { kind: resume ? "session_resumed" : "session_started", payload: { prompt: meta.prompt } },
+      sessionsDir,
+    );
+    onEvent(event);
+    let resolveExited!: (code: number | null) => void;
+    const exited = new Promise<number | null>((r) => { resolveExited = r; });
+    launches.push({ resume, onDisconnect });
+    return {
+      client: {
+        async send() {},
+        async kill() { resolveExited(null); },
+        async close() { resolveExited(null); },
+        replayCompleted: Promise.resolve({ lastSeq: event.seq }),
+        exited,
+      },
+    };
+  };
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: captureLauncher,
+    worktreeOps: fakeWorktreeOps(),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+  expect(launches).toHaveLength(1);
+
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+  await postJson(baseUrl, `/sessions/${sid}/resume`, {});
+  expect(launches).toHaveLength(2);
+  expect(ctx.clients.has(sid)).toBe(true);
+
+  // The original (stopped) host's socket finally tears down — its onDisconnect
+  // fires now, AFTER the resumed host already attached.
+  launches[0].onDisconnect();
+
+  expect(ctx.clients.has(sid)).toBe(true);
+
+  // Feedback reaches the resumed host (hasClient:true), and because the client
+  // is present no extra respawn fires.
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "ping", slug: "f" });
+  expect(launches).toHaveLength(2);
+  const logLines = readFileSync(hostLogPath(ctx.sessionsDir, sid), "utf8")
+    .trim().split("\n").map((l) => JSON.parse(l));
+  const wakes = logLines.filter((l) => l.event === "wake_sent");
+  expect(wakes.at(-1)?.hasClient).toBe(true);
+});
+
 test("POST /sessions/:id/resume queues the optional prompt as feedback", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

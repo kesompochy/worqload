@@ -510,6 +510,11 @@ async function spawnAndAttachHost(
   opts: { resume?: boolean } = {},
 ): Promise<HostClient> {
   await writeAgentEndpointFile(ctx, meta.id);
+  // Forward-declared so onDisconnect can identity-check before evicting: a
+  // stopped host's socket tears down a beat after its replacement attaches
+  // (the Stop&Resume race), and its stale onDisconnect must not delete the
+  // newer attachment. Same guard runWakeWatchdog already uses.
+  let attachment: SessionAttachment | undefined;
   const { client, hostProc } = await ctx.hostLauncher({
     meta,
     sessionsDir: ctx.sessionsDir,
@@ -517,10 +522,13 @@ async function spawnAndAttachHost(
     resume: opts.resume ?? false,
     onEvent: (event) => broadcastEvent(ctx, meta.id, event),
     onDisconnect: () => {
-      ctx.clients.delete(meta.id);
+      if (attachment && ctx.clients.get(meta.id) === attachment) {
+        ctx.clients.delete(meta.id);
+      }
     },
   });
-  ctx.clients.set(meta.id, { client, hostProc, hostPid: hostProc?.pid });
+  attachment = { client, hostProc, hostPid: hostProc?.pid };
+  ctx.clients.set(meta.id, attachment);
   return client;
 }
 
@@ -531,17 +539,21 @@ async function reconnectToHost(ctx: ServerContext, meta: SessionMeta): Promise<H
   try {
     await writeAgentEndpointFile(ctx, meta.id);
     const lastSeq = (await readEvents(meta.id, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
+    let attachment: SessionAttachment | undefined;
     const client = await connectToHost({
       socketPath: meta.hostSocketPath,
       sinceSeq: lastSeq,
       connectTimeoutMs: 500,
       onEvent: (event) => broadcastEvent(ctx, meta.id, event),
       onDisconnect: () => {
-        ctx.clients.delete(meta.id);
+        if (attachment && ctx.clients.get(meta.id) === attachment) {
+          ctx.clients.delete(meta.id);
+        }
       },
     });
     await client.replayCompleted.catch(() => {});
-    ctx.clients.set(meta.id, { client, hostPid: meta.hostPid });
+    attachment = { client, hostPid: meta.hostPid };
+    ctx.clients.set(meta.id, attachment);
     return client;
   } catch {
     return null;
