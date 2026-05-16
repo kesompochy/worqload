@@ -32,3 +32,16 @@ test("protocol prefix tells the agent to lead with the conclusion to respect the
   // so the agent cannot rationalize a long lead-in.
   expect(prefix.toLowerCase()).toContain("lead with the conclusion");
 });
+
+test("protocol prefix forbids pairing a Report with an Escalation about the same moment", () => {
+  const prefix = buildProtocolPrefix("main");
+  // The Report-trigger list ("rising uncertainty", "before long tool calls")
+  // fires at the exact instant an Escalation fires, and "status -> Report,
+  // question -> Escalation" makes the agent split one blocked moment into two
+  // artifacts. The human asked that an escalation-only moment stay
+  // escalation-only, so the prompt must (a) tell the agent the Escalation is
+  // itself a visible timeline entry — not a silent turn — and (b) forbid a
+  // paired Report about the same blocked moment outright.
+  expect(prefix.toLowerCase()).toContain("timeline entry the human sees");
+  expect(prefix.toLowerCase()).toContain("escalation-only means escalation-only");
+});
