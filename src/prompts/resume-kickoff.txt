@@ -1,0 +1,1 @@
+[resumed] The human has resumed this session. Run `worqload feedback fetch` for any new instructions, then continue. If there is no new feedback and your previous report says the task is complete, submit a short report saying so rather than redoing work.
