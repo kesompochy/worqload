@@ -24,5 +24,5 @@ The frontend is a Vite project under `web/` (plain ES modules + Svelte component
 
 ## Prompts
 
-- Prompts sent to `claude` live as plain `.txt` files under `src/prompts/`, loaded via Bun's `with { type: "text" }` import. Dynamic values use `{{placeholder}}` tokens substituted at build time.
+- Prompts sent to `claude` are authored as plain `.txt` files under `src/prompts/`, with `{{placeholder}}` tokens for dynamic values. Add new prompts there rather than inlining them in code.
 - Asserting that a prompt contains a specific string is out of scope for automated tests. Prompt wording is tuned constantly; substring assertions only break on every reword without catching real regressions. Test the wiring (does the prompt reach the agent, is the placeholder substituted) — never the wording.
