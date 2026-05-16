@@ -44,6 +44,14 @@ export interface Action {
   direct?: boolean;
   params?: ActionParamSpec[];
   group?: string;
+  // Safe to re-run with the same params and get the same end state. The
+  // frontend uses this to recover the "request severed mid-flight" case:
+  // under `serve --watch`, an action that rewrites the main repo working tree
+  // (merge-to-base's `git merge`, sync-base's `git pull`) makes `bun --watch`
+  // restart the server, dropping this very request even though the git work
+  // completed on disk. Re-issuing an idempotent action reports the already-done
+  // state instead of a phantom "Failed to fetch".
+  idempotent?: boolean;
   // When present, the action is offered for a session only if this returns
   // true (e.g. preview is only meaningful when the session's worktree is a
   // worqload checkout). Absent = always offered.
@@ -58,6 +66,7 @@ export interface ActionDescriptor {
   confirmMessage?: string;
   direct?: boolean;
   params?: ActionParamSpec[];
+  idempotent?: boolean;
   // Visual grouping cue for the action button row. Buttons sharing a `group`
   // render tight; a group change inserts a separator. Absent = its own group.
   group?: string;
@@ -154,6 +163,7 @@ export const syncBaseFromRemoteAction: Action = {
   confirmMessage:
     "Fetch origin and fast-forward the local base branch to match it.\n\nNon-fast-forward updates are refused. Uncommitted changes in the main repo are allowed when they don't overlap the incoming changes — git's own fast-forward decides.",
   group: "sync-base",
+  idempotent: true,
   // We deliberately do NOT pre-check `isWorktreeDirty` here: `git pull --ff-only`
   // already lets unrelated dirty files through and refuses cleanly when the
   // incoming update would clobber them. A blanket pre-check turned away routine
@@ -172,6 +182,7 @@ export const mergeToBaseAction: Action = {
   label: "Merge into base branch",
   description: "Merge this session's branch into the base branch in the main repo.",
   group: "ship",
+  idempotent: true,
   confirmMessage:
     "Merge this session's branch into the base branch?\n\nThe main repo must have the base branch checked out with a clean working tree, and the session worktree itself must have no uncommitted changes. If the merge would conflict, it is aborted before it touches the base branch.",
   async run({ meta, repoDir }) {

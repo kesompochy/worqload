@@ -1347,6 +1347,51 @@ export function extractPreviewUrl(stdout) {
   return match ? match[1] : null;
 }
 
+// How long to wait between re-issue attempts after an idempotent action's
+// request is severed, and how many to make. The dev server's `bun --watch`
+// restart rebinds the same port within ~1s; 20 × 300ms covers a slow machine
+// without hanging the button indefinitely if the server is genuinely down.
+const ACTION_RECONNECT_RETRY_MS = 300;
+const ACTION_RECONNECT_MAX_ATTEMPTS = 20;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function postAction(action, params) {
+  const res = await fetch(`/sessions/${state.selected}/actions/${encodeURIComponent(action.id)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ params }),
+  });
+  return res.json().catch(() => ({}));
+}
+
+// `serve --watch` restarts the server when an action rewrites its own source
+// tree (merge-to-base's `git merge`, sync-base's `git pull`), dropping this
+// request even though the git work already completed on disk. For an
+// idempotent action, wait out the restart — it rebinds the same port — and
+// re-issue: the re-run reports the already-done state ("Already up to date.")
+// instead of the phantom "Failed to fetch" the user otherwise sees once and
+// then clicks past on a second try. A non-idempotent action (create-pr) must
+// not be replayed, so its network error propagates unchanged.
+async function fetchActionResult(action, params) {
+  try {
+    return await postAction(action, params);
+  } catch (netError) {
+    if (!action.idempotent) throw netError;
+    for (let attempt = 0; attempt < ACTION_RECONNECT_MAX_ATTEMPTS; attempt++) {
+      await sleep(ACTION_RECONNECT_RETRY_MS);
+      try {
+        return await postAction(action, params);
+      } catch {
+        /* server still restarting; keep waiting for it to rebind the port */
+      }
+    }
+    throw netError;
+  }
+}
+
 // POSTs an action invocation, records its result, and surfaces it (toast, and
 // for create-pr / preview opens the resulting URL). Shared by the inline panel
 // (runOpenAction) and the direct header buttons (runDirectAction).
@@ -1355,12 +1400,7 @@ async function runAction(action, params) {
   state.actionRunInFlight = true;
   state.runningActionId = action.id;
   try {
-    const res = await fetch(`/sessions/${state.selected}/actions/${encodeURIComponent(action.id)}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ params }),
-    });
-    const data = await res.json().catch(() => ({}));
+    const data = await fetchActionResult(action, params);
     // actionResults is reassigned wholesale rather than mutated: Svelte 5's
     // $state doesn't proxy Maps, so ActionBar only re-renders the run output
     // when the property itself is replaced.
