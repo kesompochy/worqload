@@ -32,3 +32,15 @@ test("protocol prefix tells the agent to lead with the conclusion to respect the
   // so the agent cannot rationalize a long lead-in.
   expect(prefix.toLowerCase()).toContain("lead with the conclusion");
 });
+
+test("protocol prefix forbids pairing a Report with an Escalation about the same moment", () => {
+  const prefix = buildProtocolPrefix("main");
+  // The Report-trigger list keeps "before and after long tool calls" — the
+  // human wants progress visibility during long operations preserved. The
+  // pairing is instead cut by framing both as the channels for talking to the
+  // human: an Escalation already carries its own context, so a moment that
+  // needs a decision back is one Escalation and nothing else. The prompt must
+  // name that framing and forbid the duplicate Report outright.
+  expect(prefix.toLowerCase()).toContain("the two ways you speak to the human");
+  expect(prefix.toLowerCase()).toContain("do not also send a `report` for the same moment");
+});
