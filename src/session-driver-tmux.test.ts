@@ -87,14 +87,14 @@ async function buildLaunchOptions(
 
 test("encodeCwdForClaudeProjects replaces slashes AND dots with hyphens (matches Claude Code's own encoding)", () => {
   expect(encodeCwdForClaudeProjects("/Users/foo/repo")).toBe("-Users-foo-repo");
-  expect(encodeCwdForClaudeProjects("/Users/me/ghq/git.pepabo.com/hosting/gulliver")).toBe(
-    "-Users-me-ghq-git-pepabo-com-hosting-gulliver",
+  expect(encodeCwdForClaudeProjects("/Users/me/ghq/git.example.com/org/repo")).toBe(
+    "-Users-me-ghq-git-example-com-org-repo",
   );
   expect(encodeCwdForClaudeProjects("/Users/me/repo/.worktrees/abc")).toBe(
     "-Users-me-repo--worktrees-abc",
   );
-  expect(encodeCwdForClaudeProjects("/Users/me/ghq/git.pepabo.com/hosting/gulliver/.worktrees/6814b538")).toBe(
-    "-Users-me-ghq-git-pepabo-com-hosting-gulliver--worktrees-6814b538",
+  expect(encodeCwdForClaudeProjects("/Users/me/ghq/git.example.com/org/repo/.worktrees/6814b538")).toBe(
+    "-Users-me-ghq-git-example-com-org-repo--worktrees-6814b538",
   );
 });
 

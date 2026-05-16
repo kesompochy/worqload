@@ -1073,18 +1073,24 @@ test("onFeedback bails when both the textarea and the attachment list are empty"
 async function withApiMock(
   apiImpl: (method: string, path: string, body?: unknown) => Promise<unknown>,
   body: () => Promise<void>,
+  overrides: Partial<{
+    refreshDetail: () => Promise<void>;
+    fetchSessions: () => Promise<void>;
+  }> = {},
 ) {
+  const refreshDetail = overrides.refreshDetail ?? (async () => {});
+  const fetchSessions = overrides.fetchSessions ?? (async () => { fetchSessionsCalls++; });
   mock.module("../web/api.js", () => ({
     api: apiImpl,
     submitFeedback: async (sessionId: string, payload: unknown, attachments: unknown) => {
       submitFeedbackCalls.push({ sessionId, payload, attachments });
       return { filename: "001-x.md", seq: 1 };
     },
-    fetchSessions: async () => { fetchSessionsCalls++; },
+    fetchSessions,
     fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
     fetchActions: async () => {},
     reorderSessions: async (ids: string[]) => { reorderSessionsCalls.push(ids); },
-    refreshDetail: async () => {},
+    refreshDetail,
     refreshDiff: async () => {},
     ensureFilesLoaded: async () => {},
     ensureStructureLoaded: async () => {},
@@ -1199,6 +1205,71 @@ test("onStopAndResume clears the textarea before the stop/resume awaits", async 
       "/sessions/session-s/resume",
     ]);
     expect(valueAtFirstApi).toBe("");
+    expect(inputEl.value).toBe("");
+  } finally {
+    globalThis.document = saved.document;
+  }
+});
+
+// The /resume POST returns; the host has just respawned, and the follow-up
+// refreshDetail / fetchSessions occasionally lose the race against that
+// transition. Those failures must not drag the captured prompt back into the
+// textarea — the resume itself succeeded, and putting the text back makes the
+// human think the cleared composer regressed.
+test("onResume keeps the textarea cleared when refreshDetail throws after a successful resume POST", async () => {
+  state.selected = "session-r";
+
+  const inputEl = { value: "carry on" };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : toastEl),
+  } as unknown as Document;
+  try {
+    await withApiMock(async () => ({}), async () => {
+      await onResume();
+    }, { refreshDetail: async () => { throw new Error("transient"); } });
+    expect(inputEl.value).toBe("");
+  } finally {
+    globalThis.document = saved.document;
+  }
+});
+
+test("onResume keeps the textarea cleared when fetchSessions throws after a successful resume POST", async () => {
+  state.selected = "session-r";
+
+  const inputEl = { value: "carry on" };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : toastEl),
+  } as unknown as Document;
+  try {
+    await withApiMock(async () => ({}), async () => {
+      await onResume();
+    }, { fetchSessions: async () => { throw new Error("transient"); } });
+    expect(inputEl.value).toBe("");
+  } finally {
+    globalThis.document = saved.document;
+  }
+});
+
+test("onStopAndResume keeps the textarea cleared when refreshDetail throws after both POSTs succeed", async () => {
+  state.selected = "session-s";
+
+  const inputEl = { value: "go again" };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : toastEl),
+  } as unknown as Document;
+  try {
+    await withApiMock(async () => ({}), async () => {
+      await onStopAndResume();
+    }, { refreshDetail: async () => { throw new Error("transient"); } });
     expect(inputEl.value).toBe("");
   } finally {
     globalThis.document = saved.document;
