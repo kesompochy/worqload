@@ -324,6 +324,66 @@ test("runOpenAction records the run on a fresh actionResults Map (so ActionBar r
   }
 });
 
+test("an idempotent action whose request is severed mid-flight (serve --watch restart) retries once the server is back", async () => {
+  // Reproduces the merge-to-base symptom: `git merge` rewrites the dev
+  // server's own source, `bun --watch` restarts it, this POST's socket dies
+  // before the response. The merge already landed on disk, so re-issuing the
+  // request once the rebound server answers reports the real (success) result.
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
+  globalThis.document = { getElementById: () => null, querySelector: () => toastEl };
+  globalThis.window = { open() {} };
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("Failed to fetch");
+    return { json: async () => ({ ok: true, exitCode: 0, stdout: "Already up to date.", stderr: "" }) };
+  };
+  try {
+    state.selected = "session-a";
+    state.actions = [{ id: "merge-to-base", label: "Merge into base branch", params: [], idempotent: true }];
+    state.openActionId = "merge-to-base";
+    state.actionResults = new Map();
+    state.actionRunInFlight = false;
+
+    await runOpenAction();
+
+    expect(calls).toBe(2);
+    expect(state.actionResults.get("merge-to-base").ok).toBe(true);
+    expect(state.actionRunInFlight).toBe(false);
+  } finally {
+    globalThis.document = saved.document;
+    globalThis.window = saved.window;
+    globalThis.fetch = saved.fetch;
+  }
+});
+
+test("a non-idempotent action whose request fails is recorded as failed without retrying", async () => {
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
+  globalThis.document = { getElementById: () => null, querySelector: () => toastEl };
+  globalThis.window = { open() {} };
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; throw new TypeError("Failed to fetch"); };
+  try {
+    state.selected = "session-a";
+    state.actions = [{ id: "create-pr", label: "Create PR", params: [] }];
+    state.openActionId = "create-pr";
+    state.actionResults = new Map();
+    state.actionRunInFlight = false;
+
+    await runOpenAction();
+
+    expect(calls).toBe(1);
+    expect(state.actionResults.get("create-pr").ok).toBe(false);
+    expect(state.actionRunInFlight).toBe(false);
+  } finally {
+    globalThis.document = saved.document;
+    globalThis.window = saved.window;
+    globalThis.fetch = saved.fetch;
+  }
+});
+
 test("gotoAnchorTarget opens the Reports tab and expands the referenced report", async () => {
   state.reports = [{ filename: "003-progress.md", content: "x", read: true }];
   state.reportToggle = new Map();
