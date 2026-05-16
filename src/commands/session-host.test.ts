@@ -332,18 +332,17 @@ test("runHost uses hostLogPath under the sessions dir for its diagnostic log", a
   expect(entries.some((e) => e.event === "claude_exited")).toBe(true);
 });
 
-test("runHost in resume mode emits session_resumed and sends the resume kickoff (not the protocol bootstrap)", async () => {
+test("runHost in resume mode emits session_resumed, not session_started", async () => {
   const { sessionsDir, sessionId, hostExit, socketPath } = await setupHost("echo", undefined, { resume: true });
   const client = await connectClient(socketPath);
   client.send({ type: "hello", sinceSeq: 0 });
   await client.next((m) => m.type === "replay_done");
 
-  const echoed = await client.next(
+  // Let the resumed host drive claude far enough to produce one assistant
+  // message before tearing it down, so the event sequence is fully recorded.
+  await client.next(
     (m) => m.type === "event" && m.event.kind === "claude_assistant_message",
   );
-  if (echoed.type !== "event") throw new Error("unreachable");
-  expect(JSON.stringify(echoed.event.payload)).toContain("[resumed]");
-  expect(JSON.stringify(echoed.event.payload)).not.toContain("You are running inside a worqload session");
 
   client.send({ type: "kill", signal: "SIGTERM" });
   await client.next((m) => m.type === "exited").catch(() => {});

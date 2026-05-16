@@ -21,3 +21,8 @@ The frontend is a Vite project under `web/` (plain ES modules + Svelte component
 - TDD: write the test before the implementation.
 - Keep changes small. One task = one commit-sized unit.
 - Reports written by worqload sessions are in Japanese.
+
+## Prompts
+
+- Prompts sent to `claude` live as plain `.txt` files under `src/prompts/`, loaded via Bun's `with { type: "text" }` import. Dynamic values use `{{placeholder}}` tokens substituted at build time.
+- Asserting that a prompt contains a specific string is out of scope for automated tests. Prompt wording is tuned constantly; substring assertions only break on every reword without catching real regressions. Test the wiring (does the prompt reach the agent, is the placeholder substituted) — never the wording.

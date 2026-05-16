@@ -8,6 +8,8 @@
 // sanitizeBranchName enforces a conservative subset of git ref names so an LLM
 // or human typo cannot produce a name that breaks `git worktree add -b`.
 
+import CLAUDE_INSTRUCTION from "./prompts/branch-name-instruction.txt" with { type: "text" };
+
 const MAX_LEN = 60;
 
 // rules: a leading char that is not '-' or '/', followed by allowed chars
@@ -32,12 +34,6 @@ export function sanitizeBranchName(input: string): string | null {
 }
 
 export type BranchNameGenerator = (prompt: string) => Promise<string | null>;
-
-const CLAUDE_INSTRUCTION = [
-  "Generate a short git branch name describing this task.",
-  "Rules: kebab-case, 1-3 hyphenated lowercase words, ASCII letters/digits/hyphens only, max 30 chars.",
-  "Output ONLY the branch name on a single line. No explanation, no quotes.",
-].join(" ");
 
 // Default generator: spawn `claude -p` to ask Claude for a short branch name.
 // Returns null on any failure (claude not on PATH, non-zero exit, unparseable
