@@ -39,6 +39,20 @@ const CLAUDE_INSTRUCTION = [
   "Output ONLY the branch name on a single line. No explanation, no quotes.",
 ].join(" ");
 
+// The branch-name agent is the same `claude` the sessions run, so it honors the
+// same WORQLOAD_SPAWN_COMMAND override serve.ts uses to point at a relocated or
+// renamed claude binary. Only the executable (first whitespace token) is taken:
+// this is a plain `-p <prompt>` text query, not the stream-json session
+// invocation, so the spawn command's session flags do not apply here.
+export function resolveBranchNameClaudeBin(env: Record<string, string | undefined> = process.env): string {
+  const spawnEnv = env.WORQLOAD_SPAWN_COMMAND;
+  if (spawnEnv && spawnEnv.trim() !== "") {
+    const [executable] = spawnEnv.trim().split(/\s+/);
+    if (executable) return executable;
+  }
+  return "claude";
+}
+
 // Default generator: spawn `claude -p` to ask Claude for a short branch name.
 // Returns null on any failure (claude not on PATH, non-zero exit, unparseable
 // output) so the caller can fall back to <shortId>.
@@ -46,7 +60,7 @@ export const defaultBranchNameGenerator: BranchNameGenerator = async (prompt) =>
   const fullPrompt = `${CLAUDE_INSTRUCTION}\n\nTask: ${prompt}`;
   let proc;
   try {
-    proc = Bun.spawn(["claude", "-p", fullPrompt], { stdout: "pipe", stderr: "pipe" });
+    proc = Bun.spawn([resolveBranchNameClaudeBin(), "-p", fullPrompt], { stdout: "pipe", stderr: "pipe" });
   } catch {
     return null;
   }
