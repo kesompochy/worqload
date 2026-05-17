@@ -11,18 +11,19 @@ test("protocol prefix tells the agent to check for base-branch conflicts after c
   expect(prefix.toLowerCase()).toContain("conflict");
 });
 
-test("protocol prefix defines the revision step as drafting to .worqload-draft/ and reading it back", () => {
+test("protocol prefix no longer burdens the session with the 推敲 ceremony", () => {
   const prefix = buildProtocolPrefix("main");
-  // The directory the agent must use as scratch space for drafts.
-  expect(prefix).toContain(".worqload-draft/");
-  // The act must be named — vague "deliberate and revise" was the wording the
-  // agent shipped half-baked reports under. The Japanese-speaking human reviews
-  // reports and asked us to call the step "推敲" explicitly.
-  expect(prefix).toContain("推敲");
-  // Spell out the two operations that constitute 推敲 so the agent can't gloss
-  // over them: write the draft to a file, then read it back before submitting.
-  expect(prefix.toLowerCase()).toContain("write");
-  expect(prefix.toLowerCase()).toContain("read");
+  // 推敲 moved off the working session onto a disposable report-only agent
+  // worqload spins up on receipt. The session must not be told to draft to a
+  // file and read it back — that round-trip is no longer its job.
+  expect(prefix).not.toContain("推敲");
+  expect(prefix).not.toContain(".worqload-draft/");
+});
+
+test("protocol prefix still tells the agent how to submit a report", () => {
+  const prefix = buildProtocolPrefix("main");
+  // Dropping 推敲 must not drop the submit mechanic itself.
+  expect(prefix).toContain("worqload report submit --slug");
 });
 
 test("protocol prefix tells the agent to lead with the conclusion to respect the human's time", () => {
