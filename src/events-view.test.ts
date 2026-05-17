@@ -66,6 +66,46 @@ test("describeEvent summarises a tool_use by name and key argument", () => {
   ]);
 });
 
+test("describeEvent redacts a tool_use that touches .worqload-draft/ so the raw report stays out of the human's view", () => {
+  // The session writes its unpolished report into the session-private draft
+  // dir before submitting; when rewriting is on only the rewritten version
+  // should reach the human. The protocol promises worqload never shows
+  // .worqload-draft/ — including in the event stream — so its content must
+  // not leak through the Events tab.
+  const payload = {
+    type: "assistant",
+    message: {
+      content: [{ type: "tool_use", name: "Write", input: { file_path: ".worqload-draft/003-done.md", content: "RAW UNPOLISHED REPORT BODY" } }],
+    },
+  };
+  const d = describeEvent({ seq: 5, kind: "claude_tool_use", timestamp: "", payload });
+  const serialized = JSON.stringify(d);
+  expect(serialized).not.toContain("RAW UNPOLISHED REPORT BODY");
+  expect(d.sections).toHaveLength(1);
+  expect(d.sections[0].body).not.toContain("RAW UNPOLISHED REPORT BODY");
+  expect(d.sections[0].body.toLowerCase()).toContain("session-private");
+});
+
+test("describeEvent redacts a Bash tool_use that pipes a .worqload-draft/ file into submit", () => {
+  const payload = {
+    type: "assistant",
+    message: {
+      content: [{ type: "tool_use", name: "Bash", input: { command: "cat .worqload-draft/003-done.md | worqload report submit --slug done" } }],
+    },
+  };
+  const d = describeEvent({ seq: 6, kind: "claude_tool_use", timestamp: "", payload });
+  expect(d.sections[0].body.toLowerCase()).toContain("session-private");
+});
+
+test("describeEvent leaves a normal Write tool_use untouched", () => {
+  const payload = {
+    type: "assistant",
+    message: { content: [{ type: "tool_use", name: "Write", input: { file_path: "src/x.ts", content: "export const x = 1;" } }] },
+  };
+  const d = describeEvent({ seq: 7, kind: "claude_tool_use", timestamp: "", payload });
+  expect(d.sections[0].body).toContain("export const x = 1;");
+});
+
 test("describeEvent summarises a Read tool_use by file path", () => {
   const payload = {
     type: "assistant",
