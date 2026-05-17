@@ -15,7 +15,7 @@
   import { formatRelative, eventAgeIsStale } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReportAgent } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
   const tabs = [
@@ -74,6 +74,10 @@
     · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
     · worktree: <code>{m.worktreePath}</code>
+    · <label class="report-agent-toggle" title="On: worqload runs a disposable report-only agent over each report (結論ファースト・短文に整形) before storing it. Off: the report is stored as the session wrote it.">
+      <input type="checkbox" checked={m.reportAgentEnabled !== false} onchange={() => onToggleReportAgent(m.id)} />
+      レポート整形
+    </label>
   </div>
   <div class="tabs">
     {#each tabs as tab}

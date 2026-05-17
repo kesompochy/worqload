@@ -7,8 +7,9 @@ import {
   loadSessionMeta,
   listSessionMetas,
   reorderSessions,
+  isReportAgentEnabled,
 } from "./session";
-import type { SessionStatus } from "./session";
+import type { SessionStatus, SessionMeta } from "./session";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -55,6 +56,22 @@ test("createSession throws on empty prompt", () => {
 test("createSession accepts optional title", () => {
   const meta = createSession({ ...baseParams, title: "my session" });
   expect(meta.title).toBe("my session");
+});
+
+test("isReportAgentEnabled defaults ON so reports stay polished without an explicit opt-in", () => {
+  const meta = createSession(baseParams);
+  // The 推敲 pass used to run unconditionally inside the session. Replacing it
+  // with the disposable agent must not silently drop polishing for sessions
+  // that predate the flag (their meta has no reportAgentEnabled field).
+  expect(meta.reportAgentEnabled).toBeUndefined();
+  expect(isReportAgentEnabled(meta)).toBe(true);
+});
+
+test("isReportAgentEnabled is false only when the human explicitly turned it off", () => {
+  const off: SessionMeta = { ...createSession(baseParams), reportAgentEnabled: false };
+  const on: SessionMeta = { ...createSession(baseParams), reportAgentEnabled: true };
+  expect(isReportAgentEnabled(off)).toBe(false);
+  expect(isReportAgentEnabled(on)).toBe(true);
 });
 
 test("validateTransition allows valid transitions", () => {

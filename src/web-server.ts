@@ -12,10 +12,12 @@ import {
   listSessionMetas,
   reorderSessions,
   isTerminal,
+  isReportAgentEnabled,
   validateTransition,
   type SessionMeta,
   type SessionStatus,
 } from "./session";
+import { makeClaudeReportRewriter, type ReportRewriter } from "./report-rewriter";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
@@ -144,6 +146,10 @@ export interface ServerContext {
   branchNameGenerator: BranchNameGenerator;
   hostLauncher: HostLauncher;
   worktreeOps: WorktreeOps;
+  // Rewrites a submitted report into human-readable form before it's stored,
+  // when the session's reportAgentEnabled flag is on. The default spawns a
+  // disposable claude from spawnCommand; tests inject a synchronous fake.
+  reportRewriter: ReportRewriter;
   clients: Map<string, SessionAttachment>;
   baseUrlForAgent: string;
   wsClients: Set<ServerWebSocket<WsClientData>>;
@@ -174,6 +180,7 @@ export interface StartServerOptions {
   branchNameGenerator?: BranchNameGenerator;
   hostCommand?: string[];       // override how the (subprocess) host is launched
   hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
+  reportRewriter?: ReportRewriter; // override the report rewriter (tests use a fake)
   worktreeOps?: WorktreeOps;    // override the git/worktree layer (tests use a fake)
   // Auto-resume threshold for the wake watchdog (ms). The watchdog scans for
   // a fresh claude_* event after each wake; if none arrives within this
@@ -558,6 +565,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand, driverName });
+  // Spawned from the same argv as sessions, so WORQLOAD_DRIVER /
+  // WORQLOAD_SPAWN_COMMAND govern the disposable agent too.
+  const reportRewriter = opts.reportRewriter ?? makeClaudeReportRewriter({ spawnCommand });
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
 
   await mkdir(sessionsDir, { recursive: true });
@@ -628,6 +638,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     spawnCommand,
     branchNameGenerator,
     hostLauncher,
+    reportRewriter,
     worktreeOps,
     clients: new Map(),
     port: server.port,
@@ -707,6 +718,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/unarchive", postUnarchive),
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
+  defineRoute("POST", "/sessions/:id/report-agent", postReportAgent),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("GET",  "/sessions/:id/feedback/:filename/attachments/:name", getFeedbackAttachment),
@@ -1096,6 +1108,25 @@ async function postTitle(req: Request, ctx: ServerContext, params: Record<string
     const trimmed = body.title.trim();
     const { title: _previous, ...rest } = meta;
     const updated: SessionMeta = trimmed === "" ? rest : { ...rest, title: trimmed };
+    await saveSessionMeta(updated, ctx.sessionsDir);
+    return json({ meta: updated });
+  });
+}
+
+interface ReportAgentBody {
+  enabled?: unknown;
+}
+
+// The UI toggle for the disposable report-only agent. Stored on meta so it
+// rides along in every session listing/detail response without extra
+// decoration (isReportAgentEnabled reads it; absent means on).
+async function postReportAgent(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json().catch(() => ({}))) as ReportAgentBody;
+    if (typeof body.enabled !== "boolean") {
+      return json({ error: "enabled must be a boolean" }, 400);
+    }
+    const updated: SessionMeta = { ...meta, reportAgentEnabled: body.enabled };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
   });
@@ -1934,8 +1965,14 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
         return json({ error: `no such feedback message: ${replyTo}` }, 400);
       }
     }
+    // The disposable report-only agent runs here, before the report is stored,
+    // so the session never saw the 推敲 burden and the human reads the polished
+    // text. Off per session → store the agent's raw submission untouched.
+    const content = isReportAgentEnabled(meta)
+      ? await ctx.reportRewriter(body.content, { cwd: meta.worktreePath })
+      : body.content;
     const dir = reportsDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(dir, body.slug, body.content, replyTo ? { meta: { replyTo } } : {});
+    const file = await writeNumberedFile(dir, body.slug, content, replyTo ? { meta: { replyTo } } : {});
     await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
     return json({ filename: file.filename, seq: file.seq });
   });
