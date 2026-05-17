@@ -231,6 +231,54 @@ test("merge-to-base merges the session branch when preconditions are satisfied",
   expect(showResult.exitCode).toBe(0);
 });
 
+test("merge-to-base defaults the merge commit message to the session name", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+
+  writeFileSync(join(meta.worktreePath, "feature.txt"), "added by session\n");
+  git(["add", "feature.txt"], meta.worktreePath);
+  git(["commit", "-m", "session work"], meta.worktreePath);
+
+  const res = await mergeToBaseAction.run({ meta, repoDir }, {});
+  expect(res.ok).toBe(true);
+
+  const subject = new TextDecoder().decode(git(["log", "-1", "--format=%s"], repoDir).stdout).trim();
+  expect(subject).toBe(`Merge session ${sessionId.slice(0, 8)}: ${meta.title}`);
+});
+
+test("merge-to-base uses a custom commit message when one is supplied", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+
+  writeFileSync(join(meta.worktreePath, "feature.txt"), "added by session\n");
+  git(["add", "feature.txt"], meta.worktreePath);
+  git(["commit", "-m", "session work"], meta.worktreePath);
+
+  const res = await mergeToBaseAction.run({ meta, repoDir }, { message: "ship the parser rewrite\n\ncloses #42" });
+  expect(res.ok).toBe(true);
+
+  const body = new TextDecoder().decode(git(["log", "-1", "--format=%B"], repoDir).stdout).trim();
+  expect(body).toBe("ship the parser rewrite\n\ncloses #42");
+});
+
+test("merge-to-base falls back to the default message when the supplied message is blank", async () => {
+  const repoDir = makeRepo();
+  const sessionId = crypto.randomUUID();
+  const meta = await makeSessionWorktree(repoDir, sessionId);
+
+  writeFileSync(join(meta.worktreePath, "feature.txt"), "added by session\n");
+  git(["add", "feature.txt"], meta.worktreePath);
+  git(["commit", "-m", "session work"], meta.worktreePath);
+
+  const res = await mergeToBaseAction.run({ meta, repoDir }, { message: "   \n  " });
+  expect(res.ok).toBe(true);
+
+  const subject = new TextDecoder().decode(git(["log", "-1", "--format=%s"], repoDir).stdout).trim();
+  expect(subject).toBe(`Merge session ${sessionId.slice(0, 8)}: ${meta.title}`);
+});
+
 test("merge-to-base refuses when session worktree is dirty", async () => {
   const repoDir = makeRepo();
   const sessionId = crypto.randomUUID();
