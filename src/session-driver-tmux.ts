@@ -152,6 +152,33 @@ function shellSingleQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+// The claude argv runs with the bootstrap text as its positional [prompt],
+// read via $(cat <file>) inside a single double-quoted positional so newlines
+// and shell metachars in the bootstrap pass through unevaluated. `exec`
+// replaces the bash wrapper so the tmux pane's process IS claude (kill-session
+// and has-session then track claude directly).
+function claudeTmuxBootstrapShellCommand(claudeArgv: string[], bootstrapFile: string): string {
+  const claudePrefix = claudeArgv.map(shellSingleQuote).join(" ");
+  const fileArg = shellSingleQuote(bootstrapFile);
+  return `exec ${claudePrefix} "$(cat ${fileArg})"`;
+}
+
+// Concatenate the text blocks of a transcript `assistant` line, or null if the
+// line is not an assistant turn carrying text (system/init, tool_use, user
+// echo). Same message shape classifyClaudeLine reads.
+function assistantLineText(parsed: Record<string, unknown>): string | null {
+  if (parsed?.type !== "assistant") return null;
+  const content = (parsed.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) return null;
+  const text = content
+    .filter((b): b is { type: string; text: string } =>
+      (b as { type?: string })?.type === "text" && typeof (b as { text?: unknown })?.text === "string",
+    )
+    .map((b) => b.text)
+    .join("");
+  return text === "" ? null : text;
+}
+
 export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriverFactory {
   return async (opts: SessionDriverLaunchOptions): Promise<SessionDriver> => {
     const sessionId = opts.env.WORQLOAD_SESSION_ID ?? `anon-${Date.now()}`;
@@ -259,14 +286,7 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
       // from the existing transcript.
       const idFlag = isResume ? "--resume" : "--session-id";
       const claudeArgvWithId = [...cleanedSpawn, idFlag, sessionId];
-
-      // Build the shell command. Wrap each fragment in single quotes; pass
-      // the prompt via $(cat <file>) inside a single double-quoted positional
-      // so newlines and shell metachars in the bootstrap pass through
-      // unevaluated.
-      const claudePrefix = claudeArgvWithId.map(shellSingleQuote).join(" ");
-      const fileArg = shellSingleQuote(bootstrapFile);
-      const shellCmd = `exec ${claudePrefix} "$(cat ${fileArg})"`;
+      const shellCmd = claudeTmuxBootstrapShellCommand(claudeArgvWithId, bootstrapFile);
 
       const spawnRes = await deps.tmuxRun([
         "new-session", "-d",
@@ -356,3 +376,96 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
 }
 
 export const tmuxClaudeDriver: SessionDriverFactory = makeTmuxClaudeDriverFactory(defaultTmuxDeps);
+
+export interface TmuxOneShotOptions {
+  // The single prompt to ask claude. Delivered as claude's positional
+  // [prompt] argument, exactly like the session driver's first message.
+  prompt: string;
+  // The claude executable to run.
+  claudeBin: string;
+  // Working directory for the tmux session; also fixes which
+  // <projects>/<encoded-cwd> transcript directory is read.
+  cwd: string;
+  // Pins both the transcript filename (--session-id) and the tmux session
+  // name. Caller supplies a fresh UUID so it cannot collide with a real
+  // worqload session sharing the cwd.
+  sessionId: string;
+  // Extra env vars forwarded into the tmux session.
+  env: Record<string, string>;
+}
+
+// Run a single prompt through interactive claude inside tmux and return its
+// first assistant text, so the work draws from interactive usage limits
+// instead of the `claude -p` Agent SDK credit pool. This is the session
+// driver's first turn in isolation: spawn claude with the prompt as its
+// positional argument, tail the transcript for the first assistant text,
+// then tear the tmux session down (interactive claude stays resident after
+// answering, so process exit is not the completion signal). Returns null on
+// spawn failure or if no assistant text appears before the timeout; the
+// caller is expected to have a non-tmux fallback.
+export async function tmuxOneShotText(
+  opts: TmuxOneShotOptions,
+  deps: TmuxDriverDeps,
+): Promise<string | null> {
+  const sessionName = tmuxSessionName(opts.sessionId);
+  const transcriptDir = deps.resolveTranscriptDir(opts.cwd);
+  const transcriptPath = join(transcriptDir, `${opts.sessionId}.jsonl`);
+  const bootstrapFile = join(deps.bootstrapFileDir, `worqload-oneshot-${opts.sessionId}.txt`);
+
+  await mkdir(transcriptDir, { recursive: true });
+  await writeFile(bootstrapFile, opts.prompt);
+
+  const cleanup = async (): Promise<void> => {
+    await deps.tmuxRun(["kill-session", "-t", sessionName]).catch(() => {});
+    await unlink(bootstrapFile).catch(() => {});
+  };
+
+  try {
+    const envArgs: string[] = [];
+    for (const [k, v] of Object.entries(opts.env)) {
+      envArgs.push("-e", `${k}=${v}`);
+    }
+    const claudeArgv = [opts.claudeBin, "--dangerously-skip-permissions", "--session-id", opts.sessionId];
+    const shellCmd = claudeTmuxBootstrapShellCommand(claudeArgv, bootstrapFile);
+
+    const spawnRes = await deps.tmuxRun([
+      "new-session", "-d",
+      "-s", sessionName,
+      "-c", opts.cwd,
+      ...envArgs,
+      "bash", "-c", shellCmd,
+    ]);
+    if (spawnRes.exitCode !== 0) return null;
+
+    // Poll the predicted transcript path for the first assistant text. claude
+    // only writes the file once it has processed the prompt, so absence early
+    // on is expected; we keep reading the whole file each tick (one short
+    // turn, so size is a non-issue) until an assistant text line shows up or
+    // the deadline passes.
+    const deadline = Date.now() + deps.transcriptWaitTimeoutMs;
+    while (Date.now() < deadline) {
+      let data: string;
+      try {
+        data = await readFile(transcriptPath, { encoding: "utf8" });
+      } catch {
+        await sleep(deps.pollIntervalMs);
+        continue;
+      }
+      for (const line of data.split("\n")) {
+        if (line.trim() === "") continue;
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        const text = assistantLineText(parsed);
+        if (text !== null) return text;
+      }
+      await sleep(deps.pollIntervalMs);
+    }
+    return null;
+  } finally {
+    await cleanup();
+  }
+}

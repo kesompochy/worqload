@@ -8,6 +8,7 @@ import type {
 import {
   encodeCwdForClaudeProjects,
   makeTmuxClaudeDriverFactory,
+  tmuxOneShotText,
   tmuxSessionName,
   type TmuxDriverDeps,
   type TmuxRunResult,
@@ -350,4 +351,110 @@ test("exited resolves when tmux has-session returns non-zero (claude exited exte
   expect(code).toBe(0);
   // We never called driver.kill(), so kill-session must not appear.
   expect(state.calls.some((c) => c.args[0] === "kill-session")).toBe(false);
+});
+
+test("tmuxOneShotText spawns claude with the prompt, returns the first assistant text, then kills the tmux session", async () => {
+  const cwd = makeTmpDir("tmux-oneshot-cwd");
+  const transcriptDir = makeTmpDir("tmux-oneshot-tx");
+  const bootstrapDir = makeTmpDir("tmux-oneshot-bootstrap");
+  const sessionId = "11111111-2222-3333-4444-555555555555";
+
+  // Simulate the transcript claude would have written: a system init line
+  // first, then the assistant turn carrying the answer.
+  await writeFile(
+    join(transcriptDir, `${sessionId}.jsonl`),
+    `${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n` +
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "auto-branch-name extra" }] } })}\n`,
+  );
+
+  const calls: RecordedCall[] = [];
+  let bootstrapContent: string | null = null;
+  const deps: TmuxDriverDeps = {
+    tmuxRun: async (args, opts) => {
+      calls.push({ args: [...args], stdin: opts?.stdin });
+      if (args[0] === "new-session") {
+        // Read the bootstrap file while it still exists (claude would do the
+        // same via $(cat ...)); the one-shot deletes it during teardown.
+        const shellCmd = args.at(-1) ?? "";
+        const m = shellCmd.match(/worqload-oneshot-[a-z0-9-]+\.txt/);
+        if (m) bootstrapContent = await readFile(join(bootstrapDir, m[0]), "utf8");
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    },
+    resolveTranscriptDir: () => transcriptDir,
+    pollIntervalMs: 10,
+    transcriptWaitTimeoutMs: 2000,
+    bootstrapFileDir: bootstrapDir,
+  };
+
+  const text = await tmuxOneShotText(
+    { prompt: "name this task", claudeBin: "claude", cwd, sessionId, env: { FOO: "bar" } },
+    deps,
+  );
+
+  expect(text).toBe("auto-branch-name extra");
+
+  const spawnCall = calls[0];
+  if (!spawnCall) throw new Error("tmux new-session not invoked");
+  expect(spawnCall.args[0]).toBe("new-session");
+  const nameIdx = spawnCall.args.indexOf("-s");
+  expect(spawnCall.args[nameIdx + 1]).toBe(tmuxSessionName(sessionId));
+  expect(spawnCall.args.some((a) => a === "FOO=bar")).toBe(true);
+  const shellCmd = spawnCall.args.at(-1);
+  if (typeof shellCmd !== "string") throw new Error("missing shell command");
+  expect(shellCmd).toContain("--session-id");
+  expect(shellCmd).toContain(sessionId);
+  expect(shellCmd).toContain("--dangerously-skip-permissions");
+  expect(shellCmd).toContain("$(cat");
+
+  // The prompt is fed through a bootstrap file (multi-line / metachar safe).
+  expect(bootstrapContent).toBe("name this task");
+
+  // Interactive claude stays resident after answering, so the one-shot must
+  // tear the tmux session down itself.
+  expect(calls.some((c) => c.args[0] === "kill-session")).toBe(true);
+});
+
+test("tmuxOneShotText returns null and still tears down the session when no assistant line appears before the timeout", async () => {
+  const cwd = makeTmpDir("tmux-oneshot-cwd");
+  const transcriptDir = makeTmpDir("tmux-oneshot-tx");
+  const { deps, state } = makeFakeTmuxDeps(transcriptDir);
+  const sessionId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  // Only a system line ever appears — claude never produces an assistant turn.
+  await writeFile(
+    join(transcriptDir, `${sessionId}.jsonl`),
+    `${JSON.stringify({ type: "system", subtype: "init" })}\n`,
+  );
+
+  const text = await tmuxOneShotText(
+    { prompt: "x", claudeBin: "claude", cwd, sessionId, env: {} },
+    { ...deps, transcriptWaitTimeoutMs: 150, pollIntervalMs: 10 },
+  );
+
+  expect(text).toBeNull();
+  expect(state.calls.some((c) => c.args[0] === "kill-session")).toBe(true);
+});
+
+test("tmuxOneShotText returns null when tmux new-session fails", async () => {
+  const cwd = makeTmpDir("tmux-oneshot-cwd");
+  const transcriptDir = makeTmpDir("tmux-oneshot-tx");
+  const calls: RecordedCall[] = [];
+  const deps: TmuxDriverDeps = {
+    tmuxRun: async (args, opts) => {
+      calls.push({ args: [...args], stdin: opts?.stdin });
+      if (args[0] === "new-session") return { exitCode: 1, stdout: "", stderr: "boom" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    },
+    resolveTranscriptDir: () => transcriptDir,
+    pollIntervalMs: 10,
+    transcriptWaitTimeoutMs: 1000,
+    bootstrapFileDir: makeTmpDir("tmux-oneshot-bootstrap"),
+  };
+
+  const text = await tmuxOneShotText(
+    { prompt: "x", claudeBin: "claude", cwd, sessionId: "ffffffff-0000-0000-0000-000000000000", env: {} },
+    deps,
+  );
+
+  expect(text).toBeNull();
 });

@@ -1,5 +1,15 @@
 import { test, expect, describe } from "bun:test";
-import { sanitizeBranchName } from "./branch-name";
+import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  sanitizeBranchName,
+  resolveBranchNameClaudeBin,
+  defaultBranchNameGenerator,
+  makeBranchNameGenerator,
+} from "./branch-name";
+import type { TmuxDriverDeps } from "./session-driver-tmux";
 
 describe("sanitizeBranchName", () => {
   test("accepts a simple kebab-case name", () => {
@@ -58,5 +68,113 @@ describe("sanitizeBranchName", () => {
 
   test("rejects @{ sequence", () => {
     expect(sanitizeBranchName("foo@{bar")).toBeNull();
+  });
+});
+
+describe("resolveBranchNameClaudeBin", () => {
+  test("defaults to claude when WORQLOAD_SPAWN_COMMAND is unset", () => {
+    expect(resolveBranchNameClaudeBin({})).toBe("claude");
+  });
+
+  test("defaults to claude when WORQLOAD_SPAWN_COMMAND is blank", () => {
+    expect(resolveBranchNameClaudeBin({ WORQLOAD_SPAWN_COMMAND: "   " })).toBe("claude");
+  });
+
+  test("uses the executable (first token) of WORQLOAD_SPAWN_COMMAND", () => {
+    expect(resolveBranchNameClaudeBin({ WORQLOAD_SPAWN_COMMAND: "  my-claude --flag x  " })).toBe("my-claude");
+  });
+});
+
+describe("defaultBranchNameGenerator", () => {
+  function writeFakeClaude(body: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "wq-branchname-"));
+    const path = join(dir, "fake-claude");
+    writeFileSync(path, `#!/bin/sh\n${body}\n`);
+    chmodSync(path, 0o755);
+    return path;
+  }
+
+  async function withSpawnCommand<T>(value: string, run: () => Promise<T>): Promise<T> {
+    const prev = process.env.WORQLOAD_SPAWN_COMMAND;
+    process.env.WORQLOAD_SPAWN_COMMAND = value;
+    try {
+      return await run();
+    } finally {
+      if (prev === undefined) delete process.env.WORQLOAD_SPAWN_COMMAND;
+      else process.env.WORQLOAD_SPAWN_COMMAND = prev;
+    }
+  }
+
+  test("invokes the WORQLOAD_SPAWN_COMMAND binary and returns its sanitized output", async () => {
+    const fake = writeFakeClaude("echo 'auto-generated-name extra words'");
+    const name = await withSpawnCommand(fake, () => defaultBranchNameGenerator("do a thing"));
+    expect(name).toBe("auto-generated-name");
+  });
+
+  test("returns null when the spawned binary exits non-zero", async () => {
+    const fake = writeFakeClaude("exit 1");
+    const name = await withSpawnCommand(fake, () => defaultBranchNameGenerator("do a thing"));
+    expect(name).toBeNull();
+  });
+});
+
+describe("makeBranchNameGenerator with WORQLOAD_DRIVER=tmux", () => {
+  async function withDriverTmux<T>(run: () => Promise<T>): Promise<T> {
+    const prev = process.env.WORQLOAD_DRIVER;
+    process.env.WORQLOAD_DRIVER = "tmux";
+    try {
+      return await run();
+    } finally {
+      if (prev === undefined) delete process.env.WORQLOAD_DRIVER;
+      else process.env.WORQLOAD_DRIVER = prev;
+    }
+  }
+
+  test("routes branch naming through the tmux one-shot and sanitizes its assistant text", async () => {
+    const transcriptDir = mkdtempSync(join(tmpdir(), "wq-bn-tmux-tx-"));
+    const bootstrapDir = mkdtempSync(join(tmpdir(), "wq-bn-tmux-bs-"));
+    let newSessionSeen = false;
+    const tmuxDeps: TmuxDriverDeps = {
+      tmuxRun: async (args) => {
+        if (args[0] === "new-session") {
+          newSessionSeen = true;
+          // The generator mints its own UUID; recover it from the spawned
+          // command and write the transcript claude would have produced.
+          const shellCmd = args.at(-1) ?? "";
+          const id = shellCmd.match(/'--session-id' '([^']+)'/)?.[1];
+          if (id) {
+            await writeFile(
+              join(transcriptDir, `${id}.jsonl`),
+              `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "tmux-named branch" }] } })}\n`,
+            );
+          }
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      resolveTranscriptDir: () => transcriptDir,
+      pollIntervalMs: 10,
+      transcriptWaitTimeoutMs: 2000,
+      bootstrapFileDir: bootstrapDir,
+    };
+
+    const name = await withDriverTmux(() => makeBranchNameGenerator(tmuxDeps)("build a thing"));
+
+    expect(newSessionSeen).toBe(true);
+    expect(name).toBe("tmux-named");
+  });
+
+  test("falls back to null (caller uses shortId) when the tmux one-shot produces no answer", async () => {
+    const transcriptDir = mkdtempSync(join(tmpdir(), "wq-bn-tmux-tx-"));
+    const tmuxDeps: TmuxDriverDeps = {
+      tmuxRun: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      resolveTranscriptDir: () => transcriptDir,
+      pollIntervalMs: 10,
+      transcriptWaitTimeoutMs: 120,
+      bootstrapFileDir: mkdtempSync(join(tmpdir(), "wq-bn-tmux-bs-")),
+    };
+
+    const name = await withDriverTmux(() => makeBranchNameGenerator(tmuxDeps)("build a thing"));
+
+    expect(name).toBeNull();
   });
 });
