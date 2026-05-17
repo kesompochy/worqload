@@ -62,13 +62,10 @@ export function describeEvent(event) {
       if (uses.length === 0) return fallback("(tool use)", payload);
       return {
         summary: uses.map(u => {
-          if (touchesPrivateDraft(u.input)) return `${u.name} ${PRIVATE_DRAFT_HINT}`;
           const arg = summarizeToolInput(u.name, u.input);
           return arg ? `${u.name} ${arg}` : u.name;
         }).join(" · "),
-        sections: uses.map(u => touchesPrivateDraft(u.input)
-          ? { label: u.name, body: PRIVATE_DRAFT_NOTICE, format: "text" }
-          : { label: u.name, body: prettyJson(u.input), format: "code" }),
+        sections: uses.map(u => ({ label: u.name, body: prettyJson(u.input), format: "code" })),
       };
     }
 
@@ -194,21 +191,6 @@ function describeCommandApprovalResolved(payload) {
 }
 
 // ---- pure helpers --------------------------------------------------------
-
-// `.worqload-draft/` is the session-private scratch dir the agent drafts its
-// report into before submitting (see the protocol prefix). The protocol
-// promises worqload never shows it to the human — and that has to hold here:
-// when report rewriting is on, the unpolished draft a Write/Bash tool call
-// carries must not leak through the Events tab. Match the dir anywhere in the
-// tool input (file_path, command, ...) and redact the whole input.
-const PRIVATE_DRAFT_HINT = "(session-private draft — hidden)";
-const PRIVATE_DRAFT_NOTICE =
-  "(redacted: .worqload-draft/ is session-private; worqload does not show it to the human)";
-
-function touchesPrivateDraft(input) {
-  if (!input || typeof input !== "object") return false;
-  return prettyJson(input).includes(".worqload-draft/");
-}
 
 function fallback(summary, payload) {
   return { summary, sections: [payloadSection(payload)] };

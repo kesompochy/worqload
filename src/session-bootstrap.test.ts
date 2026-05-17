@@ -13,21 +13,17 @@ test("protocol prefix tells the agent to check for base-branch conflicts after c
 
 test("protocol prefix no longer burdens the session with the 推敲 ceremony", () => {
   const prefix = buildProtocolPrefix("main");
-  // 推敲 moved off the working session onto a disposable report-only agent.
-  // The word names the polish-and-revise burden; it must be gone so the
-  // session does not re-adopt it.
+  // 推敲 moved off the working session onto a disposable report-only agent
+  // worqload spins up on receipt. The session must not be told to draft to a
+  // file and read it back — that round-trip is no longer its job.
   expect(prefix).not.toContain("推敲");
+  expect(prefix).not.toContain(".worqload-draft/");
 });
 
-test("protocol prefix routes the report through the session-private draft dir so the raw stays out of the human's view", () => {
+test("protocol prefix still tells the agent how to submit a report", () => {
   const prefix = buildProtocolPrefix("main");
-  // The raw, unpolished draft must not reach the human when rewriting is on.
-  // The session writes it into .worqload-draft/ (which worqload never shows,
-  // not even in the event stream) and pipes that file into submit — so the
-  // human only ever sees the rewritten version.
-  expect(prefix).toContain(".worqload-draft/");
+  // Dropping 推敲 must not drop the submit mechanic itself.
   expect(prefix).toContain("worqload report submit --slug");
-  expect(prefix.toLowerCase()).toContain("session-private");
 });
 
 test("protocol prefix tells the agent to lead with the conclusion to respect the human's time", () => {
