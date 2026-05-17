@@ -42,7 +42,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback, onResume, onStopAndResume } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback, onResume, onStopAndResume, onToggleReportAgent } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -1131,6 +1131,42 @@ async function withApiMock(
     }));
   }
 }
+
+test("onToggleReportAgent flips an on (absent) flag off and POSTs the new value", async () => {
+  state.selected = "sess-ra";
+  state.detail = { meta: { id: "sess-ra" }, events: [] };
+  state.sessions = [{ id: "sess-ra" }];
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+
+  await withApiMock(async (method, path, body) => {
+    calls.push({ method, path, body });
+    return { meta: { id: "sess-ra", reportAgentEnabled: (body as { enabled: boolean }).enabled } };
+  }, async () => {
+    await onToggleReportAgent("sess-ra");
+  });
+
+  expect(calls).toEqual([{ method: "POST", path: "/sessions/sess-ra/report-agent", body: { enabled: false } }]);
+  expect(state.detail.meta.reportAgentEnabled).toBe(false);
+  // Sidebar card stays in sync so a later detail reload reflects the same value.
+  expect(state.sessions[0].reportAgentEnabled).toBe(false);
+});
+
+test("onToggleReportAgent turns the flag back on when it was explicitly off", async () => {
+  state.selected = "sess-rb";
+  state.detail = { meta: { id: "sess-rb", reportAgentEnabled: false }, events: [] };
+  state.sessions = [];
+  const bodies: unknown[] = [];
+
+  await withApiMock(async (_method, _path, body) => {
+    bodies.push(body);
+    return { meta: { id: "sess-rb", reportAgentEnabled: (body as { enabled: boolean }).enabled } };
+  }, async () => {
+    await onToggleReportAgent("sess-rb");
+  });
+
+  expect(bodies).toEqual([{ enabled: true }]);
+  expect(state.detail.meta.reportAgentEnabled).toBe(true);
+});
 
 test("onResume clears the textarea before the await, so a re-render mid-flight can't strand the prompt", async () => {
   state.selected = "session-r";
