@@ -147,9 +147,9 @@ export interface ServerContext {
   clients: Map<string, SessionAttachment>;
   baseUrlForAgent: string;
   wsClients: Set<ServerWebSocket<WsClientData>>;
-  // Wall-clock of the latest claude_* event observed per session. The wake
-  // watchdog compares it with the wake-send time to decide whether to
-  // auto-resume a host whose claude has gone deaf to stdin.
+  // Wall-clock of the latest claude_* event observed per session. Used by the
+  // wake watchdog only as a liveness signal for a manual wake with an empty
+  // inbox; queued-feedback delivery is judged by the inbox itself, not this.
   lastClaudeActivityAt: Map<string, number>;
   // Watchdog threshold. Zero (or negative) disables the watchdog entirely.
   wakeWatchdogMs: number;
@@ -175,9 +175,10 @@ export interface StartServerOptions {
   hostCommand?: string[];       // override how the (subprocess) host is launched
   hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
   worktreeOps?: WorktreeOps;    // override the git/worktree layer (tests use a fake)
-  // Auto-resume threshold for the wake watchdog (ms). The watchdog scans for
-  // a fresh claude_* event after each wake; if none arrives within this
-  // window, it tears down the host and re-spawns with --continue. Zero or
+  // Auto-resume threshold for the wake watchdog (ms). When it fires, if the
+  // feedback inbox still holds an unfetched message (or, with nothing queued,
+  // claude has stayed silent since the wake), it tears down the host and
+  // re-spawns with --continue so RESUME_KICKOFF forces a fetch. Zero or
   // negative disables it. Production default is 90s; tests override down.
   wakeWatchdogMs?: number;
   // Per-attachment byte cap and per-feedback-message attachment count cap.
@@ -428,8 +429,6 @@ async function runWakeWatchdog(
   wakeAt: number,
   expectedAtt: SessionAttachment,
 ): Promise<void> {
-  const lastActivity = ctx.lastClaudeActivityAt.get(sessionId) ?? 0;
-  if (lastActivity >= wakeAt) return; // claude responded in time
   const meta = await loadSessionMeta(sessionId, ctx.sessionsDir);
   if (!meta || isTerminal(meta.status)) return; // session has moved on
   // Identity check: the attachment that received the wake must still be the
@@ -438,11 +437,25 @@ async function runWakeWatchdog(
   // stale.
   const currentAtt = ctx.clients.get(sessionId);
   if (currentAtt !== expectedAtt) return;
+
+  // The inbox is the authoritative "was the feedback picked up" signal:
+  // `worqload feedback fetch` moves inbox→read atomically as part of the
+  // fetch, so anything still in inbox proves the agent never drained it —
+  // no matter how many unrelated claude_* events it emitted meanwhile (a
+  // mid-turn claude keeps emitting, ending with a `turn_duration` system
+  // event, which would otherwise mask an undelivered wake). Claude activity
+  // is only a meaningful liveness signal for a manual wake with nothing
+  // queued; for queued feedback the queued file is what matters.
+  const inboxRemaining = await listAllFiles(feedbackInboxDirFor(ctx, sessionId));
+  const lastActivity = ctx.lastClaudeActivityAt.get(sessionId) ?? 0;
+  if (inboxRemaining.length === 0 && lastActivity >= wakeAt) return;
+
+  const reason = inboxRemaining.length > 0 ? "feedback_unfetched" : "wake_unanswered";
   const silenceMs = Date.now() - wakeAt;
-  appendHostLog(ctx, sessionId, "watchdog_auto_resume", { silenceMs, hostPid: expectedAtt.hostPid });
+  appendHostLog(ctx, sessionId, "watchdog_auto_resume", { reason, silenceMs, hostPid: expectedAtt.hostPid });
   await appendAndBroadcast(ctx, sessionId, {
     kind: "session_auto_resumed",
-    payload: { reason: "wake_unanswered", silenceMs },
+    payload: { reason, silenceMs },
   });
   try {
     await expectedAtt.client.kill("SIGTERM");
