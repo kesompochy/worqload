@@ -151,6 +151,12 @@ export interface ServerContext {
   // wake watchdog only as a liveness signal for a manual wake with an empty
   // inbox; queued-feedback delivery is judged by the inbox itself, not this.
   lastClaudeActivityAt: Map<string, number>;
+  // Wall-clock of the latest `worqload feedback fetch` (internal feedback GET)
+  // per session. An empty inbox alone is ambiguous — it could mean "the agent
+  // drained it" or "nothing was ever queued (a manual wake)". A fetch at/after
+  // the wake is the authoritative proof the agent actually picked the feedback
+  // up, even when that fetch produced no claude_* event of its own.
+  lastFeedbackFetchAt: Map<string, number>;
   // Watchdog threshold. Zero (or negative) disables the watchdog entirely.
   wakeWatchdogMs: number;
   // Per-attachment byte cap and per-feedback-message attachment count cap.
@@ -448,7 +454,12 @@ async function runWakeWatchdog(
   // queued; for queued feedback the queued file is what matters.
   const inboxRemaining = await listAllFiles(feedbackInboxDirFor(ctx, sessionId));
   const lastActivity = ctx.lastClaudeActivityAt.get(sessionId) ?? 0;
-  if (inboxRemaining.length === 0 && lastActivity >= wakeAt) return;
+  const lastFeedbackFetch = ctx.lastFeedbackFetchAt.get(sessionId) ?? 0;
+  // Quiet only when nothing is queued AND the agent is demonstrably engaged
+  // since the wake: it fetched its inbox (the authoritative delivery signal,
+  // true even if that fetch emitted no claude_* event) or — for a manual wake
+  // with nothing queued — claude produced some event.
+  if (inboxRemaining.length === 0 && (lastFeedbackFetch >= wakeAt || lastActivity >= wakeAt)) return;
 
   const reason = inboxRemaining.length > 0 ? "feedback_unfetched" : "wake_unanswered";
   const silenceMs = Date.now() - wakeAt;
@@ -647,6 +658,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     baseUrlForAgent: `http://127.0.0.1:${server.port}`,
     wsClients: new Set(),
     lastClaudeActivityAt: new Map(),
+    lastFeedbackFetchAt: new Map(),
     wakeWatchdogMs: opts.wakeWatchdogMs ?? DEFAULT_WAKE_WATCHDOG_MS,
     feedbackAttachmentMaxBytes: opts.feedbackAttachmentMaxBytes ?? DEFAULT_FEEDBACK_ATTACHMENT_MAX_BYTES,
     feedbackAttachmentMaxCount: opts.feedbackAttachmentMaxCount ?? DEFAULT_FEEDBACK_ATTACHMENT_MAX_COUNT,
@@ -1071,6 +1083,7 @@ async function deleteSession(_req: Request, ctx: ServerContext, params: Record<s
     }
     ctx.clients.delete(meta.id);
     ctx.lastClaudeActivityAt.delete(meta.id);
+    ctx.lastFeedbackFetchAt.delete(meta.id);
     try {
       await ctx.worktreeOps.removeWorktree(meta.worktreePath, meta.branchName, ctx.repoDir);
     } catch {
@@ -2017,6 +2030,10 @@ function formatAttachmentsSection(absolutePaths: string[]): string {
 
 async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
+    // The agent checking its inbox — drained or not — is the wake watchdog's
+    // proof of delivery: it disambiguates "inbox empty because fetched" from
+    // "inbox empty because nothing was queued".
+    ctx.lastFeedbackFetchAt.set(meta.id, Date.now());
     const inbox = feedbackInboxDirFor(ctx, meta.id);
     const readDir = feedbackReadDirFor(ctx, meta.id);
     const messages = await listAllFiles(inbox);
