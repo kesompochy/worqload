@@ -163,17 +163,17 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .report.collapsed .report-body { display: none; }
 .report-empty { color: var(--text-dim); font-style: italic; }
 
-/* Reports tab: report cards on the left, an always-visible table of contents
-   pinned on the right. align-items:flex-start + align-self:flex-start keep the
+/* Reports tab: an always-visible table of contents pinned on the left, report
+   cards on the right. align-items:flex-start + align-self:flex-start keep the
    short TOC from being stretched to the tall reports column so position:sticky
    can pin it as .detail-body (the scroll container) scrolls. */
 .reports-with-toc { display: flex; align-items: flex-start; gap: 1.1rem; }
 .reports-column { flex: 1; min-width: 0; }
 .report-toc {
-  flex: 0 0 13rem; width: 13rem;
+  flex: 0 1 13rem; width: 13rem; min-width: 7rem;
   position: sticky; top: 0; align-self: flex-start;
   max-height: calc(100vh - 5rem); overflow-y: auto;
-  border-left: 1px solid var(--border); padding-left: .9rem;
+  border-right: 1px solid var(--border); padding-right: .9rem;
 }
 .report-toc-group { margin-bottom: .7rem; }
 .report-toc-report, .report-toc-heading {
@@ -195,9 +195,6 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .report-toc-heading[data-toc-level="4"] { padding-left: 3rem; }
 .report-toc-heading[data-toc-level="5"] { padding-left: 3.8rem; }
 .report-toc-heading[data-toc-level="6"] { padding-left: 4.6rem; }
-/* The detail pane gets cramped on narrow viewports; the TOC is the first thing
-   to drop since the report bodies must stay readable. */
-@media (max-width: 760px) { .report-toc { display: none; } }
 .tabs { display: flex; gap: .25rem; padding: 0 1.1rem; border-bottom: 1px solid var(--border); background: var(--panel); }
 .tab-btn { background: transparent; border: 1px solid transparent; border-bottom: none; padding: .45rem .9rem; border-radius: 4px 4px 0 0; color: var(--text-dim); cursor: pointer; }
 .tab-btn.active { background: var(--bg); border-color: var(--border); color: var(--text); margin-bottom: -1px; }
