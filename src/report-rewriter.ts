@@ -79,7 +79,7 @@ export function makeClaudeReportRewriter(opts: ClaudeReportRewriterOptions): Rep
         stderr: "pipe",
       });
       const texts: string[] = [];
-      const stdoutTask = readLines(proc.stdout, line => extractAssistantText(line, texts));
+      const stdoutTask = readLines(proc.stdout, (line) => extractAssistantText(line, texts));
       // Drain stderr so a chatty agent can't fill the pipe buffer and wedge.
       const stderrTask = readLines(proc.stderr, () => {});
 

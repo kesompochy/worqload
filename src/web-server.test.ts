@@ -46,7 +46,7 @@ function makeGitRepo(): string {
 
 // The default test server: an fs-only worktree layer and an in-process host, so
 // no `git` runs and no subprocesses are spawned. `repoDir` is just a directory.
-async function bootServer(repoDir: string) {
+async function bootServer(repoDir: string, extra: Partial<Parameters<typeof startServer>[0]> = {}) {
   const started = await startServer({
     port: 0,
     repoDir,
@@ -55,6 +55,10 @@ async function bootServer(repoDir: string) {
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    // Default to pass-through so report tests don't spawn the real claude the
+    // production rewriter would; the rewrite-specific tests override this.
+    reportRewriter: async raw => raw,
+    ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -305,6 +309,52 @@ test("POST /internal/sessions/:id/reports writes numbered report", async () => {
   const events = await readEvents(sid, 1, ctx.sessionsDir);
   const reportEvents = events.filter(e => e.kind === "report_submitted");
   expect(reportEvents).toHaveLength(2);
+});
+
+test("a submitted report is run through the report rewriter before being stored (flag defaults ON)", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, {
+    reportRewriter: async (raw, { cwd }) => `整形済み(${cwd ? "cwd-ok" : "no-cwd"}): ${raw}`,
+  });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "なまの本文" }).then(r => r.json());
+  const stored = readFileSync(join(ctx.sessionsDir, sid, "reports", r.filename), "utf8");
+  expect(stored).toBe("整形済み(cwd-ok): なまの本文");
+});
+
+test("toggling reportAgentEnabled off stores the report raw; toggling back on restores rewriting", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, {
+    reportRewriter: async raw => `REWRITTEN: ${raw}`,
+  });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const off = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: false }).then(r => r.json());
+  expect(off.meta.reportAgentEnabled).toBe(false);
+  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json());
+  expect(detail.meta.reportAgentEnabled).toBe(false);
+
+  const r1 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "raw", content: "素のまま" }).then(r => r.json());
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r1.filename), "utf8")).toBe("素のまま");
+
+  const on = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true }).then(r => r.json());
+  expect(on.meta.reportAgentEnabled).toBe(true);
+
+  const r2 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "polished", content: "また整形" }).then(r => r.json());
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r2.filename), "utf8")).toBe("REWRITTEN: また整形");
+});
+
+test("POST /sessions/:id/report-agent rejects a non-boolean enabled", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const res = await postJson(baseUrl, `/sessions/${created.meta.id}/report-agent`, { enabled: "yes" });
+  expect(res.status).toBe(400);
 });
 
 test("POST /internal/sessions/:id/escalations sets status to waiting_human", async () => {
