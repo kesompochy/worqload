@@ -24,6 +24,18 @@ export interface SessionMeta {
   // The server skips the reconcile-on-boot step for these so a running mock
   // doesn't get auto-flipped to crashed for lacking a real host process.
   mock?: boolean;
+  // Whether worqload runs a disposable report-only agent over each submitted
+  // report before storing it. Absent means enabled: the in-session 推敲 pass it
+  // replaces used to run unconditionally, so the default has to preserve that.
+  // The human flips it per session from the UI.
+  reportAgentEnabled?: boolean;
+}
+
+// `reportAgentEnabled` is opt-out, not opt-in: only an explicit `false` (the
+// human toggled it off for this session) disables the rewrite. Undefined —
+// every session created before the flag existed — stays enabled.
+export function isReportAgentEnabled(meta: SessionMeta): boolean {
+  return meta.reportAgentEnabled !== false;
 }
 
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
