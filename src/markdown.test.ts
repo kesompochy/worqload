@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { renderMarkdown } from "../web/markdown.js";
+import { renderMarkdown, extractHeadings } from "../web/markdown.js";
 
 test("heading produces h-tag with start line", () => {
   const html = renderMarkdown("# Title\n", { anchorPath: "./r.md" });
@@ -192,4 +192,30 @@ test("a block anchored by several feedbacks lists them all on the marker", () =>
 test("no feedback marker when no feedback anchors are passed", () => {
   const html = renderMarkdown("body\n", { anchorPath: "./r.md" });
   expect(html).not.toContain("data-feedback-preview");
+});
+
+test("extractHeadings returns each heading with its level and 1-based source line", () => {
+  const headings = extractHeadings("intro paragraph\n\n# Top\n\nbody\n\n## Sub\n\n### Deep\n");
+  expect(headings).toEqual([
+    { level: 1, text: "Top", line: 3 },
+    { level: 2, text: "Sub", line: 7 },
+    { level: 3, text: "Deep", line: 9 },
+  ]);
+});
+
+test("extractHeadings strips inline markdown from the label", () => {
+  const headings = extractHeadings("## **Bold** `code` and [a link](http://x) _em_\n");
+  expect(headings).toEqual([{ level: 2, text: "Bold code and a link em", line: 1 }]);
+});
+
+test("extractHeadings ignores '#' lines inside a fenced code block", () => {
+  const headings = extractHeadings("# Real\n\n```\n# not a heading\n```\n\n## Also real\n");
+  expect(headings).toEqual([
+    { level: 1, text: "Real", line: 1 },
+    { level: 2, text: "Also real", line: 7 },
+  ]);
+});
+
+test("extractHeadings returns an empty array when there are no headings", () => {
+  expect(extractHeadings("just a paragraph\n\n- a list item\n")).toEqual([]);
 });

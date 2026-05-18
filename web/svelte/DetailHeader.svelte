@@ -15,7 +15,7 @@
   import { formatRelative, eventAgeIsStale } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReportAgent } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
   const tabs = [
@@ -50,8 +50,8 @@
   {@const lastEvent = events.length > 0 ? events[events.length - 1] : null}
   <div class="detail-header">
     <div class="title"><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
-    {#if appState.actions.length > 0}
-      <div class="header-actions">
+    <div class="header-actions">
+      {#if appState.actions.length > 0}
         {#each appState.actions as a, i (a.id)}
           {#if groupBoundary(appState.actions, i)}
             <span class="action-group-sep" aria-hidden="true"></span>
@@ -64,8 +64,10 @@
             <button class="btn-action" class:open={appState.openActionId === a.id} title={a.description || ""} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
           {/if}
         {/each}
-      </div>
-    {/if}
+        <span class="action-group-sep" aria-hidden="true"></span>
+      {/if}
+      <label class="report-agent-toggle" title="On: worqload runs a disposable report-only agent over each report (結論ファースト・短文に整形) before storing it. Off: the report is stored as the session wrote it."><input type="checkbox" checked={m.reportAgentEnabled !== false} onchange={() => onToggleReportAgent(m.id)} /><span>レポート整形</span></label>
+    </div>
   </div>
   <ActionBar />
   <div class="detail-meta">

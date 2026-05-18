@@ -12,10 +12,12 @@ import {
   listSessionMetas,
   reorderSessions,
   isTerminal,
+  isReportAgentEnabled,
   validateTransition,
   type SessionMeta,
   type SessionStatus,
 } from "./session";
+import { makeClaudeReportRewriter, type ReportRewriter } from "./report-rewriter";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
@@ -144,13 +146,23 @@ export interface ServerContext {
   branchNameGenerator: BranchNameGenerator;
   hostLauncher: HostLauncher;
   worktreeOps: WorktreeOps;
+  // Rewrites a submitted report into human-readable form before it's stored,
+  // when the session's reportAgentEnabled flag is on. The default spawns a
+  // disposable claude from spawnCommand; tests inject a synchronous fake.
+  reportRewriter: ReportRewriter;
   clients: Map<string, SessionAttachment>;
   baseUrlForAgent: string;
   wsClients: Set<ServerWebSocket<WsClientData>>;
-  // Wall-clock of the latest claude_* event observed per session. The wake
-  // watchdog compares it with the wake-send time to decide whether to
-  // auto-resume a host whose claude has gone deaf to stdin.
+  // Wall-clock of the latest claude_* event observed per session. Used by the
+  // wake watchdog only as a liveness signal for a manual wake with an empty
+  // inbox; queued-feedback delivery is judged by the inbox itself, not this.
   lastClaudeActivityAt: Map<string, number>;
+  // Wall-clock of the latest `worqload feedback fetch` (internal feedback GET)
+  // per session. An empty inbox alone is ambiguous — it could mean "the agent
+  // drained it" or "nothing was ever queued (a manual wake)". A fetch at/after
+  // the wake is the authoritative proof the agent actually picked the feedback
+  // up, even when that fetch produced no claude_* event of its own.
+  lastFeedbackFetchAt: Map<string, number>;
   // Watchdog threshold. Zero (or negative) disables the watchdog entirely.
   wakeWatchdogMs: number;
   // Per-attachment byte cap and per-feedback-message attachment count cap.
@@ -174,10 +186,12 @@ export interface StartServerOptions {
   branchNameGenerator?: BranchNameGenerator;
   hostCommand?: string[];       // override how the (subprocess) host is launched
   hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
+  reportRewriter?: ReportRewriter; // override the report rewriter (tests use a fake)
   worktreeOps?: WorktreeOps;    // override the git/worktree layer (tests use a fake)
-  // Auto-resume threshold for the wake watchdog (ms). The watchdog scans for
-  // a fresh claude_* event after each wake; if none arrives within this
-  // window, it tears down the host and re-spawns with --continue. Zero or
+  // Auto-resume threshold for the wake watchdog (ms). When it fires, if the
+  // feedback inbox still holds an unfetched message (or, with nothing queued,
+  // claude has stayed silent since the wake), it tears down the host and
+  // re-spawns with --continue so RESUME_KICKOFF forces a fetch. Zero or
   // negative disables it. Production default is 90s; tests override down.
   wakeWatchdogMs?: number;
   // Per-attachment byte cap and per-feedback-message attachment count cap.
@@ -428,8 +442,6 @@ async function runWakeWatchdog(
   wakeAt: number,
   expectedAtt: SessionAttachment,
 ): Promise<void> {
-  const lastActivity = ctx.lastClaudeActivityAt.get(sessionId) ?? 0;
-  if (lastActivity >= wakeAt) return; // claude responded in time
   const meta = await loadSessionMeta(sessionId, ctx.sessionsDir);
   if (!meta || isTerminal(meta.status)) return; // session has moved on
   // Identity check: the attachment that received the wake must still be the
@@ -438,11 +450,30 @@ async function runWakeWatchdog(
   // stale.
   const currentAtt = ctx.clients.get(sessionId);
   if (currentAtt !== expectedAtt) return;
+
+  // The inbox is the authoritative "was the feedback picked up" signal:
+  // `worqload feedback fetch` moves inbox→read atomically as part of the
+  // fetch, so anything still in inbox proves the agent never drained it —
+  // no matter how many unrelated claude_* events it emitted meanwhile (a
+  // mid-turn claude keeps emitting, ending with a `turn_duration` system
+  // event, which would otherwise mask an undelivered wake). Claude activity
+  // is only a meaningful liveness signal for a manual wake with nothing
+  // queued; for queued feedback the queued file is what matters.
+  const inboxRemaining = await listAllFiles(feedbackInboxDirFor(ctx, sessionId));
+  const lastActivity = ctx.lastClaudeActivityAt.get(sessionId) ?? 0;
+  const lastFeedbackFetch = ctx.lastFeedbackFetchAt.get(sessionId) ?? 0;
+  // Quiet only when nothing is queued AND the agent is demonstrably engaged
+  // since the wake: it fetched its inbox (the authoritative delivery signal,
+  // true even if that fetch emitted no claude_* event) or — for a manual wake
+  // with nothing queued — claude produced some event.
+  if (inboxRemaining.length === 0 && (lastFeedbackFetch >= wakeAt || lastActivity >= wakeAt)) return;
+
+  const reason = inboxRemaining.length > 0 ? "feedback_unfetched" : "wake_unanswered";
   const silenceMs = Date.now() - wakeAt;
-  appendHostLog(ctx, sessionId, "watchdog_auto_resume", { silenceMs, hostPid: expectedAtt.hostPid });
+  appendHostLog(ctx, sessionId, "watchdog_auto_resume", { reason, silenceMs, hostPid: expectedAtt.hostPid });
   await appendAndBroadcast(ctx, sessionId, {
     kind: "session_auto_resumed",
-    payload: { reason: "wake_unanswered", silenceMs },
+    payload: { reason, silenceMs },
   });
   try {
     await expectedAtt.client.kill("SIGTERM");
@@ -570,6 +601,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand, driverName });
+  // Spawned from the same argv as sessions, so WORQLOAD_DRIVER /
+  // WORQLOAD_SPAWN_COMMAND govern the disposable agent too.
+  const reportRewriter = opts.reportRewriter ?? makeClaudeReportRewriter({ spawnCommand });
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
 
   await mkdir(sessionsDir, { recursive: true });
@@ -640,12 +674,14 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     spawnCommand,
     branchNameGenerator,
     hostLauncher,
+    reportRewriter,
     worktreeOps,
     clients: new Map(),
     port: server.port,
     baseUrlForAgent: `http://127.0.0.1:${server.port}`,
     wsClients: new Set(),
     lastClaudeActivityAt: new Map(),
+    lastFeedbackFetchAt: new Map(),
     wakeWatchdogMs: opts.wakeWatchdogMs ?? DEFAULT_WAKE_WATCHDOG_MS,
     feedbackAttachmentMaxBytes: opts.feedbackAttachmentMaxBytes ?? DEFAULT_FEEDBACK_ATTACHMENT_MAX_BYTES,
     feedbackAttachmentMaxCount: opts.feedbackAttachmentMaxCount ?? DEFAULT_FEEDBACK_ATTACHMENT_MAX_COUNT,
@@ -719,6 +755,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/unarchive", postUnarchive),
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
+  defineRoute("POST", "/sessions/:id/report-agent", postReportAgent),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("GET",  "/sessions/:id/feedback/:filename/attachments/:name", getFeedbackAttachment),
@@ -1070,6 +1107,7 @@ async function deleteSession(_req: Request, ctx: ServerContext, params: Record<s
     }
     ctx.clients.delete(meta.id);
     ctx.lastClaudeActivityAt.delete(meta.id);
+    ctx.lastFeedbackFetchAt.delete(meta.id);
     try {
       await ctx.worktreeOps.removeWorktree(meta.worktreePath, meta.branchName, ctx.repoDir);
     } catch {
@@ -1108,6 +1146,25 @@ async function postTitle(req: Request, ctx: ServerContext, params: Record<string
     const trimmed = body.title.trim();
     const { title: _previous, ...rest } = meta;
     const updated: SessionMeta = trimmed === "" ? rest : { ...rest, title: trimmed };
+    await saveSessionMeta(updated, ctx.sessionsDir);
+    return json({ meta: updated });
+  });
+}
+
+interface ReportAgentBody {
+  enabled?: unknown;
+}
+
+// The UI toggle for the disposable report-only agent. Stored on meta so it
+// rides along in every session listing/detail response without extra
+// decoration (isReportAgentEnabled reads it; absent means on).
+async function postReportAgent(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json().catch(() => ({}))) as ReportAgentBody;
+    if (typeof body.enabled !== "boolean") {
+      return json({ error: "enabled must be a boolean" }, 400);
+    }
+    const updated: SessionMeta = { ...meta, reportAgentEnabled: body.enabled };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
   });
@@ -1946,8 +2003,14 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
         return json({ error: `no such feedback message: ${replyTo}` }, 400);
       }
     }
+    // The disposable report-only agent runs here, before the report is stored,
+    // so the session never saw the 推敲 burden and the human reads the polished
+    // text. Off per session → store the agent's raw submission untouched.
+    const content = isReportAgentEnabled(meta)
+      ? await ctx.reportRewriter(body.content, { cwd: meta.worktreePath })
+      : body.content;
     const dir = reportsDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(dir, body.slug, body.content, replyTo ? { meta: { replyTo } } : {});
+    const file = await writeNumberedFile(dir, body.slug, content, replyTo ? { meta: { replyTo } } : {});
     await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
     return json({ filename: file.filename, seq: file.seq });
   });
@@ -2016,6 +2079,10 @@ function formatAttachmentsSection(absolutePaths: string[]): string {
 
 async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
+    // The agent checking its inbox — drained or not — is the wake watchdog's
+    // proof of delivery: it disambiguates "inbox empty because fetched" from
+    // "inbox empty because nothing was queued".
+    ctx.lastFeedbackFetchAt.set(meta.id, Date.now());
     const inbox = feedbackInboxDirFor(ctx, meta.id);
     const readDir = feedbackReadDirFor(ctx, meta.id);
     const messages = await listAllFiles(inbox);

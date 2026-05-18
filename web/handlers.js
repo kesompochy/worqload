@@ -1308,6 +1308,26 @@ export async function onRenameCommit(id, rawValue) {
   }
 }
 
+// The detail-header toggle for the disposable report-only agent. The flag
+// lives on the session meta (absent means on); flipping it changes whether
+// worqload polishes this session's future reports before storing them. Reads
+// the current value off the loaded detail (where the toggle is rendered) and
+// sends the inverse — only an explicit false counts as off.
+export async function onToggleReportAgent(id) {
+  if (!id) return;
+  const meta = state.detail && state.detail.meta && state.detail.meta.id === id ? state.detail.meta : null;
+  if (!meta) return;
+  const enabled = meta.reportAgentEnabled === false;
+  try {
+    const res = await api("POST", `/sessions/${id}/report-agent`, { enabled });
+    state.detail.meta = res.meta;
+    const card = state.sessions.find(s => s.id === id);
+    if (card) card.reportAgentEnabled = res.meta.reportAgentEnabled;
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 // Drag-reorder the sidebar: move the dragged card so it lands immediately
 // before `beforeId` (or to the end when that's null), update the in-browser
 // list at once, then persist so the 30s poll keeps the new order.

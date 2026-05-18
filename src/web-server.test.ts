@@ -46,7 +46,7 @@ function makeGitRepo(): string {
 
 // The default test server: an fs-only worktree layer and an in-process host, so
 // no `git` runs and no subprocesses are spawned. `repoDir` is just a directory.
-async function bootServer(repoDir: string) {
+async function bootServer(repoDir: string, extra: Partial<Parameters<typeof startServer>[0]> = {}) {
   const started = await startServer({
     port: 0,
     repoDir,
@@ -55,6 +55,10 @@ async function bootServer(repoDir: string) {
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    // Default to pass-through so report tests don't spawn the real claude the
+    // production rewriter would; the rewrite-specific tests override this.
+    reportRewriter: async raw => raw,
+    ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -305,6 +309,52 @@ test("POST /internal/sessions/:id/reports writes numbered report", async () => {
   const events = await readEvents(sid, 1, ctx.sessionsDir);
   const reportEvents = events.filter(e => e.kind === "report_submitted");
   expect(reportEvents).toHaveLength(2);
+});
+
+test("a submitted report is run through the report rewriter before being stored (flag defaults ON)", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, {
+    reportRewriter: async (raw, { cwd }) => `整形済み(${cwd ? "cwd-ok" : "no-cwd"}): ${raw}`,
+  });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "なまの本文" }).then(r => r.json());
+  const stored = readFileSync(join(ctx.sessionsDir, sid, "reports", r.filename), "utf8");
+  expect(stored).toBe("整形済み(cwd-ok): なまの本文");
+});
+
+test("toggling reportAgentEnabled off stores the report raw; toggling back on restores rewriting", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, {
+    reportRewriter: async raw => `REWRITTEN: ${raw}`,
+  });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const off = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: false }).then(r => r.json());
+  expect(off.meta.reportAgentEnabled).toBe(false);
+  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json());
+  expect(detail.meta.reportAgentEnabled).toBe(false);
+
+  const r1 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "raw", content: "素のまま" }).then(r => r.json());
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r1.filename), "utf8")).toBe("素のまま");
+
+  const on = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true }).then(r => r.json());
+  expect(on.meta.reportAgentEnabled).toBe(true);
+
+  const r2 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "polished", content: "また整形" }).then(r => r.json());
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r2.filename), "utf8")).toBe("REWRITTEN: また整形");
+});
+
+test("POST /sessions/:id/report-agent rejects a non-boolean enabled", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const res = await postJson(baseUrl, `/sessions/${created.meta.id}/report-agent`, { enabled: "yes" });
+  expect(res.status).toBe(400);
 });
 
 test("POST /internal/sessions/:id/escalations sets status to waiting_human", async () => {
@@ -664,10 +714,12 @@ test("wake watchdog auto-resumes when no claude_* event arrives within the thres
   expect(kinds.filter((k) => k === "session_resumed").length).toBeGreaterThanOrEqual(1);
 
   const auto = events.find((e) => e.kind === "session_auto_resumed");
-  expect((auto?.payload as Record<string, unknown>).reason).toBe("wake_unanswered");
+  // Feedback is queued and was never fetched, so the inbox-still-full trigger
+  // is the precise diagnosis (it subsumes "no claude_* event arrived").
+  expect((auto?.payload as Record<string, unknown>).reason).toBe("feedback_unfetched");
 });
 
-test("wake watchdog stays quiet when claude responds before the threshold", async () => {
+test("wake watchdog stays quiet when the agent actually fetched the feedback", async () => {
   const repoDir = makeTmpDir("repo");
   const started = await startServer({
     port: 0,
@@ -685,13 +737,59 @@ test("wake watchdog stays quiet when claude responds before the threshold", asyn
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
-  // Simulate claude reacting to the wake before the watchdog fires.
+  // A real `worqload feedback fetch` is a Bash tool call inside a claude turn:
+  // it drains the inbox AND the surrounding turn emits claude_* events. Model
+  // both. (Either alone would still resume — the inbox must be drained, and a
+  // drained inbox with a since-dead claude is still worth recovering.)
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
   ctx.lastClaudeActivityAt.set(sid, Date.now() + 1);
 
   await new Promise((r) => setTimeout(r, 250));
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
   expect(events.some((e) => e.kind === "session_auto_resumed")).toBe(false);
+});
+
+// Regression: the structural feedback-delivery bug. The wake watchdog used to
+// treat "claude emitted any claude_* event after the wake" as proof the
+// feedback was handled. It is not: when feedback arrives mid-turn the wake is
+// only queued (and with the tmux driver, pasted into a busy TUI — often lost
+// entirely) while claude keeps emitting events for its current work, ending
+// with a `turn_duration` system event. The agent never runs `worqload
+// feedback fetch`, the file rots in the inbox, and the session sits idle. The
+// watchdog must key off the inbox itself, not claude activity.
+test("wake watchdog auto-resumes when claude is active but the feedback inbox was never drained", async () => {
+  const repoDir = makeTmpDir("repo");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    wakeWatchdogMs: 60,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
+  // Claude is mid-turn: it keeps emitting events after the wake (the old
+  // predicate `lastClaudeActivityAt >= wakeAt` is satisfied) but never fetches.
+  ctx.lastClaudeActivityAt.set(sid, Date.now() + 1);
+
+  await new Promise((r) => setTimeout(r, 250));
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const auto = events.find((e) => e.kind === "session_auto_resumed");
+  expect(auto).toBeDefined();
+  expect((auto?.payload as Record<string, unknown>).reason).toBe("feedback_unfetched");
+
+  // The inbox is drained by the respawn path's RESUME_KICKOFF in production;
+  // here we assert the recovery was triggered (a fresh session_resumed).
+  expect(events.filter((e) => e.kind === "session_resumed").length).toBeGreaterThanOrEqual(1);
 });
 
 test("a second wake on the same attachment resets the watchdog deadline", async () => {

@@ -13,7 +13,7 @@
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
   import { state as appState, isReportExpanded, isFeedbackExpanded, anchorLabel, feedbackAnchorsForPath } from "../state.svelte.js";
-  import { renderMarkdown } from "../markdown.js";
+  import { renderMarkdown, extractHeadings } from "../markdown.js";
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
   import StructureView from "./StructureView.svelte";
@@ -227,25 +227,51 @@
         <div class="report-empty">No feedback sent yet. Type below to send the agent feedback.</div>
       {/if}
     {:else if reportsNewestFirst.length > 0}
-      {#each reportsNewestFirst as r (r.filename)}
-        {@const expanded = isReportExpanded(r)}
-        {@const markTo = r.read ? "unread" : "read"}
-        {@const reportAnchorPath = `./.worqload-reports/${r.filename}`}
-        {@const reportFeedbackAnchors = feedbackAnchorsForPath(reportAnchorPath).map(f => ({ lineStart: f.anchor.lineStart, lineEnd: f.anchor.lineEnd, filename: f.filename }))}
-        <article class="report" class:unread={!r.read} class:collapsed={!expanded} data-report-filename={r.filename}>
-          <div class="report-header" data-report-toggle={r.filename}>
-            <span class="report-chevron">▾</span>
-            <span class="report-filename">{r.filename}</span>
-            {#if r.replyTo}
-              <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
-            {/if}
-            <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
-          </div>
-          <div class="report-body">
-            <div class="md">{@html renderMarkdown(r.content, { anchorPath: reportAnchorPath, anchor: appState.anchor, feedbackAnchors: reportFeedbackAnchors })}</div>
-          </div>
-        </article>
-      {/each}
+      <div class="reports-with-toc">
+        <!-- Always-on left-side table of contents. Each entry reuses the
+             existing onDetailBodyClick delegation: data-goto-report scrolls to
+             the whole report card, data-goto-anchor-path/-line scrolls to a
+             heading's source line (the same anchor renderMarkdown emits). -->
+        <nav class="report-toc" aria-label="レポート目次">
+          {#each reportsNewestFirst as r (r.filename)}
+            <div class="report-toc-group">
+              <button type="button" class="report-toc-report" data-goto-report={r.filename} title={r.filename}>{r.filename}</button>
+              {#each extractHeadings(r.content) as h (h.line)}
+                <button
+                  type="button"
+                  class="report-toc-heading"
+                  data-toc-level={h.level}
+                  data-goto-anchor-path={`./.worqload-reports/${r.filename}`}
+                  data-goto-anchor-line={h.line}
+                  data-goto-anchor-line-end={h.line}
+                  title={h.text}
+                >{h.text}</button>
+              {/each}
+            </div>
+          {/each}
+        </nav>
+        <div class="reports-column">
+          {#each reportsNewestFirst as r (r.filename)}
+            {@const expanded = isReportExpanded(r)}
+            {@const markTo = r.read ? "unread" : "read"}
+            {@const reportAnchorPath = `./.worqload-reports/${r.filename}`}
+            {@const reportFeedbackAnchors = feedbackAnchorsForPath(reportAnchorPath).map(f => ({ lineStart: f.anchor.lineStart, lineEnd: f.anchor.lineEnd, filename: f.filename }))}
+            <article class="report" class:unread={!r.read} class:collapsed={!expanded} data-report-filename={r.filename}>
+              <div class="report-header" data-report-toggle={r.filename}>
+                <span class="report-chevron">▾</span>
+                <span class="report-filename">{r.filename}</span>
+                {#if r.replyTo}
+                  <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
+                {/if}
+                <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
+              </div>
+              <div class="report-body">
+                <div class="md">{@html renderMarkdown(r.content, { anchorPath: reportAnchorPath, anchor: appState.anchor, feedbackAnchors: reportFeedbackAnchors })}</div>
+              </div>
+            </article>
+          {/each}
+        </div>
+      </div>
     {:else}
       <div class="report-empty">No reports yet. The agent submits reports at progress checkpoints.</div>
     {/if}

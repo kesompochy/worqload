@@ -185,7 +185,8 @@ export const mergeToBaseAction: Action = {
   idempotent: true,
   confirmMessage:
     "Merge this session's branch into the base branch?\n\nThe main repo must have the base branch checked out with a clean working tree, and the session worktree itself must have no uncommitted changes. If the merge would conflict, it is aborted before it touches the base branch.",
-  async run({ meta, repoDir }) {
+  params: [{ name: "message", label: "Commit message", type: "text", placeholder: "(default: Merge session <id>: <session name>)" }],
+  async run({ meta, repoDir }, params) {
     if (await isWorktreeDirty(meta.worktreePath)) {
       return fail("session worktree has uncommitted changes; the agent must commit them before merging");
     }
@@ -217,7 +218,7 @@ export const mergeToBaseAction: Action = {
       };
     }
     const title = defaultPrTitle(meta);
-    const message = `Merge session ${meta.id.slice(0, 8)}: ${title}`;
+    const message = params.message?.trim() || `Merge session ${meta.id.slice(0, 8)}: ${title}`;
     return runCommand(["git", "merge", "--no-ff", "-m", message, branchName], repoDir);
   },
 };

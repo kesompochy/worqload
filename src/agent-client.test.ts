@@ -15,6 +15,9 @@ async function bootAndCreateSession(): Promise<{ endpoint: string; sessionId: st
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    // Pass-through: these tests assert report bookkeeping, not prose, and must
+    // not spawn the real claude the production rewriter would.
+    reportRewriter: async raw => raw,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const endpoint = `http://127.0.0.1:${started.server.port}`;

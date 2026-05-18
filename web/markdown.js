@@ -41,6 +41,33 @@ export function renderMarkdown(source, options = {}) {
   return blocks.map(b => renderBlock(b, ctx)).join("");
 }
 
+// The ATX headings of `source`, in document order, for building a table of
+// contents. `line` is the 1-based source line of the heading — the same value
+// `renderMarkdown` puts on the rendered `<h*>`'s data-anchor-line, so a TOC
+// entry can drive the existing line-anchor scroll. `text` is the heading with
+// inline markdown reduced to its visible text. Headings inside fenced code
+// blocks are excluded because parseBlocks consumes those fences first.
+export function extractHeadings(source) {
+  return parseBlocks(source)
+    .filter(b => b.kind === "heading")
+    .map(b => ({ level: b.level, text: stripInlineMarkdown(b.content), line: b.startLine }));
+}
+
+// Reduce heading inline markdown to plain text for a TOC label. Mirrors the
+// constructs renderInline handles (code, links, bold, italic) but keeps only
+// the visible text. Code spans are unwrapped first so emphasis markers inside
+// them are not stripped.
+function stripInlineMarkdown(text) {
+  return String(text ?? "")
+    .replace(/`+([^`]+?)`+/g, "$1")
+    .replace(/\[([^\]]+)\]\([^\s)]+(?:\s+"[^"]*")?\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, "$1$2")
+    .replace(/(^|[\s(])_([^_\s][^_]*?)_(?=[\s).,;:!?]|$)/g, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // ---------- block-level parsing ----------
 
 function parseBlocks(source) {
