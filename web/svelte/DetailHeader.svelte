@@ -31,6 +31,11 @@
   // reports not yet marked read, plus escalations that pause the agent's turn
   // until answered. Surfaced as a single badge on the Reports tab so the human
   // notices unacked items even while viewing another tab (Diff / Events / ...).
+  // The branch's remote PR URL once the lazy lookup resolves, else null. A
+  // session whose branch already has a PR can't open another, so this both
+  // gates the Create PR button and renders the link beside it.
+  const prUrl = $derived(appState.prLink?.url ?? null);
+
   const unreadReportCount = $derived(appState.reports.filter(r => !r.read).length);
   const unresolvedEscalationCount = $derived(appState.asking.length);
   const reportsAttentionCount = $derived(unreadReportCount + unresolvedEscalationCount);
@@ -61,7 +66,10 @@
               {#if appState.runningActionId === a.id}<span class="spinner"></span> {a.label}…{:else}{a.label}{/if}
             </button>
           {:else}
-            <button class="btn-action" class:open={appState.openActionId === a.id} title={a.description || ""} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
+            <button class="btn-action" class:open={appState.openActionId === a.id} disabled={a.id === "create-pr" && prUrl !== null} title={a.id === "create-pr" && prUrl !== null ? "このブランチには既に PR があります" : (a.description || "")} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
+          {/if}
+          {#if a.id === "create-pr" && prUrl}
+            <a class="pr-link-chip" href={prUrl} target="_blank" rel="noopener" title="このブランチの PR を開く">PR</a>
           {/if}
         {/each}
         <span class="action-group-sep" aria-hidden="true"></span>
@@ -73,7 +81,6 @@
   <div class="detail-meta">
     base: <code>{m.baseBranch}</code>
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}
-    {#if appState.prLink?.url}· <a href={appState.prLink.url} target="_blank" rel="noopener">PR</a>{/if}
     · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
     · worktree: <code>{m.worktreePath}</code>
