@@ -47,6 +47,7 @@ export async function fetchSessions() {
   }
   updateDocumentTitle();
   updateLoadAverage();
+  prefetchPrLinks();
 }
 
 // The archived-tab feed. Kept separate from `state.sessions` so the active
@@ -140,17 +141,30 @@ export async function refreshDetail() {
   if (state.activeTab === "structure") await ensureStructureViewLoaded(true);
 }
 
-// The PR (if any) tracking the session's branch on the remote. Fire-and-forget
-// — the server resolver may make a network call, which must not delay the
-// detail render — so callers `void` this. The session-switch guard drops a
-// result that arrives after the human moved to another session.
-export async function loadPrLink(id) {
+// The PR (if any) tracking a session's branch on the remote. Fire-and-forget —
+// the server resolver may make a network call — so callers `void` this. The
+// result lands in the prLinks cache (so a later open reads it with no delay)
+// and, if that session is the one on screen, in prLink (what the header reads).
+// `fresh` bypasses the server cache: used right after create-pr so the new PR
+// shows immediately instead of after the cache TTL.
+export async function loadPrLink(id, { fresh = false } = {}) {
   try {
-    const res = await api("GET", `/sessions/${id}/pr-link`);
+    const res = await api("GET", `/sessions/${id}/pr-link${fresh ? "?fresh=1" : ""}`);
+    state.prLinks = { ...state.prLinks, [id]: res };
     if (state.selected === id) state.prLink = res;
   } catch {
-    if (state.selected === id) state.prLink = null;
+    /* leave the cache entry as-is so the next poll retries */
   }
+}
+
+// Warm the prLinks cache for every active session in the background. Driven by
+// the session-list poll (boot + every 30s) so by the time the human opens a
+// session its link is already in hand. Re-requested every poll rather than
+// once: the server-side TTL cache turns most of these into instant hits (no
+// `gh` respawn), while the ones past the TTL refresh the link so a PR opened
+// outside worqload still surfaces without a reload.
+export function prefetchPrLinks() {
+  for (const s of state.sessions) void loadPrLink(s.id);
 }
 
 // One-stop loader for whichever Structure-tab snapshots the current mode

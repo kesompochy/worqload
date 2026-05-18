@@ -13,7 +13,8 @@ export const state = $state({
   sidebarHidden: false,  // Whether the left sidebar (.sidebar) is collapsed out of the layout. Persisted in localStorage under "worqload:sidebar-hidden"; toggled via the in-sidebar « button and the fixed-position » button surfaced when hidden.
   selected: null,        // session id
   detail: null,          // { meta, events }
-  prLink: null,          // branch→PR-URL lookup: { url } | { url: null, reason } | null (not yet loaded). Fetched lazily off the detail load.
+  prLink: null,          // selected session's branch→PR-URL lookup: { url } | { url: null, reason } | null. Mirrors prLinks[selected]; the header reads this.
+  prLinks: {},           // id → branch→PR-URL result, prefetched in the background off the session-list poll so an opened session shows its link with no delay. Reassigned wholesale ($state doesn't proxy plain-object key adds reactively across modules otherwise — match the actionResults Map convention).
   reports: [],
   asking: [],
   feedbackHistory: [],

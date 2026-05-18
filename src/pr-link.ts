@@ -12,11 +12,19 @@ export type PrLinkReason = "no-pr" | "gh-missing" | "gh-error";
 
 export type PrLinkResult = { url: string } | { url: null; reason: PrLinkReason };
 
-export interface PrLinkResolver {
+export interface PrLinkResolveParams {
   // worktreePath is where the lookup runs (a git worktree of the repo, so the
   // remote it queries is the session repo's remote). branchName is the session
   // branch whose tracking PR we want.
-  resolve(params: { worktreePath: string; branchName: string }): Promise<PrLinkResult>;
+  worktreePath: string;
+  branchName: string;
+  // Skip any memoization and resolve live. Set right after `create-pr` so the
+  // freshly opened PR shows immediately instead of after the cache TTL.
+  bypassCache?: boolean;
+}
+
+export interface PrLinkResolver {
+  resolve(params: PrLinkResolveParams): Promise<PrLinkResult>;
 }
 
 function cleanGitEnv(): Record<string, string | undefined> {
@@ -68,3 +76,39 @@ export const ghPrLinkResolver: PrLinkResolver = {
     return interpretGhPrList({ spawned: true, exitCode, stdout });
   },
 };
+
+// Default cache lifetime. PR existence for a branch changes rarely (open /
+// merge / close are human actions), so a few minutes of staleness is fine —
+// long enough that the 30s sidebar poll warming every session's link costs at
+// most one `gh` per branch per window, short enough that an externally-opened
+// PR still surfaces without a reload. The `create-pr` path doesn't wait it
+// out: it passes bypassCache.
+const DEFAULT_PR_LINK_TTL_MS = 5 * 60_000;
+
+// Memoizes a resolver per (worktree, branch). The sidebar prefetches every
+// session's PR link in the background off the session-list poll; without this
+// each poll would spawn one `gh` per session, and — the actual complaint — the
+// link would only appear a visible beat after a session was opened. With the
+// cache warm, the value is already in hand when the human opens the session.
+// A hit inside the TTL returns without touching the inner resolver; a miss,
+// an expired entry, or bypassCache resolves live and refreshes the entry.
+export function makeCachedPrLinkResolver(
+  inner: PrLinkResolver,
+  opts: { ttlMs?: number; now?: () => number } = {},
+): PrLinkResolver {
+  const ttlMs = opts.ttlMs ?? DEFAULT_PR_LINK_TTL_MS;
+  const now = opts.now ?? Date.now;
+  const cache = new Map<string, { result: PrLinkResult; at: number }>();
+  return {
+    async resolve(params) {
+      const key = `${params.worktreePath}\0${params.branchName}`;
+      if (!params.bypassCache) {
+        const hit = cache.get(key);
+        if (hit && now() - hit.at < ttlMs) return hit.result;
+      }
+      const result = await inner.resolve(params);
+      cache.set(key, { result, at: now() });
+      return result;
+    },
+  };
+}
