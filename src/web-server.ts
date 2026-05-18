@@ -24,6 +24,7 @@ import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktre
 import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
 import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
+import { ghPrLinkResolver, type PrLinkResolver } from "./pr-link";
 import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead, attachmentsDirNameFor } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
@@ -146,6 +147,10 @@ export interface ServerContext {
   branchNameGenerator: BranchNameGenerator;
   hostLauncher: HostLauncher;
   worktreeOps: WorktreeOps;
+  // Resolves the PR URL tracking a session's branch on the remote. Kept off
+  // WorktreeOps so worqload core stays unaware of `gh`; the default
+  // (ghPrLinkResolver) is the one place that knows.
+  prLinkResolver: PrLinkResolver;
   // Rewrites a submitted report into human-readable form before it's stored,
   // when the session's reportAgentEnabled flag is on. The default spawns a
   // disposable claude from spawnCommand; tests inject a synchronous fake.
@@ -188,6 +193,7 @@ export interface StartServerOptions {
   hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
   reportRewriter?: ReportRewriter; // override the report rewriter (tests use a fake)
   worktreeOps?: WorktreeOps;    // override the git/worktree layer (tests use a fake)
+  prLinkResolver?: PrLinkResolver; // override the branch→PR-URL resolver (tests use a fake)
   // Auto-resume threshold for the wake watchdog (ms). When it fires, if the
   // feedback inbox still holds an unfetched message (or, with nothing queued,
   // claude has stayed silent since the wake), it tears down the host and
@@ -605,6 +611,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   // WORQLOAD_SPAWN_COMMAND govern the disposable agent too.
   const reportRewriter = opts.reportRewriter ?? makeClaudeReportRewriter({ spawnCommand });
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
+  const prLinkResolver = opts.prLinkResolver ?? ghPrLinkResolver;
 
   await mkdir(sessionsDir, { recursive: true });
   // Migrate any anchored feedback still carrying its anchor as a `Re:` line in
@@ -676,6 +683,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     hostLauncher,
     reportRewriter,
     worktreeOps,
+    prLinkResolver,
     clients: new Map(),
     port: server.port,
     baseUrlForAgent: `http://127.0.0.1:${server.port}`,
@@ -774,6 +782,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/code-nav/definition", getCodeNavDefinition),
   defineRoute("GET",  "/sessions/:id/code-nav/references", getCodeNavReferences),
   defineRoute("GET",  "/sessions/:id/permalink", getPermalink),
+  defineRoute("GET",  "/sessions/:id/pr-link", getPrLink),
   defineRoute("GET",  "/actions", getActions),
   defineRoute("GET",  "/sessions/:id/actions", getSessionActions),
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
@@ -1545,6 +1554,22 @@ async function getPermalink(req: Request, ctx: ServerContext, params: Record<str
       lineEnd: lineEnd ?? undefined,
     });
     return json({ url, ref: sha, branch: meta.branchName });
+  });
+}
+
+// The PR (if any) tracking this session's branch on the remote. Lazy and
+// independent of GET /sessions/:id — the resolver may shell out to a CLI over
+// the network, which must not delay the detail load. Shape mirrors permalink:
+// `{ url }` when found, `{ url: null, reason }` otherwise. The branch comes
+// from meta; legacy pre-branchName sessions never had a tracking PR.
+async function getPrLink(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    if (!meta.branchName) return json({ url: null, reason: "no-pr" });
+    const result = await ctx.prLinkResolver.resolve({
+      worktreePath: meta.worktreePath,
+      branchName: meta.branchName,
+    });
+    return json(result);
   });
 }
 

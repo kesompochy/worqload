@@ -13,6 +13,7 @@ export const state = $state({
   sidebarHidden: false,  // Whether the left sidebar (.sidebar) is collapsed out of the layout. Persisted in localStorage under "worqload:sidebar-hidden"; toggled via the in-sidebar « button and the fixed-position » button surfaced when hidden.
   selected: null,        // session id
   detail: null,          // { meta, events }
+  prLink: null,          // branch→PR-URL lookup: { url } | { url: null, reason } | null (not yet loaded). Fetched lazily off the detail load.
   reports: [],
   asking: [],
   feedbackHistory: [],

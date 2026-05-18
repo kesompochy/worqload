@@ -140,6 +140,19 @@ export async function refreshDetail() {
   if (state.activeTab === "structure") await ensureStructureViewLoaded(true);
 }
 
+// The PR (if any) tracking the session's branch on the remote. Fire-and-forget
+// — the server resolver may make a network call, which must not delay the
+// detail render — so callers `void` this. The session-switch guard drops a
+// result that arrives after the human moved to another session.
+export async function loadPrLink(id) {
+  try {
+    const res = await api("GET", `/sessions/${id}/pr-link`);
+    if (state.selected === id) state.prLink = res;
+  } catch {
+    if (state.selected === id) state.prLink = null;
+  }
+}
+
 // One-stop loader for whichever Structure-tab snapshots the current mode
 // needs: After + Before for that mode. Before always fires alongside After —
 // the Split toggle is visibility-only, so the Before payload is ready by the

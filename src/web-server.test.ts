@@ -1502,6 +1502,42 @@ test("GET /sessions/:id/permalink returns null with a reason when the worktree h
   expect(res.reason).toBe("no-remote");
 });
 
+// How a branch maps to a PR URL is the PrLinkResolver's contract (see
+// pr-link.test.ts for the gh result mapping). Here we check the endpoint hands
+// the resolver the session's branch + worktree and passes its result through.
+test("GET /sessions/:id/pr-link returns the resolver's URL for the session branch", async () => {
+  const repoDir = makeTmpDir("repo");
+  let seen: { worktreePath: string; branchName: string } | null = null;
+  const { baseUrl } = await bootServer(repoDir, {
+    prLinkResolver: {
+      async resolve(params) {
+        seen = params;
+        return { url: "https://github.com/owner/repo/pull/7" };
+      },
+    },
+  });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/pr-link`).then(r => r.json());
+  expect(res.url).toBe("https://github.com/owner/repo/pull/7");
+  expect(seen?.branchName).toBe(created.meta.branchName);
+  expect(seen?.worktreePath).toBe(created.meta.worktreePath);
+});
+
+test("GET /sessions/:id/pr-link passes through the no-PR reason", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir, {
+    prLinkResolver: { async resolve() { return { url: null, reason: "no-pr" }; } },
+  });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${created.meta.id}/pr-link`).then(r => r.json());
+  expect(res.url).toBeNull();
+  expect(res.reason).toBe("no-pr");
+});
+
 test("GET /sessions/:id/asking returns pending escalations", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
