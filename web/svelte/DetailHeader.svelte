@@ -73,6 +73,7 @@
   <div class="detail-meta">
     base: <code>{m.baseBranch}</code>
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}
+    {#if appState.prLink?.url}· <a href={appState.prLink.url} target="_blank" rel="noopener">PR</a>{/if}
     · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
     · worktree: <code>{m.worktreePath}</code>

@@ -16,6 +16,7 @@ import {
   fetchActions,
   reorderSessions,
   refreshDetail,
+  loadPrLink,
   refreshDiff,
   ensureFilesLoaded,
   ensureStructureViewLoaded,
@@ -45,6 +46,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   state.reports = [];
   state.asking = [];
   state.detail = null;
+  state.prLink = null;
   // An anchor's path resolves only inside the previous session's worktree, so
   // it must not ride along to feedback sent to the newly selected one.
   state.anchor = null;
@@ -86,6 +88,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   clearAttachments();
   if (!id) return;
   await refreshDetail();
+  void loadPrLink(id);
   await fetchActions(id);
   openWs(id);
 }
@@ -1433,6 +1436,9 @@ async function runAction(action, params) {
       ranAt: new Date().toISOString(),
     });
     if (data.ok && action.id === "create-pr") {
+      // The branch now has a PR; refresh the header link instead of waiting
+      // for the next session select.
+      if (state.selected) void loadPrLink(state.selected);
       const url = extractPullRequestUrl(data.stdout ?? "");
       if (url) {
         // `gh pr create` already did the work; jumping straight to the PR is
