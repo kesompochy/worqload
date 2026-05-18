@@ -1,9 +1,8 @@
-import { test, expect, afterEach } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync } from "fs";
-import { startServer, type HostLauncher } from "./web-server";
-import { agentEndpointPath, hostLogPath, loadSessionMeta } from "./session";
 import { appendEvent, readEvents } from "./event-log";
+import { agentEndpointPath, hostLogPath, loadSessionMeta } from "./session";
 import {
   cleanupAll,
   fakeWorktreeOps,
@@ -12,6 +11,7 @@ import {
   makeTmpDir,
   trackCleanup,
 } from "./test-helpers";
+import { type HostLauncher, startServer } from "./web-server";
 
 afterEach(cleanupAll);
 
@@ -57,7 +57,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     worktreeOps: fakeWorktreeOps(),
     // Default to pass-through so report tests don't spawn the real claude the
     // production rewriter would; the rewrite-specific tests override this.
-    reportRewriter: async raw => raw,
+    reportRewriter: async (raw) => raw,
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -216,15 +216,15 @@ test("POST /sessions/order persists the sidebar order", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const a = await postJson(baseUrl, "/sessions", { prompt: "first", baseBranch: TEST_BASE }).then(r => r.json());
-  const b = await postJson(baseUrl, "/sessions", { prompt: "second", baseBranch: TEST_BASE }).then(r => r.json());
-  const c = await postJson(baseUrl, "/sessions", { prompt: "third", baseBranch: TEST_BASE }).then(r => r.json());
+  const a = await postJson(baseUrl, "/sessions", { prompt: "first", baseBranch: TEST_BASE }).then((r) => r.json());
+  const b = await postJson(baseUrl, "/sessions", { prompt: "second", baseBranch: TEST_BASE }).then((r) => r.json());
+  const c = await postJson(baseUrl, "/sessions", { prompt: "third", baseBranch: TEST_BASE }).then((r) => r.json());
   const ids = [a.meta.id, b.meta.id, c.meta.id];
 
   const res = await postJson(baseUrl, "/sessions/order", { ids });
   expect(res.status).toBe(200);
 
-  const body = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const body = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
   expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(ids);
 });
 
@@ -239,8 +239,10 @@ test("GET /sessions exposes unread report counts per session", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const a = await postJson(baseUrl, "/sessions", { prompt: "with reports", baseBranch: TEST_BASE }).then(r => r.json());
-  const b = await postJson(baseUrl, "/sessions", { prompt: "no reports", baseBranch: TEST_BASE }).then(r => r.json());
+  const a = await postJson(baseUrl, "/sessions", { prompt: "with reports", baseBranch: TEST_BASE }).then((r) =>
+    r.json(),
+  );
+  const b = await postJson(baseUrl, "/sessions", { prompt: "no reports", baseBranch: TEST_BASE }).then((r) => r.json());
   const aid = a.meta.id;
   const bid = b.meta.id;
 
@@ -249,7 +251,7 @@ test("GET /sessions exposes unread report counts per session", async () => {
   await postJson(baseUrl, `/internal/sessions/${aid}/reports`, { slug: "more", content: "more progress" });
   await postJson(baseUrl, `/sessions/${aid}/reports/001-plan.md/read`, {});
 
-  const body = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const body = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
   const byId = Object.fromEntries(body.sessions.map((s: { id: string; unreadReportCount: number }) => [s.id, s]));
   expect(byId[aid].unreadReportCount).toBe(2);
   expect(byId[bid].unreadReportCount).toBe(0);
@@ -259,8 +261,10 @@ test("GET /sessions exposes unresolved escalation counts per session", async () 
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const a = await postJson(baseUrl, "/sessions", { prompt: "with escalations", baseBranch: TEST_BASE }).then(r => r.json());
-  const b = await postJson(baseUrl, "/sessions", { prompt: "none", baseBranch: TEST_BASE }).then(r => r.json());
+  const a = await postJson(baseUrl, "/sessions", { prompt: "with escalations", baseBranch: TEST_BASE }).then((r) =>
+    r.json(),
+  );
+  const b = await postJson(baseUrl, "/sessions", { prompt: "none", baseBranch: TEST_BASE }).then((r) => r.json());
   const aid = a.meta.id;
   const bid = b.meta.id;
 
@@ -268,8 +272,10 @@ test("GET /sessions exposes unresolved escalation counts per session", async () 
   await postJson(baseUrl, `/internal/sessions/${aid}/escalations`, { slug: "second", content: "B?" });
   await postJson(baseUrl, `/sessions/${aid}/escalations/001-first.md/resolve`, { content: "answer A" });
 
-  const body = await fetch(`${baseUrl}/sessions`).then(r => r.json());
-  const byId = Object.fromEntries(body.sessions.map((s: { id: string; unresolvedEscalationCount: number }) => [s.id, s]));
+  const body = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
+  const byId = Object.fromEntries(
+    body.sessions.map((s: { id: string; unresolvedEscalationCount: number }) => [s.id, s]),
+  );
   expect(byId[aid].unresolvedEscalationCount).toBe(1);
   expect(byId[bid].unresolvedEscalationCount).toBe(0);
 });
@@ -278,14 +284,14 @@ test("GET /sessions exposes the last agent-work event timestamp, ignoring report
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const work = await appendEvent(sid, { kind: "claude_tool_use", payload: { name: "Read" } }, ctx.sessionsDir);
   // A later event that is *not* agent work — it must not move the timestamp.
   await appendEvent(sid, { kind: "report_submitted", payload: { filename: "001-x.md" } }, ctx.sessionsDir);
 
-  const body = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const body = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
   const session = body.sessions.find((s: { id: string }) => s.id === sid);
   expect(session.lastAgentEventAt).toBe(work.timestamp);
 });
@@ -294,20 +300,26 @@ test("POST /internal/sessions/:id/reports writes numbered report", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const r1 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "this is the plan" }).then(r => r.json());
+  const r1 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, {
+    slug: "plan",
+    content: "this is the plan",
+  }).then((r) => r.json());
   expect(r1.filename).toBe("001-plan.md");
   expect(r1.seq).toBe(1);
 
-  const r2 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "build-failed", content: "stuff broke" }).then(r => r.json());
+  const r2 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, {
+    slug: "build-failed",
+    content: "stuff broke",
+  }).then((r) => r.json());
   expect(r2.filename).toBe("002-build-failed.md");
 
   const reportsDir = join(ctx.sessionsDir, sid, "reports");
   expect(readdirSync(reportsDir).sort()).toEqual(["001-plan.md", "002-build-failed.md"]);
   const events = await readEvents(sid, 1, ctx.sessionsDir);
-  const reportEvents = events.filter(e => e.kind === "report_submitted");
+  const reportEvents = events.filter((e) => e.kind === "report_submitted");
   expect(reportEvents).toHaveLength(2);
 });
 
@@ -317,10 +329,12 @@ test("a submitted report is run through the report rewriter before being stored 
     reportRewriter: async (raw, { cwd }) => `整形済み(${cwd ? "cwd-ok" : "no-cwd"}): ${raw}`,
   });
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "なまの本文" }).then(r => r.json());
+  const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "なまの本文" }).then(
+    (r) => r.json(),
+  );
   const stored = readFileSync(join(ctx.sessionsDir, sid, "reports", r.filename), "utf8");
   expect(stored).toBe("整形済み(cwd-ok): なまの本文");
 });
@@ -328,31 +342,36 @@ test("a submitted report is run through the report rewriter before being stored 
 test("toggling reportAgentEnabled off stores the report raw; toggling back on restores rewriting", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async raw => `REWRITTEN: ${raw}`,
+    reportRewriter: async (raw) => `REWRITTEN: ${raw}`,
   });
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const off = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: false }).then(r => r.json());
+  const off = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: false }).then((r) => r.json());
   expect(off.meta.reportAgentEnabled).toBe(false);
-  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json());
+  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
   expect(detail.meta.reportAgentEnabled).toBe(false);
 
-  const r1 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "raw", content: "素のまま" }).then(r => r.json());
+  const r1 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "raw", content: "素のまま" }).then(
+    (r) => r.json(),
+  );
   expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r1.filename), "utf8")).toBe("素のまま");
 
-  const on = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true }).then(r => r.json());
+  const on = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true }).then((r) => r.json());
   expect(on.meta.reportAgentEnabled).toBe(true);
 
-  const r2 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "polished", content: "また整形" }).then(r => r.json());
+  const r2 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, {
+    slug: "polished",
+    content: "また整形",
+  }).then((r) => r.json());
   expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r2.filename), "utf8")).toBe("REWRITTEN: また整形");
 });
 
 test("POST /sessions/:id/report-agent rejects a non-boolean enabled", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const res = await postJson(baseUrl, `/sessions/${created.meta.id}/report-agent`, { enabled: "yes" });
   expect(res.status).toBe(400);
 });
@@ -361,23 +380,26 @@ test("POST /internal/sessions/:id/escalations sets status to waiting_human", asy
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const e = await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "which-lib", content: "X or Y?" }).then(r => r.json());
+  const e = await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, {
+    slug: "which-lib",
+    content: "X or Y?",
+  }).then((r) => r.json());
   expect(e.filename).toBe("001-which-lib.md");
 
   const meta = await loadSessionMeta(sid, ctx.sessionsDir);
   expect(meta?.status).toBe("waiting_human");
   const events = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(events.some(ev => ev.kind === "escalation_requested")).toBe(true);
+  expect(events.some((ev) => ev.kind === "escalation_requested")).toBe(true);
 });
 
 test("feedback inbox round trip: POST writes, GET fetches and moves to read", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "hi there", slug: "say-hi" });
@@ -395,7 +417,7 @@ test("feedback inbox round trip: POST writes, GET fetches and moves to read", as
     anchor: { path: "src/foo.ts", lineStart: 40, lineEnd: 45 },
   });
 
-  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   expect(fetched.messages).toHaveLength(2);
   // The agent still sees the `Re:` line at the head of an anchored message.
   expect(fetched.messages[1].content).toBe("Re: src/foo.ts:40-45\n\nfix this please");
@@ -410,7 +432,7 @@ test("worqload feedback fetch surfaces absolute attachment paths in the message 
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
@@ -420,14 +442,14 @@ test("worqload feedback fetch surfaces absolute attachment paths in the message 
   form.append("attachment", new File([png], "design.webp", { type: "image/webp" }));
   await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
 
-  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   expect(fetched.messages).toHaveLength(1);
   const expectedDir = join(ctx.sessionsDir, sid, "feedback", "read", "001-look.attachments");
   expect(fetched.messages[0].content).toBe(
     `see the screenshot\n\n## Attachments\n\n` +
-    `The human attached 2 images. Read each with the Read tool:\n\n` +
-    `- ${expectedDir}/01-shot.png\n` +
-    `- ${expectedDir}/02-design.webp`,
+      `The human attached 2 images. Read each with the Read tool:\n\n` +
+      `- ${expectedDir}/01-shot.png\n` +
+      `- ${expectedDir}/02-design.webp`,
   );
 });
 
@@ -435,12 +457,12 @@ test("worqload feedback fetch leaves the body untouched when no attachments are 
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "plain message", slug: "plain" });
 
-  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  const fetched = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   expect(fetched.messages[0].content).toBe("plain message");
 });
 
@@ -448,7 +470,7 @@ test("GET /sessions/:id/feedback exposes attachments on each message", async () 
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
@@ -457,7 +479,7 @@ test("GET /sessions/:id/feedback exposes attachments on each message", async () 
   form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
   await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
 
-  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then(r => r.json());
+  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then((r) => r.json());
   expect(history.messages).toHaveLength(1);
   expect(history.messages[0].filename).toBe("001-look.md");
   expect(history.messages[0].attachments).toEqual(["01-shot.png"]);
@@ -467,7 +489,7 @@ test("GET /sessions/:id/feedback/:filename/attachments/:name streams the bytes",
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -487,7 +509,7 @@ test("GET attachments endpoint also serves files moved into the read dir", async
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
@@ -497,7 +519,7 @@ test("GET attachments endpoint also serves files moved into the read dir", async
   await fetch(`${baseUrl}/sessions/${sid}/feedback`, { method: "POST", body: form });
 
   // Drain the inbox into read.
-  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
 
   const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/001-see.md/attachments/01-shot.png`);
   expect(res.status).toBe(200);
@@ -508,10 +530,12 @@ test("GET attachments endpoint rejects path traversal in :name", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/001-x.md/attachments/${encodeURIComponent("../../../etc/passwd")}`);
+  const res = await fetch(
+    `${baseUrl}/sessions/${sid}/feedback/001-x.md/attachments/${encodeURIComponent("../../../etc/passwd")}`,
+  );
   expect(res.status).toBe(400);
 });
 
@@ -519,7 +543,7 @@ test("POST /feedback (multipart) stores attachments in a sibling .attachments di
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -544,7 +568,7 @@ test("POST /feedback (multipart) rejects non-image MIME types", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const form = new FormData();
@@ -570,7 +594,7 @@ test("POST /feedback (multipart) rejects an attachment exceeding the size cap", 
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const oversized = new Uint8Array(32);
@@ -596,7 +620,7 @@ test("POST /feedback (multipart) rejects more attachments than the per-request c
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const png = new Uint8Array([0x89]);
@@ -615,7 +639,7 @@ test("POST /feedback appends a wake_sent entry to host.log", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
@@ -659,7 +683,7 @@ test("POST /feedback respawns the host when the session is running but the clien
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
   const ctx = started.ctx;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   expect(launches).toEqual([{ resume: false }]);
 
@@ -680,7 +704,7 @@ test("POST /feedback respawns the host when the session is running but the clien
   expect(meta?.status).toBe("running");
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(events.some(e => e.kind === "session_auto_resumed")).toBe(true);
+  expect(events.some((e) => e.kind === "session_auto_resumed")).toBe(true);
 });
 
 test("wake watchdog auto-resumes when no claude_* event arrives within the threshold", async () => {
@@ -698,7 +722,7 @@ test("wake watchdog auto-resumes when no claude_* event arrives within the thres
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
   const ctx = started.ctx;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
@@ -733,7 +757,7 @@ test("wake watchdog stays quiet when the agent actually fetched the feedback", a
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
   const ctx = started.ctx;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
@@ -741,7 +765,7 @@ test("wake watchdog stays quiet when the agent actually fetched the feedback", a
   // it drains the inbox AND the surrounding turn emits claude_* events. Model
   // both. (Either alone would still resume — the inbox must be drained, and a
   // drained inbox with a since-dead claude is still worth recovering.)
-  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   ctx.lastClaudeActivityAt.set(sid, Date.now() + 1);
 
   await new Promise((r) => setTimeout(r, 250));
@@ -772,7 +796,7 @@ test("wake watchdog auto-resumes when claude is active but the feedback inbox wa
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
   const ctx = started.ctx;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
@@ -806,7 +830,7 @@ test("a second wake on the same attachment resets the watchdog deadline", async 
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
   const ctx = started.ctx;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   // First wake.
@@ -841,7 +865,7 @@ test("a stale watchdog from a replaced attachment is a no-op", async () => {
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
   const ctx = started.ctx;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   // Send a wake (watchdog A scheduled for +80ms).
@@ -881,7 +905,7 @@ test("wake watchdog disabled with wakeWatchdogMs=0 leaves a silent session alone
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
   const ctx = started.ctx;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "wake me", slug: "wake" });
@@ -895,10 +919,10 @@ test("POST /sessions/:id/wake sends a manual wake and logs it to host.log", asyn
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const res = await postJson(baseUrl, `/sessions/${sid}/wake`, {}).then(r => r.json());
+  const res = await postJson(baseUrl, `/sessions/${sid}/wake`, {}).then((r) => r.json());
   expect(res.ok).toBe(true);
   expect(res.sent).toBe(true);
 
@@ -918,7 +942,7 @@ test("POST /sessions/:id/wake rejects a terminal session", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
 
@@ -934,12 +958,14 @@ test("feedback numbering stays monotonic after a fetch drains the inbox", async 
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "first", slug: "a" });
-  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
-  const second = await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "second", slug: "b" }).then(r => r.json());
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
+  const second = await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "second", slug: "b" }).then((r) =>
+    r.json(),
+  );
 
   expect(second.filename).toBe("002-b.md");
   expect(second.seq).toBe(2);
@@ -952,10 +978,10 @@ test("POST /sessions/:id/stop kills the host and sets status stopped", async () 
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const stopped = await postJson(baseUrl, `/sessions/${sid}/stop`, {}).then(r => r.json());
+  const stopped = await postJson(baseUrl, `/sessions/${sid}/stop`, {}).then((r) => r.json());
   expect(stopped.meta.status).toBe("stopped");
   expect(stopped.meta.endedAt).toBeDefined();
 
@@ -968,32 +994,32 @@ test("escalation resolve moves asking file, writes feedback, returns to running"
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "lib", content: "X or Y?" });
 
   // before resolve
-  let detail = await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json());
+  let detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
   expect(detail.meta.status).toBe("waiting_human");
 
   const resolved = await postJson(baseUrl, `/sessions/${sid}/escalations/001-lib.md/resolve`, {
     content: "go with X",
-  }).then(r => r.json());
+  }).then((r) => r.json());
   expect(resolved.ok).toBe(true);
 
   // status returned to running
-  detail = await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json());
+  detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
   expect(detail.meta.status).toBe("running");
 
   // asking dir empty top-level, resolved/ has the file
   const askingTop = readdirSync(join(ctx.sessionsDir, sid, "asking"));
   expect(askingTop).toContain("resolved");
-  expect(askingTop.filter(f => f.endsWith(".md"))).toEqual([]);
+  expect(askingTop.filter((f) => f.endsWith(".md"))).toEqual([]);
   expect(readdirSync(join(ctx.sessionsDir, sid, "asking", "resolved"))).toEqual(["001-lib.md"]);
 
   // feedback inbox has the answer
-  const inboxRes = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  const inboxRes = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   expect(inboxRes.messages).toHaveLength(1);
   expect(inboxRes.messages[0].content).toContain("X or Y?");
   expect(inboxRes.messages[0].content).toContain("go with X");
@@ -1003,7 +1029,7 @@ test("escalation resolve returns 404 for missing file", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const res = await fetch(`${baseUrl}/sessions/${sid}/escalations/nope.md/resolve`, {
@@ -1018,7 +1044,7 @@ test("escalation resolve keeps waiting_human when other escalations remain", asy
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "first", content: "A?" });
@@ -1026,7 +1052,7 @@ test("escalation resolve keeps waiting_human when other escalations remain", asy
 
   await postJson(baseUrl, `/sessions/${sid}/escalations/001-first.md/resolve`, { content: "answer A" });
 
-  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json());
+  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
   expect(detail.meta.status).toBe("waiting_human");
 });
 
@@ -1034,31 +1060,34 @@ test("escalation numbering stays monotonic after a resolve archives the file", a
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "first", content: "A?" });
   await postJson(baseUrl, `/sessions/${sid}/escalations/001-first.md/resolve`, { content: "answer A" });
-  const second = await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "second", content: "B?" }).then(r => r.json());
+  const second = await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, {
+    slug: "second",
+    content: "B?",
+  }).then((r) => r.json());
 
   expect(second.filename).toBe("002-second.md");
   expect(second.seq).toBe(2);
 
   const askingDir = join(ctx.sessionsDir, sid, "asking");
-  expect(readdirSync(askingDir).filter(f => f.endsWith(".md"))).toEqual(["002-second.md"]);
+  expect(readdirSync(askingDir).filter((f) => f.endsWith(".md"))).toEqual(["002-second.md"]);
 });
 
 test("GET /sessions/:id/reports returns all reports with content", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
   await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "build", content: "build result" });
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
   expect(res.reports).toHaveLength(2);
   expect(res.reports[0].filename).toBe("001-plan.md");
   expect(res.reports[0].content).toBe("the plan");
@@ -1071,49 +1100,49 @@ test("POST /sessions/:id/reports/:filename/read marks a report as read", async (
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
   await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "build", content: "build result" });
 
-  const marked = await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/read`, {}).then(r => r.json());
+  const marked = await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/read`, {}).then((r) => r.json());
   expect(marked.ok).toBe(true);
   expect(marked.read).toBe(true);
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
   const byName = Object.fromEntries(res.reports.map((r: { filename: string; read: boolean }) => [r.filename, r.read]));
   expect(byName["001-plan.md"]).toBe(true);
   expect(byName["002-build.md"]).toBe(false);
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(events.some(e => e.kind === "report_read")).toBe(true);
+  expect(events.some((e) => e.kind === "report_read")).toBe(true);
 });
 
 test("POST /sessions/:id/reports/:filename/unread reverts read state", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
   await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/read`, {});
-  const reverted = await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/unread`, {}).then(r => r.json());
+  const reverted = await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/unread`, {}).then((r) => r.json());
   expect(reverted.read).toBe(false);
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
   expect(res.reports[0].read).toBe(false);
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(events.some(e => e.kind === "report_unread")).toBe(true);
+  expect(events.some((e) => e.kind === "report_unread")).toBe(true);
 });
 
 test("POST /sessions/:id/reports/read-all marks every report read and emits one event", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
@@ -1122,19 +1151,19 @@ test("POST /sessions/:id/reports/read-all marks every report read and emits one 
   await postJson(baseUrl, `/sessions/${sid}/reports/002-step.md/read`, {});
 
   const seqBefore = (await readEvents(sid, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
-  const result = await postJson(baseUrl, `/sessions/${sid}/reports/read-all`, {}).then(r => r.json());
+  const result = await postJson(baseUrl, `/sessions/${sid}/reports/read-all`, {}).then((r) => r.json());
   expect(result.ok).toBe(true);
   expect(result.read.sort()).toEqual(["001-plan.md", "003-more.md"]);
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
   expect(res.reports.every((r: { read: boolean }) => r.read)).toBe(true);
 
-  const newEvents = (await readEvents(sid, 1, ctx.sessionsDir)).filter(e => e.seq > seqBefore);
+  const newEvents = (await readEvents(sid, 1, ctx.sessionsDir)).filter((e) => e.seq > seqBefore);
   expect(newEvents).toHaveLength(1);
   expect(newEvents[0].kind).toBe("report_read");
   expect((newEvents[0].payload as { filenames: string[] }).filenames.sort()).toEqual(["001-plan.md", "003-more.md"]);
 
-  const sessions = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const sessions = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
   expect(sessions.sessions.find((s: { id: string }) => s.id === sid).unreadReportCount).toBe(0);
 });
 
@@ -1142,14 +1171,14 @@ test("POST /sessions/:id/reports/read-all is a no-op (no event) when nothing is 
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const seqBefore = (await readEvents(sid, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
-  const result = await postJson(baseUrl, `/sessions/${sid}/reports/read-all`, {}).then(r => r.json());
+  const result = await postJson(baseUrl, `/sessions/${sid}/reports/read-all`, {}).then((r) => r.json());
   expect(result.ok).toBe(true);
   expect(result.read).toEqual([]);
-  const newEvents = (await readEvents(sid, 1, ctx.sessionsDir)).filter(e => e.seq > seqBefore);
+  const newEvents = (await readEvents(sid, 1, ctx.sessionsDir)).filter((e) => e.seq > seqBefore);
   expect(newEvents).toEqual([]);
 });
 
@@ -1157,7 +1186,7 @@ test("POST /sessions/:id/reports/:filename/read returns 404 for missing report",
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const res = await postJson(baseUrl, `/sessions/${sid}/reports/nope.md/read`, {});
@@ -1172,7 +1201,7 @@ test("GET /sessions/:id/diff returns worktreeOps.gitDiff against the session-sta
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const diffRes = await fetch(`${baseUrl}/sessions/${sid}/diff`);
@@ -1191,14 +1220,14 @@ test("GET /sessions/:id/files lists worktree files and hides the .worqload-repor
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   const wt = created.meta.worktreePath;
   writeFileSync(join(wt, "README.md"), "# r\n");
   mkdirSync(join(wt, "src"), { recursive: true });
   writeFileSync(join(wt, "src", "new.ts"), "export const x = 1;\n");
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/files`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/files`).then((r) => r.json());
   expect(res.paths).toContain("README.md");
   expect(res.paths).toContain("src/new.ts");
   // worqload-injected entries (the reports symlink and the draft scratch dir)
@@ -1228,12 +1257,17 @@ test("GET /sessions/:id/structure returns the changeset's import-dependency neig
     repoDir,
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
-    worktreeOps: { ...fakeWorktreeOps(), async gitDiff() { return cannedDiff; } },
+    worktreeOps: {
+      ...fakeWorktreeOps(),
+      async gitDiff() {
+        return cannedDiff;
+      },
+    },
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   const wt = created.meta.worktreePath;
   mkdirSync(join(wt, "web"), { recursive: true });
@@ -1244,7 +1278,7 @@ test("GET /sessions/:id/structure returns the changeset's import-dependency neig
   writeFileSync(join(wt, "web", "standalone.js"), ``);
   writeFileSync(join(wt, "README.md"), `not source\n`);
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/structure`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/structure`).then((r) => r.json());
   expect(res.changedFiles).toEqual(["web/greet.js"]);
   // greet.js (changed) and everything within the default hop radius: it imports
   // util.js, which imports app.js, which imports greet.js — a 3-file cycle.
@@ -1273,12 +1307,17 @@ test("GET /sessions/:id/structure?anchorPath=… re-seeds the graph from the giv
     repoDir,
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
-    worktreeOps: { ...fakeWorktreeOps(), async gitDiff() { return cannedDiff; } },
+    worktreeOps: {
+      ...fakeWorktreeOps(),
+      async gitDiff() {
+        return cannedDiff;
+      },
+    },
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   const wt = created.meta.worktreePath;
   mkdirSync(join(wt, "web"), { recursive: true });
@@ -1288,7 +1327,9 @@ test("GET /sessions/:id/structure?anchorPath=… re-seeds the graph from the giv
   writeFileSync(join(wt, "web", "elsewhere.js"), `import "./standalone.js";\n`);
   writeFileSync(join(wt, "web", "standalone.js"), ``);
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/structure?anchorPath=web/elsewhere.js&hops=1`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/structure?anchorPath=web/elsewhere.js&hops=1`).then((r) =>
+    r.json(),
+  );
   expect(res.anchorPath).toBe("web/elsewhere.js");
   expect(res.graph.nodes.sort()).toEqual(["web/elsewhere.js", "web/standalone.js"]);
   expect(res.changedFiles).toEqual([]); // greet.js is changed but not in the anchored slice
@@ -1313,19 +1354,24 @@ test("GET /sessions/:id/structure with an anchor still tints diff-changed files 
     repoDir,
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
-    worktreeOps: { ...fakeWorktreeOps(), async gitDiff() { return cannedDiff; } },
+    worktreeOps: {
+      ...fakeWorktreeOps(),
+      async gitDiff() {
+        return cannedDiff;
+      },
+    },
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   const wt = created.meta.worktreePath;
   mkdirSync(join(wt, "web"), { recursive: true });
   writeFileSync(join(wt, "web", "app.js"), `import { greet } from "./greet.js";\n`);
   writeFileSync(join(wt, "web", "greet.js"), ``);
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/structure?anchorPath=web/app.js&hops=1`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/structure?anchorPath=web/app.js&hops=1`).then((r) => r.json());
   expect(res.anchorPath).toBe("web/app.js");
   expect(res.graph.nodes.sort()).toEqual(["web/app.js", "web/greet.js"]);
   expect(res.changedFiles).toEqual(["web/greet.js"]);
@@ -1342,8 +1388,8 @@ test("GET /sessions/:id/structure?side=before draws the graph from the diff base
     "--- a/web/greet.js",
     "+++ b/web/greet.js",
     "@@ -1 +1 @@",
-    "-import \"./old.js\";",
-    "+import \"./new.js\";",
+    '-import "./old.js";',
+    '+import "./new.js";',
   ].join("\n");
 
   const beforeTree: Record<string, string> = {
@@ -1357,8 +1403,12 @@ test("GET /sessions/:id/structure?side=before draws the graph from the diff base
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: {
       ...fakeWorktreeOps(),
-      async gitDiff() { return cannedDiff; },
-      async listFilesAtRevision() { return Object.keys(beforeTree).sort(); },
+      async gitDiff() {
+        return cannedDiff;
+      },
+      async listFilesAtRevision() {
+        return Object.keys(beforeTree).sort();
+      },
       async readFileAtRevision(_wt, _rev, relPath) {
         const content = beforeTree[relPath];
         return content === undefined ? { kind: "not-found" } : { kind: "text", content };
@@ -1368,18 +1418,18 @@ test("GET /sessions/:id/structure?side=before draws the graph from the diff base
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   const wt = created.meta.worktreePath;
   mkdirSync(join(wt, "web"), { recursive: true });
   writeFileSync(join(wt, "web", "greet.js"), `import "./new.js";\n`);
   writeFileSync(join(wt, "web", "new.js"), ``);
 
-  const after = await fetch(`${baseUrl}/sessions/${sid}/structure`).then(r => r.json());
+  const after = await fetch(`${baseUrl}/sessions/${sid}/structure`).then((r) => r.json());
   expect(after.side).toBe("after");
   expect(after.graph.nodes.sort()).toEqual(["web/greet.js", "web/new.js"]);
 
-  const before = await fetch(`${baseUrl}/sessions/${sid}/structure?side=before`).then(r => r.json());
+  const before = await fetch(`${baseUrl}/sessions/${sid}/structure?side=before`).then((r) => r.json());
   expect(before.side).toBe("before");
   expect(before.graph.nodes.sort()).toEqual(["web/greet.js", "web/old.js"]);
   expect(before.changedFiles).toEqual(["web/greet.js"]);
@@ -1389,7 +1439,7 @@ test("GET /sessions/:id/file returns text content of a worktree file", async () 
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   writeFileSync(join(created.meta.worktreePath, "notes.txt"), "alpha\nbeta\n");
 
@@ -1404,7 +1454,7 @@ test("GET /sessions/:id/file rejects paths that escape the worktree", async () =
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const res = await fetch(`${baseUrl}/sessions/${sid}/file?path=${encodeURIComponent("../".repeat(20) + "etc/hosts")}`);
@@ -1415,7 +1465,7 @@ test("GET /sessions/:id/file returns 404 for a missing file and 400 without a pa
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   expect((await fetch(`${baseUrl}/sessions/${sid}/file?path=nope.txt`)).status).toBe(404);
@@ -1426,11 +1476,11 @@ test("GET /sessions/:id/file flags binary files instead of returning their bytes
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   writeFileSync(join(created.meta.worktreePath, "blob.bin"), Buffer.from([0x68, 0x69, 0x00, 0x03, 0xff]));
 
-  const body = await fetch(`${baseUrl}/sessions/${sid}/file?path=blob.bin`).then(r => r.json());
+  const body = await fetch(`${baseUrl}/sessions/${sid}/file?path=blob.bin`).then((r) => r.json());
   expect(body.binary).toBe(true);
   expect(body.content).toBeUndefined();
 });
@@ -1439,18 +1489,18 @@ test("GET /sessions/:id/search returns matching lines across worktree files; emp
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   const wt = created.meta.worktreePath;
   mkdirSync(join(wt, "src"), { recursive: true });
   writeFileSync(join(wt, "src", "a.ts"), "const needle = 1;\nplain\n");
   writeFileSync(join(wt, "README.md"), "no match here\n");
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/search?q=needle`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/search?q=needle`).then((r) => r.json());
   expect(res.matches).toEqual([{ path: "src/a.ts", line: 1, text: "const needle = 1;" }]);
   expect(res.truncated).toBe(false);
 
-  const empty = await fetch(`${baseUrl}/sessions/${sid}/search?q=`).then(r => r.json());
+  const empty = await fetch(`${baseUrl}/sessions/${sid}/search?q=`).then((r) => r.json());
   expect(empty.matches).toEqual([]);
 });
 
@@ -1458,11 +1508,13 @@ test("GET /sessions/:id/code-nav/definition reports unavailable for a language w
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   writeFileSync(join(created.meta.worktreePath, "notes.rb"), "def thing; end\n");
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/code-nav/definition?path=notes.rb&language=ruby&line=0&character=4`);
+  const res = await fetch(
+    `${baseUrl}/sessions/${sid}/code-nav/definition?path=notes.rb&language=ruby&line=0&character=4`,
+  );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ available: false });
 
@@ -1477,14 +1529,16 @@ test("GET /sessions/:id/permalink returns a blob URL at HEAD for a file and line
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const file = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=src/a.ts`).then(r => r.json());
+  const file = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=src/a.ts`).then((r) => r.json());
   expect(file.url).toBe(`https://github.com/owner/repo/blob/${"f".repeat(40)}/src/a.ts`);
   expect(file.branch).toBe(created.meta.branchName);
 
-  const range = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=src/a.ts&lineStart=3&lineEnd=8`).then(r => r.json());
+  const range = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=src/a.ts&lineStart=3&lineEnd=8`).then((r) =>
+    r.json(),
+  );
   expect(range.url).toBe(`https://github.com/owner/repo/blob/${"f".repeat(40)}/src/a.ts#L3-L8`);
 
   expect((await fetch(`${baseUrl}/sessions/${sid}/permalink`)).status).toBe(400);
@@ -1494,10 +1548,10 @@ test("GET /sessions/:id/permalink returns null with a reason when the worktree h
   const repoDir = makeGitRepo();
   const { baseUrl } = await bootServerRealGit(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=README.md`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/permalink?path=README.md`).then((r) => r.json());
   expect(res.url).toBeNull();
   expect(res.reason).toBe("no-remote");
 });
@@ -1517,10 +1571,10 @@ test("GET /sessions/:id/pr-link returns the resolver's URL for the session branc
     },
   });
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/pr-link`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/pr-link`).then((r) => r.json());
   expect(res.url).toBe("https://github.com/owner/repo/pull/7");
   expect(seen?.branchName).toBe(created.meta.branchName);
   expect(seen?.worktreePath).toBe(created.meta.worktreePath);
@@ -1529,25 +1583,57 @@ test("GET /sessions/:id/pr-link returns the resolver's URL for the session branc
 test("GET /sessions/:id/pr-link passes through the no-PR reason", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir, {
-    prLinkResolver: { async resolve() { return { url: null, reason: "no-pr" }; } },
+    prLinkResolver: {
+      async resolve() {
+        return { url: null, reason: "no-pr" };
+      },
+    },
   });
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
-  const res = await fetch(`${baseUrl}/sessions/${created.meta.id}/pr-link`).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${created.meta.id}/pr-link`).then((r) => r.json());
   expect(res.url).toBeNull();
   expect(res.reason).toBe("no-pr");
+});
+
+// The sidebar prefetches every session's PR link off its poll; without server
+// caching that would respawn the resolver per session per poll. Two reads of
+// the same session hit the resolver once.
+test("GET /sessions/:id/pr-link caches the resolver result across requests", async () => {
+  const repoDir = makeTmpDir("repo");
+  let calls = 0;
+  const { baseUrl } = await bootServer(repoDir, {
+    prLinkResolver: {
+      async resolve() {
+        calls++;
+        return { url: "https://github.com/owner/repo/pull/9" };
+      },
+    },
+  });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await fetch(`${baseUrl}/sessions/${sid}/pr-link`).then((r) => r.json());
+  const second = await fetch(`${baseUrl}/sessions/${sid}/pr-link`).then((r) => r.json());
+  expect(second.url).toBe("https://github.com/owner/repo/pull/9");
+  expect(calls).toBe(1);
+
+  const fresh = await fetch(`${baseUrl}/sessions/${sid}/pr-link?fresh=1`).then((r) => r.json());
+  expect(fresh.url).toBe("https://github.com/owner/repo/pull/9");
+  expect(calls).toBe(2);
 });
 
 test("GET /sessions/:id/asking returns pending escalations", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "lib", content: "X or Y?" });
 
-  const res = await fetch(`${baseUrl}/sessions/${sid}/asking`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/sessions/${sid}/asking`).then((r) => r.json());
   expect(res.asking).toHaveLength(1);
   expect(res.asking[0].content).toBe("X or Y?");
 });
@@ -1559,27 +1645,27 @@ test("POST /sessions/:id/title sets, updates and clears the display title", asyn
   const created = await postJson(baseUrl, "/sessions", {
     prompt: "あなたに長いお願いごとをしたいです、これはサイドバーで読みにくい",
     baseBranch: TEST_BASE,
-  }).then(r => r.json());
+  }).then((r) => r.json());
   const sid = created.meta.id;
   expect(created.meta.title).toBeUndefined();
 
   // set
-  const set = await postJson(baseUrl, `/sessions/${sid}/title`, { title: "  リファクタ祭り  " }).then(r => r.json());
+  const set = await postJson(baseUrl, `/sessions/${sid}/title`, { title: "  リファクタ祭り  " }).then((r) => r.json());
   expect(set.meta.title).toBe("リファクタ祭り");
   expect((await loadSessionMeta(sid, ctx.sessionsDir))?.title).toBe("リファクタ祭り");
-  expect((await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json())).meta.title).toBe("リファクタ祭り");
+  expect((await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json())).meta.title).toBe("リファクタ祭り");
 
   // update
-  const updated = await postJson(baseUrl, `/sessions/${sid}/title`, { title: "別名" }).then(r => r.json());
+  const updated = await postJson(baseUrl, `/sessions/${sid}/title`, { title: "別名" }).then((r) => r.json());
   expect(updated.meta.title).toBe("別名");
 
   // clear (empty / whitespace → drop the field, fall back to the prompt)
-  const cleared = await postJson(baseUrl, `/sessions/${sid}/title`, { title: "   " }).then(r => r.json());
+  const cleared = await postJson(baseUrl, `/sessions/${sid}/title`, { title: "   " }).then((r) => r.json());
   expect(cleared.meta.title).toBeUndefined();
   expect((await loadSessionMeta(sid, ctx.sessionsDir))?.title).toBeUndefined();
 
   // surfaced in the session list too
-  const list = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const list = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
   expect(list.sessions.find((s: { id: string }) => s.id === sid)?.title).toBeUndefined();
 });
 
@@ -1587,7 +1673,7 @@ test("POST /sessions/:id/title rejects a non-string title and an unknown session
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   expect((await postJson(baseUrl, `/sessions/${created.meta.id}/title`, { title: 123 })).status).toBe(400);
   expect((await postJson(baseUrl, `/sessions/${created.meta.id}/title`, {})).status).toBe(400);
   expect((await postJson(baseUrl, "/sessions/nope/title", { title: "x" })).status).toBe(404);
@@ -1597,7 +1683,7 @@ test("POST /sessions/:id/archive hides terminal sessions from default list", asy
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   // Cannot archive while running
@@ -1605,13 +1691,13 @@ test("POST /sessions/:id/archive hides terminal sessions from default list", asy
   expect(tooEarly.status).toBe(400);
 
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
-  const archived = await postJson(baseUrl, `/sessions/${sid}/archive`, {}).then(r => r.json());
+  const archived = await postJson(baseUrl, `/sessions/${sid}/archive`, {}).then((r) => r.json());
   expect(archived.meta.archivedAt).toBeDefined();
 
-  const visible = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const visible = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
   expect(visible.sessions.find((s: { id: string }) => s.id === sid)).toBeUndefined();
 
-  const all = await fetch(`${baseUrl}/sessions?includeArchived=true`).then(r => r.json());
+  const all = await fetch(`${baseUrl}/sessions?includeArchived=true`).then((r) => r.json());
   expect(all.sessions.find((s: { id: string }) => s.id === sid)).toBeDefined();
 });
 
@@ -1632,7 +1718,7 @@ test("POST /sessions/:id/archive refuses with 409 when a preview is still runnin
   const previewRoot = makeTmpDir("preview-root");
   process.env.WORQLOAD_PREVIEW_DIR = previewRoot;
   try {
-    const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+    const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
     const sid = created.meta.id;
     await postJson(baseUrl, `/sessions/${sid}/stop`, {});
     plantLivePreviewPid(previewRoot, sid, process.pid);
@@ -1644,7 +1730,7 @@ test("POST /sessions/:id/archive refuses with 409 when a preview is still runnin
     expect(body.pid).toBe(process.pid);
 
     // The session must not have been marked archived by the refused request.
-    const all = await fetch(`${baseUrl}/sessions?includeArchived=true`).then(r => r.json());
+    const all = await fetch(`${baseUrl}/sessions?includeArchived=true`).then((r) => r.json());
     const found = all.sessions.find((s: { id: string; archivedAt?: string }) => s.id === sid);
     expect(found?.archivedAt).toBeUndefined();
   } finally {
@@ -1663,7 +1749,7 @@ test("POST /sessions/:id/archive?stopPreview=true stops the preview then archive
   // need it alive long enough to be killed.
   const proc = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
   try {
-    const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+    const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
     const sid = created.meta.id;
     await postJson(baseUrl, `/sessions/${sid}/stop`, {});
     plantLivePreviewPid(previewRoot, sid, proc.pid as number);
@@ -1677,7 +1763,11 @@ test("POST /sessions/:id/archive?stopPreview=true stops the preview then archive
     // the SIGTERM the archive flow sent lands.
     await proc.exited;
   } finally {
-    try { proc.kill(); } catch { /* already gone */ }
+    try {
+      proc.kill();
+    } catch {
+      /* already gone */
+    }
     delete process.env.WORQLOAD_PREVIEW_DIR;
   }
 });
@@ -1686,13 +1776,17 @@ test("GET /sessions?archived=only returns only archived sessions", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const active = await postJson(baseUrl, "/sessions", { prompt: "active", baseBranch: TEST_BASE }).then(r => r.json());
-  const toArchive = await postJson(baseUrl, "/sessions", { prompt: "to-archive", baseBranch: TEST_BASE }).then(r => r.json());
+  const active = await postJson(baseUrl, "/sessions", { prompt: "active", baseBranch: TEST_BASE }).then((r) =>
+    r.json(),
+  );
+  const toArchive = await postJson(baseUrl, "/sessions", { prompt: "to-archive", baseBranch: TEST_BASE }).then((r) =>
+    r.json(),
+  );
 
   await postJson(baseUrl, `/sessions/${toArchive.meta.id}/stop`, {});
   await postJson(baseUrl, `/sessions/${toArchive.meta.id}/archive`, {});
 
-  const onlyArchived = await fetch(`${baseUrl}/sessions?archived=only`).then(r => r.json());
+  const onlyArchived = await fetch(`${baseUrl}/sessions?archived=only`).then((r) => r.json());
   const ids = onlyArchived.sessions.map((s: { id: string }) => s.id);
   expect(ids).toContain(toArchive.meta.id);
   expect(ids).not.toContain(active.meta.id);
@@ -1702,22 +1796,24 @@ test("POST /sessions/:id/unarchive clears archivedAt and the session reappears i
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "rescue-me", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "rescue-me", baseBranch: TEST_BASE }).then((r) =>
+    r.json(),
+  );
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
   await postJson(baseUrl, `/sessions/${sid}/archive`, {});
 
-  const hidden = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const hidden = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
   expect(hidden.sessions.find((s: { id: string }) => s.id === sid)).toBeUndefined();
 
-  const restored = await postJson(baseUrl, `/sessions/${sid}/unarchive`, {}).then(r => r.json());
+  const restored = await postJson(baseUrl, `/sessions/${sid}/unarchive`, {}).then((r) => r.json());
   expect(restored.meta.archivedAt).toBeUndefined();
 
-  const visible = await fetch(`${baseUrl}/sessions`).then(r => r.json());
+  const visible = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
   expect(visible.sessions.find((s: { id: string }) => s.id === sid)).toBeDefined();
 
-  const onlyArchived = await fetch(`${baseUrl}/sessions?archived=only`).then(r => r.json());
+  const onlyArchived = await fetch(`${baseUrl}/sessions?archived=only`).then((r) => r.json());
   expect(onlyArchived.sessions.find((s: { id: string }) => s.id === sid)).toBeUndefined();
 });
 
@@ -1725,7 +1821,9 @@ test("POST /sessions/:id/unarchive on a non-archived session is a no-op (200)", 
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "active", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "active", baseBranch: TEST_BASE }).then((r) =>
+    r.json(),
+  );
   const sid = created.meta.id;
 
   const res = await postJson(baseUrl, `/sessions/${sid}/unarchive`, {});
@@ -1746,7 +1844,9 @@ test("DELETE /sessions/:id removes worktree, branch, and session dir for an arch
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "delete-me", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "delete-me", baseBranch: TEST_BASE }).then((r) =>
+    r.json(),
+  );
   const sid = created.meta.id;
   const worktreePath = created.meta.worktreePath;
   const sessionDir = join(ctx.sessionsDir, sid);
@@ -1763,7 +1863,7 @@ test("DELETE /sessions/:id removes worktree, branch, and session dir for an arch
   expect(existsSync(worktreePath)).toBe(false);
   expect(existsSync(sessionDir)).toBe(false);
 
-  const all = await fetch(`${baseUrl}/sessions?includeArchived=true`).then(r => r.json());
+  const all = await fetch(`${baseUrl}/sessions?includeArchived=true`).then((r) => r.json());
   expect(all.sessions.find((s: { id: string }) => s.id === sid)).toBeUndefined();
 });
 
@@ -1771,7 +1871,9 @@ test("DELETE /sessions/:id refuses to delete a non-archived session", async () =
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "still-active", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "still-active", baseBranch: TEST_BASE }).then((r) =>
+    r.json(),
+  );
   const sid = created.meta.id;
 
   const res = await fetch(`${baseUrl}/sessions/${sid}`, { method: "DELETE" });
@@ -1792,22 +1894,24 @@ test("GET /sessions/:id/feedback merges inbox and read with status", async () =>
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "first", slug: "a" });
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "second", slug: "b" });
   // drain only the first one by simulating an agent fetch
-  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   // post a third one after fetch
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "third", slug: "c" });
 
-  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then(r => r.json());
+  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then((r) => r.json());
   expect(history.messages).toHaveLength(3);
   // newest (highest serial) first
   expect(history.messages.map((m: { content: string }) => m.content)).toEqual(["third", "second", "first"]);
   // first two were drained (status read), third is unread
-  const byContent = Object.fromEntries(history.messages.map((m: { content: string; status: string }) => [m.content, m.status]));
+  const byContent = Object.fromEntries(
+    history.messages.map((m: { content: string; status: string }) => [m.content, m.status]),
+  );
   expect(byContent["first"]).toBe("read");
   expect(byContent["second"]).toBe("read");
   expect(byContent["third"]).toBe("unread");
@@ -1817,7 +1921,7 @@ test("GET /sessions/:id/feedback exposes the structured anchor and keeps the bod
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "plain", slug: "feedback" });
@@ -1827,7 +1931,7 @@ test("GET /sessions/:id/feedback exposes the structured anchor and keeps the bod
     anchor: { path: "src/foo.ts", lineStart: 10, lineEnd: 12 },
   });
 
-  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then(r => r.json());
+  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then((r) => r.json());
   const anchored = history.messages.find((m: { content: string }) => m.content === "look at these lines");
   expect(anchored.anchor).toEqual({ path: "src/foo.ts", lineStart: 10, lineEnd: 12 });
   const plain = history.messages.find((m: { content: string }) => m.content === "plain");
@@ -1844,7 +1948,7 @@ test("startServer reconnects to a still-running host across a serve restart", as
     hostCommand: HOST_COMMAND,
   });
   const baseUrl1 = `http://127.0.0.1:${first.server.port}`;
-  const created = await postJson(baseUrl1, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl1, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   // Simulate a graceful serve restart: stop the HTTP server but leave hosts
@@ -1861,7 +1965,7 @@ test("startServer reconnects to a still-running host across a serve restart", as
   trackCleanup(() => second.shutdown({ killHosts: true }));
   const baseUrl2 = `http://127.0.0.1:${second.server.port}`;
 
-  const detail = await fetch(`${baseUrl2}/sessions/${sid}`).then(r => r.json());
+  const detail = await fetch(`${baseUrl2}/sessions/${sid}`).then((r) => r.json());
   expect(detail.meta.status).toBe("running");
   expect(detail.meta.endedAt).toBeUndefined();
 
@@ -1876,9 +1980,13 @@ test("startServer reconnects to a still-running host across a serve restart", as
   expect(typeof hostPid).toBe("number");
   await second.shutdown({ killHosts: true });
   // small grace for the signal to land
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 100));
   let alive = true;
-  try { process.kill(hostPid, 0); } catch { alive = false; }
+  try {
+    process.kill(hostPid, 0);
+  } catch {
+    alive = false;
+  }
   expect(alive).toBe(false);
 });
 
@@ -1892,7 +2000,7 @@ test("startServer marks a session crashed when its host is dead on boot", async 
     hostCommand: HOST_COMMAND,
   });
   const baseUrl1 = `http://127.0.0.1:${first.server.port}`;
-  const created = await postJson(baseUrl1, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl1, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   // Kill the host. Session meta still says "running" — that's the orphan
@@ -1909,7 +2017,7 @@ test("startServer marks a session crashed when its host is dead on boot", async 
   trackCleanup(() => second.shutdown({ killHosts: true }));
   const baseUrl2 = `http://127.0.0.1:${second.server.port}`;
 
-  const detail = await fetch(`${baseUrl2}/sessions/${sid}`).then(r => r.json());
+  const detail = await fetch(`${baseUrl2}/sessions/${sid}`).then((r) => r.json());
   expect(detail.meta.status).toBe("crashed");
   expect(detail.meta.endedAt).toBeDefined();
   expect(detail.events.some((e: { kind: string }) => e.kind === "session_crashed")).toBe(true);
@@ -1919,39 +2027,39 @@ test("WS /sessions/:id/stream replays past events on subscribe and pushes live o
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/sessions/${sid}/stream`);
-  await new Promise<void>(resolve => ws.addEventListener("open", () => resolve(), { once: true }));
+  await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }));
 
   const messages: { sessionId: string; event: { kind: string; seq: number } }[] = [];
-  ws.addEventListener("message", e => {
+  ws.addEventListener("message", (e) => {
     messages.push(JSON.parse(typeof e.data === "string" ? e.data : ""));
   });
 
   ws.send(JSON.stringify({ type: "subscribe", lastSeq: 0 }));
   // wait for replay
-  await new Promise(r => setTimeout(r, 100));
-  expect(messages.some(m => m.event.kind === "session_started")).toBe(true);
+  await new Promise((r) => setTimeout(r, 100));
+  expect(messages.some((m) => m.event.kind === "session_started")).toBe(true);
 
   // Now trigger a new server-side event and confirm it streams to the client.
   const messageCountBefore = messages.length;
   await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "live", content: "live event body" });
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 100));
 
   expect(messages.length).toBeGreaterThan(messageCountBefore);
-  expect(messages.some(m => m.event.kind === "report_submitted")).toBe(true);
+  expect(messages.some((m) => m.event.kind === "report_submitted")).toBe(true);
 
   ws.close();
-  await new Promise(r => setTimeout(r, 30));
+  await new Promise((r) => setTimeout(r, 30));
 });
 
 test("POST /sessions/:id/cancel no longer exists", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const res = await postJson(baseUrl, `/sessions/${created.meta.id}/cancel`, {});
   expect(res.status).toBe(404);
 });
@@ -1960,7 +2068,7 @@ test("POST /sessions/:id/resume respawns the host and returns the session to run
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
@@ -1969,7 +2077,7 @@ test("POST /sessions/:id/resume respawns the host and returns the session to run
   expect(meta?.status).toBe("stopped");
   expect(meta?.endedAt).toBeDefined();
 
-  const resumed = await postJson(baseUrl, `/sessions/${sid}/resume`, {}).then(r => r.json());
+  const resumed = await postJson(baseUrl, `/sessions/${sid}/resume`, {}).then((r) => r.json());
   expect(resumed.meta.status).toBe("running");
   expect(resumed.meta.endedAt).toBeUndefined();
   expect(ctx.clients.has(sid)).toBe(true);
@@ -1998,13 +2106,19 @@ test("a stopped host's late socket teardown does not evict the resumed attachmen
     );
     onEvent(event);
     let resolveExited!: (code: number | null) => void;
-    const exited = new Promise<number | null>((r) => { resolveExited = r; });
+    const exited = new Promise<number | null>((r) => {
+      resolveExited = r;
+    });
     launches.push({ resume, onDisconnect });
     return {
       client: {
         async send() {},
-        async kill() { resolveExited(null); },
-        async close() { resolveExited(null); },
+        async kill() {
+          resolveExited(null);
+        },
+        async close() {
+          resolveExited(null);
+        },
         replayCompleted: Promise.resolve({ lastSeq: event.seq }),
         exited,
       },
@@ -2021,7 +2135,7 @@ test("a stopped host's late socket teardown does not evict the resumed attachmen
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
   const ctx = started.ctx;
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   expect(launches).toHaveLength(1);
 
@@ -2041,7 +2155,9 @@ test("a stopped host's late socket teardown does not evict the resumed attachmen
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "ping", slug: "f" });
   expect(launches).toHaveLength(2);
   const logLines = readFileSync(hostLogPath(ctx.sessionsDir, sid), "utf8")
-    .trim().split("\n").map((l) => JSON.parse(l));
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
   const wakes = logLines.filter((l) => l.event === "wake_sent");
   expect(wakes.at(-1)?.hasClient).toBe(true);
 });
@@ -2050,7 +2166,7 @@ test("POST /sessions/:id/resume queues the optional prompt as feedback", async (
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
 
@@ -2067,7 +2183,7 @@ test("POST /sessions/:id/resume rejects a session that is still running", async 
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const res = await postJson(baseUrl, `/sessions/${sid}/resume`, {});
@@ -2078,7 +2194,7 @@ test("POST /sessions/:id/resume rejects a session whose worktree is gone", async
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
   await postJson(baseUrl, `/sessions/${sid}/stop`, {});
   rmSync(created.meta.worktreePath, { recursive: true, force: true });
@@ -2124,7 +2240,7 @@ test("GET /actions exposes the built-in action registry", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const res = await fetch(`${baseUrl}/actions`).then(r => r.json());
+  const res = await fetch(`${baseUrl}/actions`).then((r) => r.json());
   const ids = res.actions.map((a: { id: string }) => a.id);
   expect(ids).toContain("merge-to-base");
   expect(ids).toContain("create-pr");
@@ -2133,7 +2249,7 @@ test("GET /actions exposes the built-in action registry", async () => {
 test("POST /sessions/:id/actions/:actionId returns 404 for unknown action", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const res = await postJson(baseUrl, `/sessions/${sid}/actions/nope`, {});
@@ -2143,7 +2259,9 @@ test("POST /sessions/:id/actions/:actionId returns 404 for unknown action", asyn
 test("POST /sessions/:id/actions/merge-to-base merges when preconditions hold", async () => {
   const repoDir = makeGitRepo();
   const { baseUrl } = await bootServerRealGit(repoDir);
-  const created = await postJson(baseUrl, "/sessions", { prompt: "merge me", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "merge me", baseBranch: TEST_BASE }).then((r) =>
+    r.json(),
+  );
   const sid = created.meta.id;
   const wt = created.meta.worktreePath;
 
@@ -2166,7 +2284,7 @@ test("POST /sessions/:id/actions/merge-to-base merges when preconditions hold", 
 test("POST /sessions/:id/actions/merge-to-base returns 422 when preconditions fail", async () => {
   const repoDir = makeGitRepo();
   const { baseUrl } = await bootServerRealGit(repoDir);
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   // dirty the main repo
@@ -2183,7 +2301,7 @@ test("POST /sessions/:id/actions/merge-to-base returns 422 when preconditions fa
 test("invoking an action records an action_invoked event so the run log persists", async () => {
   const repoDir = makeGitRepo();
   const { baseUrl, ctx } = await bootServerRealGit(repoDir);
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   // dirty the main repo so merge-to-base fails predictably; we only care that
@@ -2193,7 +2311,7 @@ test("invoking an action records an action_invoked event so the run log persists
   await postJson(baseUrl, `/sessions/${sid}/actions/merge-to-base`, {});
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
-  const invoked = events.filter(e => e.kind === "action_invoked");
+  const invoked = events.filter((e) => e.kind === "action_invoked");
   expect(invoked.length).toBe(1);
   const payload = invoked[0].payload as { actionId: string; ok: boolean };
   expect(payload.actionId).toBe("merge-to-base");
@@ -2204,24 +2322,26 @@ test("command approval: request creates asking + sidecar, sets waiting_human, ge
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const dangerousCommand = "npm publish --access public";
   const req = await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, {
     command: dangerousCommand,
     reason: "release the package",
-  }).then(r => r.json());
+  }).then((r) => r.json());
   expect(req.filename).toBe("001-command-approval.md");
 
   const askingDir = join(ctx.sessionsDir, sid, "asking");
   expect(readdirSync(askingDir).sort()).toEqual(["001-command-approval.command.json", "001-command-approval.md"]);
-  expect(JSON.parse(readFileSync(join(askingDir, "001-command-approval.command.json"), "utf8")).command).toBe(dangerousCommand);
+  expect(JSON.parse(readFileSync(join(askingDir, "001-command-approval.command.json"), "utf8")).command).toBe(
+    dangerousCommand,
+  );
 
   const meta = await loadSessionMeta(sid, ctx.sessionsDir);
   expect(meta?.status).toBe("waiting_human");
 
-  const asking = await fetch(`${baseUrl}/sessions/${sid}/asking`).then(r => r.json());
+  const asking = await fetch(`${baseUrl}/sessions/${sid}/asking`).then((r) => r.json());
   expect(asking.asking).toHaveLength(1);
   expect(asking.asking[0].command).toBe(dangerousCommand);
   expect(asking.asking[0].content).toContain("REQUIRE APPROVAL");
@@ -2231,33 +2351,36 @@ test("command approval: approve runs the command in the worktree and feeds back 
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "echo approved-ok" });
 
   const resolved = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, {
     decision: "approve",
-  }).then(r => r.json());
+  }).then((r) => r.json());
   expect(resolved.ok).toBe(true);
   expect(resolved.exitCode).toBe(0);
   expect(resolved.stdout).toContain("approved-ok");
 
   const askingDir = join(ctx.sessionsDir, sid, "asking");
-  expect(readdirSync(askingDir).filter(f => f.endsWith(".md") || f.endsWith(".json"))).toEqual([]);
-  expect(readdirSync(join(askingDir, "resolved")).sort()).toEqual(["001-command-approval.command.json", "001-command-approval.md"]);
+  expect(readdirSync(askingDir).filter((f) => f.endsWith(".md") || f.endsWith(".json"))).toEqual([]);
+  expect(readdirSync(join(askingDir, "resolved")).sort()).toEqual([
+    "001-command-approval.command.json",
+    "001-command-approval.md",
+  ]);
 
-  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then(r => r.json());
+  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
   expect(detail.meta.status).toBe("running");
 
-  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   expect(inbox.messages).toHaveLength(1);
   expect(inbox.messages[0].content).toContain("approved this command");
   expect(inbox.messages[0].content).toContain("approved-ok");
   expect(inbox.messages[0].content).toContain("Exit code");
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
-  const resolvedEvent = events.find(e => e.kind === "escalation_resolved");
+  const resolvedEvent = events.find((e) => e.kind === "escalation_resolved");
   const resolvedPayload = resolvedEvent?.payload as { decision?: string; exitCode?: number; stdout?: string };
   expect(resolvedPayload?.decision).toBe("approve");
   expect(resolvedPayload?.exitCode).toBe(0);
@@ -2268,7 +2391,7 @@ test("command approval: approve with a human note relays that note in the feedba
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "echo approved-ok" });
@@ -2277,16 +2400,16 @@ test("command approval: approve with a human note relays that note in the feedba
   const resolved = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, {
     decision: "approve",
     content: note,
-  }).then(r => r.json());
+  }).then((r) => r.json());
   expect(resolved.ok).toBe(true);
 
-  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   expect(inbox.messages).toHaveLength(1);
   expect(inbox.messages[0].content).toContain("approved this command");
   expect(inbox.messages[0].content).toContain(note);
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
-  const resolvedEvent = events.find(e => e.kind === "escalation_resolved");
+  const resolvedEvent = events.find((e) => e.kind === "escalation_resolved");
   const resolvedPayload = resolvedEvent?.payload as { decision?: string; note?: string };
   expect(resolvedPayload?.decision).toBe("approve");
   expect(resolvedPayload?.note).toBe(note);
@@ -2296,20 +2419,22 @@ test("command approval: reject does not run the command and feeds back the rejec
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   const marker = join(repoDir, "should-not-exist");
-  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: `touch ${JSON.stringify(marker)}` });
+  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, {
+    command: `touch ${JSON.stringify(marker)}`,
+  });
 
   const resolved = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, {
     decision: "reject",
     content: "we never touch that path",
-  }).then(r => r.json());
+  }).then((r) => r.json());
   expect(resolved.ok).toBe(true);
   expect(existsSync(marker)).toBe(false);
 
-  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then(r => r.json());
+  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   expect(inbox.messages[0].content).toContain("rejected this command");
   expect(inbox.messages[0].content).toContain("we never touch that path");
 });
@@ -2318,11 +2443,13 @@ test("command approval: resolve without a decision is rejected", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "echo hi" });
-  const res = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, { content: "yes please" });
+  const res = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, {
+    content: "yes please",
+  });
   expect(res.status).toBe(400);
 });
 
@@ -2353,6 +2480,6 @@ test("GET / links the favicon route in the document head", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
 
-  const html = await fetch(`${baseUrl}/`).then(r => r.text());
+  const html = await fetch(`${baseUrl}/`).then((r) => r.text());
   expect(html).toMatch(/<link[^>]+rel="icon"[^>]+href="\/favicon"/);
 });

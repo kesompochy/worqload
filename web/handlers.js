@@ -46,7 +46,11 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   state.reports = [];
   state.asking = [];
   state.detail = null;
-  state.prLink = null;
+  // Seed from the background-prefetched cache so the header renders the PR
+  // link / Create-PR-disabled state on the first paint, with no open-time
+  // flip. undefined (never prefetched — e.g. first boot) falls back to a
+  // fetch below; the prLinks cache survives session switches.
+  state.prLink = state.prLinks[id] ?? null;
   // An anchor's path resolves only inside the previous session's worktree, so
   // it must not ride along to feedback sent to the newly selected one.
   state.anchor = null;
@@ -88,7 +92,10 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   clearAttachments();
   if (!id) return;
   await refreshDetail();
-  void loadPrLink(id);
+  // Cold cache only (first boot, before the prefetch resolved). The warm case
+  // already rendered from state.prLinks above with no round trip; refreshing
+  // it here too would reintroduce the open-time flip the prefetch removes.
+  if (state.prLinks[id] === undefined) void loadPrLink(id);
   await fetchActions(id);
   openWs(id);
 }
@@ -1436,9 +1443,9 @@ async function runAction(action, params) {
       ranAt: new Date().toISOString(),
     });
     if (data.ok && action.id === "create-pr") {
-      // The branch now has a PR; refresh the header link instead of waiting
-      // for the next session select.
-      if (state.selected) void loadPrLink(state.selected);
+      // The branch just got a PR; bypass the server cache so the link appears
+      // now instead of after its TTL.
+      if (state.selected) void loadPrLink(state.selected, { fresh: true });
       const url = extractPullRequestUrl(data.stdout ?? "");
       if (url) {
         // `gh pr create` already did the work; jumping straight to the PR is

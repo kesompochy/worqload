@@ -24,7 +24,7 @@ import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktre
 import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
 import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
-import { ghPrLinkResolver, type PrLinkResolver } from "./pr-link";
+import { ghPrLinkResolver, makeCachedPrLinkResolver, type PrLinkResolver } from "./pr-link";
 import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead, attachmentsDirNameFor } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
@@ -611,7 +611,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   // WORQLOAD_SPAWN_COMMAND govern the disposable agent too.
   const reportRewriter = opts.reportRewriter ?? makeClaudeReportRewriter({ spawnCommand });
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
-  const prLinkResolver = opts.prLinkResolver ?? ghPrLinkResolver;
+  // Cache wraps whatever resolver is in play (the gh one in production, a fake
+  // in tests) so the sidebar's background prefetch doesn't respawn `gh` per
+  // session per poll and an opened session shows its link without a beat.
+  const prLinkResolver = makeCachedPrLinkResolver(opts.prLinkResolver ?? ghPrLinkResolver);
 
   await mkdir(sessionsDir, { recursive: true });
   // Migrate any anchored feedback still carrying its anchor as a `Re:` line in
@@ -1557,17 +1560,21 @@ async function getPermalink(req: Request, ctx: ServerContext, params: Record<str
   });
 }
 
-// The PR (if any) tracking this session's branch on the remote. Lazy and
-// independent of GET /sessions/:id — the resolver may shell out to a CLI over
-// the network, which must not delay the detail load. Shape mirrors permalink:
+// The PR (if any) tracking this session's branch on the remote. Independent of
+// GET /sessions/:id — the resolver may shell out to a CLI over the network, so
+// the sidebar prefetches this for every session off its poll, keeping the
+// cache warm so an opened session shows its link with no delay. `?fresh=1`
+// bypasses the cache (used right after create-pr). Shape mirrors permalink:
 // `{ url }` when found, `{ url: null, reason }` otherwise. The branch comes
 // from meta; legacy pre-branchName sessions never had a tracking PR.
-async function getPrLink(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+async function getPrLink(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     if (!meta.branchName) return json({ url: null, reason: "no-pr" });
+    const bypassCache = new URL(req.url).searchParams.get("fresh") === "1";
     const result = await ctx.prLinkResolver.resolve({
       worktreePath: meta.worktreePath,
       branchName: meta.branchName,
+      bypassCache,
     });
     return json(result);
   });
