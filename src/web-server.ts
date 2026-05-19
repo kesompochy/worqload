@@ -116,11 +116,17 @@ interface SessionAttachment {
   // Defined only when this serve instance is the one that spawned the host
   // (and that host runs as a real subprocess).
   hostProc?: Subprocess;
-  // The wake watchdog runs at most one timer per attachment. A new wake on
-  // the same attachment clears the previous timer (giving claude its full
-  // window again); attachment replacement leaves the old timer to fire and
+  // The wake watchdog runs at most one timer per attachment. Its deadline is
+  // anchored to the FIRST still-unacknowledged wake: a later wake arriving
+  // while earlier feedback is still undrained does not push the deadline out
+  // (otherwise a human appending feedback faster than the threshold would
+  // postpone recovery forever). watchdogArmedAt is the timestamp of that
+  // anchoring wake while a watchdog is pending, and undefined once it has
+  // fired (acknowledged → quiet, or auto-resumed) so the next wake re-arms a
+  // fresh deadline. Attachment replacement leaves the old timer to fire and
   // bail out via the identity check in runWakeWatchdog.
   watchdogTimer?: ReturnType<typeof setTimeout>;
+  watchdogArmedAt?: number;
 }
 
 // Brings a session's host to life and returns a client for talking to it. The
@@ -426,13 +432,19 @@ function appendHostLog(
 // worst-case waiting time short.
 const DEFAULT_WAKE_WATCHDOG_MS = 90_000;
 
-// One pending watchdog per attachment. A new wake on the same attachment
-// resets the deadline; an attachment replacement leaves the prior timer
-// pending, but runWakeWatchdog's identity check makes it a no-op.
+// One pending watchdog per attachment, anchored to the first wake that has
+// not yet been acknowledged. A wake arriving while one is already pending does
+// NOT re-arm it: streamed feedback (a human appending every second) would
+// otherwise reset the deadline indefinitely and the inbox would rot
+// undelivered. Once the pending watchdog fires (runWakeWatchdog clears
+// watchdogArmedAt either way), the next wake arms a fresh deadline. An
+// attachment replacement leaves the prior timer pending, but runWakeWatchdog's
+// identity check makes it a no-op.
 function scheduleWakeWatchdog(ctx: ServerContext, sessionId: string, att: SessionAttachment): void {
   if (ctx.wakeWatchdogMs <= 0) return;
-  if (att.watchdogTimer) clearTimeout(att.watchdogTimer);
+  if (att.watchdogArmedAt !== undefined) return;
   const wakeAt = Date.now();
+  att.watchdogArmedAt = wakeAt;
   const timer = setTimeout(() => { void runWakeWatchdog(ctx, sessionId, wakeAt, att); }, ctx.wakeWatchdogMs);
   // The watchdog is purely advisory; it must never keep the event loop alive
   // past the rest of the server.
@@ -448,6 +460,10 @@ async function runWakeWatchdog(
   wakeAt: number,
   expectedAtt: SessionAttachment,
 ): Promise<void> {
+  // The timer is spent. Release the anchor so the next wake re-arms a fresh
+  // deadline, whatever this run decides below (stay quiet, or auto-resume).
+  // On a stale fire this only touches the now-discarded attachment.
+  expectedAtt.watchdogArmedAt = undefined;
   const meta = await loadSessionMeta(sessionId, ctx.sessionsDir);
   if (!meta || isTerminal(meta.status)) return; // session has moved on
   // Identity check: the attachment that received the wake must still be the
