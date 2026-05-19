@@ -816,7 +816,50 @@ test("wake watchdog auto-resumes when claude is active but the feedback inbox wa
   expect(events.filter((e) => e.kind === "session_resumed").length).toBeGreaterThanOrEqual(1);
 });
 
-test("a second wake on the same attachment resets the watchdog deadline", async () => {
+// Regression: streamed feedback used to defeat the watchdog. Each wake reset
+// the 90s deadline, so a human appending feedback faster than the threshold
+// kept postponing it forever — the inbox rotted undelivered with no recovery.
+// The deadline must anchor to the FIRST still-undrained wake, not the latest:
+// a later wake while earlier feedback is still unfetched does not buy more
+// silence.
+test("a second wake does not postpone the watchdog while earlier feedback is still undrained", async () => {
+  const repoDir = makeTmpDir("repo");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    wakeWatchdogMs: 300,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  // First wake: deadline armed ≈ now + 300ms.
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "first", slug: "a" });
+  // A second wake 100ms in, with the inbox still undrained. The old behavior
+  // reset the timer (fire ≈ +400ms); the fixed behavior keeps it anchored to
+  // the first wake (fire ≈ +300ms).
+  await new Promise((r) => setTimeout(r, 100));
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "second", slug: "b" });
+
+  // ≈ +360ms total: past the first wake's deadline (300), before the deadline
+  // a reset would have produced (400). The watchdog must already have fired.
+  await new Promise((r) => setTimeout(r, 260));
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const auto = events.find((e) => e.kind === "session_auto_resumed");
+  expect(auto).toBeDefined();
+  expect((auto?.payload as Record<string, unknown>).reason).toBe("feedback_unfetched");
+});
+
+// The flip side of the anchor change: once the agent drains the inbox the
+// watchdog goes quiet, and a subsequent wake must arm a fresh deadline — the
+// "skip if already armed" guard must not permanently wedge the watchdog off.
+test("a wake after the inbox was drained re-arms a fresh watchdog", async () => {
   const repoDir = makeTmpDir("repo");
   const started = await startServer({
     port: 0,
@@ -833,22 +876,23 @@ test("a second wake on the same attachment resets the watchdog deadline", async 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
 
-  // First wake.
+  // First wake, then the agent drains it (a real `worqload feedback fetch`):
+  // the watchdog fires once, sees an empty + fetched inbox, and stays quiet.
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "first", slug: "a" });
-  // Before the 150ms threshold elapses, send a second wake.
-  await new Promise((r) => setTimeout(r, 80));
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
+  ctx.lastClaudeActivityAt.set(sid, Date.now() + 1);
+  await new Promise((r) => setTimeout(r, 220));
+  const quiet = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(quiet.some((e) => e.kind === "session_auto_resumed")).toBe(false);
+
+  // A new wake now must arm a fresh watchdog (the prior one was cleared when it
+  // fired and went quiet). Leave it undrained; it must fire.
   await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "second", slug: "b" });
-  // 100ms total — past the first deadline, but the second wake reset the timer.
-  await new Promise((r) => setTimeout(r, 100));
-
-  const events = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(events.some((e) => e.kind === "session_auto_resumed")).toBe(false);
-
-  // Now wait past the second deadline; the watchdog should fire from the
-  // second wake's clock.
-  await new Promise((r) => setTimeout(r, 150));
+  await new Promise((r) => setTimeout(r, 220));
   const after = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(after.some((e) => e.kind === "session_auto_resumed")).toBe(true);
+  const auto = after.find((e) => e.kind === "session_auto_resumed");
+  expect(auto).toBeDefined();
+  expect((auto?.payload as Record<string, unknown>).reason).toBe("feedback_unfetched");
 });
 
 test("a stale watchdog from a replaced attachment is a no-op", async () => {
