@@ -14,6 +14,8 @@
 //   echo   : echo the stdin text back as one agent_message item, then exit 0
 //   say    : emit argv[3] verbatim as the agent_message item text, then exit 0
 //            (used by the rewriter test to feed an exact transformed output)
+//   rotate : behave like echo but ALWAYS mint a fresh thread_id, ignoring any
+//            resume id in argv (simulates codex recovering a deleted thread)
 //   crash  : emit thread.started and exit 1 immediately
 //   hang   : emit thread.started, never write anything else, read stdin forever
 
@@ -45,7 +47,11 @@ async function readStdin(): Promise<string> {
   return new TextDecoder().decode(buf);
 }
 
-const threadId = findResumeId() ?? `mock-thread-${process.pid}`;
+// `rotate` mode forces a fresh id regardless of any resume arg so the test can
+// exercise the driver's "codex rotated my thread out from under me" path.
+const threadId = mode === "rotate"
+  ? `mock-thread-${process.pid}`
+  : (findResumeId() ?? `mock-thread-${process.pid}`);
 writeLine({ type: "thread.started", thread_id: threadId });
 
 if (mode === "crash") {
@@ -73,7 +79,7 @@ if (mode === "say") {
   process.exit(0);
 }
 
-if (mode === "echo") {
+if (mode === "echo" || mode === "rotate") {
   const text = await readStdin();
   writeLine({ type: "turn.started" });
   writeLine({

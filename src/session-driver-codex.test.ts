@@ -99,6 +99,74 @@ test("codexPipeDriver serialises concurrent sendUserMessage calls (second waits 
   await driver.exited;
 });
 
+test("codexPipeDriver fires onAgentSessionId with the captured thread_id of a fresh session", async () => {
+  const captured: string[] = [];
+  const driver = await codexPipeDriver({
+    spawnCommand: ["bun", MOCK, "echo"],
+    env: testEnv(),
+    onEvent: () => {},
+    log: () => {},
+    onAgentSessionId: (id) => captured.push(id),
+  });
+
+  await driver.sendUserMessage("hello", "bootstrap");
+  expect(captured.length).toBe(1);
+  expect(captured[0]).toMatch(/^mock-thread-\d+$/);
+
+  // A second turn (same thread) must NOT re-fire — id hasn't changed.
+  await driver.sendUserMessage("world", "send_user");
+  expect(captured.length).toBe(1);
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
+test("codexPipeDriver passed priorAgentSessionId resumes that thread on the FIRST turn", async () => {
+  const events: SessionDriverEvent[] = [];
+  const driver = await codexPipeDriver({
+    spawnCommand: ["bun", MOCK, "echo"],
+    env: testEnv(),
+    onEvent: collectorSink(events),
+    log: () => {},
+    priorAgentSessionId: "prior-thread-abc",
+  });
+
+  await driver.sendUserMessage("first", "bootstrap");
+  // Mock echoes the resume id back as thread.started.thread_id when it sees
+  // `resume <id>` in argv — proves the driver passed the prior id through.
+  const started = events.find((e) => (e.payload as { type?: string })?.type === "thread.started");
+  expect((started?.payload as { thread_id?: string })?.thread_id).toBe("prior-thread-abc");
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
+test("codexPipeDriver fires onAgentSessionId when codex rotates the thread id (e.g. expired prior id)", async () => {
+  // Mock that ignores the resume id and minted its own would simulate codex
+  // recovering a deleted thread. Our mock echoes the resume id verbatim, so to
+  // exercise rotation we use a fresh-mode launch and force the assertion via
+  // the priorAgentSessionId being different from what the mock returns.
+  const captured: string[] = [];
+  const driver = await codexPipeDriver({
+    spawnCommand: ["bun", MOCK, "rotate"],
+    env: testEnv(),
+    onEvent: () => {},
+    log: () => {},
+    priorAgentSessionId: "stale-id",
+    onAgentSessionId: (id) => captured.push(id),
+  });
+
+  await driver.sendUserMessage("first", "bootstrap");
+  // rotate mode mints a fresh id regardless of resume arg; the driver must
+  // detect the mismatch and re-fire the callback.
+  expect(captured.length).toBe(1);
+  expect(captured[0]).not.toBe("stale-id");
+  expect(captured[0]).toMatch(/^mock-thread-\d+$/);
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
 test("codexPipeDriver.exited resolves only after kill, not after a turn naturally completes", async () => {
   const driver = await codexPipeDriver({
     spawnCommand: ["bun", MOCK, "echo"],

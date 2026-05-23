@@ -22,6 +22,15 @@ export interface SessionDriverLaunchOptions {
   spawnCommand: string[];
   onEvent: SessionDriverEventSink;
   log: SessionDriverLogFn;
+  // The agent-side session identifier persisted from a prior host (if any).
+  // Codex uses this to resume its thread across host restarts; the claude pipe
+  // and tmux drivers ignore it (claude resumes via `--continue` at argv level,
+  // tmux via the worqload session id it already encodes).
+  priorAgentSessionId?: string;
+  // Fired when the driver captures (or rotates) the agent-side session
+  // identifier the next host should restore from. runHost persists it on the
+  // worqload meta so a future resume can rejoin the same thread.
+  onAgentSessionId?: (id: string) => void;
 }
 
 export interface SessionDriver {
