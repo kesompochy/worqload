@@ -162,6 +162,7 @@ export interface ServerContext {
   worqloadDir: string;          // <repo>/.worqload
   sessionsDir: string;          // <repo>/.worqload/sessions
   worktreesDir: string;         // <repo>/.worktrees
+  agentName: AgentName;
   spawnCommand: string[];
   branchNameGenerator: BranchNameGenerator;
   hostLauncher: HostLauncher;
@@ -799,6 +800,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     worqloadDir,
     sessionsDir,
     worktreesDir,
+    agentName,
     spawnCommand,
     branchNameGenerator,
     hostLauncher,
@@ -1391,7 +1393,7 @@ async function getReportAttachment(_req: Request, ctx: ServerContext, params: Re
 async function getSessionDetail(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const events = await readEvents(meta.id, 1, ctx.sessionsDir);
-    return json({ meta, events });
+    return json({ meta, events, agentName: ctx.agentName });
   });
 }
 

@@ -11,7 +11,7 @@
   import { state as appState, isEventExpanded } from "../state.svelte.js";
   import { formatRelative } from "../dom.js";
   import { renderMarkdown } from "../markdown.js";
-  import { describeEvent, isAgentWorkEvent } from "../events-view.js";
+  import { describeEvent, displayEventKind, isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
 
   // Only the agent's own work — reports, feedback, escalations and
@@ -28,7 +28,7 @@
       <div class="event-line" data-event-toggle={event.seq}>
         <span class="event-chevron">▾</span>
         <span class="event-seq">{event.seq}</span>
-        <span class="event-kind">{event.kind}</span>
+        <span class="event-kind" title={event.kind}>{displayEventKind(event, appState.detail?.agentName)}</span>
         <span class="event-ts">{formatRelative(event.timestamp, clock.now)}</span>
         <span class="event-summary">{described.summary}</span>
       </div>

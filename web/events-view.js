@@ -30,6 +30,13 @@ export function isAgentWorkEvent(event) {
   return AGENT_WORK_EVENT_KINDS.has(event?.kind);
 }
 
+export function displayEventKind(event, agentName = "claude") {
+  const kind = String(event?.kind ?? "event");
+  if (!kind.startsWith("claude_")) return kind;
+  const agentLabel = agentName === "codex" ? "Codex" : "Claude";
+  return `${agentLabel} ${kind.slice("claude_".length).replaceAll("_", " ")}`;
+}
+
 // ---- pure: event -> { summary, sections } -------------------------------
 //
 // summary  : one line for the collapsed row.
