@@ -1,6 +1,6 @@
 # worqload
 
-A browser UI for observing and steering parallel `claude` sessions.
+A browser UI for observing and steering parallel `claude` / `codex` sessions.
 
 It narrows the human's role to Orient alone and raises its load average by running many sessions at once: the agents handle Observe / Decide / Act, the human watches and replies asynchronously. worqload stops at showing the diff — merge, commit, and branch lifecycle stay with the human.
 

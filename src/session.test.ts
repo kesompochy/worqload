@@ -35,6 +35,7 @@ test("createSession returns valid meta", () => {
   expect(meta.baseCommit).toBe("abc123");
   expect(meta.worktreePath).toBe("/tmp/wt/abc");
   expect(meta.branchName).toBe("do-something");
+  expect(meta.agentName).toBeUndefined();
   expect(meta.status).toBe("running");
   expect(meta.createdAt).toBeDefined();
   expect(meta.endedAt).toBeUndefined();
@@ -56,6 +57,11 @@ test("createSession throws on empty prompt", () => {
 test("createSession accepts optional title", () => {
   const meta = createSession({ ...baseParams, title: "my session" });
   expect(meta.title).toBe("my session");
+});
+
+test("createSession accepts optional agentName", () => {
+  const meta = createSession({ ...baseParams, agentName: "codex" });
+  expect(meta.agentName).toBe("codex");
 });
 
 test("isReportAgentEnabled defaults OFF so the session's own prose is stored unless opted in", () => {

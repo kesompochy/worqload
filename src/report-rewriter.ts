@@ -10,11 +10,8 @@
 
 import { readLines } from "./claude-stream";
 import { buildUserMessage } from "./session-bootstrap";
-
-// Per-agent rewriter factory: which CLI the disposable report-only agent
-// uses. Mirrors the AgentName threading in web-server.ts so the choice of
-// session agent automatically picks the matching rewriter.
-export type AgentName = "claude" | "codex";
+import type { AgentName } from "./session";
+export type { AgentName };
 
 // The agent's verdict on a submitted report:
 //  - string: the rewritten report, to be stored.

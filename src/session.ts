@@ -1,6 +1,7 @@
 import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 
 export type SessionStatus = "running" | "waiting_human" | "stopped" | "crashed";
+export type AgentName = "claude" | "codex";
 
 export interface SessionMeta {
   id: string;
@@ -10,6 +11,7 @@ export interface SessionMeta {
   baseCommit: string;
   worktreePath: string;
   branchName: string;
+  agentName?: AgentName;
   hostPid?: number;
   hostSocketPath?: string;
   status: SessionStatus;
@@ -69,6 +71,7 @@ export interface CreateSessionParams {
   baseCommit: string;
   worktreePath: string;
   branchName: string;
+  agentName?: AgentName;
   title?: string;
 }
 
@@ -85,6 +88,7 @@ export function createSession(params: CreateSessionParams): SessionMeta {
     baseCommit: params.baseCommit,
     worktreePath: params.worktreePath,
     branchName: params.branchName,
+    ...(params.agentName !== undefined && { agentName: params.agentName }),
     status: "running",
     createdAt: new Date().toISOString(),
   };

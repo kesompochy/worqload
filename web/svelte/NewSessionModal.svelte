@@ -9,6 +9,7 @@
 
   let visible = $state(false);
   let prompt = $state("");
+  let agentName = $state("claude");
   let baseBranch = $state("");
   let branchName = $state("");
   let submitting = $state(false);
@@ -16,6 +17,7 @@
 
   export function open() {
     prompt = "";
+    agentName = "claude";
     baseBranch = "";
     branchName = "";
     submitting = false;
@@ -42,7 +44,7 @@
     submitting = true;
     errorMessage = "";
     try {
-      const body = { prompt: trimmedPrompt };
+      const body = { prompt: trimmedPrompt, agentName };
       const trimmedBase = baseBranch.trim();
       const trimmedBranchName = branchName.trim();
       if (trimmedBase) body.baseBranch = trimmedBase;
@@ -71,7 +73,7 @@
     <div class="modal">
       <h2>New session</h2>
       <p style="margin:.2em 0 .6em; color:var(--text-dim); font-size:12px">
-        The prompt becomes the first user message in a fresh claude session.
+        The prompt becomes the first user message in a fresh agent session.
       </p>
       <textarea
         bind:value={prompt}
@@ -83,6 +85,13 @@
       {#if errorMessage}
         <p class="create-error">Error: {errorMessage}</p>
       {/if}
+      <div class="row" style="margin-top:.7rem">
+        <label for="new-session-agent" style="color:var(--text-dim); font-size:12px">Agent</label>
+        <select id="new-session-agent" bind:value={agentName} style="flex:1">
+          <option value="claude">Claude</option>
+          <option value="codex">Codex</option>
+        </select>
+      </div>
       <div class="row" style="margin-top:.7rem">
         <span class="spacer"></span>
         <button onclick={create} disabled={submitting}>
