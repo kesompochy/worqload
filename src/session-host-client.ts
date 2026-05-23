@@ -33,7 +33,7 @@ export interface SpawnHostOptions {
   // Driver name passed through as `--driver <name>` to the host. The host
   // resolves it to a SessionDriverFactory at parse time. Unset → host uses
   // its default (the pipe driver speaking stream-json to `claude -p`).
-  driverName?: "pipe" | "tmux";
+  driverName?: "pipe" | "tmux" | "codex";
 }
 
 // Builds the argv for a `session-host` invocation. Everything after `--` is

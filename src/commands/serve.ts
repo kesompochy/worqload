@@ -174,7 +174,27 @@ export async function serve(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const { ctx } = await startServer({ port: requestedPort, spawnCommand, hostCommand, ...(driverName && { driverName }) });
+  // WORQLOAD_AGENT picks which CLI worqload spawns per session. "claude"
+  // (default) keeps the existing behavior; "codex" runs `codex exec --json`
+  // via the codex session driver (one process per turn, thread_id reused
+  // across turns within a host's lifetime). The codex agent has no driver
+  // variants, so WORQLOAD_DRIVER is ignored when WORQLOAD_AGENT=codex.
+  const agentEnv = (process.env.WORQLOAD_AGENT ?? "").trim();
+  let agentName: "claude" | "codex" | undefined;
+  if (agentEnv === "codex") agentName = "codex";
+  else if (agentEnv === "claude" || agentEnv === "") agentName = undefined;
+  else {
+    console.error(`unknown WORQLOAD_AGENT: ${agentEnv} (expected 'claude' or 'codex')`);
+    process.exit(1);
+  }
+
+  const { ctx } = await startServer({
+    port: requestedPort,
+    spawnCommand,
+    hostCommand,
+    ...(driverName && { driverName }),
+    ...(agentName && { agentName }),
+  });
   if (requestedPort !== 0 && ctx.port !== requestedPort) {
     console.log(`port ${requestedPort} was in use; using ${ctx.port} instead`);
   }

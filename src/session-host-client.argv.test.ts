@@ -96,6 +96,23 @@ test("buildHostArgv omits --driver when driverName is unset", () => {
   expect(parsed?.driver).toBeUndefined();
 });
 
+test("buildHostArgv + parseHostArgs carry --driver codex and resolve to the codex factory", () => {
+  const argv = buildHostArgv({
+    hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],
+    sessionId: "sess-1",
+    sessionsDir: "/repo/.worqload/sessions",
+    socketPath: "/tmp/worqload/sess-1.sock",
+    agentEndpoint: "http://127.0.0.1:3456",
+    spawnCommand: ["codex"],
+    driverName: "codex",
+  });
+  expect(argv).toContain("--driver");
+  const driverIdx = argv.indexOf("--driver");
+  expect(argv[driverIdx + 1]).toBe("codex");
+  const parsed = parseHostArgs(argv.slice(3));
+  expect(typeof parsed?.driver).toBe("function");
+});
+
 test("buildHostArgv + parseHostArgs carry --driver tmux and resolve to the tmux factory", () => {
   const argv = buildHostArgv({
     hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],
