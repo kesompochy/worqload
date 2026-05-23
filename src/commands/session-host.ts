@@ -7,6 +7,7 @@ import { exitWithUsage } from "./cli-helpers";
 import { buildProtocolPrefix, RESUME_KICKOFF } from "../session-bootstrap";
 import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
 import { claudePipeDriver, type SessionDriver, type SessionDriverFactory } from "../session-driver";
+import { codexPipeDriver } from "../session-driver-codex";
 import { tmuxClaudeDriver } from "../session-driver-tmux";
 import {
   encodeMessage,
@@ -15,7 +16,7 @@ import {
   type ServeToHostMessage,
 } from "../session-host-protocol";
 
-export type DriverName = "pipe" | "tmux";
+export type DriverName = "pipe" | "tmux" | "codex";
 
 export function resolveDriverByName(name: string): SessionDriverFactory {
   switch (name) {
@@ -23,8 +24,10 @@ export function resolveDriverByName(name: string): SessionDriverFactory {
       return claudePipeDriver;
     case "tmux":
       return tmuxClaudeDriver;
+    case "codex":
+      return codexPipeDriver;
     default:
-      throw new Error(`unknown WORQLOAD_DRIVER: ${name} (expected 'pipe' or 'tmux')`);
+      throw new Error(`unknown WORQLOAD_DRIVER: ${name} (expected 'pipe', 'tmux', or 'codex')`);
   }
 }
 

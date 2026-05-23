@@ -1,8 +1,9 @@
 import { test, expect } from "bun:test";
 import { join } from "path";
-import { buildReportRewritePrompt, ESCALATE_SENTINEL, makeClaudeReportRewriter, SUPPRESS_SENTINEL } from "./report-rewriter";
+import { buildReportRewritePrompt, ESCALATE_SENTINEL, makeClaudeReportRewriter, makeCodexReportRewriter, SUPPRESS_SENTINEL } from "./report-rewriter";
 
 const MOCK = join(import.meta.dir, "__fixtures__", "mock-claude.ts");
+const MOCK_CODEX = join(import.meta.dir, "__fixtures__", "mock-codex.ts");
 
 test("buildReportRewritePrompt embeds the raw report and the human-readability guidance", () => {
   const prompt = buildReportRewritePrompt("生のレポート本文");
@@ -90,4 +91,53 @@ test("makeClaudeReportRewriter stores escalate-sentinel-plus-text as an ordinary
   });
   const out = await rewrite("本文", { cwd: process.cwd() });
   expect(out).toEqual(expect.stringContaining("まだ本文がある"));
+});
+
+test("makeCodexReportRewriter spawns `codex exec --json -` and returns its rewritten text", async () => {
+  // echo mode echoes the stdin (the rewrite prompt) back as one agent_message
+  // item; the rewriter strips down to that text. Pinning that the codex
+  // invocation actually used the spawnCommand prefix we supplied.
+  const rewrite = makeCodexReportRewriter({ spawnCommand: ["bun", MOCK_CODEX, "echo"] });
+  const out = await rewrite("もとの本文", { cwd: process.cwd() });
+  if (typeof out !== "string") throw new Error("echo mode must produce a rewritten string");
+  expect(out.startsWith("echo:")).toBe(true);
+  expect(out).toContain("もとの本文");
+});
+
+test("makeCodexReportRewriter falls back to the raw report when codex exits non-zero", async () => {
+  const rewrite = makeCodexReportRewriter({ spawnCommand: ["bun", MOCK_CODEX, "crash"] });
+  const raw = "失っては困る本文";
+  expect(await rewrite(raw, { cwd: process.cwd() })).toBe(raw);
+});
+
+test("makeCodexReportRewriter falls back to the raw report when the command cannot be spawned", async () => {
+  const rewrite = makeCodexReportRewriter({ spawnCommand: ["definitely-not-a-real-binary-xyz"] });
+  const raw = "起動失敗でも残る本文";
+  expect(await rewrite(raw, { cwd: process.cwd() })).toBe(raw);
+});
+
+test("makeCodexReportRewriter returns null when codex emits the suppression sentinel as the sole agent_message text", async () => {
+  const rewrite = makeCodexReportRewriter({
+    spawnCommand: ["bun", MOCK_CODEX, "say", SUPPRESS_SENTINEL],
+  });
+  expect(await rewrite("不要な本文", { cwd: process.cwd() })).toBeNull();
+});
+
+test("makeCodexReportRewriter returns the escalate verdict when codex emits the escalate sentinel alone", async () => {
+  const rewrite = makeCodexReportRewriter({
+    spawnCommand: ["bun", MOCK_CODEX, "say", ESCALATE_SENTINEL],
+  });
+  expect(await rewrite("これでよいか", { cwd: process.cwd() })).toEqual({ escalate: true });
+});
+
+test("makeCodexReportRewriter stores sentinel-plus-text as an ordinary rewrite", async () => {
+  // Same wiring concern as the claude path: only the bare sentinel triggers
+  // suppression / escalate, so a stray token can't silently drop or reroute
+  // a real report.
+  const rewrite = makeCodexReportRewriter({
+    spawnCommand: ["bun", MOCK_CODEX, "say", `${SUPPRESS_SENTINEL} まだ本文がある`],
+  });
+  const out = await rewrite("本文", { cwd: process.cwd() });
+  expect(out).not.toBeNull();
+  expect(out).toContain("まだ本文がある");
 });

@@ -17,7 +17,7 @@ import {
   type SessionMeta,
   type SessionStatus,
 } from "./session";
-import { makeClaudeReportRewriter, type ReportRewriter } from "./report-rewriter";
+import { makeClaudeReportRewriter, makeCodexReportRewriter, type ReportRewriter } from "./report-rewriter";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
@@ -61,7 +61,20 @@ function listenWithFallback(requestedPort: number, listen: (port: number) => Ser
   throw new Error(`no free port found in range ${requestedPort}-${requestedPort + PORT_FALLBACK_ATTEMPTS - 1}`);
 }
 
-function buildDefaultSpawnCommand(driverName: "pipe" | "tmux"): string[] {
+export type AgentName = "claude" | "codex";
+
+export function buildDefaultSpawnCommand(
+  agentName: AgentName,
+  driverName: "pipe" | "tmux",
+): string[] {
+  if (agentName === "codex") {
+    // The codex driver appends `exec --json -` (fresh) or `exec --json resume
+    // <id> -` (subsequent turns) to this prefix. --dangerously-bypass-approvals-
+    // and-sandbox is the codex equivalent of claude's bypassPermissions: a
+    // headless worqload session has no human to approve a per-command prompt,
+    // so the alternative is sessions wedging mid-turn.
+    return ["codex", "--dangerously-bypass-approvals-and-sandbox"];
+  }
   // bypassPermissions is the default for v1 ergonomics: a -p session has no
   // human to approve prompts, so any unallowed Bash would auto-fail. Set
   // WORQLOAD_PERMISSION_MODE=default (or acceptEdits) to lock the session
@@ -192,12 +205,18 @@ export interface ServerContext {
 export interface StartServerOptions {
   port?: number;                // 0 = random
   repoDir?: string;
-  spawnCommand?: string[];      // override the claude binary command
-  // Which SessionDriver implementation to spawn each session with. "pipe"
-  // (default) runs `claude -p` and exchanges stream-json over stdio. "tmux"
-  // runs interactive `claude` inside a tmux session, reading claude's JSONL
-  // transcript for output — avoids the Agent SDK credit pool that `claude -p`
-  // will draw from starting 2026-06-15.
+  spawnCommand?: string[];      // override the agent binary command
+  // Which CLI worqload spawns per session. "claude" (default) runs `claude -p`
+  // or interactive claude via tmux (see driverName). "codex" runs the codex
+  // CLI via `codex exec --json` — one process per turn — using the codex
+  // session driver. Picked by the WORQLOAD_AGENT env var in production.
+  agentName?: AgentName;
+  // Which claude SessionDriver implementation to spawn each session with.
+  // "pipe" (default) runs `claude -p` and exchanges stream-json over stdio.
+  // "tmux" runs interactive `claude` inside a tmux session, reading claude's
+  // JSONL transcript for output — avoids the Agent SDK credit pool that
+  // `claude -p` will draw from starting 2026-06-15. Ignored when
+  // agentName === "codex".
   driverName?: "pipe" | "tmux";
   // Overrides the helper that turns a prompt into a short branch name.
   // Return null to skip generation; the caller then falls back to <shortId>.
@@ -408,21 +427,33 @@ async function transitionStatus(
 // session). The host — not serve — writes the session_started / session_resumed
 // event and sends claude its first message. On resume claude's prior
 // conversation is continued (`--continue`), so we still connect from seq 0.
-function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: string[]; driverName: "pipe" | "tmux" }): HostLauncher {
+function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: string[]; agentName: AgentName; driverName: "pipe" | "tmux" }): HostLauncher {
   return async ({ meta, sessionsDir, agentEndpoint, resume, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
     const logFile = hostLogPath(sessionsDir, meta.id);
+    // claude's resume mode appends `--continue` to its argv. codex's resume is
+    // driven by the codex driver itself (it remembers thread_id within the
+    // host lifetime); on a host respawn the driver starts fresh and codex
+    // creates a new thread — for v1 that's the accepted limitation, no argv
+    // change here.
+    const resumedSpawnCommand = resume && config.agentName === "claude"
+      ? [...config.spawnCommand, "--continue"]
+      : config.spawnCommand;
+    // Effective driver: codex sessions ignore WORQLOAD_DRIVER (there's only
+    // one codex driver). Claude sessions honour the requested pipe/tmux split.
+    const effectiveDriver: "pipe" | "tmux" | "codex" =
+      config.agentName === "codex" ? "codex" : config.driverName;
     const hostProc = spawnDetachedHost({
       sessionId: meta.id,
       sessionsDir,
       socketPath,
       agentEndpoint,
-      spawnCommand: resume ? [...config.spawnCommand, "--continue"] : config.spawnCommand,
+      spawnCommand: resumedSpawnCommand,
       hostCommand: config.hostCommand,
       logFile,
       // Only pass `--driver` when it differs from the host CLI's default
       // ("pipe"). Avoids churning host argv in the common case.
-      ...(config.driverName === "tmux" ? { driverName: "tmux" as const } : {}),
+      ...(effectiveDriver !== "pipe" ? { driverName: effectiveDriver } : {}),
       ...(resume && { resume: true }),
     });
     const client = await connectToHost({ socketPath, sinceSeq: 0, onEvent, onDisconnect });
@@ -683,14 +714,20 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const worqloadDir = join(repoDir, ".worqload");
   const sessionsDir = join(worqloadDir, "sessions");
   const worktreesDir = join(repoDir, ".worktrees");
+  const agentName: AgentName = opts.agentName ?? "claude";
   const driverName = opts.driverName ?? "pipe";
-  const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand(driverName);
+  const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand(agentName, driverName);
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
-  const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand, driverName });
-  // Spawned from the same argv as sessions, so WORQLOAD_DRIVER /
-  // WORQLOAD_SPAWN_COMMAND govern the disposable agent too.
-  const reportRewriter = opts.reportRewriter ?? makeClaudeReportRewriter({ spawnCommand });
+  const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand, agentName, driverName });
+  // Spawned from the same argv as sessions, so WORQLOAD_AGENT /
+  // WORQLOAD_DRIVER / WORQLOAD_SPAWN_COMMAND govern the disposable agent too.
+  // The codex variant uses makeCodexReportRewriter, which appends `exec --json
+  // -` to spawnCommand to invoke codex in one-prompt-then-exit mode.
+  const reportRewriter = opts.reportRewriter
+    ?? (agentName === "codex"
+      ? makeCodexReportRewriter({ spawnCommand })
+      : makeClaudeReportRewriter({ spawnCommand }));
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
   // Cache wraps whatever resolver is in play (the gh one in production, a fake
   // in tests) so the sidebar's background prefetch doesn't respawn `gh` per
