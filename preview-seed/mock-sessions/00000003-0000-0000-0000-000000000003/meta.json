@@ -1,0 +1,14 @@
+{
+  "id": "00000003-0000-0000-0000-000000000003",
+  "title": "main の出力に時刻を入れる試みが落ちた",
+  "prompt": "main の出力の頭に現在時刻 (ISO 8601) を付けてほしい。`[2026-…Z] Hello, worqload!` のような形で。",
+  "baseBranch": "main",
+  "baseCommit": "__BASE_COMMIT__",
+  "worktreePath": "__REPO_DIR__",
+  "branchName": "mock/timestamp-output",
+  "status": "crashed",
+  "createdAt": "2026-05-10T22:15:00.000Z",
+  "endedAt": "2026-05-10T22:19:11.000Z",
+  "sortOrder": 2,
+  "mock": true
+}

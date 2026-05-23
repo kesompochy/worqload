@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="icon" href="/favicon" />
+<title>worqload</title>
+</head>
+<body>
+<div class="layout" id="layout">
+  <button id="btnShowSidebar" class="show-sidebar-btn" type="button" title="Show sidebar" aria-label="Show sidebar">»</button>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title" id="sidebarTitle">
+        <div class="app-name">worqload</div>
+        <h1 id="repoName">…</h1>
+      </div>
+      <div class="sidebar-actions">
+        <span id="loadAverage" class="load-average idle" title="未読レポート 0 + 未解決エスカレ 0">⚖ 0</span>
+        <button id="btnNotify" class="btn-notify off" title="Desktop notifications">🔕</button>
+        <button id="btnNew">+ New</button>
+        <button id="btnHideSidebar" class="btn-hide-sidebar" type="button" title="Hide sidebar" aria-label="Hide sidebar">«</button>
+      </div>
+    </div>
+    <div id="sessionList" class="session-list"></div>
+  </aside>
+  <main id="detail" class="detail">
+    <div id="detailHeader"></div>
+    <div id="detailMain" class="detail-main">
+      <div id="detailBodyMount"></div>
+      <div id="detailComposer"></div>
+    </div>
+  </main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script type="module" src="/main.ts"></script>
+</body>
+</html>

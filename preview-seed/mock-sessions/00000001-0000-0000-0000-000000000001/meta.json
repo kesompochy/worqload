@@ -1,0 +1,13 @@
+{
+  "id": "00000001-0000-0000-0000-000000000001",
+  "title": "greet にトーン引数を足してほしい",
+  "prompt": "greet() を丁寧モードと普段モードで使い分けたい。第2引数 tone を 'plain'|'polite' で取って、'polite' なら 'Hello, ◯ さん!' を返す形にしてほしい。ついでに別ファイルで wave() を作って、内部で polite な greet を呼ぶこと。",
+  "baseBranch": "main",
+  "baseCommit": "__BASE_COMMIT__",
+  "worktreePath": "__REPO_DIR__",
+  "branchName": "mock/greet-tone",
+  "status": "running",
+  "createdAt": "2026-05-12T08:30:00.000Z",
+  "sortOrder": 0,
+  "mock": true
+}

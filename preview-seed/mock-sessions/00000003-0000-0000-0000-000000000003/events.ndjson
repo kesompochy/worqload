@@ -1,0 +1,5 @@
+{"seq":1,"kind":"session_started","timestamp":"2026-05-10T22:15:00.000Z","payload":{"prompt":"main の出力の頭に現在時刻 (ISO 8601) を付けてほしい。`[2026-…Z] Hello, worqload!` のような形で。"}}
+{"seq":2,"kind":"claude_assistant_message","timestamp":"2026-05-10T22:15:30.000Z","payload":{"text":"src/main.ts に new Date().toISOString() で接頭辞を足します。"}}
+{"seq":3,"kind":"claude_tool_use","timestamp":"2026-05-10T22:16:00.000Z","payload":{"name":"Edit","input":{"file_path":"src/main.ts"}}}
+{"seq":4,"kind":"claude_assistant_message","timestamp":"2026-05-10T22:18:00.000Z","payload":{"text":"テンプレートリテラル内の式評価で … （長文ループに陥る）"}}
+{"seq":5,"kind":"session_crashed","timestamp":"2026-05-10T22:19:11.000Z","payload":{"reason":"out_of_memory"}}

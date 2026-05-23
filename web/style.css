@@ -1,0 +1,603 @@
+:root {
+  color-scheme: dark;
+  --bg: #0e1116;
+  --panel: #161b22;
+  --panel-2: #1c2230;
+  --border: #2a313c;
+  --text: #d6dee8;
+  --text-dim: #8b95a3;
+  --accent: #58a6ff;
+  --running: #3fb950;
+  --waiting: #d29922;
+  --stopped: #8b95a3;
+  --crashed: #f85149;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { background: var(--panel-2); border: 1px solid var(--border); padding: .35rem .8rem; border-radius: 4px; cursor: pointer; }
+button:hover { background: #232b3a; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+textarea, input { background: var(--bg); border: 1px solid var(--border); padding: .4rem .5rem; border-radius: 4px; color: var(--text); width: 100%; }
+textarea { resize: vertical; min-height: 4rem; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+.layout { display: grid; grid-template-columns: 320px 1fr; height: 100%; }
+/* When the sidebar is hidden, the .sidebar aside drops out of flow
+   (display:none) and a thin strip on column 1 holds the » re-entry button.
+   The strip stays in the grid so .detail keeps its column-2 placement —
+   without the explicit grid-column anchors below, a sole remaining
+   .detail would auto-place into column 1 (and lose its width). */
+.layout.sidebar-hidden { grid-template-columns: 36px 1fr; }
+.layout.sidebar-hidden .sidebar { display: none; }
+.sidebar { grid-column: 1; border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.detail { grid-column: 2; }
+.btn-hide-sidebar { padding: .35rem .45rem; line-height: 1; font-size: 14px; color: var(--text-dim); }
+.btn-hide-sidebar:hover { color: var(--text); }
+/* Re-entry point when the sidebar is hidden: a column-1 strip with a »
+   button at the top. Hidden in normal layout; .layout.sidebar-hidden flips
+   it on. Keeping it as a grid item (rather than position:fixed) means the
+   detail content begins to its right with no overlap. */
+.show-sidebar-btn {
+  display: none; grid-column: 1; align-self: start;
+  width: 100%; padding: .5rem 0; line-height: 1; font-size: 14px;
+  background: var(--panel); border: 0; border-right: 1px solid var(--border);
+  color: var(--text-dim); cursor: pointer;
+}
+.show-sidebar-btn:hover { color: var(--text); background: var(--panel-2); }
+.layout.sidebar-hidden .show-sidebar-btn { display: block; }
+.sidebar-header { padding: .75rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.sidebar-actions { display: flex; align-items: center; gap: .4rem; flex: 0 0 auto; }
+.load-average { flex: 0 0 auto; padding: .25rem .4rem; border: 1px solid var(--border); border-radius: 3px; background: var(--panel-2); color: var(--text); font-size: 12px; line-height: 1; white-space: nowrap; cursor: default; }
+.load-average.idle { color: var(--text-dim); }
+.btn-notify { padding: .35rem .45rem; line-height: 1; font-size: 14px; }
+.btn-notify.off { opacity: .5; }
+.btn-notify.on { border-color: var(--accent); }
+.sidebar-title { min-width: 0; }
+.sidebar-title .app-name { font-size: 11px; letter-spacing: .08em; color: var(--text-dim); text-transform: uppercase; }
+.sidebar-title h1 { margin: 0; font-size: 1rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-list { overflow-y: auto; flex: 1; }
+.sidebar-tabs { display: flex; border-bottom: 1px solid var(--border); flex: 0 0 auto; background: var(--bg); position: sticky; top: 0; z-index: 1; }
+.sidebar-tab { flex: 1; background: transparent; border: 0; border-radius: 0; padding: .55rem .25rem; color: var(--text-dim); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; border-bottom: 2px solid transparent; cursor: pointer; }
+.sidebar-tab:hover { background: var(--panel); color: var(--text); }
+.sidebar-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: transparent; }
+.bulk-action-bar { display: flex; align-items: center; gap: .4rem; padding: .45rem .6rem; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 33px; z-index: 1; }
+.bulk-count { font-size: 12px; color: var(--text-dim); flex: 1; }
+.bulk-action-bar button { font-size: 11px; padding: .2rem .5rem; }
+.bulk-delete { color: var(--crashed); border-color: rgba(248,81,73,.5); }
+.bulk-delete:hover { background: rgba(248,81,73,.12); }
+/* The left strip of an archived card is the checkbox's hit area: clicking
+   anywhere in it toggles the checkbox (the strip holds nothing else), so the
+   label needs physical width and stretches to the card's full height to claim
+   the column. The card-level onclick that selects the session is held off by
+   stopPropagation in SessionList.svelte. */
+.session-card-select-area { flex: 0 0 auto; align-self: stretch; display: flex; justify-content: center; padding: .15rem .25rem 0 0; margin: -.75rem 0 -.75rem -.75rem; padding-left: .75rem; cursor: pointer; }
+.session-card-select-area:hover { background: rgba(88,166,255,.06); }
+/* The global `textarea, input { width: 100%; ... }` rule (see top of file) would
+   stretch the bulk-select checkbox to the whole card width and paint it with the
+   text-input background; reset to native checkbox dimensions and chrome. */
+.session-card-select { flex: 0 0 auto; width: auto; padding: 0; background: transparent; border: 0; border-radius: 0; margin: .35rem 0 0 0; cursor: pointer; }
+.session-card.selected { background: rgba(88,166,255,.08); }
+.session-card { padding: .75rem; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: .55rem; align-items: flex-start; }
+.session-card:hover { background: var(--panel); }
+.session-card.active { background: var(--panel-2); border-left: 3px solid var(--accent); padding-left: calc(.75rem - 3px); }
+.session-card.dragging { opacity: .4; }
+.session-card.drag-over { box-shadow: inset 0 2px 0 0 var(--accent); }
+.session-card.drag-over-end { box-shadow: inset 0 -2px 0 0 var(--accent); }
+.session-card-main { min-width: 0; flex: 1; }
+.session-card-title-row { display: flex; align-items: flex-start; gap: .4rem; }
+.session-card-title-row .title { flex: 1 1 auto; min-width: 0; }
+.session-card .title { font-weight: 600; margin: 0 0 .2rem 0; word-break: break-word; }
+.session-rename-input { font-size: 13px; padding: .2rem .35rem; margin: 0 0 .2rem 0; }
+.btn-card-rename { flex-shrink: 0; font-size: 11px; padding: .2rem .55rem; }
+.session-card .meta { color: var(--text-dim); font-size: 12px; }
+.session-event-age.stale { color: var(--waiting); font-weight: 600; }
+.unread-badge {
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg);
+  margin-top: 1px;
+}
+.session-card-actions { display: none; flex-wrap: wrap; gap: .3rem; margin-top: .55rem; }
+.session-card:hover .session-card-actions, .session-card.active .session-card-actions { display: flex; }
+.session-card-actions button { font-size: 11px; padding: .2rem .55rem; }
+.btn-card-resume { color: var(--running); border-color: rgba(63,185,80,.5); }
+.btn-card-resume:hover { background: rgba(63,185,80,.12); }
+.btn-card-stop-resume { color: var(--accent); border-color: rgba(88,166,255,.5); }
+.btn-card-stop-resume:hover { background: rgba(88,166,255,.12); }
+.btn-card-unarchive { color: var(--running); border-color: rgba(63,185,80,.5); }
+.btn-card-unarchive:hover { background: rgba(63,185,80,.12); }
+.btn-card-delete { color: var(--crashed); border-color: rgba(248,81,73,.5); }
+.btn-card-delete:hover { background: rgba(248,81,73,.12); }
+.badge { display: inline-block; padding: .05rem .4rem; border-radius: 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-right: .35rem; vertical-align: middle; }
+.badge-running { background: rgba(63,185,80,.15); color: var(--running); }
+.badge-waiting_human { background: rgba(210,153,34,.18); color: var(--waiting); }
+.badge-stopped { background: rgba(139,149,163,.16); color: var(--stopped); }
+.badge-crashed { background: rgba(248,81,73,.18); color: var(--crashed); }
+.detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.detail-main { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+/* DetailBody.svelte mounts here; the wrapper itself generates no box so the
+   .detail-body it renders is a direct flex child of .detail-main. */
+#detailBodyMount { display: contents; }
+.detail-empty { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-dim); }
+.detail-header { padding: .9rem 1.1rem; border-bottom: 1px solid var(--border); display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.detail-header .title { font-size: 1.05rem; font-weight: 600; flex: 1 1 auto; word-break: break-word; }
+.detail-meta { color: var(--text-dim); font-size: 12px; padding: 0 1.1rem .5rem 1.1rem; border-bottom: 1px solid var(--border); }
+/* A session UI control, sat in `.header-actions` alongside Preview / Stop
+   preview — not metadata. Sized to match the .btn-action buttons it lines up
+   with; inline-flex + nowrap keeps the checkbox glued to its label. */
+.report-agent-toggle { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; font-size: 12px; cursor: pointer; user-select: none; }
+/* Same trap the bulk-select checkbox hits: the global `textarea, input
+   { width: 100%; ... }` rule would stretch this checkbox across the meta line
+   and paint it like a text input. Reset to native checkbox chrome. */
+.report-agent-toggle input { flex: 0 0 auto; width: auto; margin: 0; padding: 0; background: transparent; border: 0; border-radius: 0; cursor: pointer; }
+.detail-body { overflow-y: auto; padding: 1rem 1.1rem; flex: 1; min-height: 0; }
+/* The diff's first file header is sticky at top: 0; a top padding would leave
+   an empty band above it once pinned, so the diff view drops it. */
+.detail-body.diff-view { padding-top: 0; }
+.detail-body section { margin-bottom: 1.5rem; }
+.detail-body h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin: 0 0 .5rem 0; }
+.asking { background: rgba(210,153,34,.08); border: 1px solid rgba(210,153,34,.4); padding: .8rem 1rem; border-radius: 4px; }
+.asking .label { color: var(--waiting); font-size: 12px; text-transform: uppercase; letter-spacing: .07em; margin-bottom: .3rem; }
+/* "Approve & Run" executes an arbitrary command, so it carries the caution colour. */
+.ask-approve { border-color: rgba(210,153,34,.55); color: var(--waiting); }
+.ask-approve:hover { background: rgba(210,153,34,.12); }
+.report { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; margin-bottom: .7rem; overflow: hidden; }
+.report.unread { border-left: 3px solid var(--accent); }
+.report-header { display: flex; align-items: center; gap: .5rem; padding: .55rem .8rem; cursor: pointer; user-select: none; }
+.report-header:hover { background: var(--panel-2); }
+.report-chevron { color: var(--text-dim); width: 1ch; display: inline-block; transition: transform .12s ease; }
+.report.collapsed .report-chevron { transform: rotate(-90deg); }
+.report-filename { color: var(--accent); font-size: 12px; font-family: ui-monospace, monospace; flex: 1; }
+.report-status { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: .1rem .5rem; border-radius: 3px; cursor: pointer; border: 1px solid transparent; transition: background-color .08s ease, border-color .08s ease; }
+.report-status.unread { background: rgba(88,166,255,.18); color: var(--accent); }
+.report-status.unread:hover { background: rgba(88,166,255,.32); border-color: rgba(88,166,255,.5); }
+.report-status.read { background: rgba(139,149,163,.16); color: var(--text-dim); }
+.report-status.read:hover { background: rgba(139,149,163,.28); border-color: rgba(139,149,163,.5); color: var(--text); }
+.report-status-action { display: none; }
+.report-status:hover .report-status-state { display: none; }
+.report-status:hover .report-status-action { display: inline; }
+.report-body { padding: .55rem .9rem .7rem .9rem; border-top: 1px solid var(--border); }
+.report.collapsed .report-body { display: none; }
+.report-empty { color: var(--text-dim); font-style: italic; }
+
+/* Reports tab: an always-visible table of contents pinned on the left, report
+   cards on the right. align-items:flex-start + align-self:flex-start keep the
+   short TOC from being stretched to the tall reports column so position:sticky
+   can pin it as .detail-body (the scroll container) scrolls. */
+.reports-with-toc { display: flex; align-items: flex-start; gap: 1.1rem; }
+.reports-column { flex: 1; min-width: 0; }
+.report-toc {
+  flex: 0 1 13rem; width: 13rem; min-width: 7rem;
+  position: sticky; top: 0; align-self: flex-start;
+  max-height: calc(100vh - 5rem); overflow-y: auto;
+  border-right: 1px solid var(--border); padding-right: .9rem;
+}
+.report-toc-group { margin-bottom: .7rem; }
+.report-toc-report, .report-toc-heading {
+  display: block; width: 100%; text-align: left;
+  background: transparent; border: 0; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.report-toc-report {
+  padding: .15rem 0; color: var(--accent);
+  font-family: ui-monospace, monospace; font-size: 11px;
+}
+.report-toc-report:hover { text-decoration: underline; }
+.report-toc-heading {
+  padding: .1rem 0 .1rem .6rem; color: var(--text-dim); font-size: 12px;
+}
+.report-toc-heading:hover { color: var(--text); }
+.report-toc-heading[data-toc-level="2"] { padding-left: 1.4rem; }
+.report-toc-heading[data-toc-level="3"] { padding-left: 2.2rem; }
+.report-toc-heading[data-toc-level="4"] { padding-left: 3rem; }
+.report-toc-heading[data-toc-level="5"] { padding-left: 3.8rem; }
+.report-toc-heading[data-toc-level="6"] { padding-left: 4.6rem; }
+.tabs { display: flex; gap: .25rem; padding: 0 1.1rem; border-bottom: 1px solid var(--border); background: var(--panel); }
+.tab-btn { background: transparent; border: 1px solid transparent; border-bottom: none; padding: .45rem .9rem; border-radius: 4px 4px 0 0; color: var(--text-dim); cursor: pointer; }
+.tab-btn.active { background: var(--bg); border-color: var(--border); color: var(--text); margin-bottom: -1px; }
+.tab-btn:hover { color: var(--text); }
+.tab-count, .tab-event-age { color: var(--text-dim); font-weight: normal; }
+.tab-count-unread { color: var(--waiting); font-weight: 600; }
+.tab-event-age { margin-left: .35rem; }
+.tab-event-age.stale { color: var(--waiting); font-weight: 600; }
+.diff-base-toggle { margin-left: auto; padding: .35rem .5rem; font-size: 12px; color: var(--text-dim); }
+.diff-empty { color: var(--text-dim); font-style: italic; padding: 1rem 0; }
+.diff-file { margin-bottom: 1.2rem; border: 1px solid var(--border); border-radius: 4px; }
+.diff-file-header { position: sticky; top: 0; z-index: 2; background: var(--panel-2); padding: .4rem .7rem; border-radius: 4px 4px 0 0; font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); display: flex; align-items: center; gap: .5rem; cursor: pointer; user-select: none; }
+.diff-file-header:hover { background: #232b3a; }
+.diff-file-body { overflow: hidden; border-radius: 0 0 4px 4px; }
+.diff-chevron { color: var(--text-dim); width: 1ch; display: inline-block; transition: transform .12s ease; }
+.diff-file.collapsed .diff-chevron { transform: rotate(-90deg); }
+.diff-file.collapsed .diff-file-header { border-radius: 4px; }
+.diff-file.collapsed .diff-file-body { display: none; }
+.copy-path-btn { background: transparent; border: 0; color: var(--text-dim); cursor: pointer; padding: 0 .25rem; font-size: 12px; line-height: 1; opacity: 0; transition: opacity .12s ease, color .08s ease; }
+.diff-file-header:hover .copy-path-btn, .file-content-header:hover .copy-path-btn { opacity: .6; }
+.copy-path-btn:hover { opacity: 1; color: var(--accent); }
+.diff-summary { margin-left: auto; font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace; }
+.diff-summary .add-count { color: var(--running); margin-right: .35rem; }
+.diff-summary .remove-count { color: var(--crashed); }
+.diff-tool-btn { background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: .15rem .55rem; font-size: 11px; border-radius: 3px; margin-right: .25rem; cursor: pointer; }
+.diff-tool-btn:hover { color: var(--text); background: var(--panel-2); }
+.diff-hunk { background: rgba(88,166,255,.05); padding: .15rem .7rem; font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-dim); }
+.diff-line { display: grid; grid-template-columns: 4ch 4ch 1fr; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; }
+.diff-line[data-anchor-line] { cursor: pointer; }
+.diff-line[data-anchor-line]:hover { background: rgba(88,166,255,.08); }
+.diff-line.selected { background: rgba(88,166,255,.18) !important; }
+.diff-line .ln { text-align: right; padding-right: .5rem; color: var(--text-dim); user-select: none; }
+.diff-line.add { background: rgba(63,185,80,.08); }
+.diff-line.remove { background: rgba(248,81,73,.08); }
+/* padding-left + negative text-indent gives wrapped continuation lines a hanging
+   indent; the 1ch matches the width of the +/-/space sign rendered via ::before,
+   so continuations line up with the code on the first line. */
+.diff-line .body { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: .7rem; padding-left: 1ch; text-indent: -1ch; }
+.diff-line.add .body::before { content: "+"; color: var(--running); }
+.diff-line.remove .body::before { content: "-"; color: var(--crashed); }
+.diff-line.context .body::before { content: " "; }
+.diff-line .hl-keyword, .file-line .hl-keyword { color: #ff7b72; }
+.diff-line .hl-string,  .file-line .hl-string  { color: #a5d6ff; }
+.diff-line .hl-number,  .file-line .hl-number  { color: #79c0ff; }
+.diff-line .hl-comment, .file-line .hl-comment { color: var(--text-dim); font-style: italic; }
+.diff-line.diff-expand-row { background: rgba(88,166,255,.05); user-select: none; cursor: pointer; }
+.diff-line.diff-expand-row:hover { background: rgba(88,166,255,.12); }
+.diff-line.diff-expand-row .ln { color: var(--text-dim); }
+.diff-expand-label { color: var(--text-dim); }
+.diff-expand-btn { background: transparent; border: 0; color: var(--accent); font: inherit; cursor: pointer; padding: 0 .6rem; }
+.diff-expand-btn:hover { text-decoration: underline; }
+.file-explorer, .diff-explorer { display: flex; gap: .8rem; align-items: flex-start; }
+.diff-files-pane { flex: 1; min-width: 0; }
+.file-tree-pane { flex: 0 0 17rem; max-height: calc(100vh - 13rem); overflow: auto; border: 1px solid var(--border); border-radius: 4px; padding: .35rem; position: sticky; top: 0; }
+.file-tree-pane .empty { color: var(--text-dim); font-style: italic; padding: .5rem; }
+.file-tree-header { margin-bottom: .4rem; }
+.file-new-btn { width: 100%; font-size: 11px; padding: .25rem .5rem; color: var(--text-dim); }
+.file-new-btn:hover { color: var(--accent); }
+.file-new-input { font-size: 12px; padding: .25rem .4rem; margin-bottom: .3rem; font-family: ui-monospace, monospace; }
+.file-new-actions { display: flex; gap: .35rem; }
+.file-tree-list { font-family: ui-monospace, monospace; font-size: 12.5px; }
+.file-tree-row { display: flex; align-items: center; gap: .25rem; padding: .12rem .3rem; border-radius: 3px; cursor: pointer; white-space: nowrap; user-select: none; }
+.file-tree-row:hover { background: var(--panel-2); }
+.file-tree-row.selected { background: rgba(88,166,255,.18); }
+.file-tree-row .twisty { width: 1ch; color: var(--text-dim); display: inline-block; flex: 0 0 auto; transition: transform .12s ease; }
+.file-tree-row.collapsed > .twisty { transform: rotate(-90deg); }
+.file-tree-row.is-file .twisty { visibility: hidden; }
+.file-tree-row .name { overflow: hidden; text-overflow: ellipsis; }
+.file-tree-row.is-dir .name { color: var(--text); }
+.file-tree-row.is-file .name { color: var(--accent); }
+.file-content-pane { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.file-content-pane .placeholder { color: var(--text-dim); font-style: italic; padding: 1rem; }
+.file-content-header { background: var(--panel-2); padding: .4rem .7rem; font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: .5rem; }
+.file-content-meta { margin-left: auto; color: var(--text-dim); }
+.file-rename-input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; padding: .15rem .4rem; }
+.file-msg { color: var(--text-dim); padding: 1rem; }
+.file-image-pane { padding: 1rem; overflow: auto; }
+.file-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  /* Checkerboard so a transparent image reads as transparent, not as the panel. */
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #ccc 25%, transparent 25%),
+    linear-gradient(-45deg, #ccc 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ccc 75%),
+    linear-gradient(-45deg, transparent 75%, #ccc 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+.file-line { display: grid; grid-template-columns: 5ch 1fr; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; cursor: pointer; }
+.file-line:hover { background: rgba(88,166,255,.08); }
+.file-line.selected { background: rgba(88,166,255,.18) !important; }
+.file-line .ln { text-align: right; padding-right: .7rem; color: var(--text-dim); user-select: none; }
+.file-line .body { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: .7rem; padding-left: 2ch; text-indent: -2ch; }
+.file-content-body .tok-ident:hover { text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
+.file-edit-btn { font-size: 11px; padding: .15rem .6rem; }
+.file-edit-btn.is-save { color: var(--accent); border-color: rgba(88,166,255,.5); }
+.file-editor { display: block; width: 100%; box-sizing: border-box; min-height: calc(100vh - 13rem); border: 0; border-radius: 0; padding: .5rem .7rem; background: var(--bg); color: var(--text); font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; resize: vertical; }
+.file-editor:focus { outline: none; }
+.code-nav-backdrop { position: fixed; inset: 0; z-index: 60; }
+.code-nav-popover { position: fixed; z-index: 61; width: 360px; max-width: 92vw; max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.4); padding: .5rem; font-size: 12px; }
+.code-nav-symbol { font-family: ui-monospace, monospace; color: var(--accent); padding: .15rem .35rem .35rem; border-bottom: 1px solid var(--border); }
+.code-nav-section { margin-top: .4rem; }
+.code-nav-section-title { color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; font-size: 10px; padding: .1rem .35rem; }
+.code-nav-empty { color: var(--text-dim); padding: .25rem .35rem; }
+.code-nav-item { display: block; width: 100%; text-align: left; background: transparent; border: 0; border-radius: 4px; padding: .25rem .35rem; cursor: pointer; }
+.code-nav-item:hover { background: var(--panel-2); }
+.code-nav-loc { display: block; font-family: ui-monospace, monospace; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.code-nav-lineno { color: var(--text-dim); }
+.code-nav-text { display: block; font-family: ui-monospace, monospace; color: var(--text-dim); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.code-nav-row { display: flex; align-items: stretch; gap: .15rem; }
+.code-nav-row .code-nav-item { flex: 1 1 auto; min-width: 0; }
+.code-nav-anchor-btn { flex: 0 0 auto; background: transparent; border: 0; padding: 0 .4rem; color: var(--text-dim); cursor: pointer; border-radius: 4px; font-size: 13px; }
+.code-nav-anchor-btn:hover { background: rgba(244,184,64,.18); color: #f4b840; }
+.md { word-break: break-word; }
+.md > * { margin: 0; }
+.md > * + * { margin-top: .55rem; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { font-weight: 600; line-height: 1.3; color: var(--text); }
+.md h1 { font-size: 1.35rem; }
+.md h2 { font-size: 1.15rem; }
+.md h3 { font-size: 1.02rem; }
+.md h4, .md h5, .md h6 { font-size: .95rem; }
+.md h2, .md h3 { border-bottom: 1px solid var(--border); padding-bottom: .25rem; }
+.md p { line-height: 1.55; white-space: pre-wrap; }
+.md ul, .md ol { padding-left: 1.4rem; line-height: 1.55; }
+.md li + li { margin-top: .2rem; }
+.md blockquote { border-left: 3px solid var(--border); color: var(--text-dim); padding: .15rem .8rem; }
+.md blockquote p { white-space: pre-wrap; }
+.md hr { border: none; border-top: 1px solid var(--border); }
+.md table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 12.5px; }
+.md th, .md td { border: 1px solid var(--border); padding: .3rem .6rem; line-height: 1.45; text-align: left; }
+.md th { background: rgba(110,118,129,.14); font-weight: 600; }
+.md tbody tr:nth-child(even) { background: rgba(110,118,129,.05); }
+.md code { background: rgba(110,118,129,.18); padding: .05rem .35rem; border-radius: 3px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+.md pre { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .55rem .75rem; overflow-x: auto; }
+.md pre code { background: transparent; padding: 0; border-radius: 0; font-size: 12.5px; white-space: pre; display: block; }
+/* Fenced code block wrapper: hosts the absolutely-positioned copy button at the
+   top-right. The button matches `.copy-path-btn`'s hover-to-reveal behavior so
+   it stays out of the way until the user reaches for it. */
+.md-code-block { position: relative; }
+.md-code-copy-btn { position: absolute; top: .3rem; right: .35rem; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; padding: .1rem .35rem; font-size: 12px; line-height: 1; border-radius: 3px; opacity: 0; transition: opacity .12s ease, color .08s ease; }
+.md-code-block:hover .md-code-copy-btn { opacity: .7; }
+.md-code-copy-btn:hover { opacity: 1; color: var(--accent); }
+.md a { color: var(--accent); }
+.md [data-anchor-line] { cursor: pointer; border-radius: 3px; padding-left: .25rem; padding-right: .25rem; margin-left: -.25rem; margin-right: -.25rem; transition: background-color .08s ease; }
+.md [data-anchor-line]:hover { background: rgba(88,166,255,.08); }
+.md [data-anchor-line][aria-current="true"] { background: rgba(88,166,255,.18); }
+.anchor-chip { display: inline-flex; align-items: center; gap: .35rem; background: rgba(88,166,255,.15); border: 1px solid rgba(88,166,255,.4); color: var(--accent); padding: .2rem .55rem; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; margin-bottom: .5rem; }
+.anchor-chip button { background: transparent; border: none; color: var(--accent); padding: 0 .2rem; cursor: pointer; font-size: 14px; line-height: 1; }
+.report-anchor-chip { background: rgba(88,166,255,.12); border: 1px solid rgba(88,166,255,.35); color: var(--accent); padding: .05rem .4rem; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 11px; cursor: pointer; max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-anchor-chip:hover { background: rgba(88,166,255,.24); border-color: rgba(88,166,255,.55); }
+/* The "you've arrived here" flash: a translucent wash laid over the target as an
+   ::after overlay that fades out, so the element's own background (a green add
+   line, a blue selected block, …) is never touched — no snap-back when the class
+   is removed. Removal is driven by `animationend` (see DetailBody.svelte), not a
+   timer, so it can't cut the fade short. */
+@keyframes anchor-flash { from { opacity: 1; } to { opacity: 0; } }
+.anchor-flash { position: relative; }
+.anchor-flash::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: 3px; z-index: 1;
+  background: rgba(210,153,34,.5);
+  animation: anchor-flash 1s ease-out forwards;
+}
+/* "There is sent feedback anchored here": a left stripe on the line/block, shown
+   at all times — that is the cue. Hovering the striped line/block surfaces a 💬
+   pin at the cursor (AnchoredFeedbackOverlay.svelte, fixed-positioned over the
+   layout); hovering that pin opens the preview popover with the feedback bodies
+   and the reports replying to them. */
+.diff-line.has-feedback, .file-line.has-feedback, .md [data-feedback-preview] { box-shadow: inset 2px 0 0 #bc8cff; }
+.feedback-anchor-pin {
+  position: fixed; z-index: 62;
+  display: inline-flex; align-items: center; gap: .1rem;
+  background: #251f33; border: 1px solid #7c5fb8; border-radius: 4px;
+  padding: .05rem .3rem; line-height: 1.4; font-size: 11px; cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+.feedback-anchor-pin:hover { background: #322a44; border-color: #9a7ad0; }
+.feedback-anchor-count { color: #d6c4ff; font-family: ui-monospace, monospace; font-weight: 600; }
+
+/* The anchored-feedback preview popover. Mirrors .code-nav-popover's float. */
+.feedback-preview-popover {
+  position: fixed; z-index: 61; width: 380px; max-width: 92vw; max-height: 38vh;
+  overflow-y: auto; overscroll-behavior: contain;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.4); padding: .5rem; font-size: 12.5px;
+}
+.fb-preview-entry + .fb-preview-entry { margin-top: .6rem; padding-top: .6rem; border-top: 1px solid var(--border); }
+.fb-preview-title {
+  display: block; width: 100%; text-align: left; background: rgba(188,140,255,.12);
+  border: 1px solid rgba(188,140,255,.35); color: #d6c4ff; border-radius: 4px;
+  padding: .15rem .4rem; margin-bottom: .35rem; cursor: pointer;
+  font-family: ui-monospace, monospace; font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fb-preview-title:hover { background: rgba(188,140,255,.22); }
+.fb-preview-reply { background: rgba(88,166,255,.12); border-color: rgba(88,166,255,.35); color: var(--accent); margin-top: .45rem; }
+.fb-preview-reply:hover { background: rgba(88,166,255,.22); }
+.fb-preview-anchor { color: var(--text-dim); }
+.fb-preview-md { margin-bottom: .1rem; }
+.fb-preview-noreply { color: var(--text-dim); font-size: 11px; padding: .1rem .1rem .15rem; }
+.event-row { border-bottom: 1px solid var(--border); font-family: ui-monospace, monospace; font-size: 12px; }
+.event-line { display: grid; grid-template-columns: 1ch 5ch 12rem 6rem 1fr; gap: .5rem; padding: .3rem .5rem; align-items: baseline; cursor: pointer; user-select: none; }
+.event-line:hover { background: var(--panel); }
+.event-chevron { color: var(--text-dim); transition: transform .12s ease; }
+.event-row:not(.expanded) .event-chevron { transform: rotate(-90deg); }
+.event-seq { color: var(--text-dim); text-align: right; }
+.event-kind { color: var(--accent); }
+.event-ts { color: var(--text-dim); }
+.event-summary { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.event-row.expanded .event-summary { white-space: normal; word-break: break-word; }
+.event-detail { display: none; padding: .1rem .9rem .6rem 2rem; }
+.event-row.expanded .event-detail { display: block; }
+.event-section-label { color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; font-size: 10px; margin: .55rem 0 .2rem; }
+.event-section-text { white-space: pre-wrap; word-break: break-word; }
+.event-section-code { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .45rem .65rem; font-size: 12.5px; max-height: 26em; overflow: auto; }
+.feedback-form { border-top: 1px solid var(--border); padding: .9rem 1.1rem; background: var(--panel); }
+.feedback-form textarea { margin-bottom: .5rem; }
+/* Image attachments staged in either composer. The chips strip sits above the
+   textarea; in the floating anchored composer it sits above its own textarea
+   too. Each chip is a thumbnail + truncated filename + remove button. */
+.attachment-chips { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .45rem; }
+.attachment-chip {
+  display: inline-flex; align-items: center; gap: .35rem;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: .15rem .35rem; font-size: 11.5px;
+}
+.attachment-chip img {
+  width: 28px; height: 28px; object-fit: cover; border-radius: 2px;
+  background: var(--bg);
+}
+.attachment-chip-name {
+  max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-dim); font-family: ui-monospace, monospace;
+}
+.attachment-chip button {
+  background: transparent; border: none; color: var(--text-dim);
+  padding: 0 .2rem; cursor: pointer; font-size: 14px; line-height: 1;
+}
+.attachment-chip button:hover { color: var(--text); }
+/* Image attachments rendered beneath a sent feedback or a submitted report
+   (Feedback / Reports tab bodies and the anchored-feedback popover). Each
+   thumbnail links to the raw image so a click opens the full-size version in
+   a new tab. */
+.attachment-strip { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .55rem; }
+.attachment-thumb {
+  max-width: 220px; max-height: 160px; object-fit: cover;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+  display: block;
+}
+.fb-preview-md + .attachment-strip,
+.attachment-strip { margin-top: .35rem; }
+.attachment-strip a { text-decoration: none; line-height: 0; }
+/* Floating composer pinned next to the anchored line/block — the cursor stays
+   near where it just clicked. No container chrome (the chip, textarea, and
+   button each carry their own); a drop shadow on the textarea lifts the
+   whole stack off the underlying content. */
+.anchored-composer {
+  position: fixed; z-index: 63;
+  display: flex; flex-direction: column; align-items: flex-start;
+  max-width: 92vw;
+  font-size: 12px;
+}
+.anchored-composer textarea {
+  margin-bottom: .4rem; resize: vertical; min-height: 5.5em;
+  font-size: 12px; line-height: 1.45;
+  box-shadow: 0 6px 22px rgba(0,0,0,.5);
+}
+.anchored-composer .row { width: 100%; }
+.anchored-composer button[type="submit"] { font-size: 11.5px; padding: .25rem .6rem; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+/* The permalink-copy mini button. Icon-only, sits flush at the start of the
+   row so it doesn't compete with the submit button on the right. */
+.anchored-composer-permalink {
+  font-size: 12px; padding: .15rem .4rem; line-height: 1;
+  background: transparent; border-color: var(--border); color: var(--text-dim);
+}
+.anchored-composer-permalink:hover { color: var(--text); background: var(--panel-2); }
+.row { display: flex; gap: .5rem; align-items: center; }
+.spacer { flex: 1; }
+.danger { color: var(--crashed); border-color: rgba(248,81,73,.5); }
+.danger:hover { background: rgba(248,81,73,.1); }
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1.2rem; width: min(520px, 90vw); }
+.modal h2 { margin: 0 0 .8rem 0; font-size: 1rem; }
+.file-search-modal { width: min(640px, 92vw); }
+.file-search-results { margin-top: .7rem; max-height: 50vh; overflow-y: auto; }
+.file-search-hint { color: var(--text-dim); font-size: 12px; padding: .35rem .1rem; }
+.file-search-list { list-style: none; margin: 0; padding: 0; }
+.file-search-row { padding: .35rem .5rem; border-radius: 4px; cursor: pointer; display: flex; flex-direction: column; gap: .1rem; }
+.file-search-row.selected { background: var(--panel-2); }
+.file-search-loc { font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-search-lineno { color: var(--text-dim); }
+.file-search-text { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-dim); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.create-error { margin: .7rem 0 0 0; padding: .5rem .7rem; border: 1px solid rgba(248,81,73,.5); border-radius: 4px; background: rgba(248,81,73,.1); color: var(--crashed); font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.hidden { display: none !important; }
+.spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: -.15em; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast { position: fixed; bottom: 1rem; right: 1rem; background: var(--panel-2); border: 1px solid var(--border); padding: .5rem .8rem; border-radius: 4px; font-size: 13px; }
+.action-output { margin-top: .8rem; }
+.action-output h3 { margin: .6rem 0 .25rem 0; font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-dim); }
+.action-output pre { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .55rem .7rem; max-height: 18em; overflow: auto; font-size: 12.5px; }
+.action-output .status-ok { color: var(--running); font-weight: 600; }
+.action-output .status-fail { color: var(--crashed); font-weight: 600; }
+.action-output .empty { color: var(--text-dim); font-style: italic; font-size: 12.5px; }
+.action-output .ran-at { color: var(--text-dim); font-size: 11px; margin-left: .4rem; }
+.action-form label { display: block; font-size: 12px; color: var(--text-dim); margin: .5rem 0 .2rem 0; text-transform: uppercase; letter-spacing: .05em; }
+.detail-header .header-actions { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+.detail-header .btn-action { font-size: 12px; padding: .25rem .6rem; }
+.detail-header .btn-action.open { background: var(--panel-2); border-color: var(--accent); color: var(--text); }
+.detail-header .action-group-sep { width: 1px; align-self: stretch; background: var(--border); margin: .15rem .55rem; }
+.detail-header .pr-link-chip { font-size: 12px; padding: .25rem .4rem; color: var(--accent); white-space: nowrap; }
+.action-panel { border-bottom: 1px solid var(--border); background: var(--panel); padding: .7rem 1.1rem .9rem 1.1rem; }
+.action-panel-head { display: flex; align-items: baseline; gap: .5rem; }
+.action-panel-head strong { font-size: 13px; }
+.action-panel-head .action-run { font-size: 12px; padding: .25rem .7rem; border-color: var(--accent); }
+.action-panel-head .desc { color: var(--text-dim); font-size: 12px; }
+.action-panel-head .close { background: transparent; border: none; color: var(--text-dim); font-size: 16px; line-height: 1; padding: 0 .3rem; cursor: pointer; }
+.action-panel-head .close:hover { color: var(--text); }
+.action-confirm { margin: .55rem 0 0 0; padding: .5rem .7rem; border: 1px solid rgba(210,153,34,.4); background: rgba(210,153,34,.08); color: var(--waiting); border-radius: 4px; white-space: pre-wrap; font-size: 12.5px; }
+
+/* Structure tab: the import-dependency graph (StructureView.svelte). */
+.structure-view { font-size: 13px; }
+.structure-message { color: var(--text-dim); padding: .5rem .2rem; max-width: 48em; line-height: 1.6; }
+.structure-message.structure-error { color: var(--crashed); }
+.structure-toolbar { display: flex; gap: 1rem; align-items: center; margin-bottom: .5rem; font-size: 12px; color: var(--text-dim); }
+.structure-toolbar label { display: flex; align-items: center; gap: .3rem; cursor: pointer; user-select: none; }
+.structure-toolbar input { width: auto; }
+.structure-zoom { display: inline-flex; gap: .2rem; align-items: center; margin-left: auto; }
+.structure-zoom-btn { font-size: 12px; padding: .15rem .5rem; line-height: 1.2; min-width: 1.8em; }
+.structure-zoom-readout { color: var(--text-dim); min-width: 3.4em; }
+/* The canvas has a *fixed* height (not max-height): if it sized to its content
+   then Fit-zoom would shrink to fit, the canvas would shrink to the new content
+   height, the next Fit would shrink again, and so on indefinitely. A fixed
+   height also keeps the anchor math stable as the model reflows. */
+.structure-canvas { position: relative; overflow: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); height: 70vh; }
+.structure-canvas svg { display: block; }
+.structure-focus { display: inline-flex; align-items: center; gap: .35rem; color: var(--text); font-size: 12px; }
+.structure-focus code { font-family: ui-monospace, monospace; color: var(--accent); }
+.structure-focus-depth { color: var(--text-dim); font-size: 11.5px; }
+.structure-focus-hint { color: var(--text-dim); font-size: 12px; }
+.structure-mode { display: inline-flex; gap: .6rem; align-items: center; }
+.structure-mode label { display: inline-flex; align-items: center; gap: .25rem; cursor: pointer; user-select: none; }
+.structure-mode input { width: auto; }
+.structure-edge, .structure-node, .structure-edge-label { transition: opacity .12s ease; }
+.structure-edge.dim, .structure-edge-label.dim, .structure-node.dim { opacity: .15; }
+.structure-edge { fill: none; stroke: var(--border); stroke-width: 1.4px; }
+.structure-edge.cycle { stroke: var(--crashed); stroke-width: 1.8px; stroke-dasharray: 5 3; }
+#structure-arrow path { fill: var(--text-dim); }
+#structure-arrow-cycle path.cycle { fill: var(--crashed); }
+.structure-edge-label rect { fill: var(--bg); stroke: var(--border); stroke-width: .8px; opacity: .92; }
+.structure-edge-label text { fill: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; }
+.structure-edge-label.expanded rect { stroke: var(--accent); }
+.structure-edge-label.expanded text { fill: var(--text); }
+.structure-node { cursor: pointer; }
+.structure-node:focus { outline: none; }
+.structure-node rect { fill: var(--panel-2); stroke: var(--border); stroke-width: 1px; }
+.structure-node:hover rect, .structure-node:focus rect { stroke: var(--accent); }
+.structure-canvas.structure-focusing .structure-node:not(.dim) rect { stroke: var(--accent); }
+.structure-node.changed rect { fill: rgba(88,166,255,.16); stroke: var(--accent); stroke-width: 1.6px; }
+.structure-node.cycle rect { stroke: var(--crashed); }
+.structure-node.expanded rect { stroke: var(--accent); }
+.structure-node text { fill: var(--text); font-size: 12px; font-family: ui-monospace, monospace; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+.structure-node.changed text { fill: var(--text); font-weight: 600; }
+/* Anchor emphasis: this is the file the human picked from Files/Diff to seed
+   the graph. Distinct from "changed" (the diff-blue tint) and "expanded" (the
+   focused-node accent stroke) — a thick gold-warm outline so a node that's
+   both changed and anchored is still visually distinct. */
+.structure-node.anchored rect { stroke: #f4b840; stroke-width: 2.2px; stroke-dasharray: none; }
+.structure-node.anchored.changed rect { stroke: #f4b840; }
+.structure-node.anchored text { font-weight: 600; }
+.structure-anchor-pill { display: inline-flex; align-items: center; gap: .3rem; padding: .1rem .4rem .1rem .35rem; background: rgba(244,184,64,.12); border: 1px solid rgba(244,184,64,.55); border-radius: 999px; font-size: 12px; color: var(--text); }
+.structure-anchor-pill code { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--text); }
+.structure-anchor-icon { color: #f4b840; font-size: 12px; line-height: 1; }
+.structure-anchor-clear { background: transparent; border: none; padding: 0 .15rem; color: var(--text-dim); cursor: pointer; font-size: 13px; line-height: 1; }
+.structure-anchor-clear:hover { color: var(--text); }
+.structure-hops { display: inline-flex; align-items: center; gap: .3rem; font-size: 12px; color: var(--text-dim); }
+.structure-hops select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: .05rem .25rem; font-size: 12px; }
+.structure-details { margin-top: .7rem; font-size: 12.5px; }
+.structure-details summary { cursor: pointer; color: var(--text-dim); user-select: none; }
+.structure-details ul { list-style: none; margin: .5rem 0 0 0; padding: 0; }
+.structure-details li { display: flex; align-items: baseline; gap: .4rem; padding: .15rem 0; flex-wrap: wrap; }
+.structure-detail-file { background: transparent; border: none; padding: 0; color: var(--accent); font-family: ui-monospace, monospace; font-size: 12px; cursor: pointer; }
+.structure-detail-file:hover { text-decoration: underline; }
+.structure-detail-file.changed { font-weight: 600; }
+.structure-detail-arrow { color: var(--text-dim); }
+.structure-detail-symbols { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 12px; }
+
+/* Split view: two StructureCanvas frames sit side by side under one toolbar.
+   The frames share equal width and a small gutter so the eye can compare
+   Before to After without scanning across the full pane. The non-split row
+   collapses to a single column so the layout reads identically to the
+   pre-split version. */
+.structure-canvas-row { display: flex; flex-direction: column; gap: .4rem; }
+.structure-canvas-row-split { flex-direction: row; gap: .6rem; }
+.structure-canvas-frame { display: flex; flex-direction: column; gap: .3rem; flex: 1 1 0; min-width: 0; }
+.structure-canvas-row-split .structure-canvas { height: 60vh; }
+.structure-canvas-label { font-size: 11.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+.structure-split-toggle { color: var(--text); font-size: 12px; }

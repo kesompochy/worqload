@@ -1,0 +1,36 @@
+{
+  "name": "worqload",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "worqload": "src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "dev": "vite build --config ./vite.config.ts && bun --watch src/cli.ts serve --no-open",
+    "preview": "vite build --config ./vite.config.ts && bun src/cli.ts preview",
+    "web:build": "vite build --config ./vite.config.ts",
+    "web:watch": "vite build --config ./vite.config.ts --watch",
+    "build": "bun build --compile src/cli.ts --outfile dist/worqload",
+    "pretest": "vite build --config ./vite.config.ts",
+    "test": "bun test",
+    "lint": "bunx @biomejs/biome lint src/",
+    "format": "bunx @biomejs/biome format src/",
+    "check": "bunx @biomejs/biome check src/",
+    "check:fix": "bunx @biomejs/biome check --write src/"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
+    "@types/bun": "latest",
+    "svelte": "^5.55.5",
+    "vite": "^8.0.12"
+  },
+  "peerDependencies": {
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "typescript-language-server": "^5.2.0"
+  }
+}

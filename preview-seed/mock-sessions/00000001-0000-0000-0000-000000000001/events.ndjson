@@ -1,0 +1,5 @@
+{"seq":1,"kind":"session_started","timestamp":"2026-05-12T08:30:00.000Z","payload":{"prompt":"greet() を丁寧モードと普段モードで使い分けたい。第2引数 tone を 'plain'|'polite' で取って、'polite' なら 'Hello, ◯ さん!' を返す形にしてほしい。ついでに別ファイルで wave() を作って、内部で polite な greet を呼ぶこと。"}}
+{"seq":2,"kind":"claude_assistant_message","timestamp":"2026-05-12T08:30:12.000Z","payload":{"text":"greet() に第2引数 tone を足し、wave() を src/wave.ts に新設します。"}}
+{"seq":3,"kind":"claude_tool_use","timestamp":"2026-05-12T08:30:34.000Z","payload":{"name":"Edit","input":{"file_path":"src/greeting.ts"}}}
+{"seq":4,"kind":"claude_tool_use","timestamp":"2026-05-12T08:31:02.000Z","payload":{"name":"Write","input":{"file_path":"src/wave.ts"}}}
+{"seq":5,"kind":"report_submitted","timestamp":"2026-05-12T08:31:45.000Z","payload":{"filename":"001-mock-progress.md"}}

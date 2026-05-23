@@ -1,0 +1,14 @@
+{
+  "id": "00000002-0000-0000-0000-000000000002",
+  "title": "README に Usage を一節足してほしい",
+  "prompt": "preview の README に、main を実行したときの出力例を載せておきたい。`bun src/main.ts` の出力を一節「## Usage」として追記してほしい。",
+  "baseBranch": "main",
+  "baseCommit": "__BASE_COMMIT__",
+  "worktreePath": "__REPO_DIR__",
+  "branchName": "mock/readme-usage",
+  "status": "stopped",
+  "createdAt": "2026-05-11T14:00:00.000Z",
+  "endedAt": "2026-05-11T14:08:42.000Z",
+  "sortOrder": 1,
+  "mock": true
+}
