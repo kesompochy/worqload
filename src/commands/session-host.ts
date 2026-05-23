@@ -211,6 +211,21 @@ export async function runHost(opts: HostOptions): Promise<number> {
     opts.sessionsDir,
   );
 
+  // Persist the agent-side conversation id whenever the driver captures or
+  // rotates it. Reads fresh meta to avoid clobbering any field the user (or
+  // serve) wrote between our last saveSessionMeta and now.
+  const persistAgentSessionId = async (id: string): Promise<void> => {
+    try {
+      const fresh = await loadSessionMeta(opts.sessionId, opts.sessionsDir);
+      if (!fresh) return;
+      if (fresh.agentSessionId === id) return;
+      await saveSessionMeta({ ...fresh, agentSessionId: id }, opts.sessionsDir);
+      log("agent_session_id_persisted", { agentSessionId: id });
+    } catch (err) {
+      log("agent_session_id_persist_failed", { error: String(err) });
+    }
+  };
+
   try {
     driver = await (opts.driver ?? claudePipeDriver)({
       cwd: meta.worktreePath || undefined,
@@ -218,6 +233,8 @@ export async function runHost(opts: HostOptions): Promise<number> {
       spawnCommand: opts.spawnCommand,
       onEvent: (event) => writeEvent(event),
       log,
+      ...(meta.agentSessionId !== undefined && { priorAgentSessionId: meta.agentSessionId }),
+      onAgentSessionId: (id) => { void persistAgentSessionId(id); },
     });
   } catch (err) {
     // The detached host's stderr is /dev/null, so an exception thrown from

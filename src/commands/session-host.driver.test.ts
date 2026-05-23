@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import type { Socket } from "bun";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { createSession, saveSessionMeta } from "../session";
+import { createSession, loadSessionMeta, saveSessionMeta } from "../session";
 import {
   encodeMessage,
   type HostToServeMessage,
@@ -207,6 +207,82 @@ test("runHost routes bootstrap, send_user and kill through an injected SessionDr
   fake.exit(0);
   const code = await hostExit;
   expect(code).toBe(0);
+});
+
+test("runHost forwards meta.agentSessionId to the driver as priorAgentSessionId so a resumed host rejoins the prior conversation", async () => {
+  const sessionsDir = makeTmpDir("driver-resume-test");
+  const worktree = makeTmpDir("driver-resume-test-wt");
+  const meta = createSession({
+    prompt: "do thing",
+    baseBranch: "main",
+    baseCommit: "abc123",
+    worktreePath: worktree,
+    branchName: "driver-resume-test",
+  });
+  await saveSessionMeta({ ...meta, agentSessionId: "prior-thread-xyz" }, sessionsDir);
+  mkdirSync(join(sessionsDir, meta.id), { recursive: true });
+  const socketPath = join(makeTmpDir("driver-resume-sock"), `${meta.id.slice(0, 8)}.sock`);
+
+  const fake = makeFakeDriver();
+  const hostExit = runHost({
+    sessionId: meta.id,
+    sessionsDir,
+    socketPath,
+    agentEndpoint: "http://127.0.0.1:0",
+    spawnCommand: ["unused"],
+    driver: fake.factory,
+  });
+
+  const launched = await fake.launched;
+  expect(launched.priorAgentSessionId).toBe("prior-thread-xyz");
+
+  fake.exit(0);
+  await hostExit;
+});
+
+test("runHost persists the agent-side session id on meta when the driver fires onAgentSessionId", async () => {
+  const sessionsDir = makeTmpDir("driver-persist-test");
+  const worktree = makeTmpDir("driver-persist-test-wt");
+  const meta = createSession({
+    prompt: "do thing",
+    baseBranch: "main",
+    baseCommit: "abc123",
+    worktreePath: worktree,
+    branchName: "driver-persist-test",
+  });
+  await saveSessionMeta(meta, sessionsDir);
+  mkdirSync(join(sessionsDir, meta.id), { recursive: true });
+  const socketPath = join(makeTmpDir("driver-persist-sock"), `${meta.id.slice(0, 8)}.sock`);
+
+  const fake = makeFakeDriver();
+  const hostExit = runHost({
+    sessionId: meta.id,
+    sessionsDir,
+    socketPath,
+    agentEndpoint: "http://127.0.0.1:0",
+    spawnCommand: ["unused"],
+    driver: fake.factory,
+  });
+
+  const launched = await fake.launched;
+  expect(launched.onAgentSessionId).toBeDefined();
+  // Simulate the driver capturing the agent-side thread id.
+  launched.onAgentSessionId?.("freshly-captured-thread");
+  // Persistence is async (load-then-save in the host), so poll briefly.
+  const deadline = Date.now() + 2000;
+  let persisted: string | undefined;
+  while (Date.now() < deadline) {
+    const m = await loadSessionMeta(meta.id, sessionsDir);
+    if (m?.agentSessionId === "freshly-captured-thread") {
+      persisted = m.agentSessionId;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  expect(persisted).toBe("freshly-captured-thread");
+
+  fake.exit(0);
+  await hostExit;
 });
 
 test("when the driver factory throws, runHost keeps the listener up so a late-connecting client still sees session_crashed and exited", async () => {

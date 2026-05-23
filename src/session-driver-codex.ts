@@ -21,7 +21,11 @@ import type {
 export const codexPipeDriver: SessionDriverFactory = async (
   opts: SessionDriverLaunchOptions,
 ): Promise<SessionDriver> => {
-  let threadId: string | null = null;
+  // Seed with the prior id from worqload meta (set when a previous host
+  // captured it). Means the very first sendUserMessage in a resumed host
+  // hits `codex exec --json resume <prior_id> -` instead of starting a fresh
+  // thread codex has no memory of.
+  let threadId: string | null = opts.priorAgentSessionId ?? null;
   let currentProc: ReturnType<typeof Bun.spawn> | null = null;
   let killed = false;
   let exitResolve!: (code: number) => void;
@@ -76,7 +80,14 @@ export const codexPipeDriver: SessionDriverFactory = async (
         parsed = { type: "raw", raw: line };
       }
       const id = extractCodexThreadId(parsed);
-      if (id !== null && threadId === null) threadId = id;
+      // Fire onAgentSessionId whenever the id we see differs from what we
+      // have on record. Two reasons it can change: first capture (threadId
+      // was null), or codex rotated us off an expired thread (returned a new
+      // id even though we asked to resume an old one).
+      if (id !== null && id !== threadId) {
+        threadId = id;
+        opts.onAgentSessionId?.(id);
+      }
       await opts.onEvent({ kind: classifyCodexLine(parsed), payload: parsed });
     });
     const stderrTask = readLines(proc.stderr, async (line) => {

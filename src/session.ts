@@ -29,6 +29,12 @@ export interface SessionMeta {
   // default, so a session's reports are stored as written. The human flips it
   // on per session from the UI.
   reportAgentEnabled?: boolean;
+  // Agent-side conversation identifier the driver wants restored on a future
+  // host respawn. Today: codex's thread_id (captured from `thread.started` and
+  // re-sent via `codex exec --json resume <id>` so the resumed host rejoins
+  // the same conversation). Claude resumes via its own `--continue` flag and
+  // does not set this field.
+  agentSessionId?: string;
 }
 
 // `reportAgentEnabled` is opt-in: only an explicit `true` (the human toggled
