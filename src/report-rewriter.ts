@@ -11,6 +11,11 @@
 import { readLines } from "./claude-stream";
 import { buildUserMessage } from "./session-bootstrap";
 
+// Per-agent rewriter factory: which CLI the disposable report-only agent
+// uses. Mirrors the AgentName threading in web-server.ts so the choice of
+// session agent automatically picks the matching rewriter.
+export type AgentName = "claude" | "codex";
+
 // The agent's verdict on a submitted report:
 //  - string: the rewritten report, to be stored.
 //  - null: suppress — not worth the human's time, store nothing.
@@ -96,6 +101,18 @@ function extractAssistantText(line: string, sink: string[]): void {
   }
 }
 
+// Final-output normalisation shared by both rewriters: a clean run with empty
+// (or whitespace-only) text falls back to the raw report so we never lose it;
+// the bare sentinel triggers the suppress / escalate verdicts; anything else
+// is treated as the rewritten body.
+function interpretRewrittenOutput(rewritten: string, rawReport: string): ReportVerdict {
+  const trimmed = rewritten.trim();
+  if (trimmed === "") return rawReport;
+  if (trimmed === SUPPRESS_SENTINEL) return null;
+  if (trimmed === ESCALATE_SENTINEL) return { escalate: true };
+  return trimmed;
+}
+
 export function makeClaudeReportRewriter(opts: ClaudeReportRewriterOptions): ReportRewriter {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return async (rawReport, { cwd }) => {
@@ -135,15 +152,79 @@ export function makeClaudeReportRewriter(opts: ClaudeReportRewriterOptions): Rep
       clearTimeout(timer);
       await Promise.allSettled([stdoutTask, stderrTask]);
 
-      const rewritten = texts.join("").trim();
-      if (timedOut || code !== 0 || rewritten === "") return rawReport;
-      // A clean run whose whole output is a sentinel: the agent judged the
-      // report not worth storing, or a misfiled escalation.
-      if (rewritten === SUPPRESS_SENTINEL) return null;
-      if (rewritten === ESCALATE_SENTINEL) return { escalate: true };
-      return rewritten;
+      if (timedOut || code !== 0) return rawReport;
+      return interpretRewrittenOutput(texts.join(""), rawReport);
     } catch {
       // Spawn itself failed (binary not found, ...). Never lose the report.
+      return rawReport;
+    }
+  };
+}
+
+export interface CodexReportRewriterOptions {
+  // codex binary prefix (e.g. ["codex"] or ["codex", "--config", "foo"]).
+  // The rewriter appends `exec --json -` so codex reads the prompt from stdin
+  // and emits its JSONL event stream — same one-shot lifecycle as the codex
+  // session driver's first turn.
+  spawnCommand: string[];
+  timeoutMs?: number;
+}
+
+// Extract the concatenated text of every `agent_message` item.completed line
+// in a codex JSONL output. (item.updated also carries text, but completed is
+// the terminal state — using it alone avoids double-counting.)
+function extractCodexAgentMessageText(line: string, sink: string[]): void {
+  let parsed: { type?: string; item?: { type?: string; text?: unknown } };
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (parsed?.type !== "item.completed") return;
+  if (parsed.item?.type !== "agent_message") return;
+  if (typeof parsed.item.text === "string") sink.push(parsed.item.text);
+}
+
+export function makeCodexReportRewriter(opts: CodexReportRewriterOptions): ReportRewriter {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  return async (rawReport, { cwd }) => {
+    try {
+      const proc = Bun.spawn([...opts.spawnCommand, "exec", "--json", "-"], {
+        cwd,
+        env: rewriterEnv(),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const texts: string[] = [];
+      const stdoutTask = readLines(proc.stdout, (line) => extractCodexAgentMessageText(line, texts));
+      const stderrTask = readLines(proc.stderr, () => {});
+
+      try {
+        proc.stdin.write(buildReportRewritePrompt(rawReport));
+        await proc.stdin.flush();
+        proc.stdin.end();
+      } catch {
+        // Codex already gone; the exit-code check below routes us to the
+        // raw-report fallback.
+      }
+
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // already dead
+        }
+      }, timeoutMs);
+      const code = await proc.exited;
+      clearTimeout(timer);
+      await Promise.allSettled([stdoutTask, stderrTask]);
+
+      if (timedOut || code !== 0) return rawReport;
+      return interpretRewrittenOutput(texts.join(""), rawReport);
+    } catch {
       return rawReport;
     }
   };
