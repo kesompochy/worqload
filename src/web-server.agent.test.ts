@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, trackCleanup } from "./test-helpers";
-import { buildDefaultSpawnCommand, startServer } from "./web-server";
+import { loadSessionMeta, type AgentName } from "./session";
+import { buildDefaultSpawnCommand, startServer, type HostLauncher } from "./web-server";
 
 afterEach(cleanupAll);
 
@@ -42,4 +43,82 @@ test("startServer with agentName=codex defaults spawnCommand to the codex prefix
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   expect(started.ctx.spawnCommand[0]).toBe("codex");
+});
+
+test("POST /sessions persists the selected agentName and passes its runtime to the host launcher", async () => {
+  const launches: Array<{ agentName?: AgentName; spawnCommand: string[]; driverName?: string }> = [];
+  const baseLauncher = inProcessHostLauncher();
+  const hostLauncher: HostLauncher = async (req) => {
+    launches.push({
+      agentName: req.meta.agentName,
+      spawnCommand: req.spawnCommand,
+      driverName: req.driverName,
+    });
+    return baseLauncher(req);
+  };
+  const started = await startServer({
+    port: 0,
+    branchNameGenerator: async () => null,
+    hostLauncher,
+    worktreeOps: fakeWorktreeOps(),
+    reportRewriter: async (raw) => raw,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+
+  const res = await fetch(`http://127.0.0.1:${started.server.port}/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "use codex", baseBranch: "trunk", agentName: "codex" }),
+  });
+
+  expect(res.status).toBe(201);
+  const body = await res.json();
+  expect(body.meta.agentName).toBe("codex");
+  expect((await loadSessionMeta(body.meta.id, started.ctx.sessionsDir))?.agentName).toBe("codex");
+  expect(launches).toHaveLength(1);
+  expect(launches[0].agentName).toBe("codex");
+  expect(launches[0].spawnCommand[0]).toBe("codex");
+  expect(launches[0].driverName).toBe("codex");
+});
+
+test("POST /sessions defaults agentName to the server agent", async () => {
+  const started = await startServer({
+    port: 0,
+    agentName: "codex",
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    reportRewriter: async (raw) => raw,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+
+  const res = await fetch(`http://127.0.0.1:${started.server.port}/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "use default", baseBranch: "trunk" }),
+  });
+
+  expect(res.status).toBe(201);
+  const body = await res.json();
+  expect(body.meta.agentName).toBe("codex");
+});
+
+test("POST /sessions rejects unknown agentName", async () => {
+  const started = await startServer({
+    port: 0,
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+    reportRewriter: async (raw) => raw,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+
+  const res = await fetch(`http://127.0.0.1:${started.server.port}/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "bad agent", baseBranch: "trunk", agentName: "gpt" }),
+  });
+
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({ error: "agentName must be 'claude' or 'codex'" });
 });

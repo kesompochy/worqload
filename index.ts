@@ -8,7 +8,7 @@ export {
   loadSessionMeta,
   listSessionMetas,
 } from "./src/session";
-export type { SessionMeta, SessionStatus } from "./src/session";
+export type { AgentName, SessionMeta, SessionStatus } from "./src/session";
 export { appendEvent, readEvents } from "./src/event-log";
 export type { Event, EventKind } from "./src/event-log";
 export {

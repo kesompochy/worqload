@@ -14,6 +14,7 @@ import {
   isTerminal,
   isReportAgentEnabled,
   validateTransition,
+  type AgentName,
   type SessionMeta,
   type SessionStatus,
 } from "./session";
@@ -60,8 +61,6 @@ function listenWithFallback(requestedPort: number, listen: (port: number) => Ser
   }
   throw new Error(`no free port found in range ${requestedPort}-${requestedPort + PORT_FALLBACK_ATTEMPTS - 1}`);
 }
-
-export type AgentName = "claude" | "codex";
 
 export function buildDefaultSpawnCommand(
   agentName: AgentName,
@@ -150,6 +149,8 @@ export interface HostLaunchRequest {
   meta: SessionMeta;
   sessionsDir: string;
   agentEndpoint: string;
+  spawnCommand: string[];
+  driverName?: "pipe" | "tmux" | "codex";
   resume: boolean;
   onEvent: (event: Event) => void;
   onDisconnect: () => void;
@@ -163,7 +164,9 @@ export interface ServerContext {
   sessionsDir: string;          // <repo>/.worqload/sessions
   worktreesDir: string;         // <repo>/.worktrees
   agentName: AgentName;
+  driverName: "pipe" | "tmux";
   spawnCommand: string[];
+  spawnCommandForAgent: (agentName: AgentName) => string[];
   branchNameGenerator: BranchNameGenerator;
   hostLauncher: HostLauncher;
   worktreeOps: WorktreeOps;
@@ -173,8 +176,10 @@ export interface ServerContext {
   prLinkResolver: PrLinkResolver;
   // Rewrites a submitted report into human-readable form before it's stored,
   // when the session's reportAgentEnabled flag is on. The default spawns a
-  // disposable claude from spawnCommand; tests inject a synchronous fake.
+  // disposable agent matching the session agent; tests inject a synchronous
+  // fake.
   reportRewriter: ReportRewriter;
+  reportRewriterForAgent: (agentName: AgentName) => ReportRewriter;
   clients: Map<string, SessionAttachment>;
   // One promise chain per session, serialising host create/teardown. Two
   // resume triggers racing (a manual Resume and the wake watchdog, or two
@@ -426,35 +431,22 @@ async function transitionStatus(
 // `bun src/cli.ts session-host`) as a detached child, connect over its unix
 // socket, and wait for it to finish replaying the event log (empty for a fresh
 // session). The host — not serve — writes the session_started / session_resumed
-// event and sends claude its first message. On resume claude's prior
-// conversation is continued (`--continue`), so we still connect from seq 0.
-function makeSpawnHostLauncher(config: { hostCommand: string[]; spawnCommand: string[]; agentName: AgentName; driverName: "pipe" | "tmux" }): HostLauncher {
-  return async ({ meta, sessionsDir, agentEndpoint, resume, onEvent, onDisconnect }) => {
+// event and sends the agent its first message.
+function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher {
+  return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, driverName, resume, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
     const logFile = hostLogPath(sessionsDir, meta.id);
-    // claude's resume mode appends `--continue` to its argv. codex's resume is
-    // driven by the codex driver itself (it remembers thread_id within the
-    // host lifetime); on a host respawn the driver starts fresh and codex
-    // creates a new thread — for v1 that's the accepted limitation, no argv
-    // change here.
-    const resumedSpawnCommand = resume && config.agentName === "claude"
-      ? [...config.spawnCommand, "--continue"]
-      : config.spawnCommand;
-    // Effective driver: codex sessions ignore WORQLOAD_DRIVER (there's only
-    // one codex driver). Claude sessions honour the requested pipe/tmux split.
-    const effectiveDriver: "pipe" | "tmux" | "codex" =
-      config.agentName === "codex" ? "codex" : config.driverName;
     const hostProc = spawnDetachedHost({
       sessionId: meta.id,
       sessionsDir,
       socketPath,
       agentEndpoint,
-      spawnCommand: resumedSpawnCommand,
+      spawnCommand,
       hostCommand: config.hostCommand,
       logFile,
       // Only pass `--driver` when it differs from the host CLI's default
       // ("pipe"). Avoids churning host argv in the common case.
-      ...(effectiveDriver !== "pipe" ? { driverName: effectiveDriver } : {}),
+      ...(driverName !== undefined && driverName !== "pipe" ? { driverName } : {}),
       ...(resume && { resume: true }),
     });
     const client = await connectToHost({ socketPath, sinceSeq: 0, onEvent, onDisconnect });
@@ -664,10 +656,18 @@ async function spawnAndAttachHost(
     // (the Stop&Resume race), and its stale onDisconnect must not delete the
     // newer attachment. Same guard runWakeWatchdog already uses.
     let attachment: SessionAttachment | undefined;
+    const agentName = meta.agentName ?? ctx.agentName;
+    const spawnCommand = ctx.spawnCommandForAgent(agentName);
+    const effectiveSpawnCommand = opts.resume && agentName === "claude"
+      ? [...spawnCommand, "--continue"]
+      : spawnCommand;
+    const driverName = agentName === "codex" ? "codex" : ctx.driverName;
     const { client, hostProc } = await ctx.hostLauncher({
       meta,
       sessionsDir: ctx.sessionsDir,
       agentEndpoint: ctx.baseUrlForAgent,
+      spawnCommand: effectiveSpawnCommand,
+      driverName,
       resume: opts.resume ?? false,
       onEvent: (event) => broadcastEvent(ctx, meta.id, event),
       onDisconnect: () => {
@@ -718,17 +718,20 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const agentName: AgentName = opts.agentName ?? "claude";
   const driverName = opts.driverName ?? "pipe";
   const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand(agentName, driverName);
+  const overriddenSpawnCommand = opts.spawnCommand;
+  const spawnCommandForAgent: (name: AgentName) => string[] = overriddenSpawnCommand !== undefined
+    ? () => overriddenSpawnCommand
+    : (name) => buildDefaultSpawnCommand(name, driverName);
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
-  const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand, spawnCommand, agentName, driverName });
-  // Spawned from the same argv as sessions, so WORQLOAD_AGENT /
-  // WORQLOAD_DRIVER / WORQLOAD_SPAWN_COMMAND govern the disposable agent too.
-  // The codex variant uses makeCodexReportRewriter, which appends `exec --json
-  // -` to spawnCommand to invoke codex in one-prompt-then-exit mode.
-  const reportRewriter = opts.reportRewriter
-    ?? (agentName === "codex"
-      ? makeCodexReportRewriter({ spawnCommand })
-      : makeClaudeReportRewriter({ spawnCommand }));
+  const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand });
+  const overriddenReportRewriter = opts.reportRewriter;
+  const reportRewriterForAgent: (name: AgentName) => ReportRewriter = overriddenReportRewriter !== undefined
+    ? () => overriddenReportRewriter
+    : (name) => name === "codex"
+      ? makeCodexReportRewriter({ spawnCommand: spawnCommandForAgent(name) })
+      : makeClaudeReportRewriter({ spawnCommand: spawnCommandForAgent(name) });
+  const reportRewriter = reportRewriterForAgent(agentName);
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
   // Cache wraps whatever resolver is in play (the gh one in production, a fake
   // in tests) so the sidebar's background prefetch doesn't respawn `gh` per
@@ -801,10 +804,13 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     sessionsDir,
     worktreesDir,
     agentName,
+    driverName,
     spawnCommand,
+    spawnCommandForAgent,
     branchNameGenerator,
     hostLauncher,
     reportRewriter,
+    reportRewriterForAgent,
     worktreeOps,
     prLinkResolver,
     clients: new Map(),
@@ -1081,6 +1087,11 @@ interface PostSessionsBody {
   baseBranch?: string;
   title?: string;
   branchName?: string;
+  agentName?: AgentName;
+}
+
+function isAgentName(value: unknown): value is AgentName {
+  return value === "claude" || value === "codex";
 }
 
 async function postSessions(req: Request, ctx: ServerContext): Promise<Response> {
@@ -1088,7 +1099,11 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   if (!body || typeof body.prompt !== "string" || body.prompt.trim() === "") {
     return json({ error: "prompt is required" }, 400);
   }
+  if (body.agentName !== undefined && !isAgentName(body.agentName)) {
+    return json({ error: "agentName must be 'claude' or 'codex'" }, 400);
+  }
 
+  const agentName = body.agentName ?? ctx.agentName;
   const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
   const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
 
@@ -1100,6 +1115,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     baseCommit,
     worktreePath: "",
     branchName: "",
+    agentName,
     title: body.title,
   });
 
@@ -2362,7 +2378,7 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
     // so the session never saw the 推敲 burden and the human reads the polished
     // text. Off per session → store the agent's raw submission untouched.
     const verdict = isReportAgentEnabled(meta)
-      ? await ctx.reportRewriter(body.content, { cwd: meta.worktreePath })
+      ? await ctx.reportRewriterForAgent(meta.agentName ?? ctx.agentName)(body.content, { cwd: meta.worktreePath })
       : body.content;
     // null = the rewriter judged the report not worth the human's time. Store
     // nothing, broadcast nothing, consume no sequence number.
