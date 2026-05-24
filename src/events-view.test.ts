@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { describeEvent, isAgentWorkEvent } from "../web/events-view.js";
+import { describeEvent, displayEventKind, isAgentWorkEvent } from "../web/events-view.js";
 
 test("isAgentWorkEvent: agent run and its steps count as work", () => {
   for (const kind of [
@@ -43,6 +43,12 @@ test("describeEvent renders a session_started prompt", () => {
   });
   expect(d.summary).toBe("fix the parser then test");
   expect(d.sections).toEqual([{ label: "Prompt", body: "fix the parser\nthen test", format: "text" }]);
+});
+
+test("displayEventKind labels agent events for the configured agent", () => {
+  expect(displayEventKind({ kind: "claude_tool_use" }, "claude")).toBe("Claude tool use");
+  expect(displayEventKind({ kind: "claude_tool_use" }, "codex")).toBe("Codex tool use");
+  expect(displayEventKind({ kind: "session_started" }, "codex")).toBe("session_started");
 });
 
 test("describeEvent extracts assistant message text and offers it as markdown", () => {
