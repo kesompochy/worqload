@@ -349,7 +349,7 @@ function formatApprovedCommandFeedback(escalationFilename: string, command: stri
 function formatRejectedCommandFeedback(escalationFilename: string, command: string, agentReason: string, note: string): string {
   const parts = [
     `Re: command approval ${escalationFilename}`,
-    "The human rejected this command; it was not run. Do not retry it. Use a different approach, or escalate for guidance.",
+    "The human rejected this command; it was not run.",
     `## Rejected command\n\n${fencedBlock(command)}`,
   ];
   if (agentReason !== "") parts.push(`## Reason for the request\n\n${agentReason}`);
