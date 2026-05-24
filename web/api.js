@@ -126,13 +126,13 @@ export function updateDocumentTitle() {
 export async function refreshDetail() {
   if (!state.selected) return;
   const id = state.selected;
-  const [{ meta, events }, reportsRes, askingRes, feedbackRes] = await Promise.all([
+  const [{ meta, events, agentName }, reportsRes, askingRes, feedbackRes] = await Promise.all([
     api("GET", `/sessions/${id}`),
     api("GET", `/sessions/${id}/reports`),
     api("GET", `/sessions/${id}/asking`),
     api("GET", `/sessions/${id}/feedback`),
   ]);
-  state.detail = { meta, events };
+  state.detail = { meta, events, agentName };
   state.reports = reportsRes.reports;
   state.asking = askingRes.asking;
   state.feedbackHistory = feedbackRes.messages;
