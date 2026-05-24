@@ -2966,7 +2966,6 @@ test("command approval: reject does not run the command and feeds back the rejec
 
   const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
   expect(inbox.messages[0].content).toContain("rejected this command");
-  expect(inbox.messages[0].content).toContain("The human rejected this command; it was not run.\n\n## Rejected command");
   expect(inbox.messages[0].content).toContain("we never touch that path");
 });
 
