@@ -436,6 +436,14 @@ function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher 
   return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, driverName, resume, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
     const logFile = hostLogPath(sessionsDir, meta.id);
+    // The hello handshake asks the host to replay events with seq > sinceSeq.
+    // serve already has every event currently in the file, so reading the
+    // current tail and passing it as sinceSeq keeps the replay empty in the
+    // common case. Resume without this would re-broadcast the entire history
+    // back through onEvent on every spawn — once over the WS to every viewing
+    // client, and once into lastClaudeActivityAt, which the wake watchdog reads
+    // for liveness.
+    const lastSeq = (await readEvents(meta.id, 1, sessionsDir)).at(-1)?.seq ?? 0;
     const hostProc = spawnDetachedHost({
       sessionId: meta.id,
       sessionsDir,
@@ -449,7 +457,7 @@ function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher 
       ...(driverName !== undefined && driverName !== "pipe" ? { driverName } : {}),
       ...(resume && { resume: true }),
     });
-    const client = await connectToHost({ socketPath, sinceSeq: 0, onEvent, onDisconnect });
+    const client = await connectToHost({ socketPath, sinceSeq: lastSeq, onEvent, onDisconnect });
     await client.replayCompleted.catch(() => {});
     return { client, hostProc };
   };

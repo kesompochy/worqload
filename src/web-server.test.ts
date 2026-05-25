@@ -2733,6 +2733,68 @@ test("POST /sessions/:id/resume rejects a session whose worktree is gone", async
   expect(res.status).toBe(400);
 });
 
+// Regression: makeSpawnHostLauncher used to send `hello {sinceSeq:0}` to every
+// freshly-spawned host. The host honours that by replaying the whole event log
+// back over the socket; serve forwards each event through onEvent →
+// broadcastEvent → every subscribed WebSocket client. The visible damage shows
+// up on resume (and on watchdog auto-resume): WS subscribers attached BEFORE
+// the resume see the entire history re-broadcast on top of the new
+// session_resumed event. The same path also stamps lastClaudeActivityAt with
+// "now" for old claude_* events, which feeds the wake watchdog a false
+// liveness signal.
+test("resume does not re-broadcast the persisted event log over the WebSocket", async () => {
+  const repoDir = makeTmpDir("repo");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    spawnCommand: ["bun", MOCK, "hang"],
+    branchNameGenerator: async () => null,
+    hostCommand: HOST_COMMAND,
+    worktreeOps: fakeWorktreeOps(),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  // Let the initial session_started + claude_system writes settle.
+  await new Promise((r) => setTimeout(r, 200));
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+  await new Promise((r) => setTimeout(r, 200));
+
+  const preResumeEvents = await readEvents(sid, 1, ctx.sessionsDir);
+  const lastSeqBeforeResume = preResumeEvents.at(-1)?.seq ?? 0;
+  expect(lastSeqBeforeResume).toBeGreaterThanOrEqual(2);
+
+  // Subscribe pretending we already have every event up to the current tail.
+  // After the fix only events with seq > lastSeqBeforeResume should reach us.
+  const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/sessions/${sid}/stream`);
+  await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }));
+  const liveMessages: { event: { seq: number; kind: string } }[] = [];
+  ws.addEventListener("message", (e) => {
+    liveMessages.push(JSON.parse(typeof e.data === "string" ? e.data : ""));
+  });
+  ws.send(JSON.stringify({ type: "subscribe", lastSeq: lastSeqBeforeResume }));
+  await new Promise((r) => setTimeout(r, 100));
+  const startIndex = liveMessages.length;
+
+  await postJson(baseUrl, `/sessions/${sid}/resume`, {});
+  // Give the new host time to attach, complete the (now empty) hello replay,
+  // and emit session_resumed plus the mock's bootstrap claude_system event.
+  await new Promise((r) => setTimeout(r, 1000));
+
+  ws.close();
+  await new Promise((r) => setTimeout(r, 30));
+
+  const resumeMessages = liveMessages.slice(startIndex);
+  for (const m of resumeMessages) {
+    expect(m.event.seq).toBeGreaterThan(lastSeqBeforeResume);
+  }
+  expect(resumeMessages.some((m) => m.event.kind === "session_resumed")).toBe(true);
+});
+
 test("GET / serves the built HTML shell referencing the hashed /assets bundles", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
