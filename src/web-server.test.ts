@@ -2795,6 +2795,59 @@ test("resume does not re-broadcast the persisted event log over the WebSocket", 
   expect(resumeMessages.some((m) => m.event.kind === "session_resumed")).toBe(true);
 });
 
+// Regression: the WS subscribe handler does `await readEvents` (disk) before
+// sending the replay. If `appendAndBroadcast` fires its `ws.send` during that
+// await, the new event hits the wire BEFORE the replay events and the client
+// filters `ev.seq <= state.lastSeq` discards the now-older replay events. The
+// gap then stays invisible until the next refreshDetail (which is exactly
+// what feedback-submission ends up triggering, hiding the bug from anyone who
+// types into the composer regularly). Events the server pushes onto the WS
+// after a subscribe must arrive in strictly increasing seq order — i.e. the
+// subscribe handler must serialise broadcasts that race against the replay.
+test("WS /sessions/:id/stream delivers subscribe replay and concurrent broadcasts in seq order", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  // Let the initial session_started settle, then keep producing events while
+  // the subscribe is in flight: each POST is an `appendAndBroadcast` that can
+  // race against the replay. We fire several so at least one lands during the
+  // server's subscribe `await readEvents` window.
+  await new Promise((r) => setTimeout(r, 100));
+  const baselineSeq = (await readEvents(sid, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
+
+  const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/sessions/${sid}/stream`);
+  await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }));
+
+  const received: { event: { seq: number; kind: string } }[] = [];
+  ws.addEventListener("message", (e) => {
+    received.push(JSON.parse(typeof e.data === "string" ? e.data : ""));
+  });
+
+  ws.send(JSON.stringify({ type: "subscribe", lastSeq: baselineSeq }));
+  const posts = Array.from({ length: 5 }, (_, i) =>
+    postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: `race-${i}`, content: `r${i}` }),
+  );
+  await Promise.all(posts);
+
+  await new Promise((r) => setTimeout(r, 300));
+  ws.close();
+  await new Promise((r) => setTimeout(r, 30));
+
+  // Every event with seq > baselineSeq must reach the client exactly once.
+  const seqs = received.map((m) => m.event.seq);
+  const expectedTail = (await readEvents(sid, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
+  for (let s = baselineSeq + 1; s <= expectedTail; s++) {
+    expect(seqs).toContain(s);
+  }
+  // And in strictly increasing order — the invariant the fix protects.
+  for (let i = 1; i < seqs.length; i++) {
+    expect(seqs[i]).toBeGreaterThan(seqs[i - 1]);
+  }
+});
+
 test("GET / serves the built HTML shell referencing the hashed /assets bundles", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

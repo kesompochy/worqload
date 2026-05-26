@@ -118,6 +118,17 @@ function hostSocketPathFor(sessionId: string): string {
 
 interface WsClientData {
   sessionId: string;
+  // Subscribe is racey by construction: the handler does `await readEvents`
+  // (disk) before sending the replay, and `appendAndBroadcast` can fire
+  // `ws.send` for a brand-new event while that await is still pending. With
+  // a naive broadcast loop the new event would hit the wire BEFORE the
+  // replay events, the client filters `ev.seq <= lastSeq` and silently drops
+  // the older replay events. While the subscribe handler is in flight,
+  // broadcasts queue here instead of going through `ws.send`; the handler
+  // flushes the queue after replay completes (skipping any seq already
+  // covered by the replay).
+  subscribeState?: "pending" | "live";
+  queuedBroadcasts?: import("./event-log").Event[];
 }
 
 interface SessionAttachment {
@@ -396,7 +407,13 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
   }
   const payload = JSON.stringify({ sessionId, event });
   for (const ws of ctx.wsClients) {
-    if (ws.data.sessionId === sessionId) {
+    if (ws.data.sessionId !== sessionId) continue;
+    if (ws.data.subscribeState === "pending") {
+      // Queue rather than send — the subscribe handler is mid-await and a
+      // direct send here would arrive before its replay events, causing the
+      // client's seq filter to discard the (older) replay.
+      ws.data.queuedBroadcasts?.push(event);
+    } else {
       try { ws.send(payload); } catch { /* dead socket */ }
     }
   }
@@ -785,6 +802,12 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     },
     websocket: {
       open(ws) {
+        // Until the client sends `subscribe`, queue any broadcasts that arrive
+        // for this session — broadcasts arriving before subscribe completes
+        // would otherwise out-pace the replay and be dropped by the client's
+        // seq filter. See WsClientData.subscribeState.
+        ws.data.subscribeState = "pending";
+        ws.data.queuedBroadcasts = [];
         ctx.wsClients.add(ws);
       },
       async message(ws, raw) {
@@ -795,6 +818,18 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
             const fromSeq = (msg.lastSeq ?? 0) + 1;
             const events = await readEvents(ws.data.sessionId, fromSeq, ctx.sessionsDir);
             for (const ev of events) {
+              try { ws.send(JSON.stringify({ sessionId: ws.data.sessionId, event: ev })); } catch {}
+            }
+            // Flush broadcasts that landed during the await above. The replay
+            // already covers everything on disk at read time, so anything in
+            // the queue with seq <= replayLastSeq is a duplicate (the
+            // broadcast and the disk-read raced over the same event).
+            const replayLastSeq = events.length > 0 ? events[events.length - 1].seq : (msg.lastSeq ?? 0);
+            const queued = ws.data.queuedBroadcasts ?? [];
+            ws.data.queuedBroadcasts = undefined;
+            ws.data.subscribeState = "live";
+            for (const ev of queued) {
+              if (ev.seq <= replayLastSeq) continue;
               try { ws.send(JSON.stringify({ sessionId: ws.data.sessionId, event: ev })); } catch {}
             }
           }
