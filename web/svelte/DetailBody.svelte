@@ -45,6 +45,9 @@
   // view; sitting exactly at the top is preserved as-is. When the active tab
   // changes the anchor row is gone, so the outgoing tab's position is stashed in
   // appState.tabScroll and the incoming tab's stashed position restored.
+  // First-visit to a tab and a tab whose stashed anchor no longer matches reset
+  // to the top: the browser otherwise carries the previous tab's scrollTop into
+  // the new content, leaving the user mid-page with no visible reason.
   const SCROLL_ANCHOR_ATTRS = ["data-event-seq", "data-report-filename", "data-feedback-filename", "data-diff-path", "data-asking"];
   let bodyEl = $state();
   let renderedTab = appState.activeTab;
@@ -100,7 +103,14 @@
     const targetTab = appState.activeTab;
     tick().then(() => {
       if (!bodyEl) return;
-      restoreScroll(tabChanged ? (appState.tabScroll.get(targetTab) ?? null) : saved);
+      if (tabChanged) {
+        // Drop any scrollTop the browser carried over from the previous tab so
+        // a missing-or-unmatched stash starts at the top instead of mid-page.
+        bodyEl.scrollTop = 0;
+        restoreScroll(appState.tabScroll.get(targetTab) ?? null);
+      } else {
+        restoreScroll(saved);
+      }
       renderedTab = targetTab;
     });
   });
