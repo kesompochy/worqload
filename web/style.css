@@ -147,6 +147,9 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .detail-body h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin: 0 0 .5rem 0; }
 .asking { background: rgba(210,153,34,.08); border: 1px solid rgba(210,153,34,.4); padding: .8rem 1rem; border-radius: 4px; }
 .asking .label { color: var(--waiting); font-size: 12px; text-transform: uppercase; letter-spacing: .07em; margin-bottom: .3rem; }
+/* Approval cards must show the full command at a glance — wrap long commands
+   inside the card instead of letting `.md pre`'s horizontal scroll hide them. */
+.asking .md pre, .asking .md pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* "Approve & Run" executes an arbitrary command, so it carries the caution colour. */
 .ask-approve { border-color: rgba(210,153,34,.55); color: var(--waiting); }
 .ask-approve:hover { background: rgba(210,153,34,.12); }
