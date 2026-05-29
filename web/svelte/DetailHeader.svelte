@@ -78,7 +78,7 @@
     </div>
   </div>
   {#if m.title}
-    <div class="detail-original-prompt" title={m.prompt}><span class="label">最初の問いかけ</span>{m.prompt}</div>
+    <div class="detail-original-prompt" title={m.prompt}><span class="label">initial prompt</span>{m.prompt}</div>
   {/if}
   <ActionBar />
   <div class="detail-meta">
