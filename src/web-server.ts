@@ -374,6 +374,7 @@ function buildRevisionRequestFeedback(rawReport: string): string {
   return [
     "A report you submitted was held for a revision pass and not yet stored. Revise mode is on for this session.",
     "Re-read the report below as the human will: lead with the conclusion, keep sentences short, and cut self-justification, apology, and filler. Then resubmit the tightened version with `worqload report submit`. The next submission is stored as written.",
+    "何を出力しないかによって品性が現れます。上品であれ。",
     `## The report awaiting revision\n\n${fencedBlock(rawReport)}`,
   ].join("\n\n") + "\n";
 }
