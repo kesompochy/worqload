@@ -43,8 +43,9 @@ export async function report(args: string[]): Promise<void> {
     if ("revisionRequested" in result) {
       console.log(
         "report held for a revision pass and not yet stored: revise mode is on for this session. worqload " +
-          "has queued the instruction in your feedback inbox — run `worqload feedback fetch`, tighten the " +
-          "report, and resubmit it via `worqload report submit`. The next submission is stored.",
+          "saved your draft to a scratch file and queued the instruction in your feedback inbox — run " +
+          "`worqload feedback fetch` for the draft path, edit it in place, and resubmit it. The next " +
+          "submission is stored.",
       );
     } else {
       console.log(result.filename);

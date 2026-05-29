@@ -365,17 +365,25 @@ function formatRejectedCommandFeedback(escalationFilename: string, command: stri
   return parts.join("\n\n") + "\n";
 }
 
+// Relative path (from the worktree root, i.e. the agent's CWD) of the scratch
+// file the first submission is saved to for the session to edit in place.
+// `.worqload-draft/` is the session-private scratch dir pre-created with the
+// worktree and hidden from the explorer / dirty-check / auto-commit.
+const REVISION_DRAFT_RELPATH = ".worqload-draft/revision-draft.md";
+
 // Delivered into the feedback inbox when revise mode holds a report's first
 // submission. The bounce can't rely on the `worqload report submit` stdout
 // alone: a session that just submitted a report has, from its own point of
 // view, finished and likely ended its turn — so it routes through the inbox,
-// which wakes the session and is drained exactly once.
-function buildRevisionRequestFeedback(rawReport: string): string {
+// which wakes the session and is drained exactly once. The first submission is
+// saved to a scratch file the session edits in place, rather than re-typed from
+// this message, so nothing is dropped in the round trip.
+function buildRevisionRequestFeedback(slug: string): string {
   return [
     "A report you submitted was held for a revision pass and not yet stored. Revise mode is on for this session.",
-    "Re-read the report below as the human will: lead with the conclusion, keep sentences short, and cut self-justification, apology, and filler. Then resubmit the tightened version with `worqload report submit`. The next submission is stored as written.",
+    `Your draft was saved to \`${REVISION_DRAFT_RELPATH}\`. Edit that file in place as the human will read it: lead with the conclusion, keep sentences short, and cut self-justification, apology, and filler.`,
     "何を出力しないかによって品性が現れます。上品であれ。",
-    `## The report awaiting revision\n\n${fencedBlock(rawReport)}`,
+    `Then resubmit the tightened draft: \`worqload report submit --slug ${slug} < ${REVISION_DRAFT_RELPATH}\`. The next submission is stored as written.`,
   ].join("\n\n") + "\n";
 }
 
@@ -2410,13 +2418,18 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
     // passes through. revisionPending marks which half of the cycle we are in.
     if (isReviseModeEnabled(meta) && meta.revisionPending !== true) {
       await saveSessionMeta({ ...meta, revisionPending: true }, ctx.sessionsDir);
+      // Save the first submission to a scratch file in the worktree so the
+      // session edits it in place rather than reconstructing it from the bounce
+      // message — nothing is dropped in the round trip. The next submission
+      // (the resubmission) is what gets stored.
+      await Bun.write(join(meta.worktreePath, REVISION_DRAFT_RELPATH), body.content);
       // Bouncing through the feedback inbox (not the CLI stdout alone) is what
       // wakes the session: a session that just submitted a report has, from its
       // own point of view, finished and likely ended its turn, so it must be
       // woken to receive the revise instruction and resubmit. Same path human
       // feedback takes, drained exactly once.
       const inbox = feedbackInboxDirFor(ctx, meta.id);
-      const file = await writeNumberedFile(inbox, "revision-requested", buildRevisionRequestFeedback(body.content), {
+      const file = await writeNumberedFile(inbox, "revision-requested", buildRevisionRequestFeedback(body.slug), {
         archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
       });
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });

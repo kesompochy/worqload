@@ -341,6 +341,7 @@ test("with revise mode on, the first submission is bounced for revision and the 
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
+  const wt = created.meta.worktreePath;
   await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
 
   // First submission: held, not stored.
@@ -350,11 +351,14 @@ test("with revise mode on, the first submission is bounced for revision and the 
   const reportsDir = join(ctx.sessionsDir, sid, "reports");
   expect(existsSync(reportsDir) && readdirSync(reportsDir).length > 0).toBe(false);
 
-  // The original is queued into the feedback inbox so the session is woken to revise it.
+  // The first submission is saved to the worktree scratch file for the session to edit in place.
+  expect(readFileSync(join(wt, ".worqload-draft", "revision-draft.md"), "utf8")).toBe("初稿");
+
+  // A revise instruction is queued into the feedback inbox (pointing at the draft) so the session is woken.
   const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
   const inboxFiles = readdirSync(inboxDir).filter((f) => f.endsWith(".md"));
   expect(inboxFiles).toHaveLength(1);
-  expect(readFileSync(join(inboxDir, inboxFiles[0]), "utf8")).toContain("初稿");
+  expect(readFileSync(join(inboxDir, inboxFiles[0]), "utf8")).toContain(".worqload-draft/revision-draft.md");
   const events = await readEvents(sid, 1, ctx.sessionsDir);
   expect(events.filter((e) => e.kind === "feedback_received")).toHaveLength(1);
   expect(events.filter((e) => e.kind === "report_submitted")).toHaveLength(0);
