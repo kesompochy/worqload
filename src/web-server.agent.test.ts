@@ -39,7 +39,6 @@ test("startServer with agentName=codex defaults spawnCommand to the codex prefix
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
-    reportRewriter: async (raw) => raw,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   expect(started.ctx.spawnCommand[0]).toBe("codex");
@@ -61,7 +60,6 @@ test("POST /sessions persists the selected agentName and passes its runtime to t
     branchNameGenerator: async () => null,
     hostLauncher,
     worktreeOps: fakeWorktreeOps(),
-    reportRewriter: async (raw) => raw,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -88,7 +86,6 @@ test("POST /sessions defaults agentName to the server agent", async () => {
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
-    reportRewriter: async (raw) => raw,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -109,7 +106,6 @@ test("POST /sessions rejects unknown agentName", async () => {
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
-    reportRewriter: async (raw) => raw,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 

@@ -12,13 +12,12 @@ import {
   listSessionMetas,
   reorderSessions,
   isTerminal,
-  isReportAgentEnabled,
+  isReviseModeEnabled,
   validateTransition,
   type AgentName,
   type SessionMeta,
   type SessionStatus,
 } from "./session";
-import { makeClaudeReportRewriter, makeCodexReportRewriter, type ReportRewriter } from "./report-rewriter";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
@@ -185,12 +184,6 @@ export interface ServerContext {
   // WorktreeOps so worqload core stays unaware of `gh`; the default
   // (ghPrLinkResolver) is the one place that knows.
   prLinkResolver: PrLinkResolver;
-  // Rewrites a submitted report into human-readable form before it's stored,
-  // when the session's reportAgentEnabled flag is on. The default spawns a
-  // disposable agent matching the session agent; tests inject a synchronous
-  // fake.
-  reportRewriter: ReportRewriter;
-  reportRewriterForAgent: (agentName: AgentName) => ReportRewriter;
   clients: Map<string, SessionAttachment>;
   // One promise chain per session, serialising host create/teardown. Two
   // resume triggers racing (a manual Resume and the wake watchdog, or two
@@ -240,7 +233,6 @@ export interface StartServerOptions {
   branchNameGenerator?: BranchNameGenerator;
   hostCommand?: string[];       // override how the (subprocess) host is launched
   hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
-  reportRewriter?: ReportRewriter; // override the report rewriter (tests use a fake)
   worktreeOps?: WorktreeOps;    // override the git/worktree layer (tests use a fake)
   prLinkResolver?: PrLinkResolver; // override the branch→PR-URL resolver (tests use a fake)
   // Auto-resume threshold for the wake watchdog (ms). When it fires, if the
@@ -373,16 +365,16 @@ function formatRejectedCommandFeedback(escalationFilename: string, command: stri
   return parts.join("\n\n") + "\n";
 }
 
-// Delivered into the feedback inbox when the report agent bounces a report as a
-// misfiled escalation. The bounce can't rely on the `worqload report submit`
-// stdout alone: a session that wrote a report to ask the human has, from its
-// own point of view, already asked and ended its turn — so it routes through
-// the inbox, which wakes the session and is drained exactly once.
-function buildBouncedReportFeedback(rawReport: string): string {
+// Delivered into the feedback inbox when revise mode holds a report's first
+// submission. The bounce can't rely on the `worqload report submit` stdout
+// alone: a session that just submitted a report has, from its own point of
+// view, finished and likely ended its turn — so it routes through the inbox,
+// which wakes the session and is drained exactly once.
+function buildRevisionRequestFeedback(rawReport: string): string {
   return [
-    "A report you submitted was not stored. The report agent judged it a request for a decision, instruction, or approval from the human — that belongs in an Escalation, not a Report.",
-    "Resubmit its content with `worqload escalate submit`, phrased so the decision you need is explicit. Do not resubmit it as a report.",
-    `## The report that was bounced\n\n${fencedBlock(rawReport)}`,
+    "A report you submitted was held for a revision pass and not yet stored. Revise mode is on for this session.",
+    "Re-read the report below as the human will: lead with the conclusion, keep sentences short, and cut self-justification, apology, and filler. Then resubmit the tightened version with `worqload report submit`. The next submission is stored as written.",
+    `## The report awaiting revision\n\n${fencedBlock(rawReport)}`,
   ].join("\n\n") + "\n";
 }
 
@@ -750,13 +742,6 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand });
-  const overriddenReportRewriter = opts.reportRewriter;
-  const reportRewriterForAgent: (name: AgentName) => ReportRewriter = overriddenReportRewriter !== undefined
-    ? () => overriddenReportRewriter
-    : (name) => name === "codex"
-      ? makeCodexReportRewriter({ spawnCommand: spawnCommandForAgent(name) })
-      : makeClaudeReportRewriter({ spawnCommand: spawnCommandForAgent(name) });
-  const reportRewriter = reportRewriterForAgent(agentName);
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
   // Cache wraps whatever resolver is in play (the gh one in production, a fake
   // in tests) so the sidebar's background prefetch doesn't respawn `gh` per
@@ -852,8 +837,6 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     spawnCommandForAgent,
     branchNameGenerator,
     hostLauncher,
-    reportRewriter,
-    reportRewriterForAgent,
     worktreeOps,
     prLinkResolver,
     clients: new Map(),
@@ -936,7 +919,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/unarchive", postUnarchive),
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
-  defineRoute("POST", "/sessions/:id/report-agent", postReportAgent),
+  defineRoute("POST", "/sessions/:id/revise-mode", postReviseMode),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("GET",  "/sessions/:id/feedback/:filename/attachments/:name", getFeedbackAttachment),
@@ -1349,20 +1332,22 @@ async function postTitle(req: Request, ctx: ServerContext, params: Record<string
   });
 }
 
-interface ReportAgentBody {
+interface ReviseModeBody {
   enabled?: unknown;
 }
 
-// The UI toggle for the disposable report-only agent. Stored on meta so it
-// rides along in every session listing/detail response without extra
-// decoration (isReportAgentEnabled reads it; absent means off).
-async function postReportAgent(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+// The UI toggle for revise mode. Stored on meta so it rides along in every
+// session listing/detail response without extra decoration (isReviseModeEnabled
+// reads it; absent means off). Toggling either way clears any pending revision
+// so the next submission starts a fresh first-submit/resubmit cycle.
+async function postReviseMode(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const body = (await req.json().catch(() => ({}))) as ReportAgentBody;
+    const body = (await req.json().catch(() => ({}))) as ReviseModeBody;
     if (typeof body.enabled !== "boolean") {
       return json({ error: "enabled must be a boolean" }, 400);
     }
-    const updated: SessionMeta = { ...meta, reportAgentEnabled: body.enabled };
+    const { revisionPending: _reset, ...rest } = meta;
+    const updated: SessionMeta = { ...rest, reviseModeEnabled: body.enabled };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
   });
@@ -2417,28 +2402,20 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
         return json({ error: `no such feedback message: ${replyTo}` }, 400);
       }
     }
-    // The disposable report-only agent runs here, before the report is stored,
-    // so the session never saw the 推敲 burden and the human reads the polished
-    // text. Off per session → store the agent's raw submission untouched.
-    const verdict = isReportAgentEnabled(meta)
-      ? await ctx.reportRewriterForAgent(meta.agentName ?? ctx.agentName)(body.content, { cwd: meta.worktreePath })
-      : body.content;
-    // null = the rewriter judged the report not worth the human's time. Store
-    // nothing, broadcast nothing, consume no sequence number.
-    if (verdict === null) {
-      return json({ suppressed: true });
-    }
-    // { escalate: true } = the report is really a request for a decision and
-    // belongs in an Escalation. The report is not stored. Bouncing it back
-    // through the CLI's stdout alone is not enough: the session that submitted
-    // it has very likely ended its turn, since a report written to ask the
-    // human reads — to that session — as "asked, now waiting". So queue the
-    // resubmission instruction into the feedback inbox and wake the session,
-    // the same path human feedback takes, so the original session runs again
-    // and refiles it as an escalation.
-    if (typeof verdict !== "string") {
+    // Revise mode (opt-in per session): hold the first submission of each
+    // report and bounce it back asking the session to tighten it, so the 推敲
+    // is done by the session — which holds the full context the report
+    // describes — rather than a context-blind rewriter. The resubmission
+    // passes through. revisionPending marks which half of the cycle we are in.
+    if (isReviseModeEnabled(meta) && meta.revisionPending !== true) {
+      await saveSessionMeta({ ...meta, revisionPending: true }, ctx.sessionsDir);
+      // Bouncing through the feedback inbox (not the CLI stdout alone) is what
+      // wakes the session: a session that just submitted a report has, from its
+      // own point of view, finished and likely ended its turn, so it must be
+      // woken to receive the revise instruction and resubmit. Same path human
+      // feedback takes, drained exactly once.
       const inbox = feedbackInboxDirFor(ctx, meta.id);
-      const file = await writeNumberedFile(inbox, "report-bounced", buildBouncedReportFeedback(body.content), {
+      const file = await writeNumberedFile(inbox, "revision-requested", buildRevisionRequestFeedback(body.content), {
         archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
       });
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
@@ -2448,23 +2425,27 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
         seq: file.seq,
         hasClient: att !== undefined,
         status: meta.status,
-        reason: "report_bounced",
+        reason: "report_revision_requested",
       });
       if (att) {
         att.client.send("[wake] check feedback inbox").catch(() => {});
         scheduleWakeWatchdog(ctx, meta.id, att);
       } else if (!isTerminal(meta.status)) {
-        await respawnMissingClient(ctx, meta, "report_bounced_no_client");
+        await respawnMissingClient(ctx, meta, "report_revision_requested");
       }
-      return json({ escalateInstead: true });
+      return json({ revisionRequested: true });
+    }
+    // The resubmission, or revise mode off: clear any pending flag and store.
+    if (meta.revisionPending === true) {
+      await saveSessionMeta({ ...meta, revisionPending: false }, ctx.sessionsDir);
     }
     const dir = reportsDirFor(ctx, meta.id);
-    // Suppressed and bounced reports returned above, so attachments are written
+    // Reports bounced for revision returned above, so attachments are written
     // only alongside a report that is actually stored.
     const writeOpts: WriteNumberedFileOptions = {};
     if (replyTo) writeOpts.meta = { replyTo };
     if (attachments.length > 0) writeOpts.attachments = attachments;
-    const file = await writeNumberedFile(dir, body.slug, verdict, writeOpts);
+    const file = await writeNumberedFile(dir, body.slug, body.content, writeOpts);
     await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
     return json({ filename: file.filename, seq: file.seq });
   });

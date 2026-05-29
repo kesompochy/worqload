@@ -3,8 +3,8 @@
 //
 // worqload core couples to git only through `WorktreeOps`; it must not learn
 // about `gh` the way it learned about `git`. So the PR lookup lives behind
-// `PrLinkResolver`, injected into the server like `worktreeOps` /
-// `reportRewriter`. `ghPrLinkResolver` — the one official implementation — is
+// `PrLinkResolver`, injected into the server like `worktreeOps`.
+// `ghPrLinkResolver` — the one official implementation — is
 // the *only* place that knows the lookup is done with the `gh` CLI; swapping it
 // for a GitHub-API or a forge-specific resolver never touches the server.
 

@@ -55,9 +55,6 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
-    // Default to pass-through so report tests don't spawn the real claude the
-    // production rewriter would; the rewrite-specific tests override this.
-    reportRewriter: async (raw) => raw,
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -323,11 +320,9 @@ test("POST /internal/sessions/:id/reports writes numbered report", async () => {
   expect(reportEvents).toHaveLength(2);
 });
 
-test("a submitted report is stored raw without the rewriter (flag defaults OFF)", async () => {
+test("a submitted report is stored on first submission with revise mode OFF (the default)", async () => {
   const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async (raw, { cwd }) => `整形済み(${cwd ? "cwd-ok" : "no-cwd"}): ${raw}`,
-  });
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
@@ -335,146 +330,97 @@ test("a submitted report is stored raw without the rewriter (flag defaults OFF)"
   const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "なまの本文" }).then(
     (r) => r.json(),
   );
+  expect(r.filename).toBe("001-plan.md");
   const stored = readFileSync(join(ctx.sessionsDir, sid, "reports", r.filename), "utf8");
   expect(stored).toBe("なまの本文");
 });
 
-test("a submitted report is run through the report rewriter once the flag is turned on", async () => {
+test("with revise mode on, the first submission is bounced for revision and the resubmission is stored verbatim", async () => {
   const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async (raw, { cwd }) => `整形済み(${cwd ? "cwd-ok" : "no-cwd"}): ${raw}`,
-  });
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
 
-  const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "なまの本文" }).then(
-    (r) => r.json(),
-  );
-  const stored = readFileSync(join(ctx.sessionsDir, sid, "reports", r.filename), "utf8");
-  expect(stored).toBe("整形済み(cwd-ok): なまの本文");
-});
-
-test("toggling reportAgentEnabled off stores the report raw; toggling back on restores rewriting", async () => {
-  const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async (raw) => `REWRITTEN: ${raw}`,
-  });
-
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const sid = created.meta.id;
-
-  const off = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: false }).then((r) => r.json());
-  expect(off.meta.reportAgentEnabled).toBe(false);
-  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
-  expect(detail.meta.reportAgentEnabled).toBe(false);
-
-  const r1 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "raw", content: "素のまま" }).then(
-    (r) => r.json(),
-  );
-  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r1.filename), "utf8")).toBe("素のまま");
-
-  const on = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true }).then((r) => r.json());
-  expect(on.meta.reportAgentEnabled).toBe(true);
-
-  const r2 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, {
-    slug: "polished",
-    content: "また整形",
-  }).then((r) => r.json());
-  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r2.filename), "utf8")).toBe("REWRITTEN: また整形");
-});
-
-test("a report the rewriter suppresses is stored nowhere and emits no event", async () => {
-  const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async () => null,
-  });
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
-
-  const res = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "noise", content: "中身のない本文" });
-  expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ suppressed: true });
-
+  // First submission: held, not stored.
+  const first = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "初稿" });
+  expect(first.status).toBe(200);
+  expect(await first.json()).toEqual({ revisionRequested: true });
   const reportsDir = join(ctx.sessionsDir, sid, "reports");
   expect(existsSync(reportsDir) && readdirSync(reportsDir).length > 0).toBe(false);
-  const events = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(events.filter((e) => e.kind === "report_submitted")).toHaveLength(0);
-});
 
-test("a suppressed report consumes no sequence number", async () => {
-  const repoDir = makeTmpDir("repo");
-  let suppressNext = true;
-  const { baseUrl } = await bootServer(repoDir, {
-    // Drop the first report, keep the rest — the next stored report must still
-    // be 001, as if the suppressed one was never submitted.
-    reportRewriter: async (raw) => {
-      if (suppressNext) {
-        suppressNext = false;
-        return null;
-      }
-      return raw;
-    },
-  });
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
-
-  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "noise", content: "x" });
-  const kept = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "real", content: "y" }).then((r) =>
-    r.json(),
-  );
-  expect(kept.filename).toBe("001-real.md");
-  expect(kept.seq).toBe(1);
-});
-
-test("a report the rewriter routes to escalation is requeued as feedback so the original session refiles it", async () => {
-  const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async () => ({ escalate: true }),
-  });
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
-
-  const res = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, {
-    slug: "ask",
-    content: "どちらにすべきか指示がほしい",
-  });
-  expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ escalateInstead: true });
-
-  // The misfiled report is stored nowhere and emits no report event.
-  const reportsDir = join(ctx.sessionsDir, sid, "reports");
-  expect(existsSync(reportsDir) && readdirSync(reportsDir).length > 0).toBe(false);
-  const events = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(events.filter((e) => e.kind === "report_submitted")).toHaveLength(0);
-
-  // Instead, the bounce is queued into the feedback inbox — carrying the
-  // original report content — and broadcast like ordinary feedback. Relying on
-  // the `worqload report submit` stdout alone loses the bounce: a session that
-  // wrote a report to ask the human has typically ended its turn already.
+  // The original is queued into the feedback inbox so the session is woken to revise it.
   const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
   const inboxFiles = readdirSync(inboxDir).filter((f) => f.endsWith(".md"));
   expect(inboxFiles).toHaveLength(1);
-  expect(readFileSync(join(inboxDir, inboxFiles[0]), "utf8")).toContain("どちらにすべきか指示がほしい");
+  expect(readFileSync(join(inboxDir, inboxFiles[0]), "utf8")).toContain("初稿");
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
   expect(events.filter((e) => e.kind === "feedback_received")).toHaveLength(1);
-
-  // And the session is woken, so it actually runs again instead of sitting idle.
+  expect(events.filter((e) => e.kind === "report_submitted")).toHaveLength(0);
   const log = readFileSync(hostLogPath(ctx.sessionsDir, sid), "utf8")
     .trim()
     .split("\n")
     .map((l) => JSON.parse(l) as Record<string, unknown>);
-  expect(log.some((e) => e.event === "wake_sent" && e.reason === "report_bounced")).toBe(true);
+  expect(log.some((e) => e.event === "wake_sent" && e.reason === "report_revision_requested")).toBe(true);
+
+  // Second submission: stored as written, with no further rewrite.
+  const second = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "推敲した本文" }).then(
+    (r) => r.json(),
+  );
+  expect(second.filename).toBe("001-plan.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", second.filename), "utf8")).toBe("推敲した本文");
 });
 
-test("POST /sessions/:id/report-agent rejects a non-boolean enabled", async () => {
+test("the revise-mode cycle resets per report: every report's first submission is bounced", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // Report A: bounce then store.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "a", content: "A初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const a = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "a", content: "A推敲" }).then((r) => r.json());
+  expect(a.filename).toBe("001-a.md");
+
+  // Report B: the next first submission is bounced again, not passed through.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "b", content: "B初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const b = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "b", content: "B推敲" }).then((r) => r.json());
+  expect(b.filename).toBe("002-b.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", b.filename), "utf8")).toBe("B推敲");
+});
+
+test("turning revise mode off mid-cycle clears the pending bounce so the next report stores on first submission", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const on = await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true }).then((r) => r.json());
+  expect(on.meta.reviseModeEnabled).toBe(true);
+
+  // Bounce the first submission, leaving a pending revision.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  // Toggle off: the pending flag is reset.
+  const off = await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: false }).then((r) => r.json());
+  expect(off.meta.reviseModeEnabled).toBe(false);
+  expect(off.meta.revisionPending).toBeUndefined();
+
+  // The next report stores on its first submission.
+  const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "そのまま保存" }).then((r) => r.json());
+  expect(r.filename).toBe("001-p.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r.filename), "utf8")).toBe("そのまま保存");
+});
+
+test("POST /sessions/:id/revise-mode rejects a non-boolean enabled", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const res = await postJson(baseUrl, `/sessions/${created.meta.id}/report-agent`, { enabled: "yes" });
+  const res = await postJson(baseUrl, `/sessions/${created.meta.id}/revise-mode`, { enabled: "yes" });
   expect(res.status).toBe(400);
 });
 
@@ -1417,22 +1363,22 @@ test("GET report attachments endpoint rejects path traversal in :name", async ()
   expect(res.status).toBe(400);
 });
 
-test("a suppressed report stores none of its attachments", async () => {
+test("a report bounced for revision stores none of its attachments", async () => {
   const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, { reportRewriter: async () => null });
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
 
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
   const form = new FormData();
-  form.set("payload", JSON.stringify({ slug: "noise", content: "nothing worth the human's time" }));
+  form.set("payload", JSON.stringify({ slug: "draft", content: "first draft" }));
   form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
 
   const res = await fetch(`${baseUrl}/internal/sessions/${sid}/reports`, { method: "POST", body: form });
-  expect(await res.json()).toEqual({ suppressed: true });
-  expect(existsSync(join(ctx.sessionsDir, sid, "reports", "001-noise.attachments"))).toBe(false);
+  expect(await res.json()).toEqual({ revisionRequested: true });
+  expect(existsSync(join(ctx.sessionsDir, sid, "reports", "001-draft.attachments"))).toBe(false);
 });
 
 // What `git diff` actually produces (full context, merge-base resolution, ...)
