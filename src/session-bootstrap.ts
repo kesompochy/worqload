@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import protocolPrefixTemplate from "./prompts/protocol-prefix.txt" with { type: "text" };
 import resumeKickoff from "./prompts/resume-kickoff.txt" with { type: "text" };
+import turnWithoutReportNudge from "./prompts/turn-without-report-nudge.txt" with { type: "text" };
 
 // The wq-issue-comment script ships inside the worqload install, not on PATH.
 // A session's CWD is a worktree of whatever target repo worqload was started
@@ -29,6 +30,11 @@ export function buildProtocolPrefix(
 // restored by `claude --continue`, so this only needs to nudge the agent back
 // into the loop and point it at any new instructions the human left.
 export const RESUME_KICKOFF = resumeKickoff;
+
+// Sent to the agent when a turn ends without a Report or Escalation. The human
+// reads the session through those two channels, so a silent turn-end leaves
+// them blind; this nudges the agent to report (or escalate) before going idle.
+export const TURN_WITHOUT_REPORT_NUDGE = turnWithoutReportNudge;
 
 export function buildUserMessage(text: string): unknown {
   return {

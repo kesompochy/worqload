@@ -1100,6 +1100,95 @@ test("POST /sessions/:id/wake rejects a terminal session", async () => {
   expect(res.status).toBe(400);
 });
 
+// Wraps inProcessHostLauncher to (a) record every message serve sends to the
+// host and (b) expose the onEvent callback so a test can feed claude stream
+// events (e.g. a turn-end `result` line) through the server's broadcast path.
+function capturingHostLauncher() {
+  const base = inProcessHostLauncher();
+  const sends: string[] = [];
+  let onEvent: ((event: Awaited<ReturnType<typeof appendEvent>>) => void) | undefined;
+  const launcher: HostLauncher = async (req) => {
+    onEvent = req.onEvent;
+    const { client } = await base(req);
+    return { client: { ...client, async send(text: string) { sends.push(text); } } };
+  };
+  return {
+    launcher,
+    sends,
+    // Simulate the host forwarding a claude turn-end line. seq/timestamp are
+    // irrelevant to the auto-nudge logic, which keys off kind + payload.type.
+    endTurn: () => onEvent?.({ seq: 0, kind: "claude_system", timestamp: "", payload: { type: "result" } }),
+  };
+}
+
+test("a turn that ends without a report is nudged with a message to the agent", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 2 });
+
+  await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+
+  host.endTurn();
+  expect(host.sends.length).toBe(1);
+});
+
+test("a turn that submitted a report is left alone", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 2 });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "progress", content: "did the thing" });
+  host.endTurn();
+  expect(host.sends.length).toBe(0);
+});
+
+test("consecutive report-less turns stop being nudged after maxAutoNudges", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 2 });
+
+  await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+
+  host.endTurn();
+  host.endTurn();
+  host.endTurn();
+  expect(host.sends.length).toBe(2);
+});
+
+test("a report resets the nudge budget for later report-less turns", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 1 });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  host.endTurn(); // report-less → nudge (budget now spent)
+  host.endTurn(); // still report-less, budget spent → no nudge
+  expect(host.sends.length).toBe(1);
+
+  // A real report clears the consecutive count.
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "progress", content: "done step" });
+  host.endTurn(); // turn that carried the report → no nudge
+  host.endTurn(); // fresh report-less turn → nudge again
+  expect(host.sends.length).toBe(2);
+});
+
+test("maxAutoNudges=0 disables the report-less nudge entirely", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 0 });
+
+  await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+
+  host.endTurn();
+  host.endTurn();
+  expect(host.sends.length).toBe(0);
+});
+
 test("feedback numbering stays monotonic after a fetch drains the inbox", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
