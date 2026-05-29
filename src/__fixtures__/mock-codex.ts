@@ -3,24 +3,20 @@
 // Emits codex-style JSONL events to stdout and exits when stdin closes (codex's
 // real exec is one prompt → exit; we mimic that lifecycle exactly).
 //
-// argv layout: the test passes `[bun, mock-codex, <mode>, ...<sayArgs>]` as the
-// spawnCommand prefix; the driver / rewriter appends `exec --json -` (fresh) or
-// `exec --json resume <id> -` (resume). So process.argv looks like:
+// argv layout: the test passes `[bun, mock-codex, <mode>]` as the spawnCommand
+// prefix; the driver appends `exec --json -` (fresh) or `exec --json resume
+// <id> -` (resume). So process.argv looks like:
 //   bun mock-codex.ts echo            exec --json -
 //   bun mock-codex.ts echo            exec --json resume <id> -
-//   bun mock-codex.ts say <TEXT>      exec --json -
 //
 // Modes:
 //   echo   : echo the stdin text back as one agent_message item, then exit 0
-//   say    : emit argv[3] verbatim as the agent_message item text, then exit 0
-//            (used by the rewriter test to feed an exact transformed output)
 //   rotate : behave like echo but ALWAYS mint a fresh thread_id, ignoring any
 //            resume id in argv (simulates codex recovering a deleted thread)
 //   crash  : emit thread.started and exit 1 immediately
 //   hang   : emit thread.started, never write anything else, read stdin forever
 
 const mode = process.argv[2] ?? "echo";
-const sayText = process.argv[3] ?? "";
 
 function writeLine(obj: unknown): void {
   process.stdout.write(`${JSON.stringify(obj)}\n`);
@@ -61,22 +57,6 @@ if (mode === "crash") {
 if (mode === "hang") {
   process.stdin.on("data", () => {});
   setInterval(() => {}, 1_000_000);
-}
-
-if (mode === "say") {
-  // Drain stdin (callers write to it) so the pipe doesn't fill; the canned
-  // output below is independent of the actual prompt.
-  await readStdin();
-  writeLine({ type: "turn.started" });
-  writeLine({
-    type: "item.completed",
-    item: { id: "i1", type: "agent_message", text: sayText },
-  });
-  writeLine({
-    type: "turn.completed",
-    usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 },
-  });
-  process.exit(0);
 }
 
 if (mode === "echo" || mode === "rotate") {

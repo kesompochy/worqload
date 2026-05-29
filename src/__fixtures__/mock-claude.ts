@@ -8,7 +8,6 @@
 //   hang    : emit init, then read stdin forever (used to test kill)
 //   crash   : emit init, then exit 1
 //   tool    : emit init, then an assistant turn with a tool_use block, then exit 0
-//   say     : emit init, then one assistant turn whose text is argv[3], then exit 0
 //   env     : emit init, then emit a system line carrying the worqload env vars, then hang
 
 const mode = process.argv[2] ?? "init";
@@ -49,18 +48,6 @@ if (mode === "tool") {
     },
   });
   process.exit(0);
-}
-
-if (mode === "say") {
-  // Emit a chosen assistant text, then exit once the driver closes stdin.
-  // Used to feed the report rewriter an exact output (e.g. the suppression
-  // sentinel) without running a real agent.
-  writeLine({
-    type: "assistant",
-    message: { content: [{ type: "text", text: process.argv[3] ?? "" }] },
-  });
-  process.stdin.on("data", () => {});
-  process.stdin.on("end", () => process.exit(0));
 }
 
 if (mode === "echo") {

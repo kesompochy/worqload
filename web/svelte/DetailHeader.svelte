@@ -15,7 +15,7 @@
   import { formatRelative, eventAgeIsStale } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReportAgent } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
   const tabs = [
@@ -74,7 +74,7 @@
         {/each}
         <span class="action-group-sep" aria-hidden="true"></span>
       {/if}
-      <label class="report-agent-toggle" title="On: worqload runs a disposable report-only agent over each report (結論ファースト・短文に整形) before storing it. Off: the report is stored as the session wrote it."><input type="checkbox" checked={m.reportAgentEnabled === true} onchange={() => onToggleReportAgent(m.id)} /><span>レポート整形</span></label>
+      <label class="revise-mode-toggle" title="On: worqload bounces the first submission of each report back to the session asking it to 推敲 (revise), then stores the resubmission. Off: the report is stored on first submission."><input type="checkbox" checked={m.reviseModeEnabled === true} onchange={() => onToggleReviseMode(m.id)} /><span>推敲モード</span></label>
     </div>
   </div>
   {#if m.title}

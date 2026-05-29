@@ -1403,21 +1403,21 @@ export async function onRenameCommit(id, rawValue) {
   }
 }
 
-// The detail-header toggle for the disposable report-only agent. The flag
-// lives on the session meta (absent means off); flipping it changes whether
-// worqload polishes this session's future reports before storing them. Reads
+// The detail-header toggle for revise mode. The flag lives on the session meta
+// (absent means off); flipping it changes whether worqload bounces the first
+// submission of this session's future reports back for a revision pass. Reads
 // the current value off the loaded detail (where the toggle is rendered) and
 // sends the inverse — only an explicit true counts as on.
-export async function onToggleReportAgent(id) {
+export async function onToggleReviseMode(id) {
   if (!id) return;
   const meta = state.detail && state.detail.meta && state.detail.meta.id === id ? state.detail.meta : null;
   if (!meta) return;
-  const enabled = meta.reportAgentEnabled !== true;
+  const enabled = meta.reviseModeEnabled !== true;
   try {
-    const res = await api("POST", `/sessions/${id}/report-agent`, { enabled });
+    const res = await api("POST", `/sessions/${id}/revise-mode`, { enabled });
     state.detail.meta = res.meta;
     const card = state.sessions.find(s => s.id === id);
-    if (card) card.reportAgentEnabled = res.meta.reportAgentEnabled;
+    if (card) card.reviseModeEnabled = res.meta.reviseModeEnabled;
   } catch (e) {
     toast(`failed: ${e.message}`);
   }

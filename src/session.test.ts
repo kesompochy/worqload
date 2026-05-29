@@ -7,7 +7,7 @@ import {
   loadSessionMeta,
   listSessionMetas,
   reorderSessions,
-  isReportAgentEnabled,
+  isReviseModeEnabled,
 } from "./session";
 import type { SessionStatus, SessionMeta } from "./session";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
@@ -64,19 +64,19 @@ test("createSession accepts optional agentName", () => {
   expect(meta.agentName).toBe("codex");
 });
 
-test("isReportAgentEnabled defaults OFF so the session's own prose is stored unless opted in", () => {
+test("isReviseModeEnabled defaults OFF so reports are stored on first submission unless opted in", () => {
   const meta = createSession(baseParams);
   // A new session leaves the flag absent; absent means off, so reports are
-  // stored as written until the human explicitly turns formatting on.
-  expect(meta.reportAgentEnabled).toBeUndefined();
-  expect(isReportAgentEnabled(meta)).toBe(false);
+  // stored on first submission until the human explicitly turns revise mode on.
+  expect(meta.reviseModeEnabled).toBeUndefined();
+  expect(isReviseModeEnabled(meta)).toBe(false);
 });
 
-test("isReportAgentEnabled is true only when the human explicitly turned it on", () => {
-  const off: SessionMeta = { ...createSession(baseParams), reportAgentEnabled: false };
-  const on: SessionMeta = { ...createSession(baseParams), reportAgentEnabled: true };
-  expect(isReportAgentEnabled(off)).toBe(false);
-  expect(isReportAgentEnabled(on)).toBe(true);
+test("isReviseModeEnabled is true only when the human explicitly turned it on", () => {
+  const off: SessionMeta = { ...createSession(baseParams), reviseModeEnabled: false };
+  const on: SessionMeta = { ...createSession(baseParams), reviseModeEnabled: true };
+  expect(isReviseModeEnabled(off)).toBe(false);
+  expect(isReviseModeEnabled(on)).toBe(true);
 });
 
 test("validateTransition allows valid transitions", () => {
