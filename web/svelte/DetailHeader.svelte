@@ -54,7 +54,7 @@
   {@const events = (appState.detail.events ?? []).filter(isAgentWorkEvent)}
   {@const lastEvent = events.length > 0 ? events[events.length - 1] : null}
   <div class="detail-header">
-    <div class="title"><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
+    <div class="title" title={m.prompt}><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
     <div class="header-actions">
       {#if appState.actions.length > 0}
         {#each appState.actions as a, i (a.id)}
@@ -77,6 +77,9 @@
       <label class="report-agent-toggle" title="On: worqload runs a disposable report-only agent over each report (結論ファースト・短文に整形) before storing it. Off: the report is stored as the session wrote it."><input type="checkbox" checked={m.reportAgentEnabled === true} onchange={() => onToggleReportAgent(m.id)} /><span>レポート整形</span></label>
     </div>
   </div>
+  {#if m.title}
+    <div class="detail-original-prompt" title={m.prompt}><span class="label">最初の問いかけ</span>{m.prompt}</div>
+  {/if}
   <ActionBar />
   <div class="detail-meta">
     {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}base: <code>{m.baseBranch}</code>
