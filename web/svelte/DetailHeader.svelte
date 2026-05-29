@@ -54,7 +54,7 @@
   {@const events = (appState.detail.events ?? []).filter(isAgentWorkEvent)}
   {@const lastEvent = events.length > 0 ? events[events.length - 1] : null}
   <div class="detail-header">
-    <div class="title" title={m.prompt}><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
+    <div class="title"><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
     <div class="header-actions">
       {#if appState.actions.length > 0}
         {#each appState.actions as a, i (a.id)}
@@ -78,7 +78,7 @@
     </div>
   </div>
   {#if m.title}
-    <div class="detail-original-prompt" title={m.prompt}><span class="label">initial prompt</span>{m.prompt}</div>
+    <div class="detail-original-prompt">{m.prompt}</div>
   {/if}
   <ActionBar />
   <div class="detail-meta">
