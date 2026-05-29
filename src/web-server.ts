@@ -34,6 +34,7 @@ import { isSessionPreviewAlive, listActions, listAvailableActions, findAction, s
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { isAgentWorkEvent } from "../web/events-view.js";
+import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -212,6 +213,20 @@ export interface ServerContext {
   lastFeedbackFetchAt: Map<string, number>;
   // Watchdog threshold. Zero (or negative) disables the watchdog entirely.
   wakeWatchdogMs: number;
+  // The agent is expected to close each turn with a Report (or an Escalation,
+  // which pauses for the human). When a turn ends with neither, serve sends the
+  // agent a message asking it to report so the session never goes silently
+  // idle on the human. maxAutoNudges caps consecutive such nudges so an agent
+  // that simply never reports can't be re-poked forever; a real Report or
+  // Escalation resets the count. Zero disables the nudge entirely.
+  maxAutoNudges: number;
+  // Per session: whether a Report/Escalation was seen since the current turn
+  // began. Set when one is appended, consumed (and reset) at the turn-end
+  // `result` event to decide whether that turn earned a nudge.
+  reportedThisTurn: Map<string, boolean>;
+  // Per session: consecutive auto-nudges sent without an intervening Report or
+  // Escalation. Compared against maxAutoNudges; reset to 0 by a real one.
+  autoNudgeCount: Map<string, number>;
   // Per-attachment byte cap and per-message attachment count cap, applied to
   // both feedback and report image uploads. Attachments above either limit are
   // rejected with 400 at the POST.
@@ -249,6 +264,10 @@ export interface StartServerOptions {
   // re-spawns with --continue so RESUME_KICKOFF forces a fetch. Zero or
   // negative disables it. Production default is 90s; tests override down.
   wakeWatchdogMs?: number;
+  // Max consecutive auto-nudges for turns that end without a Report or
+  // Escalation. Zero disables the nudge. Production default is below; tests
+  // override it to exercise the cap with few turns.
+  maxAutoNudges?: number;
   // Per-attachment byte cap and per-message attachment count cap, applied to
   // both feedback and report image uploads. Tests use these to keep size-limit
   // assertions cheap.
@@ -405,6 +424,7 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
   if (event.kind.startsWith("claude_")) {
     ctx.lastClaudeActivityAt.set(sessionId, Date.now());
   }
+  trackAutoNudge(ctx, sessionId, event);
   const payload = JSON.stringify({ sessionId, event });
   for (const ws of ctx.wsClients) {
     if (ws.data.sessionId !== sessionId) continue;
@@ -417,6 +437,50 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
       try { ws.send(payload); } catch { /* dead socket */ }
     }
   }
+}
+
+// True for the claude stream line that closes a turn: `claude -p` with
+// stream-json emits a `{type:"result",...}` line once per processed user
+// message. classifyClaudeLine files it under claude_system, carrying the full
+// parsed line as payload, so the turn boundary is observable here.
+function isClaudeTurnEnd(event: Event): boolean {
+  if (event.kind !== "claude_system") return false;
+  const payload = event.payload as { type?: unknown } | null;
+  return typeof payload === "object" && payload !== null && payload.type === "result";
+}
+
+// Keeps the per-session "did this turn report?" flag and the consecutive-nudge
+// count current as events flow through broadcastEvent, and on a turn-end that
+// carried neither a Report nor an Escalation, sends the agent a message asking
+// it to report — capped at maxAutoNudges so an agent that never reports isn't
+// re-poked forever. Both Report/Escalation events (server-appended) and the
+// claude turn-end event pass this same chokepoint, so their relative order is
+// preserved: the agent's `worqload report submit` completes (appending
+// report_submitted) before claude emits the turn's result line.
+function trackAutoNudge(ctx: ServerContext, sessionId: string, event: Event): void {
+  if (ctx.maxAutoNudges <= 0) return;
+  if (event.kind === "report_submitted" || event.kind === "escalation_requested") {
+    ctx.reportedThisTurn.set(sessionId, true);
+    ctx.autoNudgeCount.set(sessionId, 0);
+    return;
+  }
+  if (!isClaudeTurnEnd(event)) return;
+  const reported = ctx.reportedThisTurn.get(sessionId) ?? false;
+  ctx.reportedThisTurn.set(sessionId, false);
+  if (reported) return;
+  const sent = ctx.autoNudgeCount.get(sessionId) ?? 0;
+  if (sent >= ctx.maxAutoNudges) {
+    appendHostLog(ctx, sessionId, "auto_nudge_capped", { sent });
+    return;
+  }
+  // No live attachment means the host socket is gone; there is nothing to
+  // write to. The missing-client feedback path (respawnMissingClient) covers
+  // recovery there — this nudge is best-effort like a manual wake.
+  const att = ctx.clients.get(sessionId);
+  if (!att) return;
+  att.client.send(TURN_WITHOUT_REPORT_NUDGE).catch(() => {});
+  ctx.autoNudgeCount.set(sessionId, sent + 1);
+  appendHostLog(ctx, sessionId, "auto_nudge_sent", { sent: sent + 1 });
 }
 
 async function appendAndBroadcast(
@@ -503,6 +567,13 @@ function appendHostLog(
 // "claude is mid-turn on the previous message" delay while still cutting the
 // worst-case waiting time short.
 const DEFAULT_WAKE_WATCHDOG_MS = 90_000;
+
+// How many turns in a row that end without a Report or Escalation serve will
+// nudge before giving up. One nudge catches the agent that simply forgot; a
+// second covers the agent that ignored the first. Beyond that the agent is
+// demonstrably not going to report, and re-poking only burns tokens, so we
+// fall silent and leave the session for the human.
+const DEFAULT_MAX_AUTO_NUDGES = 2;
 
 // One pending watchdog per attachment, anchored to the first wake that has
 // not yet been acknowledged. A wake arriving while one is already pending does
@@ -864,6 +935,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     lastClaudeActivityAt: new Map(),
     lastFeedbackFetchAt: new Map(),
     wakeWatchdogMs: opts.wakeWatchdogMs ?? DEFAULT_WAKE_WATCHDOG_MS,
+    maxAutoNudges: opts.maxAutoNudges ?? DEFAULT_MAX_AUTO_NUDGES,
+    reportedThisTurn: new Map(),
+    autoNudgeCount: new Map(),
     attachmentMaxBytes: opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
     attachmentMaxCount: opts.attachmentMaxCount ?? DEFAULT_ATTACHMENT_MAX_COUNT,
   };
@@ -1306,6 +1380,8 @@ async function deleteSession(_req: Request, ctx: ServerContext, params: Record<s
     ctx.clients.delete(meta.id);
     ctx.lastClaudeActivityAt.delete(meta.id);
     ctx.lastFeedbackFetchAt.delete(meta.id);
+    ctx.reportedThisTurn.delete(meta.id);
+    ctx.autoNudgeCount.delete(meta.id);
     try {
       await ctx.worktreeOps.removeWorktree(meta.worktreePath, meta.branchName, ctx.repoDir);
     } catch {
