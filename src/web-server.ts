@@ -381,7 +381,7 @@ const REVISION_DRAFT_RELPATH = ".worqload-draft/revision-draft.md";
 function buildRevisionRequestFeedback(slug: string): string {
   return [
     "A report you submitted was held for a revision pass and not yet stored. Revise mode is on for this session.",
-    `Your draft was saved to \`${REVISION_DRAFT_RELPATH}\`. Edit that file in place as the human will read it: lead with the conclusion, keep sentences short, and cut self-justification, apology, and filler.`,
+    `Your draft was saved to \`${REVISION_DRAFT_RELPATH}\`. Edit that file in place as the human will read it: lead with the conclusion, keep sentences short, and cut self-justification, apology, filler, and any conversational tone. A report is a record, not a turn in a conversation.`,
     "Your character shows in what you leave out. Be dignified.",
     `Then resubmit the tightened draft: \`worqload report submit --slug ${slug} < ${REVISION_DRAFT_RELPATH}\`. The next submission is stored as written.`,
   ].join("\n\n") + "\n";
