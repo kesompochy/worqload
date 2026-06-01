@@ -14,6 +14,11 @@ interface Stoppable {
 const tmpDirs: string[] = [];
 const cleanups: Array<() => Promise<void>> = [];
 
+// Git env stripped of the variables a surrounding `git` process (e.g. a commit
+// hook running the suite) exports, so git commands target the directory we
+// point them at rather than the hook's repo.
+const cleanGitEnv = { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
+
 export function makeTmpDir(label: string): string {
   const dir = mkdtempSync(join(tmpdir(), `worqload-${label}-`));
   tmpDirs.push(dir);
@@ -33,6 +38,16 @@ export function makeRepoFromTemplate(key: string, build: (dir: string) => void):
   if (!template) {
     template = mkdtempSync(join(tmpdir(), "worqload-repo-template-"));
     build(template);
+    // Detach the repo from the developer's global gitignore (core.excludesFile).
+    // Tests that assert what `git status` reports — e.g. that .worqload-draft
+    // shows up as untracked — would otherwise pass or fail depending on whose
+    // machine runs them. The repo-local setting overrides the global; copies
+    // inherit it via .git/config. The cleaned env (no GIT_DIR/GIT_INDEX_FILE)
+    // matters when the suite runs inside a git hook, which exports those and
+    // would otherwise redirect this config write at the hook's repo.
+    if (existsSync(join(template, ".git"))) {
+      Bun.spawnSync(["git", "config", "core.excludesFile", "/dev/null"], { cwd: template, env: cleanGitEnv });
+    }
     repoTemplates.set(key, template);
   }
   const dir = makeTmpDir("repo");
