@@ -16,3 +16,22 @@ bun run preview      # try this checkout's UI against a throwaway ~/.worqload-pr
 Run `worqload` with no arguments to list the CLI subcommands.
 
 Drop a `favicon.{svg,png,ico,jpg,gif,webp}` into a repo's `.worqload/` directory to override the browser-tab icon; without one, a built-in default is served.
+
+## Configuration
+
+worqload reads `~/.config/worqload/config.yaml` at server startup (a missing file is fine — it just means no rules).
+
+### textlint
+
+When a session has revise mode on, every report it submits is checked against a list of forbidden strings before being stored. A report containing one is bounced back to the session — with the rule's `comment` — instead of being stored, so the session rewrites it. Matching is plain substring matching.
+
+```yaml
+textlint:
+  - string: "可能性"
+    comment: 統計的事実のときだけ使う
+  - string: "強い"
+    comment: 効果を表す曖昧語は避ける
+```
+
+To keep a flagged word on purpose — for example when a report needs to quote it — prefix that occurrence with a backslash: `\可能性`. The backslash exempts only that occurrence from the lint and is kept in the stored report verbatim, so reports may contain `\` freely.
+
