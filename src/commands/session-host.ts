@@ -10,6 +10,7 @@ import { claudePipeDriver, type SessionDriver, type SessionDriverFactory } from 
 import { codexPipeDriver } from "../session-driver-codex";
 import { tmuxClaudeDriver } from "../session-driver-tmux";
 import {
+  BackpressuredWriter,
   encodeMessage,
   type HostToServeMessage,
   parseLineDelimited,
@@ -79,6 +80,7 @@ function previewText(text: string): string {
 
 interface ClientState {
   buf: string;
+  writer: BackpressuredWriter;
 }
 
 // In-process entrypoint. Returns once the hosted claude has exited and the
@@ -123,7 +125,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
   const sendToActive = (msg: HostToServeMessage): void => {
     if (!activeClient) return;
     try {
-      activeClient.write(encodeMessage(msg));
+      activeClient.data.writer.send(encodeMessage(msg));
     } catch {
       // dead socket; will surface via close()
     }
@@ -179,7 +181,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
     unix: opts.socketPath,
     socket: {
       open(socket) {
-        socket.data = { buf: "" };
+        socket.data = { buf: "", writer: new BackpressuredWriter({ write: (bytes) => socket.write(bytes) }) };
         if (activeClient && activeClient !== socket) {
           try {
             activeClient.end();
@@ -196,6 +198,9 @@ export async function runHost(opts: HostOptions): Promise<number> {
         for (const msg of messages) {
           void handleServeMessage(msg);
         }
+      },
+      drain(socket) {
+        socket.data.writer.flush();
       },
       close(socket) {
         if (activeClient === socket) activeClient = null;

@@ -99,6 +99,49 @@ test("connectToHost.send pushes a user message and the host echoes it back as an
   await hostExit;
 });
 
+test("a message far larger than the socket send buffer survives the round trip intact", async () => {
+  // Regression: the host↔serve socket write is non-blocking and performs a
+  // partial write under backpressure. A message bigger than the send buffer
+  // (large assistant messages, diffs) had its tail dropped, which both
+  // truncated it and desynced the framing of the message after it — here that
+  // lost the trailing replay_done / event and hung the client. Round-trip a
+  // payload well past the buffer and require it back whole.
+  const { socketPath, hostExit } = await bootHost("echo");
+  const events: Event[] = [];
+  const client = await connectToHost({
+    socketPath,
+    sinceSeq: 0,
+    onEvent: (ev) => {
+      events.push(ev);
+    },
+  });
+  await client.replayCompleted;
+  events.length = 0;
+
+  const big = "X".repeat(100_000);
+  await client.send(big);
+
+  for (let i = 0; i < 200; i++) {
+    if (
+      events.some(
+        (e) => e.kind === "claude_assistant_message" && JSON.stringify(e.payload).includes(big),
+      )
+    ) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  expect(
+    events.some(
+      (e) => e.kind === "claude_assistant_message" && JSON.stringify(e.payload).includes(big),
+    ),
+  ).toBe(true);
+
+  await client.kill("SIGTERM");
+  await client.exited;
+  await hostExit;
+});
+
 test("the host marks meta crashed when claude exits non-zero", async () => {
   const { sessionsDir, sessionId, hostExit } = await bootHost("crash");
   await hostExit;
