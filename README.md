@@ -19,7 +19,7 @@ Drop a `favicon.{svg,png,ico,jpg,gif,webp}` into a repo's `.worqload/` directory
 
 ## Configuration
 
-worqload reads `~/.config/worqload/config.yaml` at server startup (a missing file is fine — it just means no rules).
+worqload reads `~/.config/worqload/config.yaml` (a missing file is fine — it just means no rules). Edits take effect on the next report submission, so there is no need to restart the server after changing it.
 
 ### textlint
 

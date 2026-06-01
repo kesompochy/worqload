@@ -503,6 +503,34 @@ test("a textlint bounce does not consume the one-shot revision cycle", async () 
   expect(readFileSync(join(ctx.sessionsDir, sid, "reports", stored.filename), "utf8")).toBe("綺麗な文");
 });
 
+test("textlint config edits take effect without a server restart", async () => {
+  const repoDir = makeTmpDir("repo");
+  const textlintConfigPath = writeTextlintConfig([{ string: "禁止", comment: "旧ルール" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // The original rule is in force.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止あり" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  // Rewrite the config in place — no restart.
+  writeFileSync(textlintConfigPath, 'textlint:\n  - string: "別語"\n    comment: "新ルール"\n');
+
+  // The new rule is active: a report tripping it is bounced with its comment.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "別語あり" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  const latest = readdirSync(inboxDir).filter((f) => f.endsWith(".md")).sort().at(-1) as string;
+  expect(readFileSync(join(inboxDir, latest), "utf8")).toContain("新ルール");
+
+  // The retired rule no longer fires: 「禁止」 now clears textlint and, after the
+  // ordinary one-shot revision pass, stores — which a live rule would block.
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止あり" });
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止あり" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+});
+
 test("textlint does not run when revise mode is off: a forbidden string stores on first submission", async () => {
   const repoDir = makeTmpDir("repo");
   const textlintConfigPath = writeTextlintConfig([{ string: "禁止", comment: "使わない" }]);
