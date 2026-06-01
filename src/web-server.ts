@@ -34,6 +34,7 @@ import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
+import { defaultConfigPath, lintReport, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -225,6 +226,10 @@ export interface ServerContext {
   // rejected with 400 at the POST.
   attachmentMaxBytes: number;
   attachmentMaxCount: number;
+  // The revise-mode textlint rules, read once from the config file at startup.
+  // Empty when no config exists; only consulted while a session has revise mode
+  // on (see postInternalReports).
+  textlintRules: TextlintRule[];
 }
 
 export interface StartServerOptions {
@@ -265,6 +270,10 @@ export interface StartServerOptions {
   // assertions cheap.
   attachmentMaxBytes?: number;
   attachmentMaxCount?: number;
+  // Path to the YAML config holding the revise-mode textlint rules. Defaults to
+  // `~/.config/worqload/config.yaml`; tests point it at a temp file to inject
+  // rules. A missing file means no rules.
+  textlintConfigPath?: string;
 }
 
 export interface ShutdownOptions {
@@ -404,6 +413,61 @@ function buildRevisionRequestFeedback(slug: string): string {
     "Your character shows in what you leave out. Be dignified.",
     `Then resubmit the tightened draft: \`worqload report submit --slug ${slug} < ${REVISION_DRAFT_RELPATH}\`. The next submission is stored as written.`,
   ].join("\n\n") + "\n";
+}
+
+// Delivered when a report submitted under revise mode trips the textlint rules.
+// Lists each forbidden string with its configured comment, then explains the
+// `\` escape so the session can legitimately keep a flagged word — e.g. when it
+// must quote the word itself — by prefixing a backslash; the backslash exempts
+// that one occurrence and is left in the stored report. Routes through the same
+// scratch-draft + resubmit loop as buildRevisionRequestFeedback.
+function buildTextlintBounceFeedback(slug: string, violations: TextlintViolation[]): string {
+  const findings = violations.map(v => `- \`${v.string}\`: ${v.comment}`).join("\n");
+  const escapeExample = violations[0]?.string ?? "";
+  return [
+    "A report you submitted was held: it tripped this session's textlint rules and was not stored.",
+    `Your draft was saved to \`${REVISION_DRAFT_RELPATH}\`. Remove or rephrase the following in that file:`,
+    findings,
+    `To keep a flagged word on purpose — for instance when quoting it — prefix it with a backslash (\`\\${escapeExample}\`). The backslash exempts that occurrence from the lint and stays in the stored report.`,
+    `Then resubmit the corrected draft: \`worqload report submit --slug ${slug} < ${REVISION_DRAFT_RELPATH}\`.`,
+  ].join("\n\n") + "\n";
+}
+
+// Holds a report submission instead of storing it: saves the body to the
+// session's scratch draft so it can edit in place, queues `feedbackContent`
+// into the inbox, and wakes the session to revise and resubmit. Bouncing
+// through the feedback inbox (not the CLI stdout alone) is what wakes the
+// session: one that just submitted a report has, from its own point of view,
+// finished and likely ended its turn. Shared by the generic revise-mode bounce
+// and the textlint bounce.
+async function bounceReportForRevision(
+  ctx: ServerContext,
+  meta: SessionMeta,
+  body: NumberedBody,
+  feedbackContent: string,
+  reason: string,
+): Promise<Response> {
+  await Bun.write(join(meta.worktreePath, REVISION_DRAFT_RELPATH), body.content);
+  const inbox = feedbackInboxDirFor(ctx, meta.id);
+  const file = await writeNumberedFile(inbox, "revision-requested", feedbackContent, {
+    archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
+  });
+  await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
+  const att = ctx.clients.get(meta.id);
+  appendHostLog(ctx, meta.id, "wake_sent", {
+    filename: file.filename,
+    seq: file.seq,
+    hasClient: att !== undefined,
+    status: meta.status,
+    reason,
+  });
+  if (att) {
+    att.client.send("[wake] check feedback inbox").catch(() => {});
+    scheduleWakeWatchdog(ctx, meta.id, att);
+  } else if (!isTerminal(meta.status)) {
+    await respawnMissingClient(ctx, meta, reason);
+  }
+  return json({ revisionRequested: true });
 }
 
 function feedbackInboxDirFor(ctx: ServerContext, sessionId: string): string {
@@ -906,6 +970,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     },
   }));
 
+  const textlintRules = await loadTextlintRules(opts.textlintConfigPath ?? defaultConfigPath());
+
   ctx = {
     repoDir,
     worqloadDir,
@@ -932,6 +998,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     autoNudgeCount: new Map(),
     attachmentMaxBytes: opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
     attachmentMaxCount: opts.attachmentMaxCount ?? DEFAULT_ATTACHMENT_MAX_COUNT,
+    textlintRules,
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -2492,38 +2559,22 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
     // is done by the session — which holds the full context the report
     // describes — rather than a context-blind rewriter. The resubmission
     // passes through. revisionPending marks which half of the cycle we are in.
-    if (isReviseModeEnabled(meta) && meta.revisionPending !== true) {
-      await saveSessionMeta({ ...meta, revisionPending: true }, ctx.sessionsDir);
-      // Save the first submission to a scratch file in the worktree so the
-      // session edits it in place rather than reconstructing it from the bounce
-      // message — nothing is dropped in the round trip. The next submission
-      // (the resubmission) is what gets stored.
-      await Bun.write(join(meta.worktreePath, REVISION_DRAFT_RELPATH), body.content);
-      // Bouncing through the feedback inbox (not the CLI stdout alone) is what
-      // wakes the session: a session that just submitted a report has, from its
-      // own point of view, finished and likely ended its turn, so it must be
-      // woken to receive the revise instruction and resubmit. Same path human
-      // feedback takes, drained exactly once.
-      const inbox = feedbackInboxDirFor(ctx, meta.id);
-      const file = await writeNumberedFile(inbox, "revision-requested", buildRevisionRequestFeedback(body.slug), {
-        archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
-      });
-      await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
-      const att = ctx.clients.get(meta.id);
-      appendHostLog(ctx, meta.id, "wake_sent", {
-        filename: file.filename,
-        seq: file.seq,
-        hasClient: att !== undefined,
-        status: meta.status,
-        reason: "report_revision_requested",
-      });
-      if (att) {
-        att.client.send("[wake] check feedback inbox").catch(() => {});
-        scheduleWakeWatchdog(ctx, meta.id, att);
-      } else if (!isTerminal(meta.status)) {
-        await respawnMissingClient(ctx, meta, "report_revision_requested");
+    if (isReviseModeEnabled(meta)) {
+      // textlint runs on every submission under revise mode and gates storage,
+      // so the stored report is guaranteed clean. A violation bounces without
+      // touching revisionPending — it is orthogonal to the general one-shot
+      // revision cycle below and may fire on the first or a later submission.
+      const violations = lintReport(body.content, ctx.textlintRules);
+      if (violations.length > 0) {
+        return bounceReportForRevision(ctx, meta, body, buildTextlintBounceFeedback(body.slug, violations), "report_textlint_rejected");
       }
-      return json({ revisionRequested: true });
+      // First submission of each report (textlint-clean): hold it for one
+      // general tightening pass. The resubmission passes through. revisionPending
+      // marks which half of the cycle we are in.
+      if (meta.revisionPending !== true) {
+        await saveSessionMeta({ ...meta, revisionPending: true }, ctx.sessionsDir);
+        return bounceReportForRevision(ctx, meta, body, buildRevisionRequestFeedback(body.slug), "report_revision_requested");
+      }
     }
     // The resubmission, or revise mode off: clear any pending flag and store.
     if (meta.revisionPending === true) {

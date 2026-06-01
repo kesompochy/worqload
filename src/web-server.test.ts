@@ -55,6 +55,9 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
+    // missing path means no textlint rules unless a test injects its own.
+    textlintConfigPath: join(repoDir, "no-such-worqload-config.yaml"),
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -426,6 +429,91 @@ test("POST /sessions/:id/revise-mode rejects a non-boolean enabled", async () =>
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const res = await postJson(baseUrl, `/sessions/${created.meta.id}/revise-mode`, { enabled: "yes" });
   expect(res.status).toBe(400);
+});
+
+function writeTextlintConfig(rules: Array<{ string: string; comment: string }>): string {
+  const dir = makeTmpDir("worqload-config");
+  const configPath = join(dir, "config.yaml");
+  const body = "textlint:\n" + rules.map((r) => `  - string: ${JSON.stringify(r.string)}\n    comment: ${JSON.stringify(r.comment)}\n`).join("");
+  writeFileSync(configPath, body);
+  return configPath;
+}
+
+test("revise mode bounces a submission whose forbidden string trips textlint, returning the rule's comment", async () => {
+  const repoDir = makeTmpDir("repo");
+  const textlintConfigPath = writeTextlintConfig([{ string: "可能性", comment: "統計的事実のときだけ使う" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // Clean first submission: held for the ordinary one-shot revision pass.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  // Resubmission trips textlint: bounced again, not stored, comment delivered.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "可能性がある" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const reportsDir = join(ctx.sessionsDir, sid, "reports");
+  expect(existsSync(reportsDir) && readdirSync(reportsDir).length > 0).toBe(false);
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  const latest = readdirSync(inboxDir).filter((f) => f.endsWith(".md")).sort().at(-1) as string;
+  expect(readFileSync(join(inboxDir, latest), "utf8")).toContain("統計的事実のときだけ使う");
+
+  // A clean resubmission stores.
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "見込みがある" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+});
+
+test("textlint exempts an occurrence escaped with a backslash, storing the report with the backslash intact", async () => {
+  const repoDir = makeTmpDir("repo");
+  const textlintConfigPath = writeTextlintConfig([{ string: "可能性", comment: "統計的事実のときだけ使う" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // First submission held for the ordinary revision pass.
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "初稿" });
+
+  // The escaped occurrence passes textlint; stored verbatim, backslash and all.
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "\\可能性 は統計用語" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", stored.filename), "utf8")).toBe("\\可能性 は統計用語");
+});
+
+test("a textlint bounce does not consume the one-shot revision cycle", async () => {
+  const repoDir = makeTmpDir("repo");
+  const textlintConfigPath = writeTextlintConfig([{ string: "禁止", comment: "使わない" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // First submission trips textlint: bounced before the general pass is entered.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止語あり" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  // A clean submission is now still treated as a first submission (general
+  // revision pass), proving the textlint bounce left revisionPending untouched.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "綺麗な文" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "綺麗な文" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", stored.filename), "utf8")).toBe("綺麗な文");
+});
+
+test("textlint does not run when revise mode is off: a forbidden string stores on first submission", async () => {
+  const repoDir = makeTmpDir("repo");
+  const textlintConfigPath = writeTextlintConfig([{ string: "禁止", comment: "使わない" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止語あり" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", stored.filename), "utf8")).toBe("禁止語あり");
 });
 
 test("POST /internal/sessions/:id/escalations sets status to waiting_human", async () => {
