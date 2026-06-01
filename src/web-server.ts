@@ -226,9 +226,13 @@ export interface ServerContext {
   // rejected with 400 at the POST.
   attachmentMaxBytes: number;
   attachmentMaxCount: number;
-  // The revise-mode textlint rules, read once from the config file at startup.
-  // Empty when no config exists; only consulted while a session has revise mode
-  // on (see postInternalReports).
+  // Path to the YAML config holding the revise-mode textlint rules.
+  textlintConfigPath: string;
+  // The last successfully loaded revise-mode textlint rules. Seeded at startup
+  // and refreshed from textlintConfigPath on each report submission so config
+  // edits take effect without a restart; a parse that fails leaves this value
+  // unchanged. Empty when no config exists. Only consulted while a session has
+  // revise mode on (see postInternalReports).
   textlintRules: TextlintRule[];
 }
 
@@ -468,6 +472,21 @@ async function bounceReportForRevision(
     await respawnMissingClient(ctx, meta, reason);
   }
   return json({ revisionRequested: true });
+}
+
+// Re-reads the textlint config so edits take effect without a server restart.
+// Reports are human-paced, so re-reading the small YAML per submission is cheap,
+// and reading here rather than via a file watcher sidesteps the atomic-rename
+// gotcha that makes single-file watches stop firing after an editor saves. A
+// config that fails to parse keeps the last good rules and is logged, so a typo
+// mid-edit can't wedge report submission.
+async function currentTextlintRules(ctx: ServerContext): Promise<TextlintRule[]> {
+  try {
+    ctx.textlintRules = await loadTextlintRules(ctx.textlintConfigPath);
+  } catch (err) {
+    console.error(`[textlint] config reload failed, keeping previous rules: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return ctx.textlintRules;
 }
 
 function feedbackInboxDirFor(ctx: ServerContext, sessionId: string): string {
@@ -970,7 +989,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     },
   }));
 
-  const textlintRules = await loadTextlintRules(opts.textlintConfigPath ?? defaultConfigPath());
+  const textlintConfigPath = opts.textlintConfigPath ?? defaultConfigPath();
+  const textlintRules = await loadTextlintRules(textlintConfigPath);
 
   ctx = {
     repoDir,
@@ -998,6 +1018,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     autoNudgeCount: new Map(),
     attachmentMaxBytes: opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
     attachmentMaxCount: opts.attachmentMaxCount ?? DEFAULT_ATTACHMENT_MAX_COUNT,
+    textlintConfigPath,
     textlintRules,
   };
 
@@ -2564,7 +2585,7 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
       // so the stored report is guaranteed clean. A violation bounces without
       // touching revisionPending — it is orthogonal to the general one-shot
       // revision cycle below and may fire on the first or a later submission.
-      const violations = lintReport(body.content, ctx.textlintRules);
+      const violations = lintReport(body.content, await currentTextlintRules(ctx));
       if (violations.length > 0) {
         return bounceReportForRevision(ctx, meta, body, buildTextlintBounceFeedback(body.slug, violations), "report_textlint_rejected");
       }
