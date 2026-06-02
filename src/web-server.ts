@@ -34,7 +34,9 @@ import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
-import { defaultConfigPath, lintReport, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
+import { defaultConfigPath, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
+import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
+import defaultReviseGuidance from "./prompts/revision-guidance.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -226,14 +228,19 @@ export interface ServerContext {
   // rejected with 400 at the POST.
   attachmentMaxBytes: number;
   attachmentMaxCount: number;
-  // Path to the YAML config holding the revise-mode textlint rules.
-  textlintConfigPath: string;
+  // Path to the YAML config (`~/.config/worqload/config.yaml`) holding the
+  // revise-mode settings: the textlint rules and the reviseFeedback override.
+  configPath: string;
   // The last successfully loaded revise-mode textlint rules. Seeded at startup
-  // and refreshed from textlintConfigPath on each report submission so config
-  // edits take effect without a restart; a parse that fails leaves this value
+  // and refreshed from configPath on each report submission so config edits
+  // take effect without a restart; a parse that fails leaves this value
   // unchanged. Empty when no config exists. Only consulted while a session has
   // revise mode on (see postInternalReports).
   textlintRules: TextlintRule[];
+  // The last successfully loaded `reviseFeedback:` guidance override, or null to
+  // use the built-in default guidance. Seeded and refreshed alongside
+  // textlintRules with the same keep-previous-on-parse-failure behavior.
+  reviseFeedbackGuidance: string | null;
 }
 
 export interface StartServerOptions {
@@ -274,10 +281,11 @@ export interface StartServerOptions {
   // assertions cheap.
   attachmentMaxBytes?: number;
   attachmentMaxCount?: number;
-  // Path to the YAML config holding the revise-mode textlint rules. Defaults to
+  // Path to the YAML config holding the revise-mode settings (textlint rules
+  // and the reviseFeedback override). Defaults to
   // `~/.config/worqload/config.yaml`; tests point it at a temp file to inject
-  // rules. A missing file means no rules.
-  textlintConfigPath?: string;
+  // settings. A missing file means no rules and the default feedback wording.
+  configPath?: string;
 }
 
 export interface ShutdownOptions {
@@ -409,14 +417,17 @@ const REVISION_DRAFT_RELPATH = ".worqload-draft/revision-draft.md";
 // view, finished and likely ended its turn — so it routes through the inbox,
 // which wakes the session and is drained exactly once. The first submission is
 // saved to a scratch file the session edits in place, rather than re-typed from
-// this message, so nothing is dropped in the round trip.
-function buildRevisionRequestFeedback(slug: string): string {
-  return [
-    "A report you submitted was held for a revision pass and not yet stored. Revise mode is on for this session.",
-    `Your draft was saved to \`${REVISION_DRAFT_RELPATH}\`. Edit that file in place as the human will read it: lead with the conclusion, keep sentences short, and cut self-justification, apology, filler, and any conversational tone. A report is a record, not a turn in a conversation.`,
-    "Your character shows in what you leave out. Be dignified.",
-    `Then resubmit the tightened draft: \`worqload report submit --slug ${slug} < ${REVISION_DRAFT_RELPATH}\`. The next submission is stored as written.`,
-  ].join("\n\n") + "\n";
+// this message, so nothing is dropped in the round trip. The scaffold (status
+// line, draft path, resubmit command) is the fixed template; only the editorial
+// `guidance` paragraphs are configurable, defaulting to the built-in guidance
+// unless the human overrides them via `reviseFeedback:` in the config. trimEnd
+// normalizes a trailing newline a YAML block scalar would add, so the override
+// drops cleanly into the scaffold's `{{guidance}}` slot.
+function buildRevisionRequestFeedback(slug: string, guidance: string = defaultReviseGuidance): string {
+  return revisionRequestScaffold
+    .replaceAll("{{guidance}}", guidance.trimEnd())
+    .replaceAll("{{draftPath}}", REVISION_DRAFT_RELPATH)
+    .replaceAll("{{slug}}", slug);
 }
 
 // Delivered when a report submitted under revise mode trips the textlint rules.
@@ -482,11 +493,24 @@ async function bounceReportForRevision(
 // mid-edit can't wedge report submission.
 async function currentTextlintRules(ctx: ServerContext): Promise<TextlintRule[]> {
   try {
-    ctx.textlintRules = await loadTextlintRules(ctx.textlintConfigPath);
+    ctx.textlintRules = await loadTextlintRules(ctx.configPath);
   } catch (err) {
     console.error(`[textlint] config reload failed, keeping previous rules: ${err instanceof Error ? err.message : String(err)}`);
   }
   return ctx.textlintRules;
+}
+
+// The current `reviseFeedback:` guidance, reloaded from the same config on each
+// submission so wording edits take effect without a restart. A parse failure
+// keeps the previous value, matching currentTextlintRules. Null means the
+// built-in default in buildRevisionRequestFeedback is used.
+async function currentReviseFeedbackGuidance(ctx: ServerContext): Promise<string | null> {
+  try {
+    ctx.reviseFeedbackGuidance = await loadReviseFeedbackGuidance(ctx.configPath);
+  } catch (err) {
+    console.error(`[reviseFeedback] config reload failed, keeping previous guidance: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return ctx.reviseFeedbackGuidance;
 }
 
 function feedbackInboxDirFor(ctx: ServerContext, sessionId: string): string {
@@ -989,8 +1013,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     },
   }));
 
-  const textlintConfigPath = opts.textlintConfigPath ?? defaultConfigPath();
-  const textlintRules = await loadTextlintRules(textlintConfigPath);
+  const configPath = opts.configPath ?? defaultConfigPath();
+  const textlintRules = await loadTextlintRules(configPath);
+  const reviseFeedbackGuidance = await loadReviseFeedbackGuidance(configPath);
 
   ctx = {
     repoDir,
@@ -1018,8 +1043,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     autoNudgeCount: new Map(),
     attachmentMaxBytes: opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
     attachmentMaxCount: opts.attachmentMaxCount ?? DEFAULT_ATTACHMENT_MAX_COUNT,
-    textlintConfigPath,
+    configPath,
     textlintRules,
+    reviseFeedbackGuidance,
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -2594,7 +2620,8 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
       // marks which half of the cycle we are in.
       if (meta.revisionPending !== true) {
         await saveSessionMeta({ ...meta, revisionPending: true }, ctx.sessionsDir);
-        return bounceReportForRevision(ctx, meta, body, buildRevisionRequestFeedback(body.slug), "report_revision_requested");
+        const guidance = (await currentReviseFeedbackGuidance(ctx)) ?? undefined;
+        return bounceReportForRevision(ctx, meta, body, buildRevisionRequestFeedback(body.slug, guidance), "report_revision_requested");
       }
     }
     // The resubmission, or revise mode off: clear any pending flag and store.

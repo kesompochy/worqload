@@ -57,7 +57,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     worktreeOps: fakeWorktreeOps(),
     // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
     // missing path means no textlint rules unless a test injects its own.
-    textlintConfigPath: join(repoDir, "no-such-worqload-config.yaml"),
+    configPath: join(repoDir, "no-such-worqload-config.yaml"),
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -441,8 +441,8 @@ function writeTextlintConfig(rules: Array<{ string: string; comment: string }>):
 
 test("revise mode bounces a submission whose forbidden string trips textlint, returning the rule's comment", async () => {
   const repoDir = makeTmpDir("repo");
-  const textlintConfigPath = writeTextlintConfig([{ string: "可能性", comment: "統計的事実のときだけ使う" }]);
-  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+  const configPath = writeTextlintConfig([{ string: "可能性", comment: "統計的事実のときだけ使う" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
@@ -466,8 +466,8 @@ test("revise mode bounces a submission whose forbidden string trips textlint, re
 
 test("textlint exempts an occurrence escaped with a backslash, storing the report with the backslash intact", async () => {
   const repoDir = makeTmpDir("repo");
-  const textlintConfigPath = writeTextlintConfig([{ string: "可能性", comment: "統計的事実のときだけ使う" }]);
-  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+  const configPath = writeTextlintConfig([{ string: "可能性", comment: "統計的事実のときだけ使う" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
@@ -484,8 +484,8 @@ test("textlint exempts an occurrence escaped with a backslash, storing the repor
 
 test("a textlint bounce does not consume the one-shot revision cycle", async () => {
   const repoDir = makeTmpDir("repo");
-  const textlintConfigPath = writeTextlintConfig([{ string: "禁止", comment: "使わない" }]);
-  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+  const configPath = writeTextlintConfig([{ string: "禁止", comment: "使わない" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
@@ -505,8 +505,8 @@ test("a textlint bounce does not consume the one-shot revision cycle", async () 
 
 test("textlint config edits take effect without a server restart", async () => {
   const repoDir = makeTmpDir("repo");
-  const textlintConfigPath = writeTextlintConfig([{ string: "禁止", comment: "旧ルール" }]);
-  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+  const configPath = writeTextlintConfig([{ string: "禁止", comment: "旧ルール" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
@@ -516,7 +516,7 @@ test("textlint config edits take effect without a server restart", async () => {
   expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止あり" }).then((r) => r.json())).toEqual({ revisionRequested: true });
 
   // Rewrite the config in place — no restart.
-  writeFileSync(textlintConfigPath, 'textlint:\n  - string: "別語"\n    comment: "新ルール"\n');
+  writeFileSync(configPath, 'textlint:\n  - string: "別語"\n    comment: "新ルール"\n');
 
   // The new rule is active: a report tripping it is bounced with its comment.
   expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "別語あり" }).then((r) => r.json())).toEqual({ revisionRequested: true });
@@ -533,8 +533,8 @@ test("textlint config edits take effect without a server restart", async () => {
 
 test("textlint does not run when revise mode is off: a forbidden string stores on first submission", async () => {
   const repoDir = makeTmpDir("repo");
-  const textlintConfigPath = writeTextlintConfig([{ string: "禁止", comment: "使わない" }]);
-  const { baseUrl, ctx } = await bootServer(repoDir, { textlintConfigPath });
+  const configPath = writeTextlintConfig([{ string: "禁止", comment: "使わない" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
@@ -542,6 +542,34 @@ test("textlint does not run when revise mode is off: a forbidden string stores o
   const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止語あり" }).then((r) => r.json());
   expect(stored.filename).toBe("001-p.md");
   expect(readFileSync(join(ctx.sessionsDir, sid, "reports", stored.filename), "utf8")).toBe("禁止語あり");
+});
+
+function writeConfigYaml(body: string): string {
+  const dir = makeTmpDir("worqload-config");
+  const configPath = join(dir, "config.yaml");
+  writeFileSync(configPath, body);
+  return configPath;
+}
+
+test("a reviseFeedback override replaces the guidance in the bounce while the fixed scaffold (draft path and resubmit command) stays", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeConfigYaml('reviseFeedback: "CUSTOM-GUIDANCE 結論から書け"\n');
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  const latest = readdirSync(inboxDir).filter((f) => f.endsWith(".md")).sort().at(-1) as string;
+  const body = readFileSync(join(inboxDir, latest), "utf8");
+  // The injected guidance is present.
+  expect(body).toContain("CUSTOM-GUIDANCE 結論から書け");
+  // The fixed scaffold — draft path and the slug-bearing resubmit command — is still there.
+  expect(body).toContain(".worqload-draft/revision-draft.md");
+  expect(body).toContain("worqload report submit --slug plan");
 });
 
 test("POST /internal/sessions/:id/escalations sets status to waiting_human", async () => {

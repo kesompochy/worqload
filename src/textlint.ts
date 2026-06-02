@@ -1,10 +1,17 @@
-// The "推敲モード" (revise mode) textlint gate. Rules are plain string matches
-// authored by the human in `~/.config/worqload/config.yaml` and injected into
-// the server; when a report submitted under revise mode contains a forbidden
-// string, the matching rule's comment is returned and the report is bounced for
-// re-revision. Matching is deliberately literal substring matching — no regex,
-// no morphological analysis — because the rules are hand-tuned phrasings the
-// human wants to keep out of stored reports.
+// The "推敲モード" (revise mode) config the human authors in
+// `~/.config/worqload/config.yaml`. Two parts, both optional and injected into
+// the server:
+//   - `textlint:` — the lint gate. Plain string matches; when a report
+//     submitted under revise mode contains a forbidden string, the matching
+//     rule's comment is returned and the report is bounced for re-revision.
+//     Matching is deliberately literal substring matching — no regex, no
+//     morphological analysis — because the rules are hand-tuned phrasings the
+//     human wants to keep out of stored reports.
+//   - `reviseFeedback:` — overrides the editorial guidance paragraphs inside
+//     the generic revise-mode bounce message (see buildRevisionRequestFeedback
+//     in web-server). Only the guidance is configurable; the surrounding
+//     scaffold (draft path, resubmit command) is always the fixed template.
+//     Absent means the built-in default guidance is used.
 
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -69,6 +76,33 @@ export function parseTextlintRules(yamlText: string): TextlintRule[] {
     }
     return { string: matchString, comment };
   });
+}
+
+// Reads the optional `reviseFeedback:` guidance override. A missing file or
+// absent key means "use the built-in default guidance", returned as null so the
+// caller falls back.
+export async function loadReviseFeedbackGuidance(configPath: string): Promise<string | null> {
+  const file = Bun.file(configPath);
+  if (!(await file.exists())) return null;
+  return parseReviseFeedbackGuidance(await file.text());
+}
+
+// Extracts the `reviseFeedback:` guidance string from the config YAML. An absent
+// key returns null; a present-but-non-string (or empty) value throws so the
+// misconfiguration surfaces rather than silently keeping the default. The
+// returned guidance is substituted into the fixed bounce scaffold by the caller.
+export function parseReviseFeedbackGuidance(yamlText: string): string | null {
+  const parsed = Bun.YAML.parse(yamlText) as unknown;
+  if (parsed == null) return null;
+  if (typeof parsed !== "object") {
+    throw new Error("config: top level must be a YAML mapping");
+  }
+  const raw = (parsed as Record<string, unknown>).reviseFeedback;
+  if (raw == null) return null;
+  if (typeof raw !== "string" || raw === "") {
+    throw new Error("config: `reviseFeedback` must be a non-empty string");
+  }
+  return raw;
 }
 
 // Returns one violation per rule whose string appears unescaped in the report.
