@@ -36,7 +36,6 @@ import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import { defaultConfigPath, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
-import defaultReviseGuidance from "./prompts/revision-guidance.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -237,9 +236,10 @@ export interface ServerContext {
   // unchanged. Empty when no config exists. Only consulted while a session has
   // revise mode on (see postInternalReports).
   textlintRules: TextlintRule[];
-  // The last successfully loaded `reviseFeedback:` guidance override, or null to
-  // use the built-in default guidance. Seeded and refreshed alongside
-  // textlintRules with the same keep-previous-on-parse-failure behavior.
+  // The last successfully loaded `reviseFeedback:` guidance, or null when none
+  // is configured (the bounce then carries no guidance). Seeded and refreshed
+  // alongside textlintRules with the same keep-previous-on-parse-failure
+  // behavior.
   reviseFeedbackGuidance: string | null;
 }
 
@@ -418,14 +418,16 @@ const REVISION_DRAFT_RELPATH = ".worqload-draft/revision-draft.md";
 // which wakes the session and is drained exactly once. The first submission is
 // saved to a scratch file the session edits in place, rather than re-typed from
 // this message, so nothing is dropped in the round trip. The scaffold (status
-// line, draft path, resubmit command) is the fixed template; only the editorial
-// `guidance` paragraphs are configurable, defaulting to the built-in guidance
-// unless the human overrides them via `reviseFeedback:` in the config. trimEnd
-// normalizes a trailing newline a YAML block scalar would add, so the override
-// drops cleanly into the scaffold's `{{guidance}}` slot.
-function buildRevisionRequestFeedback(slug: string, guidance: string = defaultReviseGuidance): string {
+// line, draft path, resubmit command) is the fixed template; the editorial
+// guidance is supplied entirely by the human via `reviseFeedback:` in the
+// config and is absent otherwise. The scaffold sentence ends before the
+// `{{guidance}}` slot, so the configured guidance follows as natural prose: it
+// is appended as a space-separated continuation when present, and the slot
+// collapses to nothing when no guidance is configured.
+function buildRevisionRequestFeedback(slug: string, guidance?: string): string {
+  const guidanceText = guidance?.trim();
   return revisionRequestScaffold
-    .replaceAll("{{guidance}}", guidance.trimEnd())
+    .replaceAll("{{guidance}}", guidanceText ? ` ${guidanceText}` : "")
     .replaceAll("{{draftPath}}", REVISION_DRAFT_RELPATH)
     .replaceAll("{{slug}}", slug);
 }
@@ -503,7 +505,7 @@ async function currentTextlintRules(ctx: ServerContext): Promise<TextlintRule[]>
 // The current `reviseFeedback:` guidance, reloaded from the same config on each
 // submission so wording edits take effect without a restart. A parse failure
 // keeps the previous value, matching currentTextlintRules. Null means the
-// built-in default in buildRevisionRequestFeedback is used.
+// bounce carries no guidance.
 async function currentReviseFeedbackGuidance(ctx: ServerContext): Promise<string | null> {
   try {
     ctx.reviseFeedbackGuidance = await loadReviseFeedbackGuidance(ctx.configPath);

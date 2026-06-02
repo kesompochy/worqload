@@ -37,7 +37,7 @@ To keep a flagged word on purpose — for example when a report needs to quote i
 
 ### reviseFeedback
 
-When revise mode holds a report's first submission, the bounce message asks the session to tighten the draft. The editorial guidance in that message — how to revise — is configurable; the surrounding scaffold (where the draft was saved, the resubmit command) is fixed. Set `reviseFeedback` to replace the default guidance with your own.
+When revise mode holds a report's first submission, the bounce message asks the session to tighten the draft. The scaffold (where the draft was saved, the resubmit command) is fixed; the editorial guidance — how to revise — is yours to supply. Set `reviseFeedback` and it is appended as natural prose after the scaffold's instruction to edit the draft.
 
 ```yaml
 reviseFeedback: |
@@ -45,5 +45,5 @@ reviseFeedback: |
   レポートは記録であって会話の一手ではない。
 ```
 
-Omit the key to use the built-in guidance.
+Omit the key and the bounce carries no guidance.
 

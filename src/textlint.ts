@@ -7,11 +7,11 @@
 //     Matching is deliberately literal substring matching — no regex, no
 //     morphological analysis — because the rules are hand-tuned phrasings the
 //     human wants to keep out of stored reports.
-//   - `reviseFeedback:` — overrides the editorial guidance paragraphs inside
-//     the generic revise-mode bounce message (see buildRevisionRequestFeedback
-//     in web-server). Only the guidance is configurable; the surrounding
-//     scaffold (draft path, resubmit command) is always the fixed template.
-//     Absent means the built-in default guidance is used.
+//   - `reviseFeedback:` — the editorial guidance appended to the generic
+//     revise-mode bounce message (see buildRevisionRequestFeedback in
+//     web-server). Only the guidance is configurable; the surrounding scaffold
+//     (draft path, resubmit command) is always the fixed template. Absent means
+//     the bounce carries no guidance.
 
 import { homedir } from "node:os";
 import { join } from "node:path";
