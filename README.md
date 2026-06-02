@@ -35,3 +35,15 @@ textlint:
 
 To keep a flagged word on purpose — for example when a report needs to quote it — prefix that occurrence with a backslash: `\可能性`. The backslash exempts only that occurrence from the lint and is kept in the stored report verbatim, so reports may contain `\` freely.
 
+### reviseFeedback
+
+When revise mode holds a report's first submission, the bounce message asks the session to tighten the draft. The scaffold (where the draft was saved, the resubmit command) is fixed; the editorial guidance — how to revise — is yours to supply. Set `reviseFeedback` and it is appended as natural prose after the scaffold's instruction to edit the draft.
+
+```yaml
+reviseFeedback: |
+  結論から書け。一文を短く保ち、自己弁護・謝罪・冗長な前置き・会話調を削れ。
+  レポートは記録であって会話の一手ではない。
+```
+
+Omit the key and the bounce carries no guidance.
+

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { makeTmpDir } from "./test-helpers";
-import { lintReport, loadTextlintRules, parseTextlintRules } from "./textlint";
+import { lintReport, loadReviseFeedbackGuidance, loadTextlintRules, parseReviseFeedbackGuidance, parseTextlintRules } from "./textlint";
 
 test("parseTextlintRules reads { string, comment } entries from the textlint list", () => {
   const rules = parseTextlintRules(
@@ -41,6 +41,33 @@ test("loadTextlintRules reads rules from the config file on disk", async () => {
   mkdirSync(join(dir, ".config", "worqload"), { recursive: true });
   writeFileSync(configPath, 'textlint:\n  - string: "禁止語"\n    comment: "使わない"\n');
   expect(await loadTextlintRules(configPath)).toEqual([{ string: "禁止語", comment: "使わない" }]);
+});
+
+test("parseReviseFeedbackGuidance returns the reviseFeedback guidance string verbatim", () => {
+  expect(parseReviseFeedbackGuidance('reviseFeedback: "結論から書け。短く。"')).toBe("結論から書け。短く。");
+});
+
+test("parseReviseFeedbackGuidance returns null when the key is absent", () => {
+  expect(parseReviseFeedbackGuidance("textlint: []\n")).toBeNull();
+  expect(parseReviseFeedbackGuidance("")).toBeNull();
+});
+
+test("parseReviseFeedbackGuidance throws on a non-string or empty value", () => {
+  expect(() => parseReviseFeedbackGuidance("reviseFeedback: []\n")).toThrow();
+  expect(() => parseReviseFeedbackGuidance('reviseFeedback: ""\n')).toThrow();
+});
+
+test("loadReviseFeedbackGuidance returns null when the config file is absent", async () => {
+  const dir = makeTmpDir("revise-feedback-config");
+  expect(await loadReviseFeedbackGuidance(join(dir, "config.yaml"))).toBeNull();
+});
+
+test("loadReviseFeedbackGuidance reads the guidance from the config file on disk", async () => {
+  const dir = makeTmpDir("revise-feedback-config");
+  const configPath = join(dir, ".config", "worqload", "config.yaml");
+  mkdirSync(join(dir, ".config", "worqload"), { recursive: true });
+  writeFileSync(configPath, 'reviseFeedback: "結論から書け"\n');
+  expect(await loadReviseFeedbackGuidance(configPath)).toBe("結論から書け");
 });
 
 const RULES = [
