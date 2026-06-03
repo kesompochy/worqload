@@ -158,6 +158,14 @@ export function onDetailBodyClick(e) {
     onReportMark(filename, to === "read");
     return;
   }
+  const deleteBtn = e.target.closest("[data-report-delete]");
+  if (deleteBtn) {
+    // Sits inside the report header (a toggle target); stop the click from also
+    // collapsing the card on its way out.
+    e.stopPropagation();
+    onReportDelete(deleteBtn.getAttribute("data-report-delete"));
+    return;
+  }
   const reportToggle = e.target.closest("[data-report-toggle]");
   if (reportToggle) {
     const filename = reportToggle.getAttribute("data-report-toggle");
@@ -515,6 +523,24 @@ export async function onReportMark(filename, read) {
     // The sidebar's unread badge is derived from GET /sessions, not from the
     // detail pane — refresh it too so it tracks the mark without waiting for
     // the report_read websocket round-trip (or the 30s poll).
+    await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
+// Discards a report the agent filed by mistake. Deletion is irreversible, so we
+// confirm first; the server drops the file and broadcasts report_deleted, but we
+// refresh here too so the row disappears without waiting for the round trip.
+export async function onReportDelete(filename) {
+  if (!state.selected) return;
+  if (!confirm(`レポート「${filename}」を削除します。元に戻せません。よろしいですか？`)) return;
+  try {
+    await api("DELETE", `/sessions/${state.selected}/reports/${encodeURIComponent(filename)}`);
+    const nextToggle = new Map(state.reportToggle);
+    nextToggle.delete(filename);
+    state.reportToggle = nextToggle;
+    await refreshDetail();
     await fetchSessions();
   } catch (e) {
     toast(`failed: ${e.message}`);

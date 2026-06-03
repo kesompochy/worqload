@@ -534,7 +534,7 @@ export function openWs(id) {
       if (card) card.lastAgentEventAt = ev.timestamp;
     }
     // For "interesting" events refresh the relevant slice.
-    if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread"
+    if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread" || ev.kind === "report_deleted"
         || ev.kind === "feedback_received" || ev.kind === "feedback_fetched"
         || ev.kind === "escalation_requested" || ev.kind === "escalation_resolved"
         || ev.kind === "session_stopped" || ev.kind === "session_crashed" || ev.kind === "session_resumed") {
