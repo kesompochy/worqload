@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { existsSync } from "fs";
-import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, metaFilenameFor, attachmentsDirNameFor, readReadState, setReadState, markAllRead } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumberedFile, metaFilenameFor, attachmentsDirNameFor, readReadState, setReadState, markAllRead } from "./file-store";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -282,4 +282,31 @@ test("moveNumberedFile tolerates a missing attachments dir", async () => {
 
   expect(existsSync(join(read, filename))).toBe(true);
   expect(existsSync(join(read, attachmentsDirNameFor(filename)))).toBe(false);
+});
+
+test("deleteNumberedFile removes the file, its sidecar, its attachments, and the read-state entry", async () => {
+  const dir = makeTmpDir("file-store");
+  const { filename } = await writeNumberedFile(dir, "msg", "body", {
+    meta: { anchor: { path: "p", lineStart: 1, lineEnd: 1 } },
+    attachments: [{ name: "01-image.png", bytes: new Uint8Array([0x89]) }],
+  });
+  await writeNumberedFile(dir, "keep", "still here");
+  await setReadState(dir, filename, true);
+
+  await deleteNumberedFile(dir, filename);
+
+  expect(existsSync(join(dir, filename))).toBe(false);
+  expect(existsSync(join(dir, metaFilenameFor(filename)))).toBe(false);
+  expect(existsSync(join(dir, attachmentsDirNameFor(filename)))).toBe(false);
+  expect((await readReadState(dir)).has(filename)).toBe(false);
+  expect((await listAllFiles(dir)).map(f => f.filename)).toEqual(["002-keep.md"]);
+});
+
+test("deleteNumberedFile tolerates a file without sidecar, attachments, or read-state", async () => {
+  const dir = makeTmpDir("file-store");
+  const { filename } = await writeNumberedFile(dir, "msg", "body");
+
+  await deleteNumberedFile(dir, filename);
+
+  expect(existsSync(join(dir, filename))).toBe(false);
 });

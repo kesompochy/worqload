@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { withLock } from "./lock";
@@ -206,6 +206,21 @@ export async function moveNumberedFile(srcDir: string, destDir: string, filename
   const srcAttachDir = join(srcDir, attachDirName);
   if (existsSync(srcAttachDir)) {
     await rename(srcAttachDir, join(destDir, attachDirName));
+  }
+}
+
+// Deletes a numbered file together with its `.meta.json` sidecar, its
+// `.attachments/` directory, and its entry in the read-state sidecar (each when
+// present). The inverse of writeNumberedFile: nothing that write created is left
+// behind. Used to discard a misplaced report.
+export async function deleteNumberedFile(dir: string, filename: string): Promise<void> {
+  await rm(join(dir, filename), { force: true });
+  await rm(join(dir, metaFilenameFor(filename)), { force: true });
+  await rm(join(dir, attachmentsDirNameFor(filename)), { recursive: true, force: true });
+  // Only rewrite the read-state sidecar when it actually tracks this file, so a
+  // delete never conjures an empty sidecar for a directory that had none.
+  if ((await readReadState(dir)).has(filename)) {
+    await setReadState(dir, filename, false);
   }
 }
 

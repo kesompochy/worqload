@@ -257,6 +257,40 @@ test("GET /sessions exposes unread report counts per session", async () => {
   expect(byId[bid].unreadReportCount).toBe(0);
 });
 
+test("DELETE /sessions/:id/reports/:filename removes the report and emits report_deleted", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "keep", content: "keep me" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "drop", content: "misplaced" });
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports/002-drop.md`, { method: "DELETE" });
+  expect(res.status).toBe(200);
+
+  const reportsDir = join(ctx.sessionsDir, sid, "reports");
+  expect(readdirSync(reportsDir).filter((f) => f.endsWith(".md"))).toEqual(["001-keep.md"]);
+
+  const remaining = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
+  expect(remaining.reports.map((r: { filename: string }) => r.filename)).toEqual(["001-keep.md"]);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.filter((e) => e.kind === "report_deleted")).toHaveLength(1);
+});
+
+test("DELETE /sessions/:id/reports/:filename 404s for an unknown report", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports/999-nope.md`, { method: "DELETE" });
+  expect(res.status).toBe(404);
+});
+
 test("GET /sessions exposes unresolved escalation counts per session", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

@@ -274,6 +274,7 @@
                   <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
                 {/if}
                 <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
+                <button class="report-delete" type="button" data-report-delete={r.filename} title="このレポートを削除する" aria-label="レポートを削除">✕</button>
               </div>
               <div class="report-body">
                 <div class="md">{@html renderMarkdown(r.content, { anchorPath: reportAnchorPath, anchor: appState.anchor, feedbackAnchors: reportFeedbackAnchors })}</div>
