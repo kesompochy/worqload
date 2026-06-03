@@ -166,6 +166,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .report-chevron { color: var(--text-dim); width: 1ch; display: inline-block; transition: transform .12s ease; }
 .report.collapsed .report-chevron { transform: rotate(-90deg); }
 .report-filename { color: var(--accent); font-size: 12px; font-family: ui-monospace, monospace; flex: 1; }
+.report-time { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
 .report-status { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: .1rem .5rem; border-radius: 3px; cursor: pointer; border: 1px solid transparent; transition: background-color .08s ease, border-color .08s ease; }
 .report-status.unread { background: rgba(88,166,255,.18); color: var(--accent); }
 .report-status.unread:hover { background: rgba(88,166,255,.32); border-color: rgba(88,166,255,.5); }

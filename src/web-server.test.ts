@@ -330,6 +330,29 @@ test("GET /sessions exposes the last agent-work event timestamp, ignoring report
   expect(session.lastAgentEventAt).toBe(work.timestamp);
 });
 
+test("GET /sessions/:id/reports exposes each report's submitted time from its report_submitted event", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "step", content: "step done" });
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const submittedAt = Object.fromEntries(
+    events
+      .filter((e) => e.kind === "report_submitted")
+      .map((e) => [(e.payload as { filename: string }).filename, e.timestamp]),
+  );
+
+  const body = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
+  for (const r of body.reports as { filename: string; submittedAt: string }[]) {
+    expect(r.submittedAt).toBe(submittedAt[r.filename]);
+  }
+});
+
 test("POST /internal/sessions/:id/reports writes numbered report", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
