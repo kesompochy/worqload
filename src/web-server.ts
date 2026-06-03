@@ -25,7 +25,7 @@ import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageSe
 import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { ghPrLinkResolver, makeCachedPrLinkResolver, type PrLinkResolver } from "./pr-link";
-import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead, attachmentsDirNameFor } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumberedFile, readReadState, setReadState, markAllRead, attachmentsDirNameFor } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
@@ -1128,6 +1128,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/reports/read-all", postReportsReadAll),
   defineRoute("POST", "/sessions/:id/reports/:filename/read", postReportRead),
   defineRoute("POST", "/sessions/:id/reports/:filename/unread", postReportUnread),
+  defineRoute("DELETE", "/sessions/:id/reports/:filename", deleteReport),
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
   defineRoute("GET",  "/sessions/:id/files", getFiles),
@@ -1701,6 +1702,23 @@ async function postReportsReadAll(
 
 async function postReportUnread(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return setReportReadFlag(ctx, params, false);
+}
+
+// Permanently discards a report and everything written alongside it (sidecar,
+// attachments, read-state entry). The human's escape hatch for a report an
+// agent filed in the wrong session; deletion is final, so the UI confirms first.
+async function deleteReport(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    if (!isSafeAttachmentName(filename) || !filename.endsWith(".md")) {
+      return json({ error: "invalid report filename" }, 400);
+    }
+    const dir = reportsDirFor(ctx, meta.id);
+    if (!(await Bun.file(join(dir, filename)).exists())) return json({ error: "report not found" }, 404);
+    await deleteNumberedFile(dir, filename);
+    await appendAndBroadcast(ctx, meta.id, { kind: "report_deleted", payload: { filename } });
+    return json({ ok: true, filename });
+  });
 }
 
 async function getAsking(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
