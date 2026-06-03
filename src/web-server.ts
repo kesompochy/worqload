@@ -1646,7 +1646,21 @@ async function getSessionDetail(_req: Request, ctx: ServerContext, params: Recor
 async function getReports(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const dir = reportsDirFor(ctx, meta.id);
-    const [reports, readSet] = await Promise.all([listAllFiles(dir), readReadState(dir)]);
+    const [reports, readSet, events] = await Promise.all([
+      listAllFiles(dir),
+      readReadState(dir),
+      readEvents(meta.id, 1, ctx.sessionsDir),
+    ]);
+    // The report_submitted event is when the report reached the human — the
+    // canonical submission time, recorded for existing reports too (the file's
+    // own mtime would drift if the sessions tree were ever copied).
+    const submittedAt = new Map<string, string>();
+    for (const ev of events) {
+      if (ev.kind === "report_submitted") {
+        const filename = (ev.payload as { filename?: string }).filename;
+        if (filename) submittedAt.set(filename, ev.timestamp);
+      }
+    }
     return json({
       reports: reports.map(r => ({
         filename: r.filename,
@@ -1654,6 +1668,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
         read: readSet.has(r.filename),
         replyTo: r.meta?.replyTo,
         attachments: r.attachments,
+        submittedAt: submittedAt.get(r.filename),
       })),
     });
   });

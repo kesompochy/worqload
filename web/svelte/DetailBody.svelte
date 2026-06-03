@@ -14,6 +14,8 @@
   import { tick } from "svelte";
   import { state as appState, isReportExpanded, isFeedbackExpanded, anchorLabel, feedbackAnchorsForPath } from "../state.svelte.js";
   import { renderMarkdown, extractHeadings } from "../markdown.js";
+  import { formatRelative } from "../dom.js";
+  import { clock } from "../clock.svelte.js";
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
   import StructureView from "./StructureView.svelte";
@@ -270,6 +272,9 @@
               <div class="report-header" data-report-toggle={r.filename}>
                 <span class="report-chevron">▾</span>
                 <span class="report-filename">{r.filename}</span>
+                {#if r.submittedAt}
+                  <span class="report-time" title={new Date(r.submittedAt).toLocaleString()}>{formatRelative(r.submittedAt, clock.now)}</span>
+                {/if}
                 {#if r.replyTo}
                   <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
                 {/if}
