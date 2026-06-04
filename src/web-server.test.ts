@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { appendEvent, readEvents } from "./event-log";
-import { agentEndpointPath, hostLogPath, loadSessionMeta } from "./session";
+import { agentEndpointPath, hostLogPath, loadSessionMeta, saveSessionMeta } from "./session";
 import {
   cleanupAll,
   fakeWorktreeOps,
@@ -2579,6 +2579,51 @@ test("DELETE /sessions/:id returns 404 for an unknown id", async () => {
 
   const res = await fetch(`${baseUrl}/sessions/nope`, { method: "DELETE" });
   expect(res.status).toBe(404);
+});
+
+test("POST /sessions/archived/prune deletes archives older than the given days, keeping newer ones", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const stale = await postJson(baseUrl, "/sessions", { prompt: "stale", baseBranch: TEST_BASE }).then((r) => r.json());
+  const fresh = await postJson(baseUrl, "/sessions", { prompt: "fresh", baseBranch: TEST_BASE }).then((r) => r.json());
+  for (const sid of [stale.meta.id, fresh.meta.id]) {
+    await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+    await postJson(baseUrl, `/sessions/${sid}/archive`, {});
+  }
+
+  // Backdate the stale session's archivedAt to 10 days ago; the fresh one keeps
+  // its just-now archivedAt.
+  const staleMeta = await loadSessionMeta(stale.meta.id, ctx.sessionsDir);
+  const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
+  await saveSessionMeta({ ...staleMeta!, archivedAt: tenDaysAgo }, ctx.sessionsDir);
+
+  const res = await fetch(`${baseUrl}/sessions/archived/prune`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ days: 7 }),
+  });
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.deleted).toEqual([stale.meta.id]);
+
+  expect(existsSync(join(ctx.sessionsDir, stale.meta.id))).toBe(false);
+  expect(existsSync(join(ctx.sessionsDir, fresh.meta.id))).toBe(true);
+
+  const remaining = await fetch(`${baseUrl}/sessions?archived=only`).then((r) => r.json());
+  expect(remaining.sessions.map((s: { id: string }) => s.id)).toEqual([fresh.meta.id]);
+});
+
+test("POST /sessions/archived/prune rejects a non-numeric days value", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const res = await fetch(`${baseUrl}/sessions/archived/prune`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ days: "soon" }),
+  });
+  expect(res.status).toBe(400);
 });
 
 test("GET /sessions/:id/feedback merges inbox and read with status", async () => {
