@@ -106,8 +106,9 @@ async function tailJsonl(
   deps: TmuxDriverDeps,
   shouldStop: () => boolean,
   onLine: (parsed: Record<string, unknown>) => Promise<void>,
+  initialOffset = 0,
 ): Promise<void> {
-  let offset = 0;
+  let offset = initialOffset;
   let buf = "";
   while (!shouldStop()) {
     let data: string;
@@ -220,9 +221,10 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
     // classifyClaudeLine.
     const tailTask = (async () => {
       const deadline = Date.now() + deps.transcriptWaitTimeoutMs;
+      let attachedContent = "";
       while (!exitedFlag && Date.now() < deadline) {
         try {
-          await readFile(transcriptPath, { encoding: "utf8" });
+          attachedContent = await readFile(transcriptPath, { encoding: "utf8" });
           break;
         } catch {
           await sleep(deps.pollIntervalMs);
@@ -237,6 +239,13 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
         resolveExit(1);
         return;
       }
+      // On resume, claude reopens the transcript a prior host generation already
+      // turned into events and appends to it. Start the tail past everything on
+      // disk at attach so only post-resume lines are emitted; tailing from 0
+      // would re-emit the whole conversation as duplicate events on every
+      // resume. A fresh start tails from 0 because claude writes the file from
+      // empty once it processes the first message.
+      const initialOffset = isResume ? attachedContent.length : 0;
       opts.log("transcript_attached", { transcriptPath });
       await tailJsonl(
         transcriptPath,
@@ -245,6 +254,7 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
         async (parsed) => {
           await opts.onEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
         },
+        initialOffset,
       );
     })();
 

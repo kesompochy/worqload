@@ -202,6 +202,47 @@ test("resume mode uses --resume <uuid> instead of --session-id <uuid>", async ()
   await driver.exited;
 });
 
+test("resume tails only lines appended after attach — pre-existing transcript history is not re-emitted", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  await mkdir(transcriptDir, { recursive: true });
+  const { deps } = makeFakeTmuxDeps(transcriptDir);
+
+  // A prior host generation already turned these lines into events; on resume
+  // claude reopens this same transcript and appends to it. Re-emitting the
+  // history would duplicate the whole conversation on every resume.
+  const transcriptPath = join(transcriptDir, `${SAMPLE_SESSION_ID}.jsonl`);
+  await writeFile(
+    transcriptPath,
+    `{"type":"assistant","message":{"content":[{"type":"text","text":"old-1"}]}}\n` +
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"old-2"}]}}\n`,
+  );
+
+  const events: SessionDriverEvent[] = [];
+  // --continue marks this launch as a resume (the host adds it for resumes).
+  const launch = await buildLaunchOptions(cwd, events, ["claude", "--dangerously-skip-permissions", "--continue"]);
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const driver = await factory(launch);
+  await driver.sendUserMessage("RESUMING", "bootstrap");
+
+  // Several poll ticks pass; the pre-existing history must stay unemitted.
+  await new Promise((r) => setTimeout(r, 60));
+  expect(events.length).toBe(0);
+
+  // A line appended after the resume attach IS emitted.
+  await appendFile(transcriptPath, `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}\n`);
+  const deadline = Date.now() + 2000;
+  while (events.length < 1 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  expect(events.length).toBe(1);
+  expect(events[0]?.kind).toBe("claude_tool_use");
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
 test("second and later messages go through bracketed paste-buffer + Enter", async () => {
   const cwd = makeTmpDir("tmux-driver-cwd");
   const transcriptDir = makeTmpDir("tmux-driver-tx");
