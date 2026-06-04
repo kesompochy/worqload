@@ -1,20 +1,26 @@
 // The "推敲モード" (revise mode) config the human authors in
 // `~/.config/worqload/config.yaml`. Two parts, both optional and injected into
 // the server:
-//   - `textlint:` — the lint gate. Plain string matches; when a report
-//     submitted under revise mode contains a forbidden string, the matching
-//     rule's comment is returned and the report is bounced for re-revision.
-//     Matching is deliberately literal substring matching — no regex, no
-//     morphological analysis — because the rules are hand-tuned phrasings the
-//     human wants to keep out of stored reports.
+//   - `textlint:` — the lint gate. When a report submitted under revise mode
+//     contains a forbidden string, the matching rule's comment is returned and
+//     the report is bounced for re-revision. A rule fires on either of two
+//     matches: a literal substring occurrence, or a morphological match where
+//     the rule's word appears in the report in an inflected form (rule 「寄せる」
+//     fires on 「寄せたい」/「寄せて」). The literal pass is kept because the rules
+//     are hand-tuned phrasings, some not whole words; the morphological pass is
+//     layered on top so conjugated verbs and adjectives are also caught without
+//     the human enumerating every inflection.
 //   - `reviseFeedback:` — the editorial guidance appended to the generic
 //     revise-mode bounce message (see buildRevisionRequestFeedback in
 //     web-server). Only the guidance is configurable; the surrounding scaffold
 //     (draft path, resubmit command) is always the fixed template. Absent means
 //     the bounce carries no guidance.
 
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import type { IpadicFeatures, Tokenizer } from "kuromoji";
+import * as kuromoji from "kuromoji";
 
 export interface TextlintRule {
   // The literal substring that, if present unescaped in a report, bounces it.
@@ -105,15 +111,83 @@ export function parseReviseFeedbackGuidance(yamlText: string): string | null {
   return raw;
 }
 
-// Returns one violation per rule whose string appears unescaped in the report.
-export function lintReport(text: string, rules: TextlintRule[]): TextlintViolation[] {
+// Builds the morphological tokenizer, memoized so the IPADIC dictionary (loaded
+// once into memory, ~100ms) is shared across every caller in the process rather
+// than rebuilt per server start or per report. The dictionary ships inside the
+// kuromoji package; resolve its `dict/` directory relative to the package's
+// entry point so it is found wherever the package is installed.
+let sharedTokenizer: Promise<Tokenizer<IpadicFeatures>> | null = null;
+export function getTextlintTokenizer(): Promise<Tokenizer<IpadicFeatures>> {
+  if (sharedTokenizer === null) {
+    const dicPath = join(dirname(createRequire(import.meta.url).resolve("kuromoji")), "..", "dict");
+    sharedTokenizer = new Promise((resolve, reject) => {
+      kuromoji.builder({ dicPath }).build((err, tokenizer) => {
+        if (err) reject(err);
+        else resolve(tokenizer);
+      });
+    });
+  }
+  return sharedTokenizer;
+}
+
+// Returns one violation per rule that the report trips. A rule fires when its
+// string occurs as an unescaped literal substring, or — when a tokenizer is
+// supplied — when its word appears in the report in an inflected form. Without
+// a tokenizer only the literal pass runs, so the gate still works (literal-only)
+// when the dictionary failed to load.
+export function lintReport(
+  text: string,
+  rules: TextlintRule[],
+  tokenizer?: Tokenizer<IpadicFeatures>,
+): TextlintViolation[] {
+  const reportTokens = tokenizer ? tokenizer.tokenize(text) : null;
   const violations: TextlintViolation[] = [];
   for (const rule of rules) {
-    if (hasUnescapedOccurrence(text, rule.string)) {
+    const literalMatch = hasUnescapedOccurrence(text, rule.string);
+    const inflectedMatch =
+      tokenizer !== undefined &&
+      reportTokens !== null &&
+      hasUnescapedInflectedMatch(text, reportTokens, rule.string, tokenizer);
+    if (literalMatch || inflectedMatch) {
       violations.push({ string: rule.string, comment: rule.comment });
     }
   }
   return violations;
+}
+
+// The dictionary (base) form of a token, falling back to the surface form for
+// tokens kuromoji has no base form for (symbols, unknown words, marked "*").
+function lemmaOf(token: IpadicFeatures): string {
+  return token.basic_form !== "*" ? token.basic_form : token.surface_form;
+}
+
+// True when the rule's word sequence appears in the report as a run of tokens
+// with matching base forms, unescaped. The rule string is tokenized to its own
+// base-form sequence and matched against the report's; matching on base forms is
+// what lets 「寄せる」 catch 「寄せたい」. An occurrence is exempt when the character
+// directly before its first token is the escape character — the same escape the
+// literal pass honours, located here via the token's 1-based `word_position`.
+function hasUnescapedInflectedMatch(
+  text: string,
+  reportTokens: IpadicFeatures[],
+  ruleString: string,
+  tokenizer: Tokenizer<IpadicFeatures>,
+): boolean {
+  const pattern = tokenizer.tokenize(ruleString).map(lemmaOf);
+  if (pattern.length === 0) return false;
+  for (let start = 0; start + pattern.length <= reportTokens.length; start++) {
+    let matched = true;
+    for (let offset = 0; offset < pattern.length; offset++) {
+      if (lemmaOf(reportTokens[start + offset]) !== pattern[offset]) {
+        matched = false;
+        break;
+      }
+    }
+    if (!matched) continue;
+    const charIndex = reportTokens[start].word_position - 1;
+    if (charIndex === 0 || text[charIndex - 1] !== ESCAPE_CHARACTER) return true;
+  }
+  return false;
 }
 
 // True when `needle` occurs in `text` at least once without an escape character

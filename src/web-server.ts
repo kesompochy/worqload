@@ -34,7 +34,8 @@ import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
-import { defaultConfigPath, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
+import type { IpadicFeatures, Tokenizer } from "kuromoji";
+import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
@@ -241,6 +242,10 @@ export interface ServerContext {
   // alongside textlintRules with the same keep-previous-on-parse-failure
   // behavior.
   reviseFeedbackGuidance: string | null;
+  // The morphological tokenizer the lint gate uses for inflected matches, built
+  // lazily on the first revise-mode submission (see currentTextlintTokenizer).
+  // undefined = not yet built; null = build failed (gate runs literal-only).
+  textlintTokenizer?: Tokenizer<IpadicFeatures> | null;
 }
 
 export interface StartServerOptions {
@@ -500,6 +505,23 @@ async function currentTextlintRules(ctx: ServerContext): Promise<TextlintRule[]>
     console.error(`[textlint] config reload failed, keeping previous rules: ${err instanceof Error ? err.message : String(err)}`);
   }
   return ctx.textlintRules;
+}
+
+// Resolves the morphological tokenizer the lint gate uses for inflected matches,
+// building it once on first use (memoized in textlint and cached on ctx) rather
+// than at startup, so servers that never enter revise mode never pay the
+// dictionary load. A build failure is logged once and degrades the gate to
+// literal-only matching instead of blocking submission.
+async function currentTextlintTokenizer(ctx: ServerContext): Promise<Tokenizer<IpadicFeatures> | undefined> {
+  if (ctx.textlintTokenizer === undefined) {
+    try {
+      ctx.textlintTokenizer = await getTextlintTokenizer();
+    } catch (err) {
+      ctx.textlintTokenizer = null;
+      console.error(`[textlint] tokenizer build failed, using literal matching only: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return ctx.textlintTokenizer ?? undefined;
 }
 
 // The current `reviseFeedback:` guidance, reloaded from the same config on each
@@ -2646,7 +2668,7 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
       // so the stored report is guaranteed clean. A violation bounces without
       // touching revisionPending — it is orthogonal to the general one-shot
       // revision cycle below and may fire on the first or a later submission.
-      const violations = lintReport(body.content, await currentTextlintRules(ctx));
+      const violations = lintReport(body.content, await currentTextlintRules(ctx), await currentTextlintTokenizer(ctx));
       if (violations.length > 0) {
         return bounceReportForRevision(ctx, meta, body, buildTextlintBounceFeedback(body.slug, violations), "report_textlint_rejected");
       }

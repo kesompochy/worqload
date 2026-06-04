@@ -521,6 +521,24 @@ test("revise mode bounces a submission whose forbidden string trips textlint, re
   expect(stored.filename).toBe("001-p.md");
 });
 
+test("revise mode bounces a submission where a rule word appears only in an inflected form", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeTextlintConfig([{ string: "寄せる", comment: "既存実装に揃える意味では使わない" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // Clean first submission: held for the ordinary one-shot revision pass.
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "初稿" });
+
+  // 「寄せたい」 contains no literal 「寄せる」; only the morphological pass catches it.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "挙動を寄せたい" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const reportsDir = join(ctx.sessionsDir, sid, "reports");
+  expect(existsSync(reportsDir) && readdirSync(reportsDir).length > 0).toBe(false);
+});
+
 test("textlint exempts an occurrence escaped with a backslash, storing the report with the backslash intact", async () => {
   const repoDir = makeTmpDir("repo");
   const configPath = writeTextlintConfig([{ string: "可能性", comment: "統計的事実のときだけ使う" }]);
