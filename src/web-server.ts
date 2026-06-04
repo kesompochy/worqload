@@ -1138,6 +1138,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/resume", postResume),
   defineRoute("POST", "/sessions/:id/archive", postArchive),
   defineRoute("POST", "/sessions/:id/unarchive", postUnarchive),
+  defineRoute("POST", "/sessions/archived/prune", postPruneArchived),
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/revise-mode", postReviseMode),
@@ -1508,29 +1509,63 @@ async function deleteSession(_req: Request, ctx: ServerContext, params: Record<s
     if (!meta.archivedAt) {
       return json({ error: "archive the session before deleting" }, 400);
     }
-    ctx.clients.delete(meta.id);
-    ctx.lastClaudeActivityAt.delete(meta.id);
-    ctx.lastFeedbackFetchAt.delete(meta.id);
-    ctx.reportedThisTurn.delete(meta.id);
-    ctx.autoNudgeCount.delete(meta.id);
-    try {
-      await ctx.worktreeOps.removeWorktree(meta.worktreePath, meta.branchName, ctx.repoDir);
-    } catch {
-      // worktree already gone (manual cleanup, repo moved, ...) — keep going so
-      // the session dir still gets cleared.
-    }
-    // The structure tab's function-mode Before split may have materialised a
-    // sibling worktree at the diff base; remove it too. Detached, so no branch
-    // to delete. Best-effort: most sessions never create one.
-    try {
-      const basePath = ctx.worktreeOps.baseWorktreePathFor(meta.worktreePath);
-      await ctx.worktreeOps.removeWorktree(basePath, undefined, ctx.repoDir);
-    } catch {
-      /* base worktree was never created or already gone */
-    }
-    await rm(join(ctx.sessionsDir, meta.id), { recursive: true, force: true });
+    await purgeSession(ctx, meta);
     return json({ ok: true });
   });
+}
+
+// The destructive half of deleteSession, factored out so the bulk prune can
+// reuse it: removes the worktree, the working branch, and the whole
+// .worqload/sessions/<id>/ directory. Caller is responsible for the
+// archived-state guard.
+async function purgeSession(ctx: ServerContext, meta: SessionMeta): Promise<void> {
+  ctx.clients.delete(meta.id);
+  ctx.lastClaudeActivityAt.delete(meta.id);
+  ctx.lastFeedbackFetchAt.delete(meta.id);
+  ctx.reportedThisTurn.delete(meta.id);
+  ctx.autoNudgeCount.delete(meta.id);
+  try {
+    await ctx.worktreeOps.removeWorktree(meta.worktreePath, meta.branchName, ctx.repoDir);
+  } catch {
+    // worktree already gone (manual cleanup, repo moved, ...) — keep going so
+    // the session dir still gets cleared.
+  }
+  // The structure tab's function-mode Before split may have materialised a
+  // sibling worktree at the diff base; remove it too. Detached, so no branch
+  // to delete. Best-effort: most sessions never create one.
+  try {
+    const basePath = ctx.worktreeOps.baseWorktreePathFor(meta.worktreePath);
+    await ctx.worktreeOps.removeWorktree(basePath, undefined, ctx.repoDir);
+  } catch {
+    /* base worktree was never created or already gone */
+  }
+  await rm(join(ctx.sessionsDir, meta.id), { recursive: true, force: true });
+}
+
+interface PruneArchivedBody {
+  days?: unknown;
+}
+
+// Bulk hard-delete: removes every archived session whose archivedAt predates
+// `days` days ago. Same irreversible cleanup as DELETE /sessions/:id, applied
+// per match. Deletes run sequentially — each removes a git worktree from the
+// shared repo, and parallel removals risk index-lock contention.
+async function postPruneArchived(req: Request, ctx: ServerContext): Promise<Response> {
+  const body = (await req.json().catch(() => ({}))) as PruneArchivedBody;
+  if (typeof body.days !== "number" || !Number.isFinite(body.days) || body.days < 0) {
+    return json({ error: "days must be a non-negative number" }, 400);
+  }
+  const cutoff = Date.now() - body.days * 86_400_000;
+  const sessions = await listSessionMetas(ctx.sessionsDir);
+  const stale = sessions.filter(
+    s => s.archivedAt !== undefined && new Date(s.archivedAt).getTime() < cutoff,
+  );
+  const deleted: string[] = [];
+  for (const meta of stale) {
+    await purgeSession(ctx, meta);
+    deleted.push(meta.id);
+  }
+  return json({ deleted, count: deleted.length });
 }
 
 interface TitleBody {

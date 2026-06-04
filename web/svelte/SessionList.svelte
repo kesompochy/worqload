@@ -26,6 +26,7 @@
     onSelectAllArchived,
     onClearArchivedSelection,
     onBulkDeleteArchived,
+    onPruneArchivedOlderThan,
   } from "../handlers.js";
 
   // The sidebar's currently-shown feed: active sessions or the archives tab.
@@ -160,6 +161,10 @@
       onclick={() => (allArchivedSelected ? onClearArchivedSelection() : onSelectAllArchived())}
     >{allArchivedSelected ? "Clear" : "Select all"}</button>
     <button class="bulk-delete" onclick={onBulkDeleteArchived}>Delete {selectionCount}</button>
+  </div>
+{:else if archivedView && visibleSessions.length > 0}
+  <div class="bulk-action-bar">
+    <button class="bulk-delete" onclick={onPruneArchivedOlderThan}>古いアーカイブを削除…</button>
   </div>
 {/if}
 

@@ -1051,6 +1051,33 @@ export async function onBulkDeleteArchived() {
   }
 }
 
+// Hard-delete every archive older than a chosen number of days. Prompts for the
+// threshold, hands it to the backend (which removes each matching session's
+// worktree, branch, and records), then reloads the archived feed. No undo.
+export async function onPruneArchivedOlderThan() {
+  if (typeof window === "undefined" || typeof window.prompt !== "function") return;
+  const input = window.prompt("何日より前にアーカイブしたセッションを削除しますか？（日数）", "30");
+  if (input === null) return;
+  const days = Number(input.trim());
+  if (!Number.isFinite(days) || days < 0) {
+    toast("日数を正しく入力してください");
+    return;
+  }
+  const message = `${days} 日より前にアーカイブしたセッションをすべて削除します。\nworktree・作業ブランチ・記録 (reports / events / feedback) が消え、復元できません。よろしいですか？`;
+  if (typeof window.confirm === "function" && !window.confirm(message)) return;
+  try {
+    const { count } = await api("POST", "/sessions/archived/prune", { days });
+    state.archivedSelection = new Set();
+    await fetchArchivedSessions();
+    if (state.selected && !state.archivedSessions.some(s => s.id === state.selected)) {
+      await selectSession(null);
+    }
+    toast(`${count} 件削除`);
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 export async function onArchive(id = state.selected) {
   if (!id) return;
   try {
