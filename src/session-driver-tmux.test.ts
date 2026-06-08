@@ -186,6 +186,9 @@ test("resume mode uses --resume <uuid> instead of --session-id <uuid>", async ()
   const transcriptDir = makeTmpDir("tmux-driver-tx");
   const { deps, state } = makeFakeTmuxDeps(transcriptDir);
 
+  // No surviving tmux session, so resume must recreate it with --resume.
+  state.hasSessionReplies = [1];
+
   const events: SessionDriverEvent[] = [];
   // Resume is signalled via the launch contract. The host still appends
   // --continue (the pipe driver wants it); the tmux driver must switch to
@@ -202,7 +205,7 @@ test("resume mode uses --resume <uuid> instead of --session-id <uuid>", async ()
   const driver = await factory(launch);
   await driver.sendUserMessage("RESUMING", "bootstrap");
 
-  const spawnCall = state.calls[0];
+  const spawnCall = state.calls.find((c) => c.args[0] === "new-session");
   if (!spawnCall) throw new Error("tmux new-session not invoked");
   const shellCmd = spawnCall.args.at(-1);
   if (typeof shellCmd !== "string") throw new Error("missing shell command");
@@ -211,6 +214,42 @@ test("resume mode uses --resume <uuid> instead of --session-id <uuid>", async ()
   // --continue must be stripped (worqload's claude --resume <uuid> is the
   // explicit equivalent and avoids racing with other sessions in the cwd).
   expect(shellCmd).not.toContain("--continue");
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
+test("resume reattaches to a surviving tmux session via paste instead of spawning a duplicate name (which tmux rejects)", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  const { deps, state } = makeFakeTmuxDeps(transcriptDir);
+  // The tmux + claude from a prior host generation is still alive (the session
+  // outlives host restarts by design), so has-session reports it present.
+  state.hasSessionReplies = [0];
+
+  const events: SessionDriverEvent[] = [];
+  const launch = await buildLaunchOptions(
+    cwd,
+    events,
+    ["claude", "--dangerously-skip-permissions"],
+    SAMPLE_SESSION_ID,
+    true,
+  );
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const driver = await factory(launch);
+  await driver.sendUserMessage("RESUMING", "bootstrap");
+
+  // Recreating a same-named session is exactly what tmux rejects (duplicate
+  // session, exit 1), which is what left resumed sessions unreachable.
+  expect(state.calls.some((c) => c.args[0] === "new-session")).toBe(false);
+  // The kickoff reaches the running claude through bracketed paste.
+  const loadBuffer = state.calls.find((c) => c.args[0] === "load-buffer");
+  expect(loadBuffer?.stdin).toBe("RESUMING");
+  const pasteBuffer = state.calls.find((c) => c.args[0] === "paste-buffer");
+  expect(pasteBuffer?.args).toContain("-p");
+  const sendKeys = state.calls.find((c) => c.args[0] === "send-keys");
+  expect(sendKeys?.args).toContain("Enter");
 
   driver.kill("SIGTERM");
   await driver.exited;

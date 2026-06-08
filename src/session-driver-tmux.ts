@@ -393,7 +393,22 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
             // First message: spawn tmux with claude already configured to
             // process this text as its first prompt. Both bootstrap and the
             // resume kickoff arrive here.
-            await spawnTmux(text);
+            //
+            // On resume the detached tmux + claude from a prior host generation
+            // may still be alive — the session outlives host restarts by design.
+            // tmux refuses a second session with the same name, so recreating it
+            // would fail on the duplicate-name guard and the kickoff would never
+            // reach the running claude. Reattach instead: skip new-session and
+            // paste the kickoff into the live TUI.
+            const surviving =
+              isResume && (await deps.tmuxRun(["has-session", "-t", sessionName])).exitCode === 0;
+            if (surviving) {
+              spawned = true;
+              opts.log("tmux_reattached", { sessionName });
+              await sendViaPaste(text);
+            } else {
+              await spawnTmux(text);
+            }
           } else {
             await sendViaPaste(text);
           }
