@@ -236,6 +236,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
       cwd: meta.worktreePath || undefined,
       env: claudeEnv,
       spawnCommand: opts.spawnCommand,
+      resume: opts.resume === true,
       onEvent: (event) => writeEvent(event),
       log,
       ...(meta.agentSessionId !== undefined && { priorAgentSessionId: meta.agentSessionId }),

@@ -238,13 +238,13 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
     // multiple sessions raced in the same cwd.
     const transcriptPath = join(transcriptDir, `${sessionId}.jsonl`);
 
-    // Detect resume mode by inspecting spawnCommand. web-server's host
-    // launcher appends `--continue` when serve is resuming a session. We
-    // strip it here because claude's interactive mode only honors --resume
-    // <uuid> for explicit resumption; --continue is just "the most recent in
-    // this cwd", which is wrong if multiple worqload sessions ever share a
-    // cwd.
-    const isResume = opts.spawnCommand.includes("--continue");
+    // Resume intent comes from the launch contract, not from sniffing argv. We
+    // still strip `--continue` (web-server appends it to the claude spawnCommand
+    // for resumes, which the pipe driver wants) because claude's interactive
+    // mode only honors --resume <uuid> for explicit resumption; --continue is
+    // just "the most recent in this cwd", which is wrong if multiple worqload
+    // sessions ever share a cwd.
+    const isResume = opts.resume === true;
     const cleanedSpawn = opts.spawnCommand.filter((a) => a !== "--continue");
 
     let exitedFlag = false;

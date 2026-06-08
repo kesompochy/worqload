@@ -77,6 +77,13 @@ export interface SessionDriverLaunchOptions {
   spawnCommand: string[];
   onEvent: SessionDriverEventSink;
   log: SessionDriverLogFn;
+  // Whether this launch resumes a prior session rather than starting fresh.
+  // A first-class part of the contract so a driver reads the intent here
+  // instead of reverse-engineering it from a CLI's argv: the tmux driver uses
+  // it to choose `--resume <uuid>` over `--session-id <uuid>`. The claude pipe
+  // driver instead resumes via `--continue`, which the host appends to
+  // spawnCommand; codex resumes via priorAgentSessionId. Both ignore this flag.
+  resume?: boolean;
   // The agent-side session identifier persisted from a prior host (if any).
   // Codex uses this to resume its thread across host restarts; the claude pipe
   // and tmux drivers ignore it (claude resumes via `--continue` at argv level,

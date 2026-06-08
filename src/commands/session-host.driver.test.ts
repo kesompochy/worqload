@@ -240,6 +240,38 @@ test("runHost forwards meta.agentSessionId to the driver as priorAgentSessionId 
   await hostExit;
 });
 
+test("runHost forwards its resume flag to the driver so the driver reads resume intent from the contract", async () => {
+  const sessionsDir = makeTmpDir("driver-resume-flag-test");
+  const worktree = makeTmpDir("driver-resume-flag-wt");
+  const meta = createSession({
+    prompt: "do thing",
+    baseBranch: "main",
+    baseCommit: "abc123",
+    worktreePath: worktree,
+    branchName: "driver-resume-flag-test",
+  });
+  await saveSessionMeta(meta, sessionsDir);
+  mkdirSync(join(sessionsDir, meta.id), { recursive: true });
+  const socketPath = join(makeTmpDir("driver-resume-flag-sock"), `${meta.id.slice(0, 8)}.sock`);
+
+  const fake = makeFakeDriver();
+  const hostExit = runHost({
+    sessionId: meta.id,
+    sessionsDir,
+    socketPath,
+    agentEndpoint: "http://127.0.0.1:0",
+    spawnCommand: ["unused"],
+    resume: true,
+    driver: fake.factory,
+  });
+
+  const launched = await fake.launched;
+  expect(launched.resume).toBe(true);
+
+  fake.exit(0);
+  await hostExit;
+});
+
 test("runHost persists the agent-side session id on meta when the driver fires onAgentSessionId", async () => {
   const sessionsDir = makeTmpDir("driver-persist-test");
   const worktree = makeTmpDir("driver-persist-test-wt");

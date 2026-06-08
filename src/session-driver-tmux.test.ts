@@ -76,6 +76,7 @@ async function buildLaunchOptions(
   events: SessionDriverEvent[],
   spawnCommand: string[] = ["claude", "--dangerously-skip-permissions"],
   sessionId = SAMPLE_SESSION_ID,
+  resume = false,
 ): Promise<SessionDriverLaunchOptions> {
   return {
     cwd,
@@ -84,6 +85,7 @@ async function buildLaunchOptions(
       WORQLOAD_ENDPOINT: "http://127.0.0.1:0",
     },
     spawnCommand,
+    resume,
     onEvent: (e) => {
       events.push(e);
     },
@@ -185,9 +187,16 @@ test("resume mode uses --resume <uuid> instead of --session-id <uuid>", async ()
   const { deps, state } = makeFakeTmuxDeps(transcriptDir);
 
   const events: SessionDriverEvent[] = [];
-  // The host adds --continue to spawnCommand for resume sessions; the tmux
-  // driver should detect that and switch to --resume <uuid>.
-  const launch = await buildLaunchOptions(cwd, events, ["claude", "--dangerously-skip-permissions", "--continue"]);
+  // Resume is signalled via the launch contract. The host still appends
+  // --continue (the pipe driver wants it); the tmux driver must switch to
+  // --resume <uuid> and strip --continue.
+  const launch = await buildLaunchOptions(
+    cwd,
+    events,
+    ["claude", "--dangerously-skip-permissions", "--continue"],
+    SAMPLE_SESSION_ID,
+    true,
+  );
   const factory = makeTmuxClaudeDriverFactory(deps);
 
   const driver = await factory(launch);
@@ -286,8 +295,14 @@ test("resume tails only lines appended after attach — pre-existing transcript 
   );
 
   const events: SessionDriverEvent[] = [];
-  // --continue marks this launch as a resume (the host adds it for resumes).
-  const launch = await buildLaunchOptions(cwd, events, ["claude", "--dangerously-skip-permissions", "--continue"]);
+  // resume: true marks this launch as a resume.
+  const launch = await buildLaunchOptions(
+    cwd,
+    events,
+    ["claude", "--dangerously-skip-permissions"],
+    SAMPLE_SESSION_ID,
+    true,
+  );
   const factory = makeTmuxClaudeDriverFactory(deps);
 
   const driver = await factory(launch);
