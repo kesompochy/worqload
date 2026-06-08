@@ -48,6 +48,43 @@ export function classifyCodexLine(parsed: ParsedCodexLine): EventKind {
   return "claude_system";
 }
 
+// Translate a classified codex wire line into the normalized domain payload, so
+// the events UI reads the same shape it reads for claude and never learns
+// codex's item structure. The original parsed line is kept under `wire` for the
+// debug dump only. Codex's tool items carry per-type detail fields this
+// codebase has no schema for, so tools normalize best-effort (name = item type,
+// input = the whole item) and rely on `wire` for the rest.
+export function normalizeCodexLine(parsed: ParsedCodexLine, kind: EventKind): Record<string, unknown> {
+  const item = parsed?.item;
+  switch (kind) {
+    case "claude_assistant_message": {
+      const text = typeof item?.text === "string" ? item.text : "";
+      const isReasoning = item?.type === "reasoning";
+      return { text: isReasoning ? "" : text, thinking: isReasoning ? text : "", wire: parsed };
+    }
+    case "claude_tool_use":
+      return {
+        tools: [{ name: typeof item?.type === "string" ? item.type : "tool", input: item ?? {} }],
+        wire: parsed,
+      };
+    case "claude_tool_result":
+      return {
+        results: [{ text: typeof item?.text === "string" ? item.text : "", isError: item?.type === "error" }],
+        wire: parsed,
+      };
+    default:
+      return { text: codexSystemText(parsed), wire: parsed };
+  }
+}
+
+// The claude_system kind collects codex's lifecycle and error events. Reduce
+// each to one human-readable line: an error's message, otherwise the event type.
+function codexSystemText(parsed: ParsedCodexLine): string {
+  const message = parsed?.item?.message ?? parsed?.message;
+  if (typeof message === "string" && message !== "") return message;
+  return typeof parsed?.type === "string" ? parsed.type : "system";
+}
+
 export function extractCodexThreadId(parsed: ParsedCodexLine): string | null {
   if (parsed?.type !== "thread.started") return null;
   const id = parsed.thread_id;

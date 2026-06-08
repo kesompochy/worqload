@@ -22,13 +22,22 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyClaudeLine, isClaudeTranscriptTurnEnd } from "./claude-stream";
-import { TURN_COMPLETED_EVENT } from "./session-driver";
+import { classifyClaudeLine, isClaudeTranscriptTurnEnd, normalizeClaudeLine } from "./claude-stream";
+import { emitAgentLine, parseAgentLine } from "./session-driver";
 import type {
+  AgentLineFormat,
   SessionDriver,
   SessionDriverFactory,
   SessionDriverLaunchOptions,
 } from "./session-driver";
+
+// The interactive transcript has no synthetic end-of-turn line, so the
+// assistant message that yields the turn back is the boundary.
+const CLAUDE_TRANSCRIPT_FORMAT: AgentLineFormat = {
+  classify: classifyClaudeLine,
+  normalize: normalizeClaudeLine,
+  isTurnEnd: isClaudeTranscriptTurnEnd,
+};
 
 // Claude Code stores transcripts at
 //   ~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl
@@ -168,13 +177,7 @@ async function tailJsonl(
         const line = buf.slice(0, idx);
         buf = buf.slice(idx + 1);
         if (line.trim() === "") continue;
-        let parsed: Record<string, unknown>;
-        try {
-          parsed = JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          parsed = { type: "raw", raw: line };
-        }
-        await onLine(parsed);
+        await onLine(parseAgentLine(line));
       }
     }
     await sleep(deps.pollIntervalMs);
@@ -235,13 +238,13 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
     // multiple sessions raced in the same cwd.
     const transcriptPath = join(transcriptDir, `${sessionId}.jsonl`);
 
-    // Detect resume mode by inspecting spawnCommand. web-server's host
-    // launcher appends `--continue` when serve is resuming a session. We
-    // strip it here because claude's interactive mode only honors --resume
-    // <uuid> for explicit resumption; --continue is just "the most recent in
-    // this cwd", which is wrong if multiple worqload sessions ever share a
-    // cwd.
-    const isResume = opts.spawnCommand.includes("--continue");
+    // Resume intent comes from the launch contract, not from sniffing argv. We
+    // still strip `--continue` (web-server appends it to the claude spawnCommand
+    // for resumes, which the pipe driver wants) because claude's interactive
+    // mode only honors --resume <uuid> for explicit resumption; --continue is
+    // just "the most recent in this cwd", which is wrong if multiple worqload
+    // sessions ever share a cwd.
+    const isResume = opts.resume === true;
     const cleanedSpawn = opts.spawnCommand.filter((a) => a !== "--continue");
 
     let exitedFlag = false;
@@ -293,12 +296,7 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
         transcriptPath,
         deps,
         () => exitedFlag,
-        async (parsed) => {
-          await opts.onEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
-          // The interactive transcript has no synthetic end-of-turn line, so the
-          // assistant message that yields the turn back is the boundary.
-          if (isClaudeTranscriptTurnEnd(parsed)) await opts.onEvent(TURN_COMPLETED_EVENT);
-        },
+        (parsed) => emitAgentLine(parsed, CLAUDE_TRANSCRIPT_FORMAT, opts.onEvent),
         initialOffset,
       );
     })();

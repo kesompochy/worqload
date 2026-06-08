@@ -1,5 +1,37 @@
 import { expect, test } from "bun:test";
-import { classifyCodexLine, extractCodexThreadId, isCodexTurnTerminator } from "./codex-stream";
+import { classifyCodexLine, extractCodexThreadId, isCodexTurnTerminator, normalizeCodexLine } from "./codex-stream";
+
+test("normalizeCodexLine surfaces agent_message text as the assistant message text", () => {
+  const wire = { type: "item.completed", item: { id: "i1", type: "agent_message", text: "hello" } };
+  expect(normalizeCodexLine(wire, "claude_assistant_message")).toEqual({ text: "hello", thinking: "", wire });
+});
+
+test("normalizeCodexLine routes reasoning item text into thinking", () => {
+  const wire = { type: "item.completed", item: { id: "r1", type: "reasoning", text: "pondering" } };
+  expect(normalizeCodexLine(wire, "claude_assistant_message")).toEqual({ text: "", thinking: "pondering", wire });
+});
+
+test("normalizeCodexLine flattens a tool-like item to name (item type) + input (the item)", () => {
+  const item = { id: "x", type: "command_execution", command: "ls" };
+  const wire = { type: "item.started", item };
+  expect(normalizeCodexLine(wire, "claude_tool_use")).toEqual({
+    tools: [{ name: "command_execution", input: item }],
+    wire,
+  });
+});
+
+test("normalizeCodexLine flattens a tool result, marking error items", () => {
+  const okWire = { type: "item.completed", item: { id: "x", type: "command_execution", text: "done" } };
+  expect(normalizeCodexLine(okWire, "claude_tool_result")).toEqual({
+    results: [{ text: "done", isError: false }],
+    wire: okWire,
+  });
+});
+
+test("normalizeCodexLine summarizes system lines into text", () => {
+  expect(normalizeCodexLine({ type: "error", message: "fatal" }, "claude_system").text).toBe("fatal");
+  expect(normalizeCodexLine({ type: "turn.completed" }, "claude_system").text).toBe("turn.completed");
+});
 
 test("classifyCodexLine maps thread.started and turn.* to claude_system", () => {
   expect(classifyCodexLine({ type: "thread.started", thread_id: "t-1" })).toBe("claude_system");

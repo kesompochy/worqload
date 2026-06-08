@@ -3,7 +3,7 @@
 // second implementation (interactive claude driven via tmux) is the reason this
 // indirection exists — runHost should be the same code in either case.
 
-import { classifyClaudeLine, isClaudePipeTurnEnd, readLines } from "./claude-stream";
+import { classifyClaudeLine, isClaudePipeTurnEnd, normalizeClaudeLine, readLines } from "./claude-stream";
 import type { EventKind } from "./event-log";
 import { buildUserMessage } from "./session-bootstrap";
 
@@ -22,6 +22,53 @@ export const TURN_COMPLETED_EVENT: SessionDriverEvent = { kind: "turn_completed"
 
 export type SessionDriverEventSink = (event: SessionDriverEvent) => Promise<void> | void;
 
+// A driver's wire format reduces to three per-line decisions: how to classify a
+// transcript line into an EventKind, how to shape it into the normalized domain
+// payload consumers read, and whether the line closes a turn. The rest of the
+// line→event pipeline (emit the classified+normalized event, then emit the
+// normalized TURN_COMPLETED_EVENT on a boundary) is identical across drivers,
+// so it lives in emitAgentLine rather than being copy-pasted — which is what
+// let the codex driver silently omit the turn-end emit before turn_completed
+// was normalized. The callbacks accept Record<string, unknown> so the per-wire
+// functions (which read only their own optional fields) plug in directly.
+// normalize keeps the UI from learning any CLI's wire shape: classify+normalize
+// are the entire wire→domain translation, and they live in the adapter layer.
+export interface AgentLineFormat {
+  classify: (parsed: Record<string, unknown>) => EventKind;
+  normalize: (parsed: Record<string, unknown>, kind: EventKind) => Record<string, unknown>;
+  isTurnEnd: (parsed: Record<string, unknown>) => boolean;
+}
+
+// Parse one transcript line, falling back to a raw envelope so an unparseable
+// line still surfaces downstream (classified as claude_system) instead of being
+// dropped.
+export function parseAgentLine(line: string): Record<string, unknown> {
+  try {
+    return JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return { type: "raw", raw: line };
+  }
+}
+
+// Emit the normalized events for one already-parsed transcript line: the
+// classified agent event, then TURN_COMPLETED_EVENT when the line closes a
+// turn. Drivers that inspect the parsed line for their own bookkeeping (codex's
+// thread-id capture) do so before calling this.
+export async function emitAgentLine(
+  parsed: Record<string, unknown>,
+  format: AgentLineFormat,
+  onEvent: SessionDriverEventSink,
+): Promise<void> {
+  const kind = format.classify(parsed);
+  await onEvent({ kind, payload: format.normalize(parsed, kind) });
+  if (format.isTurnEnd(parsed)) await onEvent(TURN_COMPLETED_EVENT);
+}
+
+// A driver's stderr is uniformly surfaced as a claude_system stderr event.
+export function emitStderrLine(line: string, onEvent: SessionDriverEventSink): Promise<void> | void {
+  return onEvent({ kind: "claude_system", payload: { type: "stderr", text: line } });
+}
+
 export type SessionDriverLogFn = (event: string, fields?: Record<string, unknown>) => void;
 
 export interface SessionDriverLaunchOptions {
@@ -30,6 +77,13 @@ export interface SessionDriverLaunchOptions {
   spawnCommand: string[];
   onEvent: SessionDriverEventSink;
   log: SessionDriverLogFn;
+  // Whether this launch resumes a prior session rather than starting fresh.
+  // A first-class part of the contract so a driver reads the intent here
+  // instead of reverse-engineering it from a CLI's argv: the tmux driver uses
+  // it to choose `--resume <uuid>` over `--session-id <uuid>`. The claude pipe
+  // driver instead resumes via `--continue`, which the host appends to
+  // spawnCommand; codex resumes via priorAgentSessionId. Both ignore this flag.
+  resume?: boolean;
   // The agent-side session identifier persisted from a prior host (if any).
   // Codex uses this to resume its thread across host restarts; the claude pipe
   // and tmux drivers ignore it (claude resumes via `--continue` at argv level,
@@ -61,6 +115,13 @@ export type SessionDriverFactory = (opts: SessionDriverLaunchOptions) => Promise
 // Default driver: a child process speaking the `claude -p` stream-json
 // protocol. `opts.spawnCommand` is the argv to launch (e.g. `claude -p
 // --input-format stream-json --output-format stream-json ...`).
+// The stream-json `result` line is this driver's authoritative turn boundary.
+const CLAUDE_PIPE_FORMAT: AgentLineFormat = {
+  classify: classifyClaudeLine,
+  normalize: normalizeClaudeLine,
+  isTurnEnd: isClaudePipeTurnEnd,
+};
+
 export const claudePipeDriver: SessionDriverFactory = async (opts) => {
   const claude = Bun.spawn(opts.spawnCommand, {
     cwd: opts.cwd,
@@ -70,21 +131,11 @@ export const claudePipeDriver: SessionDriverFactory = async (opts) => {
     stderr: "pipe",
   });
 
-  const stdoutTask = readLines(claude.stdout, async (line) => {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      parsed = { type: "raw", raw: line };
-    }
-    await opts.onEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
-    // The stream-json `result` line is this driver's authoritative turn boundary.
-    if (isClaudePipeTurnEnd(parsed)) await opts.onEvent(TURN_COMPLETED_EVENT);
-  });
+  const stdoutTask = readLines(claude.stdout, (line) =>
+    emitAgentLine(parseAgentLine(line), CLAUDE_PIPE_FORMAT, opts.onEvent),
+  );
 
-  const stderrTask = readLines(claude.stderr, async (line) => {
-    await opts.onEvent({ kind: "claude_system", payload: { type: "stderr", text: line } });
-  });
+  const stderrTask = readLines(claude.stderr, (line) => emitStderrLine(line, opts.onEvent));
 
   // exited resolves only after the stdout/stderr drains complete; otherwise the
   // host could finish before the last assistant message has been persisted.

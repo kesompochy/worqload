@@ -57,15 +57,15 @@ export function describeEvent(event) {
     }
 
     case "claude_assistant_message": {
-      const text = assistantText(payload);
+      const text = typeof payload?.text === "string" ? payload.text : "";
       if (text) return { summary: oneLine(text), sections: [{ label: "Message", body: text, format: "markdown" }] };
-      const thinking = blocksOfType(payload, "thinking").map(b => b.thinking).filter(t => typeof t === "string").join("\n").trim();
+      const thinking = typeof payload?.thinking === "string" ? payload.thinking : "";
       if (thinking) return { summary: oneLine(thinking) || "(thinking)", sections: [{ label: "Thinking", body: thinking, format: "text" }] };
       return fallback("(no text content)", payload);
     }
 
     case "claude_tool_use": {
-      const uses = toolUses(payload);
+      const uses = Array.isArray(payload?.tools) ? payload.tools : [];
       if (uses.length === 0) return fallback("(tool use)", payload);
       return {
         summary: uses.map(u => {
@@ -77,7 +77,7 @@ export function describeEvent(event) {
     }
 
     case "claude_tool_result": {
-      const results = toolResults(payload);
+      const results = Array.isArray(payload?.results) ? payload.results : [];
       if (results.length === 0) return fallback("(tool result)", payload);
       const joined = results.map(r => r.text).join("\n");
       const anyError = results.some(r => r.isError);
@@ -91,8 +91,10 @@ export function describeEvent(event) {
       };
     }
 
-    case "claude_system":
-      return describeClaudeSystem(payload);
+    case "claude_system": {
+      const text = typeof payload?.text === "string" ? payload.text : "";
+      return { summary: oneLine(text) || "system", sections: [payloadSection(payload?.wire ?? payload)] };
+    }
 
     case "report_submitted":
       return { summary: `📄 ${payload?.filename ?? "report"}`, sections: [payloadSection(payload)] };
@@ -144,26 +146,6 @@ export function describeEvent(event) {
   }
 }
 
-function describeClaudeSystem(payload) {
-  if (typeof payload?.text === "string" && payload.type === "stderr") {
-    return { summary: oneLine(payload.text) || "(empty stderr)", sections: [{ label: "stderr", body: payload.text, format: "code" }] };
-  }
-  if (typeof payload?.raw === "string" && payload.type === "raw") {
-    return { summary: oneLine(payload.raw) || "(unparsed line)", sections: [{ label: "raw line", body: payload.raw, format: "code" }] };
-  }
-  if (payload?.type === "result") {
-    const result = typeof payload.result === "string" ? payload.result : "";
-    return {
-      summary: `result${payload.is_error ? " (error)" : ""}${result ? `: ${oneLine(result)}` : ""}`,
-      sections: result ? [{ label: "Result", body: result, format: "text" }, payloadSection(payload)] : [payloadSection(payload)],
-    };
-  }
-  if (typeof payload?.subtype === "string") {
-    return { summary: `system: ${payload.subtype}`, sections: [payloadSection(payload)] };
-  }
-  return fallback("system", payload);
-}
-
 function describeActionInvoked(payload) {
   const label = payload?.label ?? payload?.actionId ?? "action";
   const exit = Number.isFinite(payload?.exitCode) ? ` (exit ${payload.exitCode})` : "";
@@ -200,41 +182,13 @@ function describeCommandApprovalResolved(payload) {
 // ---- pure helpers --------------------------------------------------------
 
 function fallback(summary, payload) {
-  return { summary, sections: [payloadSection(payload)] };
+  // Agent events carry the raw wire line under `wire` for diagnostics; dump that
+  // when present so the panel shows the source line, not the normalized wrapper.
+  return { summary, sections: [payloadSection(payload?.wire ?? payload)] };
 }
 
 function payloadSection(value) {
   return { label: "Payload", body: prettyJson(value), format: "code" };
-}
-
-function blocksOfType(payload, type) {
-  const content = payload?.message?.content;
-  return Array.isArray(content) ? content.filter(b => b && b.type === type) : [];
-}
-
-function assistantText(payload) {
-  return blocksOfType(payload, "text").map(b => b.text).filter(t => typeof t === "string").join("\n").trim();
-}
-
-function toolUses(payload) {
-  return blocksOfType(payload, "tool_use").map(b => ({
-    name: typeof b.name === "string" ? b.name : "tool",
-    input: b.input ?? {},
-  }));
-}
-
-function toolResults(payload) {
-  return blocksOfType(payload, "tool_result").map(b => ({ text: textFromContent(b.content), isError: b.is_error === true }));
-}
-
-function textFromContent(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map(part => (typeof part === "string" ? part : typeof part?.text === "string" ? part.text : prettyJson(part)))
-      .join("\n");
-  }
-  return content == null ? "" : prettyJson(content);
 }
 
 // A short hint at the most identifying argument of a tool call (the file being
