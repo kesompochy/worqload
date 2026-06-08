@@ -3,7 +3,7 @@
 // second implementation (interactive claude driven via tmux) is the reason this
 // indirection exists — runHost should be the same code in either case.
 
-import { classifyClaudeLine, readLines } from "./claude-stream";
+import { classifyClaudeLine, isClaudePipeTurnEnd, readLines } from "./claude-stream";
 import type { EventKind } from "./event-log";
 import { buildUserMessage } from "./session-bootstrap";
 
@@ -11,6 +11,14 @@ export interface SessionDriverEvent {
   kind: EventKind;
   payload: Record<string, unknown>;
 }
+
+// Part of the driver contract: every driver MUST emit one of these — kind
+// "turn_completed" — each time its agent finishes responding to a user message
+// (right after the classified events of that turn). Detecting the turn boundary
+// is wire-format-specific and so is the driver's responsibility; emitting this
+// normalized event lets consumers (the report-less auto-nudge) react without
+// knowing any driver's stream shape. See each driver for its terminator.
+export const TURN_COMPLETED_EVENT: SessionDriverEvent = { kind: "turn_completed", payload: {} };
 
 export type SessionDriverEventSink = (event: SessionDriverEvent) => Promise<void> | void;
 
@@ -70,6 +78,8 @@ export const claudePipeDriver: SessionDriverFactory = async (opts) => {
       parsed = { type: "raw", raw: line };
     }
     await opts.onEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
+    // The stream-json `result` line is this driver's authoritative turn boundary.
+    if (isClaudePipeTurnEnd(parsed)) await opts.onEvent(TURN_COMPLETED_EVENT);
   });
 
   const stderrTask = readLines(claude.stderr, async (line) => {

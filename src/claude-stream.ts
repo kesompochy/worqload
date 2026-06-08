@@ -2,8 +2,31 @@ import type { EventKind } from "./event-log";
 
 interface ParsedClaudeLine {
   type?: string;
-  message?: { content?: unknown };
+  message?: { content?: unknown; stop_reason?: unknown };
   [key: string]: unknown;
+}
+
+// stop_reason values on an assistant message that mean claude has yielded the
+// turn back to the user rather than pausing to run a tool (`tool_use`). The
+// interactive transcript (what the tmux driver tails) has no synthetic
+// end-of-turn line, so the terminal assistant message is the turn boundary.
+const TURN_YIELDING_STOP_REASONS = new Set(["end_turn", "stop_sequence"]);
+
+// True for the `claude -p` stream-json line that closes a turn: one
+// `{type:"result",...}` line is emitted once per processed user message,
+// regardless of how the turn ended. The pipe driver's authoritative boundary.
+export function isClaudePipeTurnEnd(parsed: ParsedClaudeLine): boolean {
+  return parsed?.type === "result";
+}
+
+// True for the transcript assistant line that closes a turn. `claude -p` also
+// emits this assistant message, but the pipe driver keys off the later `result`
+// line instead; this predicate is for sources that lack a `result` line (the
+// interactive JSONL transcript the tmux driver reads).
+export function isClaudeTranscriptTurnEnd(parsed: ParsedClaudeLine): boolean {
+  if (parsed?.type !== "assistant") return false;
+  const stopReason = parsed.message?.stop_reason;
+  return typeof stopReason === "string" && TURN_YIELDING_STOP_REASONS.has(stopReason);
 }
 
 export function classifyClaudeLine(parsed: ParsedClaudeLine): EventKind {

@@ -45,6 +45,10 @@ test("codexPipeDriver runs `codex exec --json -` for the first turn, capturing t
   expect(message).toBeDefined();
   expect(((message?.payload as { item?: { text?: string } })?.item?.text)).toContain("echo: hello");
 
+  // Driver contract: the turn boundary is normalized to a turn_completed event,
+  // emitted from codex's turn.completed line.
+  expect(events.some((e) => e.kind === "turn_completed")).toBe(true);
+
   driver.kill("SIGTERM");
   await driver.exited;
 });

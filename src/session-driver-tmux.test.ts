@@ -399,6 +399,40 @@ test("driver tails the predicted transcript path (<projects>/<encoded-cwd>/<sess
   await driver.exited;
 });
 
+test("an assistant transcript line that yields the turn emits a normalized turn_completed event", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  const { deps } = makeFakeTmuxDeps(transcriptDir);
+
+  const events: SessionDriverEvent[] = [];
+  const launch = await buildLaunchOptions(cwd, events);
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const driver = await factory(launch);
+  await driver.sendUserMessage("hi", "bootstrap");
+
+  const transcriptPath = join(transcriptDir, `${SAMPLE_SESSION_ID}.jsonl`);
+  // A tool_use turn-in-progress line must NOT be treated as a boundary; only the
+  // end_turn assistant line that follows yields the turn back.
+  await writeFile(
+    transcriptPath,
+    `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}],"stop_reason":"tool_use"}}\n` +
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}\n`,
+  );
+
+  const deadline = Date.now() + 2000;
+  while (!events.some((e) => e.kind === "turn_completed") && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  expect(events.some((e) => e.kind === "turn_completed")).toBe(true);
+  // The in-progress tool_use line did not spuriously emit one: exactly one
+  // turn_completed for the single end_turn line.
+  expect(events.filter((e) => e.kind === "turn_completed").length).toBe(1);
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
 test("factory returns immediately, without waiting for tmux or the transcript", async () => {
   const cwd = makeTmpDir("tmux-driver-cwd");
   const transcriptDir = makeTmpDir("tmux-driver-tx");

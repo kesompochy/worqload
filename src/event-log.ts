@@ -8,6 +8,13 @@ export type EventKind =
   | "claude_tool_use"
   | "claude_tool_result"
   | "claude_system"
+  // Normalized "the agent finished responding to a user message" signal. Each
+  // SessionDriver emits this from its own wire-specific terminator (pipe: the
+  // stream-json result line; tmux: the transcript assistant end_turn line;
+  // codex: turn.completed/turn.failed) so consumers react to one domain event
+  // instead of sniffing per-driver shapes. Carries no payload; the preceding
+  // agent event holds the detail. Drives the report-less auto-nudge.
+  | "turn_completed"
   | "report_submitted"
   | "report_read"
   | "report_unread"

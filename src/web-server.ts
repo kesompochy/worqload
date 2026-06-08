@@ -571,24 +571,16 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
   }
 }
 
-// True for the claude stream line that closes a turn: `claude -p` with
-// stream-json emits a `{type:"result",...}` line once per processed user
-// message. classifyClaudeLine files it under claude_system, carrying the full
-// parsed line as payload, so the turn boundary is observable here.
-function isClaudeTurnEnd(event: Event): boolean {
-  if (event.kind !== "claude_system") return false;
-  const payload = event.payload as { type?: unknown } | null;
-  return typeof payload === "object" && payload !== null && payload.type === "result";
-}
-
 // Keeps the per-session "did this turn report?" flag and the consecutive-nudge
 // count current as events flow through broadcastEvent, and on a turn-end that
 // carried neither a Report nor an Escalation, sends the agent a message asking
 // it to report — capped at maxAutoNudges so an agent that never reports isn't
 // re-poked forever. Both Report/Escalation events (server-appended) and the
-// claude turn-end event pass this same chokepoint, so their relative order is
-// preserved: the agent's `worqload report submit` completes (appending
-// report_submitted) before claude emits the turn's result line.
+// driver's turn_completed event pass this same chokepoint, so their relative
+// order is preserved: the agent's `worqload report submit` completes (appending
+// report_submitted) before the driver emits the turn's turn_completed event.
+// turn_completed is normalized across drivers (see EventKind), so serve never
+// inspects per-driver wire shapes here.
 function trackAutoNudge(ctx: ServerContext, sessionId: string, event: Event): void {
   if (ctx.maxAutoNudges <= 0) return;
   if (event.kind === "report_submitted" || event.kind === "escalation_requested") {
@@ -596,7 +588,7 @@ function trackAutoNudge(ctx: ServerContext, sessionId: string, event: Event): vo
     ctx.autoNudgeCount.set(sessionId, 0);
     return;
   }
-  if (!isClaudeTurnEnd(event)) return;
+  if (event.kind !== "turn_completed") return;
   const reported = ctx.reportedThisTurn.get(sessionId) ?? false;
   ctx.reportedThisTurn.set(sessionId, false);
   if (reported) return;

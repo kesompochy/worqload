@@ -22,7 +22,8 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyClaudeLine } from "./claude-stream";
+import { classifyClaudeLine, isClaudeTranscriptTurnEnd } from "./claude-stream";
+import { TURN_COMPLETED_EVENT } from "./session-driver";
 import type {
   SessionDriver,
   SessionDriverFactory,
@@ -294,6 +295,9 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
         () => exitedFlag,
         async (parsed) => {
           await opts.onEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
+          // The interactive transcript has no synthetic end-of-turn line, so the
+          // assistant message that yields the turn back is the boundary.
+          if (isClaudeTranscriptTurnEnd(parsed)) await opts.onEvent(TURN_COMPLETED_EVENT);
         },
         initialOffset,
       );

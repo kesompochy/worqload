@@ -7,7 +7,8 @@
 // `thread.started` event, and reusing it for subsequent invocations.
 
 import { readLines } from "./claude-stream";
-import { classifyCodexLine, extractCodexThreadId } from "./codex-stream";
+import { classifyCodexLine, extractCodexThreadId, isCodexTurnTerminator } from "./codex-stream";
+import { TURN_COMPLETED_EVENT } from "./session-driver";
 import type {
   SessionDriver,
   SessionDriverFactory,
@@ -89,6 +90,9 @@ export const codexPipeDriver: SessionDriverFactory = async (
         opts.onAgentSessionId?.(id);
       }
       await opts.onEvent({ kind: classifyCodexLine(parsed), payload: parsed });
+      // codex's per-turn process emits turn.completed/turn.failed once the turn
+      // ends; either is this driver's turn boundary.
+      if (isCodexTurnTerminator(parsed)) await opts.onEvent(TURN_COMPLETED_EVENT);
     });
     const stderrTask = readLines(proc.stderr, async (line) => {
       await opts.onEvent({ kind: "claude_system", payload: { type: "stderr", text: line } });
