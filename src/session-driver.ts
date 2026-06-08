@@ -3,7 +3,7 @@
 // second implementation (interactive claude driven via tmux) is the reason this
 // indirection exists — runHost should be the same code in either case.
 
-import { classifyClaudeLine, isClaudePipeTurnEnd, readLines } from "./claude-stream";
+import { classifyClaudeLine, isClaudePipeTurnEnd, normalizeClaudeLine, readLines } from "./claude-stream";
 import type { EventKind } from "./event-log";
 import { buildUserMessage } from "./session-bootstrap";
 
@@ -22,17 +22,20 @@ export const TURN_COMPLETED_EVENT: SessionDriverEvent = { kind: "turn_completed"
 
 export type SessionDriverEventSink = (event: SessionDriverEvent) => Promise<void> | void;
 
-// A driver's wire format reduces to two per-line decisions: how to classify a
-// transcript line into an EventKind, and whether the line closes a turn. The
-// rest of the line→event pipeline (emit the classified event, then emit the
+// A driver's wire format reduces to three per-line decisions: how to classify a
+// transcript line into an EventKind, how to shape it into the normalized domain
+// payload consumers read, and whether the line closes a turn. The rest of the
+// line→event pipeline (emit the classified+normalized event, then emit the
 // normalized TURN_COMPLETED_EVENT on a boundary) is identical across drivers,
 // so it lives in emitAgentLine rather than being copy-pasted — which is what
 // let the codex driver silently omit the turn-end emit before turn_completed
-// was normalized. classify/isTurnEnd accept Record<string, unknown> so the
-// per-wire predicates (which read only their own optional fields) plug in
-// directly.
+// was normalized. The callbacks accept Record<string, unknown> so the per-wire
+// functions (which read only their own optional fields) plug in directly.
+// normalize keeps the UI from learning any CLI's wire shape: classify+normalize
+// are the entire wire→domain translation, and they live in the adapter layer.
 export interface AgentLineFormat {
   classify: (parsed: Record<string, unknown>) => EventKind;
+  normalize: (parsed: Record<string, unknown>, kind: EventKind) => Record<string, unknown>;
   isTurnEnd: (parsed: Record<string, unknown>) => boolean;
 }
 
@@ -56,7 +59,8 @@ export async function emitAgentLine(
   format: AgentLineFormat,
   onEvent: SessionDriverEventSink,
 ): Promise<void> {
-  await onEvent({ kind: format.classify(parsed), payload: parsed });
+  const kind = format.classify(parsed);
+  await onEvent({ kind, payload: format.normalize(parsed, kind) });
   if (format.isTurnEnd(parsed)) await onEvent(TURN_COMPLETED_EVENT);
 }
 
@@ -107,6 +111,7 @@ export type SessionDriverFactory = (opts: SessionDriverLaunchOptions) => Promise
 // The stream-json `result` line is this driver's authoritative turn boundary.
 const CLAUDE_PIPE_FORMAT: AgentLineFormat = {
   classify: classifyClaudeLine,
+  normalize: normalizeClaudeLine,
   isTurnEnd: isClaudePipeTurnEnd,
 };
 

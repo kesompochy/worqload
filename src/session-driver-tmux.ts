@@ -22,7 +22,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyClaudeLine, isClaudeTranscriptTurnEnd } from "./claude-stream";
+import { classifyClaudeLine, isClaudeTranscriptTurnEnd, normalizeClaudeLine } from "./claude-stream";
 import { emitAgentLine, parseAgentLine } from "./session-driver";
 import type {
   AgentLineFormat,
@@ -35,6 +35,7 @@ import type {
 // assistant message that yields the turn back is the boundary.
 const CLAUDE_TRANSCRIPT_FORMAT: AgentLineFormat = {
   classify: classifyClaudeLine,
+  normalize: normalizeClaudeLine,
   isTurnEnd: isClaudeTranscriptTurnEnd,
 };
 

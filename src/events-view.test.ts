@@ -51,20 +51,18 @@ test("displayEventKind labels agent events for the configured agent", () => {
   expect(displayEventKind({ kind: "session_started" }, "codex")).toBe("session_started");
 });
 
+// describeEvent reads the normalized domain payload the driver emits (text /
+// tools / results), never a CLI's wire shape. The wire→domain translation is
+// covered in claude-stream.test.ts / codex-stream.test.ts.
 test("describeEvent extracts assistant message text and offers it as markdown", () => {
-  const payload = { type: "assistant", message: { content: [{ type: "text", text: "## done\n\nshipped it" }] } };
+  const payload = { text: "## done\n\nshipped it", thinking: "" };
   const d = describeEvent({ seq: 2, kind: "claude_assistant_message", timestamp: "", payload });
   expect(d.summary).toBe("## done shipped it");
   expect(d.sections).toEqual([{ label: "Message", body: "## done\n\nshipped it", format: "markdown" }]);
 });
 
 test("describeEvent summarises a tool_use by name and key argument", () => {
-  const payload = {
-    type: "assistant",
-    message: {
-      content: [{ type: "tool_use", id: "x", name: "Bash", input: { command: "bun test", description: "run tests" } }],
-    },
-  };
+  const payload = { tools: [{ name: "Bash", input: { command: "bun test", description: "run tests" } }] };
   const d = describeEvent({ seq: 3, kind: "claude_tool_use", timestamp: "", payload });
   expect(d.summary).toBe("Bash $ bun test");
   expect(d.sections).toEqual([
@@ -73,10 +71,7 @@ test("describeEvent summarises a tool_use by name and key argument", () => {
 });
 
 test("describeEvent summarises a Read tool_use by file path", () => {
-  const payload = {
-    type: "assistant",
-    message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "/a/b.ts" } }] },
-  };
+  const payload = { tools: [{ name: "Read", input: { file_path: "/a/b.ts" } }] };
   const d = describeEvent({ seq: 4, kind: "claude_tool_use", timestamp: "", payload });
   expect(d.summary).toBe("Read /a/b.ts");
 });
@@ -86,12 +81,7 @@ test("describeEvent flattens a tool_result, marking errors", () => {
     seq: 5,
     kind: "claude_tool_result",
     timestamp: "",
-    payload: {
-      type: "user",
-      message: {
-        content: [{ type: "tool_result", tool_use_id: "x", content: [{ type: "text", text: "12 pass\n0 fail" }] }],
-      },
-    },
+    payload: { results: [{ text: "12 pass\n0 fail", isError: false }] },
   });
   expect(ok.summary).toBe("12 pass 0 fail");
   expect(ok.sections).toEqual([{ label: "Tool result", body: "12 pass\n0 fail", format: "code" }]);
@@ -100,24 +90,22 @@ test("describeEvent flattens a tool_result, marking errors", () => {
     seq: 6,
     kind: "claude_tool_result",
     timestamp: "",
-    payload: {
-      type: "user",
-      message: { content: [{ type: "tool_result", tool_use_id: "x", is_error: true, content: "boom" }] },
-    },
+    payload: { results: [{ text: "boom", isError: true }] },
   });
   expect(err.summary).toBe("⚠ boom");
   expect(err.sections).toEqual([{ label: "Tool result (error)", body: "boom", format: "code" }]);
 });
 
-test("describeEvent surfaces stderr lines from claude_system", () => {
+test("describeEvent summarises a claude_system line and dumps its wire record", () => {
+  const wire = { type: "stderr", text: "deprecation warning" };
   const d = describeEvent({
     seq: 7,
     kind: "claude_system",
     timestamp: "",
-    payload: { type: "stderr", text: "deprecation warning" },
+    payload: { text: "deprecation warning", wire },
   });
   expect(d.summary).toBe("deprecation warning");
-  expect(d.sections).toEqual([{ label: "stderr", body: "deprecation warning", format: "code" }]);
+  expect(d.sections).toEqual([{ label: "Payload", body: JSON.stringify(wire, null, 2), format: "code" }]);
 });
 
 test("describeEvent gives file events a friendly summary", () => {
@@ -165,11 +153,11 @@ test("describeEvent summarises an action_invoked run and exposes its output", ()
   ]);
 });
 
-test("describeEvent falls back to pretty-printed payload for unknown shapes", () => {
-  const payload = { type: "system", subtype: "init", tools: ["Read"] };
-  const d = describeEvent({ seq: 14, kind: "claude_system", timestamp: "", payload });
+test("describeEvent dumps the wire record under a system summary", () => {
+  const wire = { type: "system", subtype: "init", tools: ["Read"] };
+  const d = describeEvent({ seq: 14, kind: "claude_system", timestamp: "", payload: { text: "system: init", wire } });
   expect(d.summary).toBe("system: init");
-  expect(d.sections).toEqual([{ label: "Payload", body: JSON.stringify(payload, null, 2), format: "code" }]);
+  expect(d.sections).toEqual([{ label: "Payload", body: JSON.stringify(wire, null, 2), format: "code" }]);
 });
 
 test("describeEvent never throws on a missing or malformed payload", () => {

@@ -33,17 +33,15 @@ test("codexPipeDriver runs `codex exec --json -` for the first turn, capturing t
 
   await driver.sendUserMessage("hello", "bootstrap");
 
-  const started = events.find((e) => (e.payload as { type?: string })?.type === "thread.started");
+  // Wire-shape assertions read payload.wire, the raw line the driver preserves
+  // for diagnostics; consumers read the normalized fields (payload.text, ...).
+  const started = events.find((e) => (e.payload as { wire?: { type?: string } })?.wire?.type === "thread.started");
   expect(started).toBeDefined();
-  expect((started?.payload as { thread_id?: string })?.thread_id).toMatch(/^mock-thread-\d+$/);
+  expect((started?.payload as { wire?: { thread_id?: string } })?.wire?.thread_id).toMatch(/^mock-thread-\d+$/);
 
-  const message = events.find(
-    (e) =>
-      e.kind === "claude_assistant_message" &&
-      (e.payload as { item?: { type?: string } })?.item?.type === "agent_message",
-  );
+  const message = events.find((e) => e.kind === "claude_assistant_message");
   expect(message).toBeDefined();
-  expect(((message?.payload as { item?: { text?: string } })?.item?.text)).toContain("echo: hello");
+  expect((message?.payload as { text?: string })?.text).toContain("echo: hello");
 
   // Driver contract: the turn boundary is normalized to a turn_completed event,
   // emitted from codex's turn.completed line.
@@ -63,15 +61,15 @@ test("codexPipeDriver reuses the captured thread_id on a second send via `exec r
   });
 
   await driver.sendUserMessage("first", "bootstrap");
-  const firstThread = (events.find((e) => (e.payload as { type?: string })?.type === "thread.started")
-    ?.payload as { thread_id?: string })?.thread_id;
+  const firstThread = (events.find((e) => (e.payload as { wire?: { type?: string } })?.wire?.type === "thread.started")
+    ?.payload as { wire?: { thread_id?: string } })?.wire?.thread_id;
   expect(firstThread).toBeDefined();
 
   events.length = 0;
   await driver.sendUserMessage("second", "send_user");
   // The resumed invocation echoes back the same thread_id the mock was started with.
-  const resumeStarted = events.find((e) => (e.payload as { type?: string })?.type === "thread.started");
-  expect((resumeStarted?.payload as { thread_id?: string })?.thread_id).toBe(firstThread);
+  const resumeStarted = events.find((e) => (e.payload as { wire?: { type?: string } })?.wire?.type === "thread.started");
+  expect((resumeStarted?.payload as { wire?: { thread_id?: string } })?.wire?.thread_id).toBe(firstThread);
 
   driver.kill("SIGTERM");
   await driver.exited;
@@ -85,7 +83,7 @@ test("codexPipeDriver serialises concurrent sendUserMessage calls (second waits 
     env: testEnv(),
     onEvent: async (e) => {
       events.push(e);
-      const text = (e.payload as { item?: { text?: string } })?.item?.text;
+      const text = (e.payload as { text?: string })?.text;
       if (text) order.push(text);
     },
     log: () => {},
@@ -138,8 +136,8 @@ test("codexPipeDriver passed priorAgentSessionId resumes that thread on the FIRS
   await driver.sendUserMessage("first", "bootstrap");
   // Mock echoes the resume id back as thread.started.thread_id when it sees
   // `resume <id>` in argv — proves the driver passed the prior id through.
-  const started = events.find((e) => (e.payload as { type?: string })?.type === "thread.started");
-  expect((started?.payload as { thread_id?: string })?.thread_id).toBe("prior-thread-abc");
+  const started = events.find((e) => (e.payload as { wire?: { type?: string } })?.wire?.type === "thread.started");
+  expect((started?.payload as { wire?: { thread_id?: string } })?.wire?.thread_id).toBe("prior-thread-abc");
 
   driver.kill("SIGTERM");
   await driver.exited;

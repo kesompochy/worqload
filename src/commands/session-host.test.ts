@@ -150,15 +150,17 @@ test("runHost gives claude WORQLOAD_SESSION_ID and WORQLOAD_ENDPOINT", async () 
   const { sessionId, hostExit, socketPath } = await setupHost("env", "http://127.0.0.1:34567");
   const client = await connectClient(socketPath);
   client.send({ type: "hello", sinceSeq: 0 });
+  // The env probe rides on a claude system line; the driver normalizes the
+  // payload and keeps the raw line under `wire`, where its fields live.
   const envEvent = await client.next(
     (m) =>
       m.type === "event" &&
-      (m.event.payload as { subtype?: string })?.subtype === "worqload_env",
+      (m.event.payload as { wire?: { subtype?: string } })?.wire?.subtype === "worqload_env",
   );
   if (envEvent.type !== "event") throw new Error("unreachable");
-  const payload = envEvent.event.payload as { sessionId: string; endpoint: string };
-  expect(payload.sessionId).toBe(sessionId);
-  expect(payload.endpoint).toBe("http://127.0.0.1:34567");
+  const wire = (envEvent.event.payload as { wire: { sessionId: string; endpoint: string } }).wire;
+  expect(wire.sessionId).toBe(sessionId);
+  expect(wire.endpoint).toBe("http://127.0.0.1:34567");
 
   client.send({ type: "kill", signal: "SIGTERM" });
   await hostExit;

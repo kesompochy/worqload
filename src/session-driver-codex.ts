@@ -7,7 +7,12 @@
 // `thread.started` event, and reusing it for subsequent invocations.
 
 import { readLines } from "./claude-stream";
-import { classifyCodexLine, extractCodexThreadId, isCodexTurnTerminator } from "./codex-stream";
+import {
+  classifyCodexLine,
+  extractCodexThreadId,
+  isCodexTurnTerminator,
+  normalizeCodexLine,
+} from "./codex-stream";
 import { emitAgentLine, emitStderrLine, parseAgentLine } from "./session-driver";
 import type {
   AgentLineFormat,
@@ -20,6 +25,7 @@ import type {
 // either is this driver's turn boundary.
 const CODEX_FORMAT: AgentLineFormat = {
   classify: classifyCodexLine,
+  normalize: normalizeCodexLine,
   isTurnEnd: isCodexTurnTerminator,
 };
 

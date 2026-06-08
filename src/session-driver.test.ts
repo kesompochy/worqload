@@ -16,9 +16,10 @@ test("parseAgentLine parses JSON and wraps an unparseable line in a raw envelope
   expect(parseAgentLine("not json")).toEqual({ type: "raw", raw: "not json" });
 });
 
-test("emitAgentLine emits the classified event, then turn_completed only on a boundary", async () => {
+test("emitAgentLine emits the classified+normalized event, then turn_completed only on a boundary", async () => {
   const format: AgentLineFormat = {
     classify: () => "claude_assistant_message",
+    normalize: (parsed, kind) => ({ kind, text: String(parsed.done) }),
     isTurnEnd: (parsed) => parsed.done === true,
   };
 
@@ -27,7 +28,8 @@ test("emitAgentLine emits the classified event, then turn_completed only on a bo
     open.push(e);
   });
   expect(open.map((e) => e.kind)).toEqual(["claude_assistant_message"]);
-  expect(open[0]?.payload).toEqual({ done: false });
+  // The emitted payload is the normalizer's output, not the raw parsed line.
+  expect(open[0]?.payload).toEqual({ kind: "claude_assistant_message", text: "false" });
 
   const closed: SessionDriverEvent[] = [];
   await emitAgentLine({ done: true }, format, (e) => {

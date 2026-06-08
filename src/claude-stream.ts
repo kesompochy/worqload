@@ -29,6 +29,89 @@ export function isClaudeTranscriptTurnEnd(parsed: ParsedClaudeLine): boolean {
   return typeof stopReason === "string" && TURN_YIELDING_STOP_REASONS.has(stopReason);
 }
 
+// Translate a classified claude wire line into the normalized domain payload
+// consumers read, so the events UI never has to know claude's stream-json
+// shape (message.content blocks, the result line, ...). The original parsed
+// line is kept under `wire` for the debug payload dump only — consumers must
+// not interpret it. classifyClaudeLine decides `kind`; this shapes the payload
+// for that kind.
+export function normalizeClaudeLine(parsed: ParsedClaudeLine, kind: EventKind): Record<string, unknown> {
+  switch (kind) {
+    case "claude_assistant_message":
+      return {
+        text: joinBlockField(parsed, "text", "text"),
+        thinking: joinBlockField(parsed, "thinking", "thinking"),
+        wire: parsed,
+      };
+    case "claude_tool_use":
+      return {
+        tools: blocksOfType(parsed, "tool_use").map((b) => ({
+          name: typeof b.name === "string" ? b.name : "tool",
+          input: b.input ?? {},
+        })),
+        wire: parsed,
+      };
+    case "claude_tool_result":
+      return {
+        results: blocksOfType(parsed, "tool_result").map((b) => ({
+          text: textFromContent(b.content),
+          isError: b.is_error === true,
+        })),
+        wire: parsed,
+      };
+    default:
+      return { text: claudeSystemText(parsed), wire: parsed };
+  }
+}
+
+interface ContentBlock {
+  type?: string;
+  [key: string]: unknown;
+}
+
+function blocksOfType(parsed: ParsedClaudeLine, type: string): ContentBlock[] {
+  const content = parsed?.message?.content;
+  return Array.isArray(content) ? (content as ContentBlock[]).filter((b) => b && b.type === type) : [];
+}
+
+function joinBlockField(parsed: ParsedClaudeLine, type: string, field: string): string {
+  return blocksOfType(parsed, type)
+    .map((b) => b[field])
+    .filter((t): t is string => typeof t === "string")
+    .join("\n")
+    .trim();
+}
+
+function textFromContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) =>
+        typeof part === "string"
+          ? part
+          : typeof (part as { text?: unknown })?.text === "string"
+            ? (part as { text: string }).text
+            : JSON.stringify(part, null, 2),
+      )
+      .join("\n");
+  }
+  return content == null ? "" : JSON.stringify(content, null, 2);
+}
+
+// The claude_system kind is a grab-bag (stderr, unparsed lines, the result
+// line, init/system subtypes). Reduce each to a single human-readable line so
+// the UI can render it without inspecting the wire shape.
+function claudeSystemText(parsed: ParsedClaudeLine): string {
+  if (parsed?.type === "stderr" && typeof parsed.text === "string") return parsed.text;
+  if (parsed?.type === "raw" && typeof parsed.raw === "string") return parsed.raw;
+  if (parsed?.type === "result") {
+    const result = typeof parsed.result === "string" ? parsed.result : "";
+    return `result${parsed.is_error ? " (error)" : ""}${result ? `: ${result}` : ""}`;
+  }
+  if (typeof parsed?.subtype === "string") return `system: ${parsed.subtype}`;
+  return "system";
+}
+
 export function classifyClaudeLine(parsed: ParsedClaudeLine): EventKind {
   const type = parsed?.type;
   const content = parsed?.message?.content;
