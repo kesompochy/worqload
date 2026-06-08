@@ -97,6 +97,30 @@ test("link with a title still renders as an anchor and carries the title", () =>
   expect(html).toContain(">docs</a>");
 });
 
+test("a bare http(s) URL is auto-linked", () => {
+  const html = renderMarkdown("see https://example.com/path for details");
+  expect(html).toContain(`<a href="https://example.com/path" rel="noreferrer" target="_blank">https://example.com/path</a>`);
+});
+
+test("trailing sentence punctuation is excluded from the auto-linked URL", () => {
+  const html = renderMarkdown("visit https://example.com.");
+  expect(html).toContain(`<a href="https://example.com"`);
+  expect(html).toContain(`>https://example.com</a>.`);
+});
+
+test("a URL already inside a markdown link is not auto-linked twice", () => {
+  const html = renderMarkdown("see [docs](https://example.com)");
+  expect(html).toContain(`>docs</a>`);
+  // Exactly one anchor; the URL text is not separately wrapped.
+  expect(html.match(/<a /g)?.length).toBe(1);
+});
+
+test("a URL inside inline code is not auto-linked", () => {
+  const html = renderMarkdown("run `curl https://example.com`");
+  expect(html).toContain("<code>curl https://example.com</code>");
+  expect(html).not.toContain("<a ");
+});
+
 test("table renders thead/tbody with header and body cells", () => {
   const html = renderMarkdown("| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n");
   expect(html).toContain("<table>");

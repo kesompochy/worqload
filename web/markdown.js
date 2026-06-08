@@ -14,6 +14,7 @@
 //   - Bold (**text**), italic (*text* / _text_)
 //   - Inline code (`code`)
 //   - Links ([text](url))
+//   - Bare http(s) URLs (auto-linked)
 //
 // Each block-level element emits source-line metadata so the worqload UI can
 // anchor feedback at the original markdown line, even though the rendering
@@ -362,14 +363,18 @@ function renderTable(block, ctx) {
 // ---------- inline rendering ----------
 
 function renderInline(text) {
-  // Stash inline-code spans first so their bodies are not touched by emphasis
-  // or link rules.
-  const codePlaceholders = [];
-  let s = text.replace(/`+([^`]+?)`+/g, (_, code) => {
-    const idx = codePlaceholders.length;
-    codePlaceholders.push(`<code>${escapeHtml(code)}</code>`);
+  // Spans stashed behind a sentinel so later inline rules can't reprocess their
+  // bodies: inline code, and the anchors produced for both markdown links and
+  // bare-URL autolinks (so an autolinked URL is never re-scanned by another
+  // rule and a URL already inside a markdown link is never linked twice).
+  const placeholders = [];
+  const stash = html => {
+    const idx = placeholders.length;
+    placeholders.push(html);
     return `${CODE_SENTINEL}${idx}${CODE_SENTINEL}`;
-  });
+  };
+
+  let s = text.replace(/`+([^`]+?)`+/g, (_, code) => stash(`<code>${escapeHtml(code)}</code>`));
 
   s = escapeHtml(s);
 
@@ -379,9 +384,11 @@ function renderInline(text) {
     /\[([^\]]+)\]\(([^\s)]+)(?:\s+"([^"]*)")?\)/g,
     (_, body, url, title) => {
       const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
-      return `<a href="${escapeAttr(url)}"${titleAttr} rel="noreferrer" target="_blank">${body}</a>`;
+      return stash(`<a href="${escapeAttr(url)}"${titleAttr} rel="noreferrer" target="_blank">${body}</a>`);
     },
   );
+
+  s = autolinkBareUrls(s, stash);
 
   // Bold before italic so the inner '*' is consumed first.
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
@@ -389,9 +396,32 @@ function renderInline(text) {
   // _italic_ requires word boundaries so identifiers like foo_bar_baz are not mangled.
   s = s.replace(/(^|[\s(])_([^_\s][^_]*?)_(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
 
-  const codeRe = new RegExp(`${CODE_SENTINEL}(\\d+)${CODE_SENTINEL}`, "g");
-  s = s.replace(codeRe, (_, idx) => codePlaceholders[Number(idx)]);
+  const placeholderRe = new RegExp(`${CODE_SENTINEL}(\\d+)${CODE_SENTINEL}`, "g");
+  s = s.replace(placeholderRe, (_, idx) => placeholders[Number(idx)]);
   return s;
+}
+
+// Wrap bare http(s) URLs in anchors. The URL run is bounded by whitespace and
+// by the stash sentinel (so an already-stashed markdown-link anchor is not
+// re-entered). Trailing characters that read as sentence punctuation rather
+// than part of the address are peeled off and left outside the anchor; a
+// closing paren is kept only when the URL itself opened one.
+function autolinkBareUrls(s, stash) {
+  const urlRe = new RegExp(`https?://[^\\s${CODE_SENTINEL}]+`, "g");
+  return s.replace(urlRe, match => {
+    let url = match;
+    let trailing = "";
+    while (url.length > 0) {
+      const last = url[url.length - 1];
+      const isPunctuation = /[.,;:!?'"]/.test(last);
+      const isUnbalancedParen = last === ")" && !url.includes("(");
+      if (!isPunctuation && !isUnbalancedParen) break;
+      trailing = last + trailing;
+      url = url.slice(0, -1);
+    }
+    if (url.length === 0) return match;
+    return stash(`<a href="${escapeAttr(url)}" rel="noreferrer" target="_blank">${url}</a>`) + trailing;
+  });
 }
 
 // ---------- attribute helpers ----------
