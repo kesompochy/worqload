@@ -8,12 +8,20 @@
 
 import { readLines } from "./claude-stream";
 import { classifyCodexLine, extractCodexThreadId, isCodexTurnTerminator } from "./codex-stream";
-import { TURN_COMPLETED_EVENT } from "./session-driver";
+import { emitAgentLine, emitStderrLine, parseAgentLine } from "./session-driver";
 import type {
+  AgentLineFormat,
   SessionDriver,
   SessionDriverFactory,
   SessionDriverLaunchOptions,
 } from "./session-driver";
+
+// codex's per-turn process emits turn.completed/turn.failed once the turn ends;
+// either is this driver's turn boundary.
+const CODEX_FORMAT: AgentLineFormat = {
+  classify: classifyCodexLine,
+  isTurnEnd: isCodexTurnTerminator,
+};
 
 // `opts.spawnCommand` is the codex binary prefix (e.g. ["codex"] or
 // ["codex", "--config", "foo"]). The driver appends `exec --json -` (fresh) or
@@ -74,12 +82,7 @@ export const codexPipeDriver: SessionDriverFactory = async (
     }
 
     const stdoutTask = readLines(proc.stdout, async (line) => {
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(line) as Record<string, unknown>;
-      } catch {
-        parsed = { type: "raw", raw: line };
-      }
+      const parsed = parseAgentLine(line);
       const id = extractCodexThreadId(parsed);
       // Fire onAgentSessionId whenever the id we see differs from what we
       // have on record. Two reasons it can change: first capture (threadId
@@ -89,14 +92,9 @@ export const codexPipeDriver: SessionDriverFactory = async (
         threadId = id;
         opts.onAgentSessionId?.(id);
       }
-      await opts.onEvent({ kind: classifyCodexLine(parsed), payload: parsed });
-      // codex's per-turn process emits turn.completed/turn.failed once the turn
-      // ends; either is this driver's turn boundary.
-      if (isCodexTurnTerminator(parsed)) await opts.onEvent(TURN_COMPLETED_EVENT);
+      await emitAgentLine(parsed, CODEX_FORMAT, opts.onEvent);
     });
-    const stderrTask = readLines(proc.stderr, async (line) => {
-      await opts.onEvent({ kind: "claude_system", payload: { type: "stderr", text: line } });
-    });
+    const stderrTask = readLines(proc.stderr, (line) => emitStderrLine(line, opts.onEvent));
 
     const code = await proc.exited;
     await Promise.allSettled([stdoutTask, stderrTask]);

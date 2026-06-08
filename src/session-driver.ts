@@ -22,6 +22,49 @@ export const TURN_COMPLETED_EVENT: SessionDriverEvent = { kind: "turn_completed"
 
 export type SessionDriverEventSink = (event: SessionDriverEvent) => Promise<void> | void;
 
+// A driver's wire format reduces to two per-line decisions: how to classify a
+// transcript line into an EventKind, and whether the line closes a turn. The
+// rest of the line→event pipeline (emit the classified event, then emit the
+// normalized TURN_COMPLETED_EVENT on a boundary) is identical across drivers,
+// so it lives in emitAgentLine rather than being copy-pasted — which is what
+// let the codex driver silently omit the turn-end emit before turn_completed
+// was normalized. classify/isTurnEnd accept Record<string, unknown> so the
+// per-wire predicates (which read only their own optional fields) plug in
+// directly.
+export interface AgentLineFormat {
+  classify: (parsed: Record<string, unknown>) => EventKind;
+  isTurnEnd: (parsed: Record<string, unknown>) => boolean;
+}
+
+// Parse one transcript line, falling back to a raw envelope so an unparseable
+// line still surfaces downstream (classified as claude_system) instead of being
+// dropped.
+export function parseAgentLine(line: string): Record<string, unknown> {
+  try {
+    return JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return { type: "raw", raw: line };
+  }
+}
+
+// Emit the normalized events for one already-parsed transcript line: the
+// classified agent event, then TURN_COMPLETED_EVENT when the line closes a
+// turn. Drivers that inspect the parsed line for their own bookkeeping (codex's
+// thread-id capture) do so before calling this.
+export async function emitAgentLine(
+  parsed: Record<string, unknown>,
+  format: AgentLineFormat,
+  onEvent: SessionDriverEventSink,
+): Promise<void> {
+  await onEvent({ kind: format.classify(parsed), payload: parsed });
+  if (format.isTurnEnd(parsed)) await onEvent(TURN_COMPLETED_EVENT);
+}
+
+// A driver's stderr is uniformly surfaced as a claude_system stderr event.
+export function emitStderrLine(line: string, onEvent: SessionDriverEventSink): Promise<void> | void {
+  return onEvent({ kind: "claude_system", payload: { type: "stderr", text: line } });
+}
+
 export type SessionDriverLogFn = (event: string, fields?: Record<string, unknown>) => void;
 
 export interface SessionDriverLaunchOptions {
@@ -61,6 +104,12 @@ export type SessionDriverFactory = (opts: SessionDriverLaunchOptions) => Promise
 // Default driver: a child process speaking the `claude -p` stream-json
 // protocol. `opts.spawnCommand` is the argv to launch (e.g. `claude -p
 // --input-format stream-json --output-format stream-json ...`).
+// The stream-json `result` line is this driver's authoritative turn boundary.
+const CLAUDE_PIPE_FORMAT: AgentLineFormat = {
+  classify: classifyClaudeLine,
+  isTurnEnd: isClaudePipeTurnEnd,
+};
+
 export const claudePipeDriver: SessionDriverFactory = async (opts) => {
   const claude = Bun.spawn(opts.spawnCommand, {
     cwd: opts.cwd,
@@ -70,21 +119,11 @@ export const claudePipeDriver: SessionDriverFactory = async (opts) => {
     stderr: "pipe",
   });
 
-  const stdoutTask = readLines(claude.stdout, async (line) => {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      parsed = { type: "raw", raw: line };
-    }
-    await opts.onEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
-    // The stream-json `result` line is this driver's authoritative turn boundary.
-    if (isClaudePipeTurnEnd(parsed)) await opts.onEvent(TURN_COMPLETED_EVENT);
-  });
+  const stdoutTask = readLines(claude.stdout, (line) =>
+    emitAgentLine(parseAgentLine(line), CLAUDE_PIPE_FORMAT, opts.onEvent),
+  );
 
-  const stderrTask = readLines(claude.stderr, async (line) => {
-    await opts.onEvent({ kind: "claude_system", payload: { type: "stderr", text: line } });
-  });
+  const stderrTask = readLines(claude.stderr, (line) => emitStderrLine(line, opts.onEvent));
 
   // exited resolves only after the stdout/stderr drains complete; otherwise the
   // host could finish before the last assistant message has been persisted.

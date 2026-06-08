@@ -1,8 +1,49 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { claudePipeDriver, type SessionDriverEvent } from "./session-driver";
+import {
+  type AgentLineFormat,
+  claudePipeDriver,
+  emitAgentLine,
+  emitStderrLine,
+  parseAgentLine,
+  type SessionDriverEvent,
+} from "./session-driver";
 
 const MOCK = join(import.meta.dir, "__fixtures__", "mock-claude.ts");
+
+test("parseAgentLine parses JSON and wraps an unparseable line in a raw envelope", () => {
+  expect(parseAgentLine('{"type":"assistant","x":1}')).toEqual({ type: "assistant", x: 1 });
+  expect(parseAgentLine("not json")).toEqual({ type: "raw", raw: "not json" });
+});
+
+test("emitAgentLine emits the classified event, then turn_completed only on a boundary", async () => {
+  const format: AgentLineFormat = {
+    classify: () => "claude_assistant_message",
+    isTurnEnd: (parsed) => parsed.done === true,
+  };
+
+  const open: SessionDriverEvent[] = [];
+  await emitAgentLine({ done: false }, format, (e) => {
+    open.push(e);
+  });
+  expect(open.map((e) => e.kind)).toEqual(["claude_assistant_message"]);
+  expect(open[0]?.payload).toEqual({ done: false });
+
+  const closed: SessionDriverEvent[] = [];
+  await emitAgentLine({ done: true }, format, (e) => {
+    closed.push(e);
+  });
+  // Classified event first, normalized turn boundary second.
+  expect(closed.map((e) => e.kind)).toEqual(["claude_assistant_message", "turn_completed"]);
+});
+
+test("emitStderrLine surfaces a stderr line as a claude_system event", async () => {
+  const events: SessionDriverEvent[] = [];
+  await emitStderrLine("boom", (e) => {
+    events.push(e);
+  });
+  expect(events).toEqual([{ kind: "claude_system", payload: { type: "stderr", text: "boom" } }]);
+});
 
 function testEnv(): Record<string, string> {
   const env: Record<string, string> = {};
