@@ -8,6 +8,8 @@
 //   hang    : emit init, then read stdin forever (used to test kill)
 //   crash   : emit init, then exit 1
 //   tool    : emit init, then an assistant turn with a tool_use block, then exit 0
+//   turn    : emit init, then for each stdin user message emit an assistant
+//             end_turn reply followed by a stream-json result line
 //   env     : emit init, then emit a system line carrying the worqload env vars, then hang
 
 const mode = process.argv[2] ?? "init";
@@ -79,6 +81,26 @@ if (mode === "echo") {
         type: "assistant",
         message: { content: [{ type: "text", text: `echo: ${echo}` }] },
       });
+    }
+  });
+  process.stdin.on("end", () => process.exit(0));
+}
+
+if (mode === "turn") {
+  const decoder = new TextDecoder();
+  let buf = "";
+  process.stdin.on("data", (chunk: Uint8Array) => {
+    buf += decoder.decode(chunk, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx);
+      buf = buf.slice(idx + 1);
+      if (line.trim() === "") continue;
+      writeLine({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" },
+      });
+      writeLine({ type: "result", is_error: false, result: "ok" });
     }
   });
   process.stdin.on("end", () => process.exit(0));

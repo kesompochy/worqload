@@ -1270,8 +1270,9 @@ test("POST /sessions/:id/wake rejects a terminal session", async () => {
 });
 
 // Wraps inProcessHostLauncher to (a) record every message serve sends to the
-// host and (b) expose the onEvent callback so a test can feed claude stream
-// events (e.g. a turn-end `result` line) through the server's broadcast path.
+// host and (b) expose the onEvent callback so a test can feed driver events
+// (e.g. the normalized turn_completed signal) through the server's broadcast
+// path.
 function capturingHostLauncher() {
   const base = inProcessHostLauncher();
   const sends: string[] = [];
@@ -1284,9 +1285,9 @@ function capturingHostLauncher() {
   return {
     launcher,
     sends,
-    // Simulate the host forwarding a claude turn-end line. seq/timestamp are
-    // irrelevant to the auto-nudge logic, which keys off kind + payload.type.
-    endTurn: () => onEvent?.({ seq: 0, kind: "claude_system", timestamp: "", payload: { type: "result" } }),
+    // Simulate the host forwarding a driver's normalized turn-end signal.
+    // seq/timestamp are irrelevant to the auto-nudge logic, which keys off kind.
+    endTurn: () => onEvent?.({ seq: 0, kind: "turn_completed", timestamp: "", payload: {} }),
   };
 }
 
