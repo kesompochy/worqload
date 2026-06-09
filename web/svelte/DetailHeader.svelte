@@ -77,9 +77,7 @@
       <label class="revise-mode-toggle" title="On: worqload bounces the first submission of each report back to the session asking it to 推敲 (revise), then stores the resubmission. Off: the report is stored on first submission."><input type="checkbox" checked={m.reviseModeEnabled === true} onchange={() => onToggleReviseMode(m.id)} /><span>推敲モード</span></label>
     </div>
   </div>
-  {#if m.title}
-    <div class="detail-original-prompt">{m.prompt}</div>
-  {/if}
+  <div class="detail-original-prompt">{m.prompt}</div>
   <ActionBar />
   <div class="detail-meta">
     {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}base: <code>{m.baseBranch}</code>
