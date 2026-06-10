@@ -241,7 +241,7 @@
             {/if}
           </div>
         {/if}
-        <div class="meta">{#if session.agentName}{session.agentName} · {/if}{session.baseBranch} · {formatRelative(session.createdAt)}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}</div>
+        <div class="meta">{#if session.agentName || session.driverName}{session.agentName ?? "claude"}{#if session.driverName && session.driverName !== "pipe"}/{session.driverName}{/if} · {/if}{session.baseBranch} · {formatRelative(session.createdAt)}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}</div>
         <div class="session-card-actions">
           {#if archivedView}
             <button class="btn-card-unarchive" onclick={(e) => { e.stopPropagation(); onUnarchive(session.id); }}>Unarchive</button>

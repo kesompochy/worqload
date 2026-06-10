@@ -3,6 +3,8 @@ import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 export type SessionStatus = "running" | "waiting_human" | "stopped" | "crashed";
 export type AgentName = "claude" | "codex";
 
+export type DriverName = "pipe" | "tmux" | "codex";
+
 export interface SessionMeta {
   id: string;
   title?: string;
@@ -12,6 +14,7 @@ export interface SessionMeta {
   worktreePath: string;
   branchName: string;
   agentName?: AgentName;
+  driverName?: DriverName;
   hostPid?: number;
   hostSocketPath?: string;
   status: SessionStatus;
@@ -76,6 +79,7 @@ export interface CreateSessionParams {
   worktreePath: string;
   branchName: string;
   agentName?: AgentName;
+  driverName?: DriverName;
   title?: string;
 }
 
@@ -93,6 +97,7 @@ export function createSession(params: CreateSessionParams): SessionMeta {
     worktreePath: params.worktreePath,
     branchName: params.branchName,
     ...(params.agentName !== undefined && { agentName: params.agentName }),
+    ...(params.driverName !== undefined && { driverName: params.driverName }),
     status: "running",
     createdAt: new Date().toISOString(),
   };
