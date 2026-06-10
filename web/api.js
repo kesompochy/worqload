@@ -103,7 +103,7 @@ export async function fetchMeta() {
 
 let repoDisplayName = "worqload";
 
-function applyMeta({ repoDir, repoName }) {
+function applyMeta({ repoDir, repoName, agentName, driverName }) {
   repoDisplayName = repoName || "worqload";
   updateDocumentTitle();
   const repoEl = document.getElementById("repoName");
@@ -113,6 +113,13 @@ function applyMeta({ repoDir, repoName }) {
   }
   const titleEl = document.getElementById("sidebarTitle");
   if (titleEl) titleEl.title = repoDir || repoDisplayName;
+  const infoEl = document.getElementById("serverInfo");
+  if (infoEl) {
+    const parts = [];
+    if (agentName) parts.push(agentName);
+    if (driverName) parts.push(driverName);
+    infoEl.textContent = parts.length > 0 ? parts.join(" / ") : "";
+  }
 }
 
 // Browser tab title: the repo name, prefixed with `(N) ` when N reports /
