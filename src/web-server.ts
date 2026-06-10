@@ -15,6 +15,7 @@ import {
   isReviseModeEnabled,
   validateTransition,
   type AgentName,
+  type DriverName,
   type SessionMeta,
   type SessionStatus,
 } from "./session";
@@ -164,7 +165,7 @@ export interface HostLaunchRequest {
   sessionsDir: string;
   agentEndpoint: string;
   spawnCommand: string[];
-  driverName?: "pipe" | "tmux" | "codex";
+  driverName?: DriverName;
   resume: boolean;
   onEvent: (event: Event) => void;
   onDisconnect: () => void;
@@ -178,7 +179,7 @@ export interface ServerContext {
   sessionsDir: string;          // <repo>/.worqload/sessions
   worktreesDir: string;         // <repo>/.worktrees
   agentName: AgentName;
-  driverName: "pipe" | "tmux";
+  driverName: DriverName;
   spawnCommand: string[];
   spawnCommandForAgent: (agentName: AgentName) => string[];
   branchNameGenerator: BranchNameGenerator;
@@ -263,7 +264,7 @@ export interface StartServerOptions {
   // JSONL transcript for output — avoids the Agent SDK credit pool that
   // `claude -p` will draw from starting 2026-06-15. Ignored when
   // agentName === "codex".
-  driverName?: "pipe" | "tmux";
+  driverName?: DriverName;
   // Overrides the helper that turns a prompt into a short branch name.
   // Return null to skip generation; the caller then falls back to <shortId>.
   branchNameGenerator?: BranchNameGenerator;
@@ -1345,6 +1346,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   }
 
   const agentName = body.agentName ?? ctx.agentName;
+  const driverName = agentName === "codex" ? "codex" : ctx.driverName;
   const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
   const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
 
@@ -1357,6 +1359,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     worktreePath: "",
     branchName: "",
     agentName,
+    driverName,
     title: body.title,
   });
 

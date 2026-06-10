@@ -64,6 +64,16 @@ test("createSession accepts optional agentName", () => {
   expect(meta.agentName).toBe("codex");
 });
 
+test("createSession accepts optional driverName", () => {
+  const meta = createSession({ ...baseParams, driverName: "tmux" });
+  expect(meta.driverName).toBe("tmux");
+});
+
+test("createSession omits driverName when not provided", () => {
+  const meta = createSession(baseParams);
+  expect(meta.driverName).toBeUndefined();
+});
+
 test("isReviseModeEnabled defaults OFF so reports are stored on first submission unless opted in", () => {
   const meta = createSession(baseParams);
   // A new session leaves the flag absent; absent means off, so reports are

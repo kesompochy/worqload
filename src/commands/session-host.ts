@@ -17,8 +17,6 @@ import {
   type ServeToHostMessage,
 } from "../session-host-protocol";
 
-export type DriverName = "pipe" | "tmux" | "codex";
-
 export function resolveDriverByName(name: string): SessionDriverFactory {
   switch (name) {
     case "pipe":
