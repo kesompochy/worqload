@@ -90,6 +90,7 @@
         <select id="new-session-agent" bind:value={agentName} style="flex:1">
           <option value="claude">Claude</option>
           <option value="codex">Codex</option>
+          <option value="cursor">Cursor</option>
         </select>
       </div>
       <div class="row" style="margin-top:.7rem">

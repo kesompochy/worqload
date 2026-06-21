@@ -33,7 +33,11 @@ export function isAgentWorkEvent(event) {
 export function displayEventKind(event, agentName = "claude") {
   const kind = String(event?.kind ?? "event");
   if (!kind.startsWith("claude_")) return kind;
-  const agentLabel = agentName === "codex" ? "Codex" : "Claude";
+  const agentLabel = agentName === "codex"
+    ? "Codex"
+    : agentName === "cursor"
+      ? "Cursor"
+      : "Claude";
   return `${agentLabel} ${kind.slice("claude_".length).replaceAll("_", " ")}`;
 }
 

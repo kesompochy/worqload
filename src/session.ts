@@ -1,7 +1,7 @@
 import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 
 export type SessionStatus = "running" | "waiting_human" | "stopped" | "crashed";
-export type AgentName = "claude" | "codex";
+export type AgentName = "claude" | "codex" | "cursor";
 
 export interface SessionMeta {
   id: string;
@@ -33,9 +33,9 @@ export interface SessionMeta {
   reportAgentEnabled?: boolean;
   // Agent-side conversation identifier the driver wants restored on a future
   // host respawn. Today: codex's thread_id (captured from `thread.started` and
-  // re-sent via `codex exec --json resume <id>` so the resumed host rejoins
-  // the same conversation). Claude resumes via its own `--continue` flag and
-  // does not set this field.
+  // re-sent via `codex exec --json resume <id>`) or cursor's session_id
+  // (re-sent via `agent --resume <id>`). Claude resumes via its own
+  // `--continue` flag and does not set this field.
   agentSessionId?: string;
 }
 

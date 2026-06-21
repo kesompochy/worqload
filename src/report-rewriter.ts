@@ -226,3 +226,46 @@ export function makeCodexReportRewriter(opts: CodexReportRewriterOptions): Repor
     }
   };
 }
+
+export interface CursorReportRewriterOptions {
+  // Cursor agent prefix (e.g. ["agent", "-p", "--output-format", "stream-json",
+  // "--force", "--trust"]). The rewriter appends the rewrite prompt as the
+  // final argv element — same one-shot lifecycle as the cursor session driver.
+  spawnCommand: string[];
+  timeoutMs?: number;
+}
+
+export function makeCursorReportRewriter(opts: CursorReportRewriterOptions): ReportRewriter {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  return async (rawReport, { cwd }) => {
+    try {
+      const proc = Bun.spawn([...opts.spawnCommand, buildReportRewritePrompt(rawReport)], {
+        cwd,
+        env: rewriterEnv(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const texts: string[] = [];
+      const stdoutTask = readLines(proc.stdout, (line) => extractAssistantText(line, texts));
+      const stderrTask = readLines(proc.stderr, () => {});
+
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // already dead
+        }
+      }, timeoutMs);
+      const code = await proc.exited;
+      clearTimeout(timer);
+      await Promise.allSettled([stdoutTask, stderrTask]);
+
+      if (timedOut || code !== 0) return rawReport;
+      return interpretRewrittenOutput(texts.join(""), rawReport);
+    } catch {
+      return rawReport;
+    }
+  };
+}

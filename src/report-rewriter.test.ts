@@ -1,9 +1,11 @@
 import { test, expect } from "bun:test";
 import { join } from "path";
-import { buildReportRewritePrompt, ESCALATE_SENTINEL, makeClaudeReportRewriter, makeCodexReportRewriter, SUPPRESS_SENTINEL } from "./report-rewriter";
+import { buildReportRewritePrompt, ESCALATE_SENTINEL, makeClaudeReportRewriter, makeCodexReportRewriter, makeCursorReportRewriter, SUPPRESS_SENTINEL } from "./report-rewriter";
 
 const MOCK = join(import.meta.dir, "__fixtures__", "mock-claude.ts");
 const MOCK_CODEX = join(import.meta.dir, "__fixtures__", "mock-codex.ts");
+const MOCK_CURSOR = join(import.meta.dir, "__fixtures__", "mock-cursor.ts");
+const CURSOR_PREFIX = ["-p", "--output-format", "stream-json", "--force", "--trust"];
 
 test("buildReportRewritePrompt embeds the raw report and the human-readability guidance", () => {
   const prompt = buildReportRewritePrompt("生のレポート本文");
@@ -140,4 +142,22 @@ test("makeCodexReportRewriter stores sentinel-plus-text as an ordinary rewrite",
   const out = await rewrite("本文", { cwd: process.cwd() });
   expect(out).not.toBeNull();
   expect(out).toContain("まだ本文がある");
+});
+
+test("makeCursorReportRewriter spawns agent -p and returns its rewritten text", async () => {
+  const rewrite = makeCursorReportRewriter({
+    spawnCommand: ["bun", MOCK_CURSOR, "echo", ...CURSOR_PREFIX],
+  });
+  const out = await rewrite("もとの本文", { cwd: process.cwd() });
+  if (typeof out !== "string") throw new Error("echo mode must produce a rewritten string");
+  expect(out.startsWith("echo:")).toBe(true);
+  expect(out).toContain("もとの本文");
+});
+
+test("makeCursorReportRewriter falls back to the raw report when agent exits non-zero", async () => {
+  const rewrite = makeCursorReportRewriter({
+    spawnCommand: ["bun", MOCK_CURSOR, "crash", ...CURSOR_PREFIX],
+  });
+  const raw = "失っては困る本文";
+  expect(await rewrite(raw, { cwd: process.cwd() })).toBe(raw);
 });
