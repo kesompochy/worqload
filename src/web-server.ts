@@ -15,6 +15,7 @@ import {
   isReportAgentEnabled,
   validateTransition,
   type AgentName,
+  type DriverName,
   type SessionMeta,
   type SessionStatus,
 } from "./session";
@@ -64,7 +65,7 @@ function listenWithFallback(requestedPort: number, listen: (port: number) => Ser
 
 export function buildDefaultSpawnCommand(
   agentName: AgentName,
-  driverName: "pipe" | "tmux",
+  driverName: DriverName,
 ): string[] {
   if (agentName === "codex") {
     // The codex driver appends `exec --json -` (fresh) or `exec --json resume
@@ -156,7 +157,8 @@ export interface HostLaunchRequest {
   sessionsDir: string;
   agentEndpoint: string;
   spawnCommand: string[];
-  driverName?: "pipe" | "tmux" | "codex" | "cursor";
+  agentName: AgentName;
+  driverName: DriverName;
   resume: boolean;
   onEvent: (event: Event) => void;
   onDisconnect: () => void;
@@ -170,7 +172,7 @@ export interface ServerContext {
   sessionsDir: string;          // <repo>/.worqload/sessions
   worktreesDir: string;         // <repo>/.worktrees
   agentName: AgentName;
-  driverName: "pipe" | "tmux";
+  driverName: DriverName;
   spawnCommand: string[];
   spawnCommandForAgent: (agentName: AgentName) => string[];
   branchNameGenerator: BranchNameGenerator;
@@ -218,18 +220,14 @@ export interface StartServerOptions {
   port?: number;                // 0 = random
   repoDir?: string;
   spawnCommand?: string[];      // override the agent binary command
-  // Which CLI worqload spawns per session. "claude" (default) runs `claude -p`
-  // or interactive claude via tmux (see driverName). "codex" runs the codex
-  // CLI via `codex exec --json` — one process per turn — using the codex
-  // session driver. Picked by the WORQLOAD_AGENT env var in production.
+  // Which agent CLI worqload spawns per session. "claude" (default), "codex",
+  // or "cursor". Picked by the WORQLOAD_AGENT env var in production.
   agentName?: AgentName;
-  // Which claude SessionDriver implementation to spawn each session with.
-  // "pipe" (default) runs `claude -p` and exchanges stream-json over stdio.
-  // "tmux" runs interactive `claude` inside a tmux session, reading claude's
-  // JSONL transcript for output — avoids the Agent SDK credit pool that
-  // `claude -p` will draw from starting 2026-06-15. Ignored when
-  // agentName === "codex".
-  driverName?: "pipe" | "tmux";
+  // Which SessionDriver communication method to use. "pipe" (default) talks
+  // to the agent CLI over stdin/stdout; "tmux" drives interactive claude in a
+  // tmux session. The effective SessionDriverFactory is resolved from the
+  // (agentName, driverName) pair — e.g. codex+pipe uses codexPipeDriver.
+  driverName?: DriverName;
   // Overrides the helper that turns a prompt into a short branch name.
   // Return null to skip generation; the caller then falls back to <shortId>.
   branchNameGenerator?: BranchNameGenerator;
@@ -439,7 +437,7 @@ async function transitionStatus(
 // session). The host — not serve — writes the session_started / session_resumed
 // event and sends the agent its first message.
 function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher {
-  return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, driverName, resume, onEvent, onDisconnect }) => {
+  return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, agentName, driverName, resume, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
     const logFile = hostLogPath(sessionsDir, meta.id);
     const hostProc = spawnDetachedHost({
@@ -450,9 +448,8 @@ function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher 
       spawnCommand,
       hostCommand: config.hostCommand,
       logFile,
-      // Only pass `--driver` when it differs from the host CLI's default
-      // ("pipe"). Avoids churning host argv in the common case.
-      ...(driverName !== undefined && driverName !== "pipe" ? { driverName } : {}),
+      ...(agentName !== "claude" ? { agentName } : {}),
+      ...(driverName !== "pipe" ? { driverName } : {}),
       ...(resume && { resume: true }),
     });
     const client = await connectToHost({ socketPath, sinceSeq: 0, onEvent, onDisconnect });
@@ -663,20 +660,17 @@ async function spawnAndAttachHost(
     // newer attachment. Same guard runWakeWatchdog already uses.
     let attachment: SessionAttachment | undefined;
     const agentName = meta.agentName ?? ctx.agentName;
+    const driverName = meta.driverName ?? ctx.driverName;
     const spawnCommand = ctx.spawnCommandForAgent(agentName);
     const effectiveSpawnCommand = opts.resume && agentName === "claude"
       ? [...spawnCommand, "--continue"]
       : spawnCommand;
-    const driverName = agentName === "codex"
-      ? "codex"
-      : agentName === "cursor"
-        ? "cursor"
-        : ctx.driverName;
     const { client, hostProc } = await ctx.hostLauncher({
       meta,
       sessionsDir: ctx.sessionsDir,
       agentEndpoint: ctx.baseUrlForAgent,
       spawnCommand: effectiveSpawnCommand,
+      agentName,
       driverName,
       resume: opts.resume ?? false,
       onEvent: (event) => broadcastEvent(ctx, meta.id, event),

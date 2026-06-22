@@ -20,7 +20,7 @@ test("buildDefaultSpawnCommand for claude/tmux returns the interactive claude ar
 });
 
 test("buildDefaultSpawnCommand for codex returns the codex prefix without exec args (the driver appends them)", () => {
-  // driverName is ignored for codex; the codex driver is the only option.
+  // codex currently only supports pipe; the spawn command is the same regardless.
   const pipe = buildDefaultSpawnCommand("codex", "pipe");
   const tmux = buildDefaultSpawnCommand("codex", "tmux");
   expect(pipe).toEqual(tmux);
@@ -87,7 +87,7 @@ test("POST /sessions persists the selected agentName and passes its runtime to t
   expect(launches).toHaveLength(1);
   expect(launches[0].agentName).toBe("codex");
   expect(launches[0].spawnCommand[0]).toBe("codex");
-  expect(launches[0].driverName).toBe("codex");
+  expect(launches[0].driverName).toBe("pipe");
 });
 
 test("POST /sessions defaults agentName to the server agent", async () => {
@@ -157,7 +157,7 @@ test("POST /sessions persists cursor agentName and passes driver cursor to the h
   expect(launches).toHaveLength(1);
   expect(launches[0].agentName).toBe("cursor");
   expect(launches[0].spawnCommand[0]).toBe("agent");
-  expect(launches[0].driverName).toBe("cursor");
+  expect(launches[0].driverName).toBe("pipe");
 });
 
 test("POST /sessions rejects unknown agentName", async () => {
