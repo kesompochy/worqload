@@ -14,6 +14,8 @@
   import { tick } from "svelte";
   import { state as appState, isReportExpanded, isFeedbackExpanded, anchorLabel, feedbackAnchorsForPath } from "../state.svelte.js";
   import { renderMarkdown, extractHeadings } from "../markdown.js";
+  import { formatRelative } from "../dom.js";
+  import { clock } from "../clock.svelte.js";
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
   import StructureView from "./StructureView.svelte";
@@ -45,6 +47,9 @@
   // view; sitting exactly at the top is preserved as-is. When the active tab
   // changes the anchor row is gone, so the outgoing tab's position is stashed in
   // appState.tabScroll and the incoming tab's stashed position restored.
+  // First-visit to a tab and a tab whose stashed anchor no longer matches reset
+  // to the top: the browser otherwise carries the previous tab's scrollTop into
+  // the new content, leaving the user mid-page with no visible reason.
   const SCROLL_ANCHOR_ATTRS = ["data-event-seq", "data-report-filename", "data-feedback-filename", "data-diff-path", "data-asking"];
   let bodyEl = $state();
   let renderedTab = appState.activeTab;
@@ -100,7 +105,14 @@
     const targetTab = appState.activeTab;
     tick().then(() => {
       if (!bodyEl) return;
-      restoreScroll(tabChanged ? (appState.tabScroll.get(targetTab) ?? null) : saved);
+      if (tabChanged) {
+        // Drop any scrollTop the browser carried over from the previous tab so
+        // a missing-or-unmatched stash starts at the top instead of mid-page.
+        bodyEl.scrollTop = 0;
+        restoreScroll(appState.tabScroll.get(targetTab) ?? null);
+      } else {
+        restoreScroll(saved);
+      }
       renderedTab = targetTab;
     });
   });
@@ -260,10 +272,14 @@
               <div class="report-header" data-report-toggle={r.filename}>
                 <span class="report-chevron">▾</span>
                 <span class="report-filename">{r.filename}</span>
+                {#if r.submittedAt}
+                  <span class="report-time" title={new Date(r.submittedAt).toLocaleString()}>{formatRelative(r.submittedAt, clock.now)}</span>
+                {/if}
                 {#if r.replyTo}
                   <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
                 {/if}
                 <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
+                <button class="report-delete" type="button" data-report-delete={r.filename} title="このレポートを削除する" aria-label="レポートを削除">✕</button>
               </div>
               <div class="report-body">
                 <div class="md">{@html renderMarkdown(r.content, { anchorPath: reportAnchorPath, anchor: appState.anchor, feedbackAnchors: reportFeedbackAnchors })}</div>

@@ -1,0 +1,5 @@
+A report you submitted was held for a revision pass and not yet stored. Revise mode is on for this session.
+
+Your draft was saved to `{{draftPath}}`. Edit that file in place as the human will read it.{{guidance}}
+
+Then resubmit the tightened draft: `worqload report submit --slug {{slug}} < {{draftPath}}`. The next submission is stored as written.

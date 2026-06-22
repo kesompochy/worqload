@@ -8,16 +8,11 @@ export interface SubmitResult {
   seq: number;
 }
 
-// A report the rewriter judged not worth the human's time: stored nowhere,
-// shown nowhere. `worqload report submit` reports this back to the agent.
-export interface ReportSuppressed {
-  suppressed: true;
-}
-
-// A report the rewriter judged a misfiled request for a decision: not stored.
-// `worqload report submit` tells the agent to resubmit it as an escalation.
-export interface ReportEscalateInstead {
-  escalateInstead: true;
+// A report held by revise mode on its first submission: not yet stored. The
+// session is asked (via a queued feedback message) to revise and resubmit;
+// `worqload report submit` reports this verdict back to the agent.
+export interface ReportRevisionRequested {
+  revisionRequested: true;
 }
 
 export interface FeedbackMessage {
@@ -62,10 +57,10 @@ export async function submitReport(
   content: string,
   replyTo?: string,
   images: File[] = [],
-): Promise<SubmitResult | ReportSuppressed | ReportEscalateInstead> {
+): Promise<SubmitResult | ReportRevisionRequested> {
   const url = `${endpoint}/internal/sessions/${sessionId}/reports`;
   const body = replyTo ? { slug, content, replyTo } : { slug, content };
-  type Result = SubmitResult | ReportSuppressed | ReportEscalateInstead;
+  type Result = SubmitResult | ReportRevisionRequested;
   return images.length > 0 ? postReportForm<Result>(url, body, images) : postJson<Result>(url, body);
 }
 

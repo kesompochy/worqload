@@ -1,7 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { startServer } from "./web-server";
 import { submitReport, submitEscalation, requestCommandApproval, fetchFeedback } from "./agent-client";
-import type { ReportRewriter } from "./report-rewriter";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -9,13 +8,9 @@ afterEach(cleanupAll);
 const TEST_BASE = "trunk";
 
 async function bootAndCreateSession(
-  // Pass-through default: these tests assert report bookkeeping, not prose, and
-  // must not spawn the real claude the production rewriter would. A suppression
-  // test overrides it.
-  reportRewriter: ReportRewriter = async raw => raw,
-  // Report formatting is off by default, so a test that needs the rewriter to
-  // actually run must opt the session in.
-  { enableReportAgent = false }: { enableReportAgent?: boolean } = {},
+  // Revise mode is off by default; a test that needs the first submission
+  // bounced must opt the session in.
+  { enableReviseMode = false }: { enableReviseMode?: boolean } = {},
 ): Promise<{ endpoint: string; sessionId: string }> {
   const repoDir = makeTmpDir("repo");
   const started = await startServer({
@@ -24,7 +19,6 @@ async function bootAndCreateSession(
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
-    reportRewriter,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const endpoint = `http://127.0.0.1:${started.server.port}`;
@@ -34,8 +28,8 @@ async function bootAndCreateSession(
     body: JSON.stringify({ prompt: "x", baseBranch: TEST_BASE }),
   }).then(r => r.json());
   const sessionId = created.meta.id;
-  if (enableReportAgent) {
-    await fetch(`${endpoint}/sessions/${sessionId}/report-agent`, {
+  if (enableReviseMode) {
+    await fetch(`${endpoint}/sessions/${sessionId}/revise-mode`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled: true }),
@@ -53,20 +47,17 @@ test("submitReport posts a numbered report", async () => {
   expect(r.seq).toBe(1);
 });
 
-test("submitReport reports suppression instead of a filename", async () => {
-  const { endpoint, sessionId } = await bootAndCreateSession(async () => null, { enableReportAgent: true });
-  const r = await submitReport(endpoint, sessionId, "noise", "中身のない本文");
-  expect(r).toEqual({ suppressed: true });
-});
+test("submitReport reports a revision-requested verdict instead of a filename on the first submission", async () => {
+  // Revise mode holds the first submission and asks the session to revise it;
+  // the server stores nothing and the agent is told to resubmit.
+  const { endpoint, sessionId } = await bootAndCreateSession({ enableReviseMode: true });
+  const r = await submitReport(endpoint, sessionId, "draft", "初稿");
+  expect(r).toEqual({ revisionRequested: true });
 
-test("submitReport reports an escalate-instead verdict instead of a filename", async () => {
-  // The rewriter judged the report a misfiled request for a decision: the
-  // server stores nothing and the agent is told to resubmit as an escalation.
-  const { endpoint, sessionId } = await bootAndCreateSession(async () => ({ escalate: true }), {
-    enableReportAgent: true,
-  });
-  const r = await submitReport(endpoint, sessionId, "ask", "どちらにすべきか指示がほしい");
-  expect(r).toEqual({ escalateInstead: true });
+  // The resubmission goes through and is stored.
+  const resubmitted = await submitReport(endpoint, sessionId, "draft", "推敲した本文");
+  if (!("filename" in resubmitted)) throw new Error("resubmission must be stored");
+  expect(resubmitted.filename).toBe("001-draft.md");
 });
 
 test("submitReport --re links the report to a feedback message", async () => {

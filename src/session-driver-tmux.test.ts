@@ -7,6 +7,7 @@ import type {
 } from "./session-driver";
 import {
   encodeCwdForClaudeProjects,
+  harvestAskRules,
   makeTmuxClaudeDriverFactory,
   tmuxOneShotText,
   tmuxSessionName,
@@ -55,6 +56,10 @@ function makeFakeTmuxDeps(transcriptDir: string, bootstrapDir = makeTmpDir("tmux
     deps: {
       tmuxRun,
       resolveTranscriptDir: () => transcriptDir,
+      // Hermetic by default: no settings files, so tests never read the real
+      // ~/.claude/settings.json. Tests exercising the ask-rule injection set
+      // this explicitly.
+      resolveSettingsFiles: () => [],
       pollIntervalMs: 10,
       transcriptWaitTimeoutMs: 5_000,
       bootstrapFileDir: bootstrapDir,
@@ -197,6 +202,109 @@ test("resume mode uses --resume <uuid> instead of --session-id <uuid>", async ()
   // --continue must be stripped (worqload's claude --resume <uuid> is the
   // explicit equivalent and avoids racing with other sessions in the cwd).
   expect(shellCmd).not.toContain("--continue");
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
+test("harvestAskRules unions permissions.ask across scopes, dedupes, and skips missing/malformed files", async () => {
+  const dir = makeTmpDir("tmux-settings");
+  const userFile = join(dir, "user.json");
+  const localFile = join(dir, "local.json");
+  const missingFile = join(dir, "absent.json");
+  const badFile = join(dir, "bad.json");
+  await writeFile(userFile, JSON.stringify({ permissions: { ask: ["Bash(rm *)", "Bash(chmod *)"], allow: ["Bash(*)"] } }));
+  await writeFile(localFile, JSON.stringify({ permissions: { ask: ["Bash(chmod *)", "Bash(kubectl delete *)"] } }));
+  await writeFile(badFile, "{ not valid json");
+
+  const rules = await harvestAskRules([userFile, localFile, missingFile, badFile]);
+  expect(rules).toEqual(["Bash(rm *)", "Bash(chmod *)", "Bash(kubectl delete *)"]);
+});
+
+test("spawn injects --settings re-declaring harvested ask rules as deny so the interactive TUI fails fast instead of prompting", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  const settingsDir = makeTmpDir("tmux-driver-settings");
+  const userFile = join(settingsDir, "settings.json");
+  await writeFile(userFile, JSON.stringify({ permissions: { ask: ["Bash(rm *)", "Bash(kubectl delete *)"] } }));
+  const { deps, state } = makeFakeTmuxDeps(transcriptDir);
+  deps.resolveSettingsFiles = () => [userFile];
+
+  const events: SessionDriverEvent[] = [];
+  const launch = await buildLaunchOptions(cwd, events);
+  const factory = makeTmuxClaudeDriverFactory(deps);
+  const driver = await factory(launch);
+  await driver.sendUserMessage("hi", "bootstrap");
+
+  const spawnCall = state.calls[0];
+  if (!spawnCall) throw new Error("tmux new-session not invoked");
+  const shellCmd = spawnCall.args.at(-1);
+  if (typeof shellCmd !== "string") throw new Error("missing shell command");
+  expect(shellCmd).toContain("--settings");
+  // deny outranks ask, so each harvested ask pattern lands in deny.
+  expect(shellCmd).toContain('"deny"');
+  expect(shellCmd).toContain("Bash(rm *)");
+  expect(shellCmd).toContain("Bash(kubectl delete *)");
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
+test("spawn omits --settings when no ask rules are present", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  const { deps, state } = makeFakeTmuxDeps(transcriptDir);
+
+  const events: SessionDriverEvent[] = [];
+  const launch = await buildLaunchOptions(cwd, events);
+  const factory = makeTmuxClaudeDriverFactory(deps);
+  const driver = await factory(launch);
+  await driver.sendUserMessage("hi", "bootstrap");
+
+  const shellCmd = state.calls[0]?.args.at(-1);
+  if (typeof shellCmd !== "string") throw new Error("missing shell command");
+  expect(shellCmd).not.toContain("--settings");
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
+test("resume tails only lines appended after attach — pre-existing transcript history is not re-emitted", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  await mkdir(transcriptDir, { recursive: true });
+  const { deps } = makeFakeTmuxDeps(transcriptDir);
+
+  // A prior host generation already turned these lines into events; on resume
+  // claude reopens this same transcript and appends to it. Re-emitting the
+  // history would duplicate the whole conversation on every resume.
+  const transcriptPath = join(transcriptDir, `${SAMPLE_SESSION_ID}.jsonl`);
+  await writeFile(
+    transcriptPath,
+    `{"type":"assistant","message":{"content":[{"type":"text","text":"old-1"}]}}\n` +
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"old-2"}]}}\n`,
+  );
+
+  const events: SessionDriverEvent[] = [];
+  // --continue marks this launch as a resume (the host adds it for resumes).
+  const launch = await buildLaunchOptions(cwd, events, ["claude", "--dangerously-skip-permissions", "--continue"]);
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const driver = await factory(launch);
+  await driver.sendUserMessage("RESUMING", "bootstrap");
+
+  // Several poll ticks pass; the pre-existing history must stay unemitted.
+  await new Promise((r) => setTimeout(r, 60));
+  expect(events.length).toBe(0);
+
+  // A line appended after the resume attach IS emitted.
+  await appendFile(transcriptPath, `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}\n`);
+  const deadline = Date.now() + 2000;
+  while (events.length < 1 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  expect(events.length).toBe(1);
+  expect(events[0]?.kind).toBe("claude_tool_use");
 
   driver.kill("SIGTERM");
   await driver.exited;
@@ -382,6 +490,7 @@ test("tmuxOneShotText spawns claude with the prompt, returns the first assistant
       return { exitCode: 0, stdout: "", stderr: "" };
     },
     resolveTranscriptDir: () => transcriptDir,
+    resolveSettingsFiles: () => [],
     pollIntervalMs: 10,
     transcriptWaitTimeoutMs: 2000,
     bootstrapFileDir: bootstrapDir,
@@ -446,6 +555,7 @@ test("tmuxOneShotText returns null when tmux new-session fails", async () => {
       return { exitCode: 0, stdout: "", stderr: "" };
     },
     resolveTranscriptDir: () => transcriptDir,
+    resolveSettingsFiles: () => [],
     pollIntervalMs: 10,
     transcriptWaitTimeoutMs: 1000,
     bootstrapFileDir: makeTmpDir("tmux-oneshot-bootstrap"),

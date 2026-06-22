@@ -11,6 +11,7 @@ export type EventKind =
   | "report_submitted"
   | "report_read"
   | "report_unread"
+  | "report_deleted"
   | "escalation_requested"
   | "escalation_resolved"
   | "feedback_received"

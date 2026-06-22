@@ -28,11 +28,15 @@ export interface SessionMeta {
   // The server skips the reconcile-on-boot step for these so a running mock
   // doesn't get auto-flipped to crashed for lacking a real host process.
   mock?: boolean;
-  // Whether worqload runs a disposable report-only agent over each submitted
-  // report before storing it. Absent means disabled: formatting is off by
-  // default, so a session's reports are stored as written. The human flips it
-  // on per session from the UI.
-  reportAgentEnabled?: boolean;
+  // Whether worqload holds the first submission of each report and bounces it
+  // back asking the session to revise it before storing. Absent means disabled:
+  // revise mode is off by default, so a session's reports are stored on first
+  // submission. The human flips it on per session from the UI.
+  reviseModeEnabled?: boolean;
+  // Tracks which half of the revise-mode cycle the next report submission is
+  // in. Set when a first submission is bounced for revision; cleared when the
+  // resubmission is stored. Only meaningful while reviseModeEnabled is on.
+  revisionPending?: boolean;
   // Agent-side conversation identifier the driver wants restored on a future
   // host respawn. Today: codex's thread_id (captured from `thread.started` and
   // re-sent via `codex exec --json resume <id>`) or cursor's session_id
@@ -41,11 +45,11 @@ export interface SessionMeta {
   agentSessionId?: string;
 }
 
-// `reportAgentEnabled` is opt-in: only an explicit `true` (the human toggled
-// it on for this session) enables the rewrite. Undefined — a new session, or
-// any created before the flag existed — stays disabled.
-export function isReportAgentEnabled(meta: SessionMeta): boolean {
-  return meta.reportAgentEnabled === true;
+// `reviseModeEnabled` is opt-in: only an explicit `true` (the human toggled
+// it on for this session) enables the forced revision pass. Undefined — a new
+// session, or any created before the flag existed — stays disabled.
+export function isReviseModeEnabled(meta: SessionMeta): boolean {
+  return meta.reviseModeEnabled === true;
 }
 
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {

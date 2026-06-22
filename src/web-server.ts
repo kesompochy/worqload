@@ -12,7 +12,7 @@ import {
   listSessionMetas,
   reorderSessions,
   isTerminal,
-  isReportAgentEnabled,
+  isReviseModeEnabled,
   validateTransition,
   type AgentName,
   type DriverName,
@@ -27,7 +27,7 @@ import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageSe
 import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { ghPrLinkResolver, makeCachedPrLinkResolver, type PrLinkResolver } from "./pr-link";
-import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, readReadState, setReadState, markAllRead, attachmentsDirNameFor } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumberedFile, readReadState, setReadState, markAllRead, attachmentsDirNameFor } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
@@ -35,6 +35,10 @@ import { isSessionPreviewAlive, listActions, listAvailableActions, findAction, s
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { isAgentWorkEvent } from "../web/events-view.js";
+import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
+import type { IpadicFeatures, Tokenizer } from "kuromoji";
+import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
+import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -125,6 +129,17 @@ function hostSocketPathFor(sessionId: string): string {
 
 interface WsClientData {
   sessionId: string;
+  // Subscribe is racey by construction: the handler does `await readEvents`
+  // (disk) before sending the replay, and `appendAndBroadcast` can fire
+  // `ws.send` for a brand-new event while that await is still pending. With
+  // a naive broadcast loop the new event would hit the wire BEFORE the
+  // replay events, the client filters `ev.seq <= lastSeq` and silently drops
+  // the older replay events. While the subscribe handler is in flight,
+  // broadcasts queue here instead of going through `ws.send`; the handler
+  // flushes the queue after replay completes (skipping any seq already
+  // covered by the replay).
+  subscribeState?: "pending" | "live";
+  queuedBroadcasts?: import("./event-log").Event[];
 }
 
 interface SessionAttachment {
@@ -182,12 +197,6 @@ export interface ServerContext {
   // WorktreeOps so worqload core stays unaware of `gh`; the default
   // (ghPrLinkResolver) is the one place that knows.
   prLinkResolver: PrLinkResolver;
-  // Rewrites a submitted report into human-readable form before it's stored,
-  // when the session's reportAgentEnabled flag is on. The default spawns a
-  // disposable agent matching the session agent; tests inject a synchronous
-  // fake.
-  reportRewriter: ReportRewriter;
-  reportRewriterForAgent: (agentName: AgentName) => ReportRewriter;
   clients: Map<string, SessionAttachment>;
   // One promise chain per session, serialising host create/teardown. Two
   // resume triggers racing (a manual Resume and the wake watchdog, or two
@@ -209,11 +218,43 @@ export interface ServerContext {
   lastFeedbackFetchAt: Map<string, number>;
   // Watchdog threshold. Zero (or negative) disables the watchdog entirely.
   wakeWatchdogMs: number;
+  // The agent is expected to close each turn with a Report (or an Escalation,
+  // which pauses for the human). When a turn ends with neither, serve sends the
+  // agent a message asking it to report so the session never goes silently
+  // idle on the human. maxAutoNudges caps consecutive such nudges so an agent
+  // that simply never reports can't be re-poked forever; a real Report or
+  // Escalation resets the count. Zero disables the nudge entirely.
+  maxAutoNudges: number;
+  // Per session: whether a Report/Escalation was seen since the current turn
+  // began. Set when one is appended, consumed (and reset) at the turn-end
+  // `result` event to decide whether that turn earned a nudge.
+  reportedThisTurn: Map<string, boolean>;
+  // Per session: consecutive auto-nudges sent without an intervening Report or
+  // Escalation. Compared against maxAutoNudges; reset to 0 by a real one.
+  autoNudgeCount: Map<string, number>;
   // Per-attachment byte cap and per-message attachment count cap, applied to
   // both feedback and report image uploads. Attachments above either limit are
   // rejected with 400 at the POST.
   attachmentMaxBytes: number;
   attachmentMaxCount: number;
+  // Path to the YAML config (`~/.config/worqload/config.yaml`) holding the
+  // revise-mode settings: the textlint rules and the reviseFeedback override.
+  configPath: string;
+  // The last successfully loaded revise-mode textlint rules. Seeded at startup
+  // and refreshed from configPath on each report submission so config edits
+  // take effect without a restart; a parse that fails leaves this value
+  // unchanged. Empty when no config exists. Only consulted while a session has
+  // revise mode on (see postInternalReports).
+  textlintRules: TextlintRule[];
+  // The last successfully loaded `reviseFeedback:` guidance, or null when none
+  // is configured (the bounce then carries no guidance). Seeded and refreshed
+  // alongside textlintRules with the same keep-previous-on-parse-failure
+  // behavior.
+  reviseFeedbackGuidance: string | null;
+  // The morphological tokenizer the lint gate uses for inflected matches, built
+  // lazily on the first revise-mode submission (see currentTextlintTokenizer).
+  // undefined = not yet built; null = build failed (gate runs literal-only).
+  textlintTokenizer?: Tokenizer<IpadicFeatures> | null;
 }
 
 export interface StartServerOptions {
@@ -233,7 +274,6 @@ export interface StartServerOptions {
   branchNameGenerator?: BranchNameGenerator;
   hostCommand?: string[];       // override how the (subprocess) host is launched
   hostLauncher?: HostLauncher;  // override host launch entirely (tests use this)
-  reportRewriter?: ReportRewriter; // override the report rewriter (tests use a fake)
   worktreeOps?: WorktreeOps;    // override the git/worktree layer (tests use a fake)
   prLinkResolver?: PrLinkResolver; // override the branch→PR-URL resolver (tests use a fake)
   // Auto-resume threshold for the wake watchdog (ms). When it fires, if the
@@ -242,11 +282,20 @@ export interface StartServerOptions {
   // re-spawns with --continue so RESUME_KICKOFF forces a fetch. Zero or
   // negative disables it. Production default is 90s; tests override down.
   wakeWatchdogMs?: number;
+  // Max consecutive auto-nudges for turns that end without a Report or
+  // Escalation. Zero disables the nudge. Production default is below; tests
+  // override it to exercise the cap with few turns.
+  maxAutoNudges?: number;
   // Per-attachment byte cap and per-message attachment count cap, applied to
   // both feedback and report image uploads. Tests use these to keep size-limit
   // assertions cheap.
   attachmentMaxBytes?: number;
   attachmentMaxCount?: number;
+  // Path to the YAML config holding the revise-mode settings (textlint rules
+  // and the reviseFeedback override). Defaults to
+  // `~/.config/worqload/config.yaml`; tests point it at a temp file to inject
+  // settings. A missing file means no rules and the default feedback wording.
+  configPath?: string;
 }
 
 export interface ShutdownOptions {
@@ -366,17 +415,131 @@ function formatRejectedCommandFeedback(escalationFilename: string, command: stri
   return parts.join("\n\n") + "\n";
 }
 
-// Delivered into the feedback inbox when the report agent bounces a report as a
-// misfiled escalation. The bounce can't rely on the `worqload report submit`
-// stdout alone: a session that wrote a report to ask the human has, from its
-// own point of view, already asked and ended its turn — so it routes through
-// the inbox, which wakes the session and is drained exactly once.
-function buildBouncedReportFeedback(rawReport: string): string {
+// Relative path (from the worktree root, i.e. the agent's CWD) of the scratch
+// file the first submission is saved to for the session to edit in place.
+// `.worqload-draft/` is the session-private scratch dir pre-created with the
+// worktree and hidden from the explorer / dirty-check / auto-commit.
+const REVISION_DRAFT_RELPATH = ".worqload-draft/revision-draft.md";
+
+// Delivered into the feedback inbox when revise mode holds a report's first
+// submission. The bounce can't rely on the `worqload report submit` stdout
+// alone: a session that just submitted a report has, from its own point of
+// view, finished and likely ended its turn — so it routes through the inbox,
+// which wakes the session and is drained exactly once. The first submission is
+// saved to a scratch file the session edits in place, rather than re-typed from
+// this message, so nothing is dropped in the round trip. The scaffold (status
+// line, draft path, resubmit command) is the fixed template; the editorial
+// guidance is supplied entirely by the human via `reviseFeedback:` in the
+// config and is absent otherwise. The scaffold sentence ends before the
+// `{{guidance}}` slot, so the configured guidance follows as natural prose: it
+// is appended as a space-separated continuation when present, and the slot
+// collapses to nothing when no guidance is configured.
+function buildRevisionRequestFeedback(slug: string, guidance?: string): string {
+  const guidanceText = guidance?.trim();
+  return revisionRequestScaffold
+    .replaceAll("{{guidance}}", guidanceText ? ` ${guidanceText}` : "")
+    .replaceAll("{{draftPath}}", REVISION_DRAFT_RELPATH)
+    .replaceAll("{{slug}}", slug);
+}
+
+// Delivered when a report submitted under revise mode trips the textlint rules.
+// Lists each forbidden string with its configured comment, then explains the
+// `\` escape so the session can legitimately keep a flagged word — e.g. when it
+// must quote the word itself — by prefixing a backslash; the backslash exempts
+// that one occurrence and is left in the stored report. Routes through the same
+// scratch-draft + resubmit loop as buildRevisionRequestFeedback.
+function buildTextlintBounceFeedback(slug: string, violations: TextlintViolation[]): string {
+  const findings = violations.map(v => `- \`${v.string}\`: ${v.comment}`).join("\n");
+  const escapeExample = violations[0]?.string ?? "";
   return [
-    "A report you submitted was not stored. The report agent judged it a request for a decision, instruction, or approval from the human — that belongs in an Escalation, not a Report.",
-    "Resubmit its content with `worqload escalate submit`, phrased so the decision you need is explicit. Do not resubmit it as a report.",
-    `## The report that was bounced\n\n${fencedBlock(rawReport)}`,
+    "A report you submitted was held: it tripped this session's textlint rules and was not stored.",
+    `Your draft was saved to \`${REVISION_DRAFT_RELPATH}\`. Remove or rephrase the following in that file:`,
+    findings,
+    `To keep a flagged word on purpose — for instance when quoting it — prefix it with a backslash (\`\\${escapeExample}\`). The backslash exempts that occurrence from the lint and stays in the stored report.`,
+    `Then resubmit the corrected draft: \`worqload report submit --slug ${slug} < ${REVISION_DRAFT_RELPATH}\`.`,
   ].join("\n\n") + "\n";
+}
+
+// Holds a report submission instead of storing it: saves the body to the
+// session's scratch draft so it can edit in place, queues `feedbackContent`
+// into the inbox, and wakes the session to revise and resubmit. Bouncing
+// through the feedback inbox (not the CLI stdout alone) is what wakes the
+// session: one that just submitted a report has, from its own point of view,
+// finished and likely ended its turn. Shared by the generic revise-mode bounce
+// and the textlint bounce.
+async function bounceReportForRevision(
+  ctx: ServerContext,
+  meta: SessionMeta,
+  body: NumberedBody,
+  feedbackContent: string,
+  reason: string,
+): Promise<Response> {
+  await Bun.write(join(meta.worktreePath, REVISION_DRAFT_RELPATH), body.content);
+  const inbox = feedbackInboxDirFor(ctx, meta.id);
+  const file = await writeNumberedFile(inbox, "revision-requested", feedbackContent, {
+    archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
+  });
+  await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
+  const att = ctx.clients.get(meta.id);
+  appendHostLog(ctx, meta.id, "wake_sent", {
+    filename: file.filename,
+    seq: file.seq,
+    hasClient: att !== undefined,
+    status: meta.status,
+    reason,
+  });
+  if (att) {
+    att.client.send("[wake] check feedback inbox").catch(() => {});
+    scheduleWakeWatchdog(ctx, meta.id, att);
+  } else if (!isTerminal(meta.status)) {
+    await respawnMissingClient(ctx, meta, reason);
+  }
+  return json({ revisionRequested: true });
+}
+
+// Re-reads the textlint config so edits take effect without a server restart.
+// Reports are human-paced, so re-reading the small YAML per submission is cheap,
+// and reading here rather than via a file watcher sidesteps the atomic-rename
+// gotcha that makes single-file watches stop firing after an editor saves. A
+// config that fails to parse keeps the last good rules and is logged, so a typo
+// mid-edit can't wedge report submission.
+async function currentTextlintRules(ctx: ServerContext): Promise<TextlintRule[]> {
+  try {
+    ctx.textlintRules = await loadTextlintRules(ctx.configPath);
+  } catch (err) {
+    console.error(`[textlint] config reload failed, keeping previous rules: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return ctx.textlintRules;
+}
+
+// Resolves the morphological tokenizer the lint gate uses for inflected matches,
+// building it once on first use (memoized in textlint and cached on ctx) rather
+// than at startup, so servers that never enter revise mode never pay the
+// dictionary load. A build failure is logged once and degrades the gate to
+// literal-only matching instead of blocking submission.
+async function currentTextlintTokenizer(ctx: ServerContext): Promise<Tokenizer<IpadicFeatures> | undefined> {
+  if (ctx.textlintTokenizer === undefined) {
+    try {
+      ctx.textlintTokenizer = await getTextlintTokenizer();
+    } catch (err) {
+      ctx.textlintTokenizer = null;
+      console.error(`[textlint] tokenizer build failed, using literal matching only: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return ctx.textlintTokenizer ?? undefined;
+}
+
+// The current `reviseFeedback:` guidance, reloaded from the same config on each
+// submission so wording edits take effect without a restart. A parse failure
+// keeps the previous value, matching currentTextlintRules. Null means the
+// bounce carries no guidance.
+async function currentReviseFeedbackGuidance(ctx: ServerContext): Promise<string | null> {
+  try {
+    ctx.reviseFeedbackGuidance = await loadReviseFeedbackGuidance(ctx.configPath);
+  } catch (err) {
+    console.error(`[reviseFeedback] config reload failed, keeping previous guidance: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return ctx.reviseFeedbackGuidance;
 }
 
 function feedbackInboxDirFor(ctx: ServerContext, sessionId: string): string {
@@ -398,12 +561,63 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
   if (event.kind.startsWith("claude_")) {
     ctx.lastClaudeActivityAt.set(sessionId, Date.now());
   }
+  trackAutoNudge(ctx, sessionId, event);
   const payload = JSON.stringify({ sessionId, event });
   for (const ws of ctx.wsClients) {
-    if (ws.data.sessionId === sessionId) {
+    if (ws.data.sessionId !== sessionId) continue;
+    if (ws.data.subscribeState === "pending") {
+      // Queue rather than send — the subscribe handler is mid-await and a
+      // direct send here would arrive before its replay events, causing the
+      // client's seq filter to discard the (older) replay.
+      ws.data.queuedBroadcasts?.push(event);
+    } else {
       try { ws.send(payload); } catch { /* dead socket */ }
     }
   }
+}
+
+// True for the claude stream line that closes a turn: `claude -p` with
+// stream-json emits a `{type:"result",...}` line once per processed user
+// message. classifyClaudeLine files it under claude_system, carrying the full
+// parsed line as payload, so the turn boundary is observable here.
+function isClaudeTurnEnd(event: Event): boolean {
+  if (event.kind !== "claude_system") return false;
+  const payload = event.payload as { type?: unknown } | null;
+  return typeof payload === "object" && payload !== null && payload.type === "result";
+}
+
+// Keeps the per-session "did this turn report?" flag and the consecutive-nudge
+// count current as events flow through broadcastEvent, and on a turn-end that
+// carried neither a Report nor an Escalation, sends the agent a message asking
+// it to report — capped at maxAutoNudges so an agent that never reports isn't
+// re-poked forever. Both Report/Escalation events (server-appended) and the
+// claude turn-end event pass this same chokepoint, so their relative order is
+// preserved: the agent's `worqload report submit` completes (appending
+// report_submitted) before claude emits the turn's result line.
+function trackAutoNudge(ctx: ServerContext, sessionId: string, event: Event): void {
+  if (ctx.maxAutoNudges <= 0) return;
+  if (event.kind === "report_submitted" || event.kind === "escalation_requested") {
+    ctx.reportedThisTurn.set(sessionId, true);
+    ctx.autoNudgeCount.set(sessionId, 0);
+    return;
+  }
+  if (!isClaudeTurnEnd(event)) return;
+  const reported = ctx.reportedThisTurn.get(sessionId) ?? false;
+  ctx.reportedThisTurn.set(sessionId, false);
+  if (reported) return;
+  const sent = ctx.autoNudgeCount.get(sessionId) ?? 0;
+  if (sent >= ctx.maxAutoNudges) {
+    appendHostLog(ctx, sessionId, "auto_nudge_capped", { sent });
+    return;
+  }
+  // No live attachment means the host socket is gone; there is nothing to
+  // write to. The missing-client feedback path (respawnMissingClient) covers
+  // recovery there — this nudge is best-effort like a manual wake.
+  const att = ctx.clients.get(sessionId);
+  if (!att) return;
+  att.client.send(TURN_WITHOUT_REPORT_NUDGE).catch(() => {});
+  ctx.autoNudgeCount.set(sessionId, sent + 1);
+  appendHostLog(ctx, sessionId, "auto_nudge_sent", { sent: sent + 1 });
 }
 
 async function appendAndBroadcast(
@@ -440,6 +654,14 @@ function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher 
   return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, agentName, driverName, resume, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
     const logFile = hostLogPath(sessionsDir, meta.id);
+    // The hello handshake asks the host to replay events with seq > sinceSeq.
+    // serve already has every event currently in the file, so reading the
+    // current tail and passing it as sinceSeq keeps the replay empty in the
+    // common case. Resume without this would re-broadcast the entire history
+    // back through onEvent on every spawn — once over the WS to every viewing
+    // client, and once into lastClaudeActivityAt, which the wake watchdog reads
+    // for liveness.
+    const lastSeq = (await readEvents(meta.id, 1, sessionsDir)).at(-1)?.seq ?? 0;
     const hostProc = spawnDetachedHost({
       sessionId: meta.id,
       sessionsDir,
@@ -452,7 +674,7 @@ function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher 
       ...(driverName !== "pipe" ? { driverName } : {}),
       ...(resume && { resume: true }),
     });
-    const client = await connectToHost({ socketPath, sinceSeq: 0, onEvent, onDisconnect });
+    const client = await connectToHost({ socketPath, sinceSeq: lastSeq, onEvent, onDisconnect });
     await client.replayCompleted.catch(() => {});
     return { client, hostProc };
   };
@@ -481,6 +703,13 @@ function appendHostLog(
 // "claude is mid-turn on the previous message" delay while still cutting the
 // worst-case waiting time short.
 const DEFAULT_WAKE_WATCHDOG_MS = 90_000;
+
+// How many turns in a row that end without a Report or Escalation serve will
+// nudge before giving up. One nudge catches the agent that simply forgot; a
+// second covers the agent that ignored the first. Beyond that the agent is
+// demonstrably not going to report, and re-poking only burns tokens, so we
+// fall silent and leave the session for the human.
+const DEFAULT_MAX_AUTO_NUDGES = 2;
 
 // One pending watchdog per attachment, anchored to the first wake that has
 // not yet been acknowledged. A wake arriving while one is already pending does
@@ -783,6 +1012,12 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     },
     websocket: {
       open(ws) {
+        // Until the client sends `subscribe`, queue any broadcasts that arrive
+        // for this session — broadcasts arriving before subscribe completes
+        // would otherwise out-pace the replay and be dropped by the client's
+        // seq filter. See WsClientData.subscribeState.
+        ws.data.subscribeState = "pending";
+        ws.data.queuedBroadcasts = [];
         ctx.wsClients.add(ws);
       },
       async message(ws, raw) {
@@ -795,6 +1030,18 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
             for (const ev of events) {
               try { ws.send(JSON.stringify({ sessionId: ws.data.sessionId, event: ev })); } catch {}
             }
+            // Flush broadcasts that landed during the await above. The replay
+            // already covers everything on disk at read time, so anything in
+            // the queue with seq <= replayLastSeq is a duplicate (the
+            // broadcast and the disk-read raced over the same event).
+            const replayLastSeq = events.length > 0 ? events[events.length - 1].seq : (msg.lastSeq ?? 0);
+            const queued = ws.data.queuedBroadcasts ?? [];
+            ws.data.queuedBroadcasts = undefined;
+            ws.data.subscribeState = "live";
+            for (const ev of queued) {
+              if (ev.seq <= replayLastSeq) continue;
+              try { ws.send(JSON.stringify({ sessionId: ws.data.sessionId, event: ev })); } catch {}
+            }
           }
         } catch { /* ignore malformed */ }
       },
@@ -803,6 +1050,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
       },
     },
   }));
+
+  const configPath = opts.configPath ?? defaultConfigPath();
+  const textlintRules = await loadTextlintRules(configPath);
+  const reviseFeedbackGuidance = await loadReviseFeedbackGuidance(configPath);
 
   ctx = {
     repoDir,
@@ -815,8 +1066,6 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     spawnCommandForAgent,
     branchNameGenerator,
     hostLauncher,
-    reportRewriter,
-    reportRewriterForAgent,
     worktreeOps,
     prLinkResolver,
     clients: new Map(),
@@ -827,8 +1076,14 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     lastClaudeActivityAt: new Map(),
     lastFeedbackFetchAt: new Map(),
     wakeWatchdogMs: opts.wakeWatchdogMs ?? DEFAULT_WAKE_WATCHDOG_MS,
+    maxAutoNudges: opts.maxAutoNudges ?? DEFAULT_MAX_AUTO_NUDGES,
+    reportedThisTurn: new Map(),
+    autoNudgeCount: new Map(),
     attachmentMaxBytes: opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
     attachmentMaxCount: opts.attachmentMaxCount ?? DEFAULT_ATTACHMENT_MAX_COUNT,
+    configPath,
+    textlintRules,
+    reviseFeedbackGuidance,
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -897,9 +1152,10 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/resume", postResume),
   defineRoute("POST", "/sessions/:id/archive", postArchive),
   defineRoute("POST", "/sessions/:id/unarchive", postUnarchive),
+  defineRoute("POST", "/sessions/archived/prune", postPruneArchived),
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
-  defineRoute("POST", "/sessions/:id/report-agent", postReportAgent),
+  defineRoute("POST", "/sessions/:id/revise-mode", postReviseMode),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("GET",  "/sessions/:id/feedback/:filename/attachments/:name", getFeedbackAttachment),
@@ -909,6 +1165,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/reports/read-all", postReportsReadAll),
   defineRoute("POST", "/sessions/:id/reports/:filename/read", postReportRead),
   defineRoute("POST", "/sessions/:id/reports/:filename/unread", postReportUnread),
+  defineRoute("DELETE", "/sessions/:id/reports/:filename", deleteReport),
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
   defineRoute("GET",  "/sessions/:id/files", getFiles),
@@ -1266,27 +1523,63 @@ async function deleteSession(_req: Request, ctx: ServerContext, params: Record<s
     if (!meta.archivedAt) {
       return json({ error: "archive the session before deleting" }, 400);
     }
-    ctx.clients.delete(meta.id);
-    ctx.lastClaudeActivityAt.delete(meta.id);
-    ctx.lastFeedbackFetchAt.delete(meta.id);
-    try {
-      await ctx.worktreeOps.removeWorktree(meta.worktreePath, meta.branchName, ctx.repoDir);
-    } catch {
-      // worktree already gone (manual cleanup, repo moved, ...) — keep going so
-      // the session dir still gets cleared.
-    }
-    // The structure tab's function-mode Before split may have materialised a
-    // sibling worktree at the diff base; remove it too. Detached, so no branch
-    // to delete. Best-effort: most sessions never create one.
-    try {
-      const basePath = ctx.worktreeOps.baseWorktreePathFor(meta.worktreePath);
-      await ctx.worktreeOps.removeWorktree(basePath, undefined, ctx.repoDir);
-    } catch {
-      /* base worktree was never created or already gone */
-    }
-    await rm(join(ctx.sessionsDir, meta.id), { recursive: true, force: true });
+    await purgeSession(ctx, meta);
     return json({ ok: true });
   });
+}
+
+// The destructive half of deleteSession, factored out so the bulk prune can
+// reuse it: removes the worktree, the working branch, and the whole
+// .worqload/sessions/<id>/ directory. Caller is responsible for the
+// archived-state guard.
+async function purgeSession(ctx: ServerContext, meta: SessionMeta): Promise<void> {
+  ctx.clients.delete(meta.id);
+  ctx.lastClaudeActivityAt.delete(meta.id);
+  ctx.lastFeedbackFetchAt.delete(meta.id);
+  ctx.reportedThisTurn.delete(meta.id);
+  ctx.autoNudgeCount.delete(meta.id);
+  try {
+    await ctx.worktreeOps.removeWorktree(meta.worktreePath, meta.branchName, ctx.repoDir);
+  } catch {
+    // worktree already gone (manual cleanup, repo moved, ...) — keep going so
+    // the session dir still gets cleared.
+  }
+  // The structure tab's function-mode Before split may have materialised a
+  // sibling worktree at the diff base; remove it too. Detached, so no branch
+  // to delete. Best-effort: most sessions never create one.
+  try {
+    const basePath = ctx.worktreeOps.baseWorktreePathFor(meta.worktreePath);
+    await ctx.worktreeOps.removeWorktree(basePath, undefined, ctx.repoDir);
+  } catch {
+    /* base worktree was never created or already gone */
+  }
+  await rm(join(ctx.sessionsDir, meta.id), { recursive: true, force: true });
+}
+
+interface PruneArchivedBody {
+  days?: unknown;
+}
+
+// Bulk hard-delete: removes every archived session whose archivedAt predates
+// `days` days ago. Same irreversible cleanup as DELETE /sessions/:id, applied
+// per match. Deletes run sequentially — each removes a git worktree from the
+// shared repo, and parallel removals risk index-lock contention.
+async function postPruneArchived(req: Request, ctx: ServerContext): Promise<Response> {
+  const body = (await req.json().catch(() => ({}))) as PruneArchivedBody;
+  if (typeof body.days !== "number" || !Number.isFinite(body.days) || body.days < 0) {
+    return json({ error: "days must be a non-negative number" }, 400);
+  }
+  const cutoff = Date.now() - body.days * 86_400_000;
+  const sessions = await listSessionMetas(ctx.sessionsDir);
+  const stale = sessions.filter(
+    s => s.archivedAt !== undefined && new Date(s.archivedAt).getTime() < cutoff,
+  );
+  const deleted: string[] = [];
+  for (const meta of stale) {
+    await purgeSession(ctx, meta);
+    deleted.push(meta.id);
+  }
+  return json({ deleted, count: deleted.length });
 }
 
 interface TitleBody {
@@ -1312,20 +1605,22 @@ async function postTitle(req: Request, ctx: ServerContext, params: Record<string
   });
 }
 
-interface ReportAgentBody {
+interface ReviseModeBody {
   enabled?: unknown;
 }
 
-// The UI toggle for the disposable report-only agent. Stored on meta so it
-// rides along in every session listing/detail response without extra
-// decoration (isReportAgentEnabled reads it; absent means off).
-async function postReportAgent(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+// The UI toggle for revise mode. Stored on meta so it rides along in every
+// session listing/detail response without extra decoration (isReviseModeEnabled
+// reads it; absent means off). Toggling either way clears any pending revision
+// so the next submission starts a fresh first-submit/resubmit cycle.
+async function postReviseMode(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const body = (await req.json().catch(() => ({}))) as ReportAgentBody;
+    const body = (await req.json().catch(() => ({}))) as ReviseModeBody;
     if (typeof body.enabled !== "boolean") {
       return json({ error: "enabled must be a boolean" }, 400);
     }
-    const updated: SessionMeta = { ...meta, reportAgentEnabled: body.enabled };
+    const { revisionPending: _reset, ...rest } = meta;
+    const updated: SessionMeta = { ...rest, reviseModeEnabled: body.enabled };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
   });
@@ -1422,7 +1717,21 @@ async function getSessionDetail(_req: Request, ctx: ServerContext, params: Recor
 async function getReports(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const dir = reportsDirFor(ctx, meta.id);
-    const [reports, readSet] = await Promise.all([listAllFiles(dir), readReadState(dir)]);
+    const [reports, readSet, events] = await Promise.all([
+      listAllFiles(dir),
+      readReadState(dir),
+      readEvents(meta.id, 1, ctx.sessionsDir),
+    ]);
+    // The report_submitted event is when the report reached the human — the
+    // canonical submission time, recorded for existing reports too (the file's
+    // own mtime would drift if the sessions tree were ever copied).
+    const submittedAt = new Map<string, string>();
+    for (const ev of events) {
+      if (ev.kind === "report_submitted") {
+        const filename = (ev.payload as { filename?: string }).filename;
+        if (filename) submittedAt.set(filename, ev.timestamp);
+      }
+    }
     return json({
       reports: reports.map(r => ({
         filename: r.filename,
@@ -1430,6 +1739,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
         read: readSet.has(r.filename),
         replyTo: r.meta?.replyTo,
         attachments: r.attachments,
+        submittedAt: submittedAt.get(r.filename),
       })),
     });
   });
@@ -1478,6 +1788,23 @@ async function postReportsReadAll(
 
 async function postReportUnread(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return setReportReadFlag(ctx, params, false);
+}
+
+// Permanently discards a report and everything written alongside it (sidecar,
+// attachments, read-state entry). The human's escape hatch for a report an
+// agent filed in the wrong session; deletion is final, so the UI confirms first.
+async function deleteReport(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    if (!isSafeAttachmentName(filename) || !filename.endsWith(".md")) {
+      return json({ error: "invalid report filename" }, 400);
+    }
+    const dir = reportsDirFor(ctx, meta.id);
+    if (!(await Bun.file(join(dir, filename)).exists())) return json({ error: "report not found" }, 404);
+    await deleteNumberedFile(dir, filename);
+    await appendAndBroadcast(ctx, meta.id, { kind: "report_deleted", payload: { filename } });
+    return json({ ok: true, filename });
+  });
 }
 
 async function getAsking(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
@@ -2380,54 +2707,40 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
         return json({ error: `no such feedback message: ${replyTo}` }, 400);
       }
     }
-    // The disposable report-only agent runs here, before the report is stored,
-    // so the session never saw the 推敲 burden and the human reads the polished
-    // text. Off per session → store the agent's raw submission untouched.
-    const verdict = isReportAgentEnabled(meta)
-      ? await ctx.reportRewriterForAgent(meta.agentName ?? ctx.agentName)(body.content, { cwd: meta.worktreePath })
-      : body.content;
-    // null = the rewriter judged the report not worth the human's time. Store
-    // nothing, broadcast nothing, consume no sequence number.
-    if (verdict === null) {
-      return json({ suppressed: true });
-    }
-    // { escalate: true } = the report is really a request for a decision and
-    // belongs in an Escalation. The report is not stored. Bouncing it back
-    // through the CLI's stdout alone is not enough: the session that submitted
-    // it has very likely ended its turn, since a report written to ask the
-    // human reads — to that session — as "asked, now waiting". So queue the
-    // resubmission instruction into the feedback inbox and wake the session,
-    // the same path human feedback takes, so the original session runs again
-    // and refiles it as an escalation.
-    if (typeof verdict !== "string") {
-      const inbox = feedbackInboxDirFor(ctx, meta.id);
-      const file = await writeNumberedFile(inbox, "report-bounced", buildBouncedReportFeedback(body.content), {
-        archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
-      });
-      await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
-      const att = ctx.clients.get(meta.id);
-      appendHostLog(ctx, meta.id, "wake_sent", {
-        filename: file.filename,
-        seq: file.seq,
-        hasClient: att !== undefined,
-        status: meta.status,
-        reason: "report_bounced",
-      });
-      if (att) {
-        att.client.send("[wake] check feedback inbox").catch(() => {});
-        scheduleWakeWatchdog(ctx, meta.id, att);
-      } else if (!isTerminal(meta.status)) {
-        await respawnMissingClient(ctx, meta, "report_bounced_no_client");
+    // Revise mode (opt-in per session): hold the first submission of each
+    // report and bounce it back asking the session to tighten it, so the 推敲
+    // is done by the session — which holds the full context the report
+    // describes — rather than a context-blind rewriter. The resubmission
+    // passes through. revisionPending marks which half of the cycle we are in.
+    if (isReviseModeEnabled(meta)) {
+      // textlint runs on every submission under revise mode and gates storage,
+      // so the stored report is guaranteed clean. A violation bounces without
+      // touching revisionPending — it is orthogonal to the general one-shot
+      // revision cycle below and may fire on the first or a later submission.
+      const violations = lintReport(body.content, await currentTextlintRules(ctx), await currentTextlintTokenizer(ctx));
+      if (violations.length > 0) {
+        return bounceReportForRevision(ctx, meta, body, buildTextlintBounceFeedback(body.slug, violations), "report_textlint_rejected");
       }
-      return json({ escalateInstead: true });
+      // First submission of each report (textlint-clean): hold it for one
+      // general tightening pass. The resubmission passes through. revisionPending
+      // marks which half of the cycle we are in.
+      if (meta.revisionPending !== true) {
+        await saveSessionMeta({ ...meta, revisionPending: true }, ctx.sessionsDir);
+        const guidance = (await currentReviseFeedbackGuidance(ctx)) ?? undefined;
+        return bounceReportForRevision(ctx, meta, body, buildRevisionRequestFeedback(body.slug, guidance), "report_revision_requested");
+      }
+    }
+    // The resubmission, or revise mode off: clear any pending flag and store.
+    if (meta.revisionPending === true) {
+      await saveSessionMeta({ ...meta, revisionPending: false }, ctx.sessionsDir);
     }
     const dir = reportsDirFor(ctx, meta.id);
-    // Suppressed and bounced reports returned above, so attachments are written
+    // Reports bounced for revision returned above, so attachments are written
     // only alongside a report that is actually stored.
     const writeOpts: WriteNumberedFileOptions = {};
     if (replyTo) writeOpts.meta = { replyTo };
     if (attachments.length > 0) writeOpts.attachments = attachments;
-    const file = await writeNumberedFile(dir, body.slug, verdict, writeOpts);
+    const file = await writeNumberedFile(dir, body.slug, body.content, writeOpts);
     await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
     return json({ filename: file.filename, seq: file.seq });
   });

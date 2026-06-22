@@ -156,6 +156,7 @@ describe("makeBranchNameGenerator with WORQLOAD_DRIVER=tmux", () => {
         return { exitCode: 0, stdout: "", stderr: "" };
       },
       resolveTranscriptDir: () => transcriptDir,
+      resolveSettingsFiles: () => [],
       pollIntervalMs: 10,
       transcriptWaitTimeoutMs: 2000,
       bootstrapFileDir: bootstrapDir,
@@ -172,6 +173,7 @@ describe("makeBranchNameGenerator with WORQLOAD_DRIVER=tmux", () => {
     const tmuxDeps: TmuxDriverDeps = {
       tmuxRun: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
       resolveTranscriptDir: () => transcriptDir,
+      resolveSettingsFiles: () => [],
       pollIntervalMs: 10,
       transcriptWaitTimeoutMs: 120,
       bootstrapFileDir: mkdtempSync(join(tmpdir(), "wq-bn-tmux-bs-")),

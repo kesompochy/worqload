@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { appendEvent, readEvents } from "./event-log";
-import { agentEndpointPath, hostLogPath, loadSessionMeta } from "./session";
+import { agentEndpointPath, hostLogPath, loadSessionMeta, saveSessionMeta } from "./session";
 import {
   cleanupAll,
   fakeWorktreeOps,
@@ -55,9 +55,9 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
-    // Default to pass-through so report tests don't spawn the real claude the
-    // production rewriter would; the rewrite-specific tests override this.
-    reportRewriter: async (raw) => raw,
+    // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
+    // missing path means no textlint rules unless a test injects its own.
+    configPath: join(repoDir, "no-such-worqload-config.yaml"),
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -257,6 +257,40 @@ test("GET /sessions exposes unread report counts per session", async () => {
   expect(byId[bid].unreadReportCount).toBe(0);
 });
 
+test("DELETE /sessions/:id/reports/:filename removes the report and emits report_deleted", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "keep", content: "keep me" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "drop", content: "misplaced" });
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports/002-drop.md`, { method: "DELETE" });
+  expect(res.status).toBe(200);
+
+  const reportsDir = join(ctx.sessionsDir, sid, "reports");
+  expect(readdirSync(reportsDir).filter((f) => f.endsWith(".md"))).toEqual(["001-keep.md"]);
+
+  const remaining = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
+  expect(remaining.reports.map((r: { filename: string }) => r.filename)).toEqual(["001-keep.md"]);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.filter((e) => e.kind === "report_deleted")).toHaveLength(1);
+});
+
+test("DELETE /sessions/:id/reports/:filename 404s for an unknown report", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports/999-nope.md`, { method: "DELETE" });
+  expect(res.status).toBe(404);
+});
+
 test("GET /sessions exposes unresolved escalation counts per session", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
@@ -296,6 +330,29 @@ test("GET /sessions exposes the last agent-work event timestamp, ignoring report
   expect(session.lastAgentEventAt).toBe(work.timestamp);
 });
 
+test("GET /sessions/:id/reports exposes each report's submitted time from its report_submitted event", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "step", content: "step done" });
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const submittedAt = Object.fromEntries(
+    events
+      .filter((e) => e.kind === "report_submitted")
+      .map((e) => [(e.payload as { filename: string }).filename, e.timestamp]),
+  );
+
+  const body = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
+  for (const r of body.reports as { filename: string; submittedAt: string }[]) {
+    expect(r.submittedAt).toBe(submittedAt[r.filename]);
+  }
+});
+
 test("POST /internal/sessions/:id/reports writes numbered report", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
@@ -323,11 +380,9 @@ test("POST /internal/sessions/:id/reports writes numbered report", async () => {
   expect(reportEvents).toHaveLength(2);
 });
 
-test("a submitted report is stored raw without the rewriter (flag defaults OFF)", async () => {
+test("a submitted report is stored on first submission with revise mode OFF (the default)", async () => {
   const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async (raw, { cwd }) => `整形済み(${cwd ? "cwd-ok" : "no-cwd"}): ${raw}`,
-  });
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
@@ -335,147 +390,261 @@ test("a submitted report is stored raw without the rewriter (flag defaults OFF)"
   const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "なまの本文" }).then(
     (r) => r.json(),
   );
+  expect(r.filename).toBe("001-plan.md");
   const stored = readFileSync(join(ctx.sessionsDir, sid, "reports", r.filename), "utf8");
   expect(stored).toBe("なまの本文");
 });
 
-test("a submitted report is run through the report rewriter once the flag is turned on", async () => {
+test("with revise mode on, the first submission is bounced for revision and the resubmission is stored verbatim", async () => {
   const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async (raw, { cwd }) => `整形済み(${cwd ? "cwd-ok" : "no-cwd"}): ${raw}`,
-  });
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
+  const wt = created.meta.worktreePath;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
 
-  const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "なまの本文" }).then(
-    (r) => r.json(),
-  );
-  const stored = readFileSync(join(ctx.sessionsDir, sid, "reports", r.filename), "utf8");
-  expect(stored).toBe("整形済み(cwd-ok): なまの本文");
-});
-
-test("toggling reportAgentEnabled off stores the report raw; toggling back on restores rewriting", async () => {
-  const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async (raw) => `REWRITTEN: ${raw}`,
-  });
-
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const sid = created.meta.id;
-
-  const off = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: false }).then((r) => r.json());
-  expect(off.meta.reportAgentEnabled).toBe(false);
-  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
-  expect(detail.meta.reportAgentEnabled).toBe(false);
-
-  const r1 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "raw", content: "素のまま" }).then(
-    (r) => r.json(),
-  );
-  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r1.filename), "utf8")).toBe("素のまま");
-
-  const on = await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true }).then((r) => r.json());
-  expect(on.meta.reportAgentEnabled).toBe(true);
-
-  const r2 = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, {
-    slug: "polished",
-    content: "また整形",
-  }).then((r) => r.json());
-  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r2.filename), "utf8")).toBe("REWRITTEN: また整形");
-});
-
-test("a report the rewriter suppresses is stored nowhere and emits no event", async () => {
-  const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async () => null,
-  });
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
-
-  const res = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "noise", content: "中身のない本文" });
-  expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ suppressed: true });
-
+  // First submission: held, not stored.
+  const first = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "初稿" });
+  expect(first.status).toBe(200);
+  expect(await first.json()).toEqual({ revisionRequested: true });
   const reportsDir = join(ctx.sessionsDir, sid, "reports");
   expect(existsSync(reportsDir) && readdirSync(reportsDir).length > 0).toBe(false);
-  const events = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(events.filter((e) => e.kind === "report_submitted")).toHaveLength(0);
-});
 
-test("a suppressed report consumes no sequence number", async () => {
-  const repoDir = makeTmpDir("repo");
-  let suppressNext = true;
-  const { baseUrl } = await bootServer(repoDir, {
-    // Drop the first report, keep the rest — the next stored report must still
-    // be 001, as if the suppressed one was never submitted.
-    reportRewriter: async (raw) => {
-      if (suppressNext) {
-        suppressNext = false;
-        return null;
-      }
-      return raw;
-    },
-  });
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
+  // The first submission is saved to the worktree scratch file for the session to edit in place.
+  expect(readFileSync(join(wt, ".worqload-draft", "revision-draft.md"), "utf8")).toBe("初稿");
 
-  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "noise", content: "x" });
-  const kept = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "real", content: "y" }).then((r) =>
-    r.json(),
-  );
-  expect(kept.filename).toBe("001-real.md");
-  expect(kept.seq).toBe(1);
-});
-
-test("a report the rewriter routes to escalation is requeued as feedback so the original session refiles it", async () => {
-  const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, {
-    reportRewriter: async () => ({ escalate: true }),
-  });
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
-
-  const res = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, {
-    slug: "ask",
-    content: "どちらにすべきか指示がほしい",
-  });
-  expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ escalateInstead: true });
-
-  // The misfiled report is stored nowhere and emits no report event.
-  const reportsDir = join(ctx.sessionsDir, sid, "reports");
-  expect(existsSync(reportsDir) && readdirSync(reportsDir).length > 0).toBe(false);
-  const events = await readEvents(sid, 1, ctx.sessionsDir);
-  expect(events.filter((e) => e.kind === "report_submitted")).toHaveLength(0);
-
-  // Instead, the bounce is queued into the feedback inbox — carrying the
-  // original report content — and broadcast like ordinary feedback. Relying on
-  // the `worqload report submit` stdout alone loses the bounce: a session that
-  // wrote a report to ask the human has typically ended its turn already.
+  // A revise instruction is queued into the feedback inbox (pointing at the draft) so the session is woken.
   const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
   const inboxFiles = readdirSync(inboxDir).filter((f) => f.endsWith(".md"));
   expect(inboxFiles).toHaveLength(1);
-  expect(readFileSync(join(inboxDir, inboxFiles[0]), "utf8")).toContain("どちらにすべきか指示がほしい");
+  expect(readFileSync(join(inboxDir, inboxFiles[0]), "utf8")).toContain(".worqload-draft/revision-draft.md");
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
   expect(events.filter((e) => e.kind === "feedback_received")).toHaveLength(1);
-
-  // And the session is woken, so it actually runs again instead of sitting idle.
+  expect(events.filter((e) => e.kind === "report_submitted")).toHaveLength(0);
   const log = readFileSync(hostLogPath(ctx.sessionsDir, sid), "utf8")
     .trim()
     .split("\n")
     .map((l) => JSON.parse(l) as Record<string, unknown>);
-  expect(log.some((e) => e.event === "wake_sent" && e.reason === "report_bounced")).toBe(true);
+  expect(log.some((e) => e.event === "wake_sent" && e.reason === "report_revision_requested")).toBe(true);
+
+  // Second submission: stored as written, with no further rewrite.
+  const second = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "推敲した本文" }).then(
+    (r) => r.json(),
+  );
+  expect(second.filename).toBe("001-plan.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", second.filename), "utf8")).toBe("推敲した本文");
 });
 
-test("POST /sessions/:id/report-agent rejects a non-boolean enabled", async () => {
+test("the revise-mode cycle resets per report: every report's first submission is bounced", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // Report A: bounce then store.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "a", content: "A初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const a = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "a", content: "A推敲" }).then((r) => r.json());
+  expect(a.filename).toBe("001-a.md");
+
+  // Report B: the next first submission is bounced again, not passed through.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "b", content: "B初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const b = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "b", content: "B推敲" }).then((r) => r.json());
+  expect(b.filename).toBe("002-b.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", b.filename), "utf8")).toBe("B推敲");
+});
+
+test("turning revise mode off mid-cycle clears the pending bounce so the next report stores on first submission", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const on = await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true }).then((r) => r.json());
+  expect(on.meta.reviseModeEnabled).toBe(true);
+
+  // Bounce the first submission, leaving a pending revision.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  // Toggle off: the pending flag is reset.
+  const off = await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: false }).then((r) => r.json());
+  expect(off.meta.reviseModeEnabled).toBe(false);
+  expect(off.meta.revisionPending).toBeUndefined();
+
+  // The next report stores on its first submission.
+  const r = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "そのまま保存" }).then((r) => r.json());
+  expect(r.filename).toBe("001-p.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", r.filename), "utf8")).toBe("そのまま保存");
+});
+
+test("POST /sessions/:id/revise-mode rejects a non-boolean enabled", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const res = await postJson(baseUrl, `/sessions/${created.meta.id}/report-agent`, { enabled: "yes" });
+  const res = await postJson(baseUrl, `/sessions/${created.meta.id}/revise-mode`, { enabled: "yes" });
   expect(res.status).toBe(400);
+});
+
+function writeTextlintConfig(rules: Array<{ string: string; comment: string }>): string {
+  const dir = makeTmpDir("worqload-config");
+  const configPath = join(dir, "config.yaml");
+  const body = "textlint:\n" + rules.map((r) => `  - string: ${JSON.stringify(r.string)}\n    comment: ${JSON.stringify(r.comment)}\n`).join("");
+  writeFileSync(configPath, body);
+  return configPath;
+}
+
+test("revise mode bounces a submission whose forbidden string trips textlint, returning the rule's comment", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeTextlintConfig([{ string: "可能性", comment: "統計的事実のときだけ使う" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // Clean first submission: held for the ordinary one-shot revision pass.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  // Resubmission trips textlint: bounced again, not stored, comment delivered.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "可能性がある" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const reportsDir = join(ctx.sessionsDir, sid, "reports");
+  expect(existsSync(reportsDir) && readdirSync(reportsDir).length > 0).toBe(false);
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  const latest = readdirSync(inboxDir).filter((f) => f.endsWith(".md")).sort().at(-1) as string;
+  expect(readFileSync(join(inboxDir, latest), "utf8")).toContain("統計的事実のときだけ使う");
+
+  // A clean resubmission stores.
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "見込みがある" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+});
+
+test("revise mode bounces a submission where a rule word appears only in an inflected form", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeTextlintConfig([{ string: "寄せる", comment: "既存実装に揃える意味では使わない" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // Clean first submission: held for the ordinary one-shot revision pass.
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "初稿" });
+
+  // 「寄せたい」 contains no literal 「寄せる」; only the morphological pass catches it.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "挙動を寄せたい" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const reportsDir = join(ctx.sessionsDir, sid, "reports");
+  expect(existsSync(reportsDir) && readdirSync(reportsDir).length > 0).toBe(false);
+});
+
+test("textlint exempts an occurrence escaped with a backslash, storing the report with the backslash intact", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeTextlintConfig([{ string: "可能性", comment: "統計的事実のときだけ使う" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // First submission held for the ordinary revision pass.
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "初稿" });
+
+  // The escaped occurrence passes textlint; stored verbatim, backslash and all.
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "\\可能性 は統計用語" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", stored.filename), "utf8")).toBe("\\可能性 は統計用語");
+});
+
+test("a textlint bounce does not consume the one-shot revision cycle", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeTextlintConfig([{ string: "禁止", comment: "使わない" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // First submission trips textlint: bounced before the general pass is entered.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止語あり" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  // A clean submission is now still treated as a first submission (general
+  // revision pass), proving the textlint bounce left revisionPending untouched.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "綺麗な文" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "綺麗な文" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", stored.filename), "utf8")).toBe("綺麗な文");
+});
+
+test("textlint config edits take effect without a server restart", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeTextlintConfig([{ string: "禁止", comment: "旧ルール" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  // The original rule is in force.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止あり" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  // Rewrite the config in place — no restart.
+  writeFileSync(configPath, 'textlint:\n  - string: "別語"\n    comment: "新ルール"\n');
+
+  // The new rule is active: a report tripping it is bounced with its comment.
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "別語あり" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  const latest = readdirSync(inboxDir).filter((f) => f.endsWith(".md")).sort().at(-1) as string;
+  expect(readFileSync(join(inboxDir, latest), "utf8")).toContain("新ルール");
+
+  // The retired rule no longer fires: 「禁止」 now clears textlint and, after the
+  // ordinary one-shot revision pass, stores — which a live rule would block.
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止あり" });
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止あり" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+});
+
+test("textlint does not run when revise mode is off: a forbidden string stores on first submission", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeTextlintConfig([{ string: "禁止", comment: "使わない" }]);
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const stored = await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "p", content: "禁止語あり" }).then((r) => r.json());
+  expect(stored.filename).toBe("001-p.md");
+  expect(readFileSync(join(ctx.sessionsDir, sid, "reports", stored.filename), "utf8")).toBe("禁止語あり");
+});
+
+function writeConfigYaml(body: string): string {
+  const dir = makeTmpDir("worqload-config");
+  const configPath = join(dir, "config.yaml");
+  writeFileSync(configPath, body);
+  return configPath;
+}
+
+test("a reviseFeedback override replaces the guidance in the bounce while the fixed scaffold (draft path and resubmit command) stays", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeConfigYaml('reviseFeedback: "CUSTOM-GUIDANCE 結論から書け"\n');
+  const { baseUrl, ctx } = await bootServer(repoDir, { configPath });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
+
+  expect(await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "初稿" }).then((r) => r.json())).toEqual({ revisionRequested: true });
+
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  const latest = readdirSync(inboxDir).filter((f) => f.endsWith(".md")).sort().at(-1) as string;
+  const body = readFileSync(join(inboxDir, latest), "utf8");
+  // The injected guidance is present.
+  expect(body).toContain("CUSTOM-GUIDANCE 結論から書け");
+  // The fixed scaffold — draft path and the slug-bearing resubmit command — is still there.
+  expect(body).toContain(".worqload-draft/revision-draft.md");
+  expect(body).toContain("worqload report submit --slug plan");
 });
 
 test("POST /internal/sessions/:id/escalations sets status to waiting_human", async () => {
@@ -1100,6 +1269,95 @@ test("POST /sessions/:id/wake rejects a terminal session", async () => {
   expect(res.status).toBe(400);
 });
 
+// Wraps inProcessHostLauncher to (a) record every message serve sends to the
+// host and (b) expose the onEvent callback so a test can feed claude stream
+// events (e.g. a turn-end `result` line) through the server's broadcast path.
+function capturingHostLauncher() {
+  const base = inProcessHostLauncher();
+  const sends: string[] = [];
+  let onEvent: ((event: Awaited<ReturnType<typeof appendEvent>>) => void) | undefined;
+  const launcher: HostLauncher = async (req) => {
+    onEvent = req.onEvent;
+    const { client } = await base(req);
+    return { client: { ...client, async send(text: string) { sends.push(text); } } };
+  };
+  return {
+    launcher,
+    sends,
+    // Simulate the host forwarding a claude turn-end line. seq/timestamp are
+    // irrelevant to the auto-nudge logic, which keys off kind + payload.type.
+    endTurn: () => onEvent?.({ seq: 0, kind: "claude_system", timestamp: "", payload: { type: "result" } }),
+  };
+}
+
+test("a turn that ends without a report is nudged with a message to the agent", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 2 });
+
+  await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+
+  host.endTurn();
+  expect(host.sends.length).toBe(1);
+});
+
+test("a turn that submitted a report is left alone", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 2 });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "progress", content: "did the thing" });
+  host.endTurn();
+  expect(host.sends.length).toBe(0);
+});
+
+test("consecutive report-less turns stop being nudged after maxAutoNudges", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 2 });
+
+  await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+
+  host.endTurn();
+  host.endTurn();
+  host.endTurn();
+  expect(host.sends.length).toBe(2);
+});
+
+test("a report resets the nudge budget for later report-less turns", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 1 });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  host.endTurn(); // report-less → nudge (budget now spent)
+  host.endTurn(); // still report-less, budget spent → no nudge
+  expect(host.sends.length).toBe(1);
+
+  // A real report clears the consecutive count.
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "progress", content: "done step" });
+  host.endTurn(); // turn that carried the report → no nudge
+  host.endTurn(); // fresh report-less turn → nudge again
+  expect(host.sends.length).toBe(2);
+});
+
+test("maxAutoNudges=0 disables the report-less nudge entirely", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 0 });
+
+  await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+
+  host.endTurn();
+  host.endTurn();
+  expect(host.sends.length).toBe(0);
+});
+
 test("feedback numbering stays monotonic after a fetch drains the inbox", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
@@ -1417,22 +1675,22 @@ test("GET report attachments endpoint rejects path traversal in :name", async ()
   expect(res.status).toBe(400);
 });
 
-test("a suppressed report stores none of its attachments", async () => {
+test("a report bounced for revision stores none of its attachments", async () => {
   const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir, { reportRewriter: async () => null });
+  const { baseUrl, ctx } = await bootServer(repoDir);
 
   const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
   const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/report-agent`, { enabled: true });
+  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
 
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
   const form = new FormData();
-  form.set("payload", JSON.stringify({ slug: "noise", content: "nothing worth the human's time" }));
+  form.set("payload", JSON.stringify({ slug: "draft", content: "first draft" }));
   form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
 
   const res = await fetch(`${baseUrl}/internal/sessions/${sid}/reports`, { method: "POST", body: form });
-  expect(await res.json()).toEqual({ suppressed: true });
-  expect(existsSync(join(ctx.sessionsDir, sid, "reports", "001-noise.attachments"))).toBe(false);
+  expect(await res.json()).toEqual({ revisionRequested: true });
+  expect(existsSync(join(ctx.sessionsDir, sid, "reports", "001-draft.attachments"))).toBe(false);
 });
 
 // What `git diff` actually produces (full context, merge-base resolution, ...)
@@ -2323,6 +2581,51 @@ test("DELETE /sessions/:id returns 404 for an unknown id", async () => {
   expect(res.status).toBe(404);
 });
 
+test("POST /sessions/archived/prune deletes archives older than the given days, keeping newer ones", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const stale = await postJson(baseUrl, "/sessions", { prompt: "stale", baseBranch: TEST_BASE }).then((r) => r.json());
+  const fresh = await postJson(baseUrl, "/sessions", { prompt: "fresh", baseBranch: TEST_BASE }).then((r) => r.json());
+  for (const sid of [stale.meta.id, fresh.meta.id]) {
+    await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+    await postJson(baseUrl, `/sessions/${sid}/archive`, {});
+  }
+
+  // Backdate the stale session's archivedAt to 10 days ago; the fresh one keeps
+  // its just-now archivedAt.
+  const staleMeta = await loadSessionMeta(stale.meta.id, ctx.sessionsDir);
+  const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
+  await saveSessionMeta({ ...staleMeta!, archivedAt: tenDaysAgo }, ctx.sessionsDir);
+
+  const res = await fetch(`${baseUrl}/sessions/archived/prune`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ days: 7 }),
+  });
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.deleted).toEqual([stale.meta.id]);
+
+  expect(existsSync(join(ctx.sessionsDir, stale.meta.id))).toBe(false);
+  expect(existsSync(join(ctx.sessionsDir, fresh.meta.id))).toBe(true);
+
+  const remaining = await fetch(`${baseUrl}/sessions?archived=only`).then((r) => r.json());
+  expect(remaining.sessions.map((s: { id: string }) => s.id)).toEqual([fresh.meta.id]);
+});
+
+test("POST /sessions/archived/prune rejects a non-numeric days value", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const res = await fetch(`${baseUrl}/sessions/archived/prune`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ days: "soon" }),
+  });
+  expect(res.status).toBe(400);
+});
+
 test("GET /sessions/:id/feedback merges inbox and read with status", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
@@ -2731,6 +3034,121 @@ test("POST /sessions/:id/resume rejects a session whose worktree is gone", async
 
   const res = await postJson(baseUrl, `/sessions/${sid}/resume`, {});
   expect(res.status).toBe(400);
+});
+
+// Regression: makeSpawnHostLauncher used to send `hello {sinceSeq:0}` to every
+// freshly-spawned host. The host honours that by replaying the whole event log
+// back over the socket; serve forwards each event through onEvent →
+// broadcastEvent → every subscribed WebSocket client. The visible damage shows
+// up on resume (and on watchdog auto-resume): WS subscribers attached BEFORE
+// the resume see the entire history re-broadcast on top of the new
+// session_resumed event. The same path also stamps lastClaudeActivityAt with
+// "now" for old claude_* events, which feeds the wake watchdog a false
+// liveness signal.
+test("resume does not re-broadcast the persisted event log over the WebSocket", async () => {
+  const repoDir = makeTmpDir("repo");
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    spawnCommand: ["bun", MOCK, "hang"],
+    branchNameGenerator: async () => null,
+    hostCommand: HOST_COMMAND,
+    worktreeOps: fakeWorktreeOps(),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+  const ctx = started.ctx;
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  // Let the initial session_started + claude_system writes settle.
+  await new Promise((r) => setTimeout(r, 200));
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+  await new Promise((r) => setTimeout(r, 200));
+
+  const preResumeEvents = await readEvents(sid, 1, ctx.sessionsDir);
+  const lastSeqBeforeResume = preResumeEvents.at(-1)?.seq ?? 0;
+  expect(lastSeqBeforeResume).toBeGreaterThanOrEqual(2);
+
+  // Subscribe pretending we already have every event up to the current tail.
+  // After the fix only events with seq > lastSeqBeforeResume should reach us.
+  const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/sessions/${sid}/stream`);
+  await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }));
+  const liveMessages: { event: { seq: number; kind: string } }[] = [];
+  ws.addEventListener("message", (e) => {
+    liveMessages.push(JSON.parse(typeof e.data === "string" ? e.data : ""));
+  });
+  ws.send(JSON.stringify({ type: "subscribe", lastSeq: lastSeqBeforeResume }));
+  await new Promise((r) => setTimeout(r, 100));
+  const startIndex = liveMessages.length;
+
+  await postJson(baseUrl, `/sessions/${sid}/resume`, {});
+  // Give the new host time to attach, complete the (now empty) hello replay,
+  // and emit session_resumed plus the mock's bootstrap claude_system event.
+  await new Promise((r) => setTimeout(r, 1000));
+
+  ws.close();
+  await new Promise((r) => setTimeout(r, 30));
+
+  const resumeMessages = liveMessages.slice(startIndex);
+  for (const m of resumeMessages) {
+    expect(m.event.seq).toBeGreaterThan(lastSeqBeforeResume);
+  }
+  expect(resumeMessages.some((m) => m.event.kind === "session_resumed")).toBe(true);
+});
+
+// Regression: the WS subscribe handler does `await readEvents` (disk) before
+// sending the replay. If `appendAndBroadcast` fires its `ws.send` during that
+// await, the new event hits the wire BEFORE the replay events and the client
+// filters `ev.seq <= state.lastSeq` discards the now-older replay events. The
+// gap then stays invisible until the next refreshDetail (which is exactly
+// what feedback-submission ends up triggering, hiding the bug from anyone who
+// types into the composer regularly). Events the server pushes onto the WS
+// after a subscribe must arrive in strictly increasing seq order — i.e. the
+// subscribe handler must serialise broadcasts that race against the replay.
+test("WS /sessions/:id/stream delivers subscribe replay and concurrent broadcasts in seq order", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  // Let the initial session_started settle, then keep producing events while
+  // the subscribe is in flight: each POST is an `appendAndBroadcast` that can
+  // race against the replay. We fire several so at least one lands during the
+  // server's subscribe `await readEvents` window.
+  await new Promise((r) => setTimeout(r, 100));
+  const baselineSeq = (await readEvents(sid, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
+
+  const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/sessions/${sid}/stream`);
+  await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }));
+
+  const received: { event: { seq: number; kind: string } }[] = [];
+  ws.addEventListener("message", (e) => {
+    received.push(JSON.parse(typeof e.data === "string" ? e.data : ""));
+  });
+
+  ws.send(JSON.stringify({ type: "subscribe", lastSeq: baselineSeq }));
+  const posts = Array.from({ length: 5 }, (_, i) =>
+    postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: `race-${i}`, content: `r${i}` }),
+  );
+  await Promise.all(posts);
+
+  await new Promise((r) => setTimeout(r, 300));
+  ws.close();
+  await new Promise((r) => setTimeout(r, 30));
+
+  // Every event with seq > baselineSeq must reach the client exactly once.
+  const seqs = received.map((m) => m.event.seq);
+  const expectedTail = (await readEvents(sid, 1, ctx.sessionsDir)).at(-1)?.seq ?? 0;
+  for (let s = baselineSeq + 1; s <= expectedTail; s++) {
+    expect(seqs).toContain(s);
+  }
+  // And in strictly increasing order — the invariant the fix protects.
+  for (let i = 1; i < seqs.length; i++) {
+    expect(seqs[i]).toBeGreaterThan(seqs[i - 1]);
+  }
 });
 
 test("GET / serves the built HTML shell referencing the hashed /assets bundles", async () => {

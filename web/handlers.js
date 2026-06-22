@@ -158,6 +158,14 @@ export function onDetailBodyClick(e) {
     onReportMark(filename, to === "read");
     return;
   }
+  const deleteBtn = e.target.closest("[data-report-delete]");
+  if (deleteBtn) {
+    // Sits inside the report header (a toggle target); stop the click from also
+    // collapsing the card on its way out.
+    e.stopPropagation();
+    onReportDelete(deleteBtn.getAttribute("data-report-delete"));
+    return;
+  }
   const reportToggle = e.target.closest("[data-report-toggle]");
   if (reportToggle) {
     const filename = reportToggle.getAttribute("data-report-toggle");
@@ -515,6 +523,24 @@ export async function onReportMark(filename, read) {
     // The sidebar's unread badge is derived from GET /sessions, not from the
     // detail pane — refresh it too so it tracks the mark without waiting for
     // the report_read websocket round-trip (or the 30s poll).
+    await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
+// Discards a report the agent filed by mistake. Deletion is irreversible, so we
+// confirm first; the server drops the file and broadcasts report_deleted, but we
+// refresh here too so the row disappears without waiting for the round trip.
+export async function onReportDelete(filename) {
+  if (!state.selected) return;
+  if (!confirm(`レポート「${filename}」を削除します。元に戻せません。よろしいですか？`)) return;
+  try {
+    await api("DELETE", `/sessions/${state.selected}/reports/${encodeURIComponent(filename)}`);
+    const nextToggle = new Map(state.reportToggle);
+    nextToggle.delete(filename);
+    state.reportToggle = nextToggle;
+    await refreshDetail();
     await fetchSessions();
   } catch (e) {
     toast(`failed: ${e.message}`);
@@ -1025,6 +1051,33 @@ export async function onBulkDeleteArchived() {
   }
 }
 
+// Hard-delete every archive older than a chosen number of days. Prompts for the
+// threshold, hands it to the backend (which removes each matching session's
+// worktree, branch, and records), then reloads the archived feed. No undo.
+export async function onPruneArchivedOlderThan() {
+  if (typeof window === "undefined" || typeof window.prompt !== "function") return;
+  const input = window.prompt("何日より前にアーカイブしたセッションを削除しますか？（日数）", "30");
+  if (input === null) return;
+  const days = Number(input.trim());
+  if (!Number.isFinite(days) || days < 0) {
+    toast("日数を正しく入力してください");
+    return;
+  }
+  const message = `${days} 日より前にアーカイブしたセッションをすべて削除します。\nworktree・作業ブランチ・記録 (reports / events / feedback) が消え、復元できません。よろしいですか？`;
+  if (typeof window.confirm === "function" && !window.confirm(message)) return;
+  try {
+    const { count } = await api("POST", "/sessions/archived/prune", { days });
+    state.archivedSelection = new Set();
+    await fetchArchivedSessions();
+    if (state.selected && !state.archivedSessions.some(s => s.id === state.selected)) {
+      await selectSession(null);
+    }
+    toast(`${count} 件削除`);
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 export async function onArchive(id = state.selected) {
   if (!id) return;
   try {
@@ -1403,21 +1456,21 @@ export async function onRenameCommit(id, rawValue) {
   }
 }
 
-// The detail-header toggle for the disposable report-only agent. The flag
-// lives on the session meta (absent means off); flipping it changes whether
-// worqload polishes this session's future reports before storing them. Reads
+// The detail-header toggle for revise mode. The flag lives on the session meta
+// (absent means off); flipping it changes whether worqload bounces the first
+// submission of this session's future reports back for a revision pass. Reads
 // the current value off the loaded detail (where the toggle is rendered) and
 // sends the inverse — only an explicit true counts as on.
-export async function onToggleReportAgent(id) {
+export async function onToggleReviseMode(id) {
   if (!id) return;
   const meta = state.detail && state.detail.meta && state.detail.meta.id === id ? state.detail.meta : null;
   if (!meta) return;
-  const enabled = meta.reportAgentEnabled !== true;
+  const enabled = meta.reviseModeEnabled !== true;
   try {
-    const res = await api("POST", `/sessions/${id}/report-agent`, { enabled });
+    const res = await api("POST", `/sessions/${id}/revise-mode`, { enabled });
     state.detail.meta = res.meta;
     const card = state.sessions.find(s => s.id === id);
-    if (card) card.reportAgentEnabled = res.meta.reportAgentEnabled;
+    if (card) card.reviseModeEnabled = res.meta.reviseModeEnabled;
   } catch (e) {
     toast(`failed: ${e.message}`);
   }

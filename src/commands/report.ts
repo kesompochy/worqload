@@ -40,13 +40,12 @@ export async function report(args: string[]): Promise<void> {
   const endpoint = resolveAgentEndpoint();
   try {
     const result = await submitReport(endpoint, sessionId, slug, content, replyTo, images);
-    if ("suppressed" in result) {
-      console.log("report suppressed: judged unnecessary by the report agent and not shown to the human");
-    } else if ("escalateInstead" in result) {
+    if ("revisionRequested" in result) {
       console.log(
-        "report not stored: it reads as a request for a decision from the human, which belongs in an " +
-          "Escalation, not a Report. worqload has queued the resubmission instruction in your feedback " +
-          "inbox — run `worqload feedback fetch` and resubmit it via `worqload escalate submit`.",
+        "report held for a revision pass and not yet stored: revise mode is on for this session. worqload " +
+          "saved your draft to a scratch file and queued the instruction in your feedback inbox — run " +
+          "`worqload feedback fetch` for the draft path, edit it in place, and resubmit it. The next " +
+          "submission is stored.",
       );
     } else {
       console.log(result.filename);

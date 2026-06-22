@@ -55,6 +55,11 @@ export interface TmuxDriverDeps {
   tmuxRun: (args: string[], opts?: { stdin?: string }) => Promise<TmuxRunResult>;
   // Where to look for claude's JSONL transcripts for a given cwd.
   resolveTranscriptDir: (cwd: string) => string;
+  // The settings.json scopes (user, project, local) to harvest `permissions.ask`
+  // rules from, in that order. Those rules are re-declared as deny so the
+  // interactive TUI fails guarded commands fast instead of hanging on a prompt
+  // (see harvestAskRules). Tests override this to stay hermetic.
+  resolveSettingsFiles: (cwd: string) => string[];
   // Polling cadence for the transcript-tail and has-session loops.
   pollIntervalMs: number;
   // How long to wait for claude to create the transcript JSONL after spawn.
@@ -89,6 +94,13 @@ export const defaultTmuxDeps: TmuxDriverDeps = {
   resolveTranscriptDir(cwd) {
     return join(homedir(), ".claude", "projects", encodeCwdForClaudeProjects(cwd));
   },
+  resolveSettingsFiles(cwd) {
+    return [
+      join(homedir(), ".claude", "settings.json"),
+      join(cwd, ".claude", "settings.json"),
+      join(cwd, ".claude", "settings.local.json"),
+    ];
+  },
   pollIntervalMs: 250,
   transcriptWaitTimeoutMs: 30_000,
   bootstrapFileDir: tmpdir(),
@@ -96,6 +108,35 @@ export const defaultTmuxDeps: TmuxDriverDeps = {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// Collect the `permissions.ask` patterns from the given settings files (user,
+// project, local scopes), unioned and order-preserving. Interactive claude
+// honors these ask rules even under --dangerously-skip-permissions, and a
+// driven tmux session has no human to answer the resulting prompt, so it hangs
+// forever. Re-declaring each ask pattern as a deny (deny outranks ask) makes
+// the TUI fail the command fast instead of blocking. Missing or malformed files
+// are skipped.
+export async function harvestAskRules(settingsFiles: string[]): Promise<string[]> {
+  const seen = new Set<string>();
+  const rules: string[] = [];
+  for (const file of settingsFiles) {
+    let parsed: { permissions?: { ask?: unknown } };
+    try {
+      parsed = JSON.parse(await readFile(file, { encoding: "utf8" }));
+    } catch {
+      continue;
+    }
+    const ask = parsed?.permissions?.ask;
+    if (!Array.isArray(ask)) continue;
+    for (const pattern of ask) {
+      if (typeof pattern === "string" && !seen.has(pattern)) {
+        seen.add(pattern);
+        rules.push(pattern);
+      }
+    }
+  }
+  return rules;
 }
 
 // Wait for `path` to appear, then tail it line-by-line. Each non-empty line is
@@ -106,8 +147,9 @@ async function tailJsonl(
   deps: TmuxDriverDeps,
   shouldStop: () => boolean,
   onLine: (parsed: Record<string, unknown>) => Promise<void>,
+  initialOffset = 0,
 ): Promise<void> {
-  let offset = 0;
+  let offset = initialOffset;
   let buf = "";
   while (!shouldStop()) {
     let data: string;
@@ -220,9 +262,10 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
     // classifyClaudeLine.
     const tailTask = (async () => {
       const deadline = Date.now() + deps.transcriptWaitTimeoutMs;
+      let attachedContent = "";
       while (!exitedFlag && Date.now() < deadline) {
         try {
-          await readFile(transcriptPath, { encoding: "utf8" });
+          attachedContent = await readFile(transcriptPath, { encoding: "utf8" });
           break;
         } catch {
           await sleep(deps.pollIntervalMs);
@@ -237,6 +280,13 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
         resolveExit(1);
         return;
       }
+      // On resume, claude reopens the transcript a prior host generation already
+      // turned into events and appends to it. Start the tail past everything on
+      // disk at attach so only post-resume lines are emitted; tailing from 0
+      // would re-emit the whole conversation as duplicate events on every
+      // resume. A fresh start tails from 0 because claude writes the file from
+      // empty once it processes the first message.
+      const initialOffset = isResume ? attachedContent.length : 0;
       opts.log("transcript_attached", { transcriptPath });
       await tailJsonl(
         transcriptPath,
@@ -245,6 +295,7 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
         async (parsed) => {
           await opts.onEvent({ kind: classifyClaudeLine(parsed), payload: parsed });
         },
+        initialOffset,
       );
     })();
 
@@ -285,7 +336,17 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
       // For resume: --resume <uuid> tells claude to reopen that exact session
       // from the existing transcript.
       const idFlag = isResume ? "--resume" : "--session-id";
-      const claudeArgvWithId = [...cleanedSpawn, idFlag, sessionId];
+      // Re-declare the user's `ask` rules as deny for this driven session.
+      // --dangerously-skip-permissions does not suppress explicit ask rules in
+      // the interactive TUI, and no human is present to answer the prompt, so a
+      // guarded command would hang the session forever. claude merges
+      // --settings into the existing config (it does not replace it), so the
+      // user's allow rules and env stay intact; only ask becomes deny.
+      const askRules = await harvestAskRules(deps.resolveSettingsFiles(cwd));
+      const permissionArgs = askRules.length > 0
+        ? ["--settings", JSON.stringify({ permissions: { deny: askRules } })]
+        : [];
+      const claudeArgvWithId = [...cleanedSpawn, ...permissionArgs, idFlag, sessionId];
       const shellCmd = claudeTmuxBootstrapShellCommand(claudeArgvWithId, bootstrapFile);
 
       const spawnRes = await deps.tmuxRun([

@@ -1,6 +1,7 @@
 import type { Socket, Subprocess } from "bun";
 import type { Event } from "./event-log";
 import {
+  BackpressuredWriter,
   encodeMessage,
   type HostToServeMessage,
   parseLineDelimited,
@@ -132,6 +133,9 @@ export async function connectToHost(opts: ConnectOptions): Promise<HostClient> {
   };
 
   let socket: Socket<undefined> | null = null;
+  // Buffers any tail the socket couldn't take in one write and resends it on
+  // `drain`; assigned once the socket connects (below).
+  let writer: BackpressuredWriter | null = null;
   // The first call to Bun.connect may race with the host's listen() — retry
   // until the socket exists or we hit the timeout.
   while (true) {
@@ -145,6 +149,9 @@ export async function connectToHost(opts: ConnectOptions): Promise<HostClient> {
             const { messages, buffer } = parseLineDelimited<HostToServeMessage>(text, buf);
             buf = buffer;
             for (const m of messages) handleMessage(m);
+          },
+          drain() {
+            writer?.flush();
           },
           close() {
             if (!hasExited) {
@@ -173,10 +180,12 @@ export async function connectToHost(opts: ConnectOptions): Promise<HostClient> {
     }
   }
   if (!socket) throw new Error("unreachable");
+  const connected = socket;
+  writer = new BackpressuredWriter({ write: (bytes) => connected.write(bytes) });
 
   const write = (msg: ServeToHostMessage): void => {
     try {
-      socket?.write(encodeMessage(msg));
+      writer?.send(encodeMessage(msg));
     } catch {
       // socket dead; the close handler will fire shortly
     }
