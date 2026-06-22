@@ -176,14 +176,14 @@ export async function serve(args: string[]): Promise<void> {
 
   // WORQLOAD_AGENT picks which CLI worqload spawns per session. "claude"
   // (default) keeps the existing behavior; "codex" runs `codex exec --json`
-  // via the codex session driver (one process per turn, thread_id reused
-  // across turns within a host's lifetime).
+  // via the codex session driver; "cursor" runs the Cursor Agent CLI.
   const agentEnv = (process.env.WORQLOAD_AGENT ?? "").trim();
-  let agentName: "claude" | "codex" | undefined;
+  let agentName: "claude" | "codex" | "cursor" | undefined;
   if (agentEnv === "codex") agentName = "codex";
+  else if (agentEnv === "cursor") agentName = "cursor";
   else if (agentEnv === "claude" || agentEnv === "") agentName = undefined;
   else {
-    console.error(`unknown WORQLOAD_AGENT: ${agentEnv} (expected 'claude' or 'codex')`);
+    console.error(`unknown WORQLOAD_AGENT: ${agentEnv} (expected 'claude', 'codex', or 'cursor')`);
     process.exit(1);
   }
 

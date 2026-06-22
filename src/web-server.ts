@@ -19,6 +19,7 @@ import {
   type SessionMeta,
   type SessionStatus,
 } from "./session";
+import { makeClaudeReportRewriter, makeCodexReportRewriter, makeCursorReportRewriter, type ReportRewriter } from "./report-rewriter";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
@@ -71,10 +72,30 @@ export function buildDefaultSpawnCommand(
   driverName: DriverName,
 ): string[] {
   if (agentName === "codex") {
+    // The codex driver appends `exec --json -` (fresh) or `exec --json resume
+    // <id> -` (subsequent turns) to this prefix. --dangerously-bypass-approvals-
+    // and-sandbox is the codex equivalent of claude's bypassPermissions: a
+    // headless worqload session has no human to approve a per-command prompt,
+    // so the alternative is sessions wedging mid-turn.
     return ["codex", "--dangerously-bypass-approvals-and-sandbox"];
   }
+  if (agentName === "cursor") {
+    // The cursor driver appends the prompt (and `--resume <session_id>` on
+    // follow-ups). --force auto-approves tool calls; --trust skips workspace
+    // trust prompts in headless mode — both are required for unattended hosts.
+    return ["agent", "-p", "--output-format", "stream-json", "--force", "--trust"];
+  }
+  // bypassPermissions is the default for v1 ergonomics: a -p session has no
+  // human to approve prompts, so any unallowed Bash would auto-fail. Set
+  // WORQLOAD_PERMISSION_MODE=default (or acceptEdits) to lock the session
+  // down to only the protocol allowlist above (the agent will then be able
+  // to write reports etc. but not run arbitrary dev commands).
   const permissionMode = process.env.WORQLOAD_PERMISSION_MODE || "bypassPermissions";
   if (driverName === "tmux") {
+    // The tmux driver runs interactive `claude` inside a detached tmux session
+    // (see src/session-driver-tmux.ts). Interactive mode does not understand
+    // --input-format or --output-format; `--dangerously-skip-permissions` is
+    // the interactive equivalent of bypassPermissions.
     return ["claude", "--dangerously-skip-permissions"];
   }
   return [
@@ -240,8 +261,8 @@ export interface StartServerOptions {
   port?: number;                // 0 = random
   repoDir?: string;
   spawnCommand?: string[];      // override the agent binary command
-  // Which agent CLI worqload spawns per session. "claude" (default) or
-  // "codex". Picked by the WORQLOAD_AGENT env var in production.
+  // Which agent CLI worqload spawns per session. "claude" (default), "codex",
+  // or "cursor". Picked by the WORQLOAD_AGENT env var in production.
   agentName?: AgentName;
   // Which SessionDriver communication method to use. "pipe" (default) talks
   // to the agent CLI over stdin/stdout; "tmux" drives interactive claude in a
@@ -560,11 +581,9 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
 // carried neither a Report nor an Escalation, sends the agent a message asking
 // it to report — capped at maxAutoNudges so an agent that never reports isn't
 // re-poked forever. Both Report/Escalation events (server-appended) and the
-// driver's turn_completed event pass this same chokepoint, so their relative
-// order is preserved: the agent's `worqload report submit` completes (appending
-// report_submitted) before the driver emits the turn's turn_completed event.
-// turn_completed is normalized across drivers (see EventKind), so serve never
-// inspects per-driver wire shapes here.
+// claude turn-end event pass this same chokepoint, so their relative order is
+// preserved: the agent's `worqload report submit` completes (appending
+// report_submitted) before claude emits the turn's result line.
 function trackAutoNudge(ctx: ServerContext, sessionId: string, event: Event): void {
   if (ctx.maxAutoNudges <= 0) return;
   if (event.kind === "report_submitted" || event.kind === "escalation_requested") {
@@ -929,6 +948,15 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand });
+  const overriddenReportRewriter = opts.reportRewriter;
+  const reportRewriterForAgent: (name: AgentName) => ReportRewriter = overriddenReportRewriter !== undefined
+    ? () => overriddenReportRewriter
+    : (name) => name === "codex"
+      ? makeCodexReportRewriter({ spawnCommand: spawnCommandForAgent(name) })
+      : name === "cursor"
+        ? makeCursorReportRewriter({ spawnCommand: spawnCommandForAgent(name) })
+        : makeClaudeReportRewriter({ spawnCommand: spawnCommandForAgent(name) });
+  const reportRewriter = reportRewriterForAgent(agentName);
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
   // Cache wraps whatever resolver is in play (the gh one in production, a fake
   // in tests) so the sidebar's background prefetch doesn't respawn `gh` per
@@ -1211,7 +1239,7 @@ async function getFavicon(_req: Request, ctx: ServerContext): Promise<Response> 
 }
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
-  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName });
+  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir) });
 }
 
 // Vite emits content-hashed bundles under web/dist/assets/. Serving any basename
@@ -1316,7 +1344,7 @@ interface PostSessionsBody {
 }
 
 function isAgentName(value: unknown): value is AgentName {
-  return value === "claude" || value === "codex";
+  return value === "claude" || value === "codex" || value === "cursor";
 }
 
 async function postSessions(req: Request, ctx: ServerContext): Promise<Response> {
@@ -1325,11 +1353,10 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     return json({ error: "prompt is required" }, 400);
   }
   if (body.agentName !== undefined && !isAgentName(body.agentName)) {
-    return json({ error: "agentName must be 'claude' or 'codex'" }, 400);
+    return json({ error: "agentName must be 'claude', 'codex', or 'cursor'" }, 400);
   }
 
   const agentName = body.agentName ?? ctx.agentName;
-  const driverName = ctx.driverName;
   const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
   const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
 
@@ -1342,7 +1369,6 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     worktreePath: "",
     branchName: "",
     agentName,
-    driverName,
     title: body.title,
   });
 

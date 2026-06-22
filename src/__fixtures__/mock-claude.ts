@@ -8,8 +8,7 @@
 //   hang    : emit init, then read stdin forever (used to test kill)
 //   crash   : emit init, then exit 1
 //   tool    : emit init, then an assistant turn with a tool_use block, then exit 0
-//   turn    : emit init, then for each stdin user message emit an assistant
-//             end_turn reply followed by a stream-json result line
+//   say     : emit init, then one assistant turn whose text is argv[3], then exit 0
 //   env     : emit init, then emit a system line carrying the worqload env vars, then hang
 
 const mode = process.argv[2] ?? "init";
@@ -52,6 +51,41 @@ if (mode === "tool") {
   process.exit(0);
 }
 
+if (mode === "say") {
+  // Emit a chosen assistant text, then exit once the driver closes stdin.
+  // Used to feed the report rewriter an exact output (e.g. the suppression
+  // sentinel) without running a real agent.
+  writeLine({
+    type: "assistant",
+    message: { content: [{ type: "text", text: process.argv[3] ?? "" }] },
+  });
+  process.stdin.on("data", () => {});
+  process.stdin.on("end", () => process.exit(0));
+}
+
+if (mode === "turn") {
+  const decoder = new TextDecoder();
+  let buf = "";
+  process.stdin.on("data", (chunk: Uint8Array) => {
+    buf += decoder.decode(chunk, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx);
+      buf = buf.slice(idx + 1);
+      if (line.trim() === "") continue;
+      writeLine({
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "reply" }],
+          stop_reason: "end_turn",
+        },
+      });
+      writeLine({ type: "result", subtype: "success", session_id: "mock", cost_usd: 0, duration_ms: 0, duration_api_ms: 0, is_error: false, num_turns: 1, result: "" });
+    }
+  });
+  process.stdin.on("end", () => process.exit(0));
+}
+
 if (mode === "echo") {
   const decoder = new TextDecoder();
   let buf = "";
@@ -81,26 +115,6 @@ if (mode === "echo") {
         type: "assistant",
         message: { content: [{ type: "text", text: `echo: ${echo}` }] },
       });
-    }
-  });
-  process.stdin.on("end", () => process.exit(0));
-}
-
-if (mode === "turn") {
-  const decoder = new TextDecoder();
-  let buf = "";
-  process.stdin.on("data", (chunk: Uint8Array) => {
-    buf += decoder.decode(chunk, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, idx);
-      buf = buf.slice(idx + 1);
-      if (line.trim() === "") continue;
-      writeLine({
-        type: "assistant",
-        message: { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" },
-      });
-      writeLine({ type: "result", is_error: false, result: "ok" });
     }
   });
   process.stdin.on("end", () => process.exit(0));
