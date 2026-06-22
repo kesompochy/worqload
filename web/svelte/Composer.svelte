@@ -11,6 +11,17 @@
   import { state as appState, anchorLabel } from "../state.svelte.js";
   import { onFeedback, onResume, clearAnchor, copyAnchorPermalink, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
+  const skillButtons = $derived(appState.actions.filter(a => a.feedbackContent));
+
+  function appendSkillCommand(feedbackContent) {
+    const input = document.getElementById("feedbackInput");
+    if (!input) return;
+    const existing = input.value;
+    const separator = existing !== "" && !existing.endsWith("\n") ? "\n" : "";
+    input.value = existing + separator + feedbackContent;
+    input.focus();
+  }
+
   // Tracked across the textarea's keydowns so a confirming Enter mid-IME
   // composition doesn't also submit (same guard as dom.js's bindInlineEdit).
   let composing = $state(false);
@@ -75,5 +86,12 @@
       <span class="spacer"></span>
       <button type="submit">{isTerminal ? "Resume session" : "Send feedback"}</button>
     </div>
+    {#if !isTerminal && skillButtons.length > 0}
+      <div class="skill-buttons">
+        {#each skillButtons as sb (sb.id)}
+          <button type="button" class="skill-btn" title={sb.description || ""} onclick={() => appendSkillCommand(sb.feedbackContent)}>{sb.label}</button>
+        {/each}
+      </div>
+    {/if}
   </form>
 {/if}

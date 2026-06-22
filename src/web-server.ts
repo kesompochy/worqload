@@ -38,6 +38,7 @@ import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import type { IpadicFeatures, Tokenizer } from "kuromoji";
 import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
+import { loadSkillButtons, type SkillButton } from "./skill-buttons";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
@@ -540,6 +541,35 @@ async function currentReviseFeedbackGuidance(ctx: ServerContext): Promise<string
     console.error(`[reviseFeedback] config reload failed, keeping previous guidance: ${err instanceof Error ? err.message : String(err)}`);
   }
   return ctx.reviseFeedbackGuidance;
+}
+
+async function currentSkillButtons(ctx: ServerContext): Promise<SkillButton[]> {
+  try {
+    return await loadSkillButtons(ctx.configPath);
+  } catch (err) {
+    console.error(`[skillButtons] config reload failed: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
+
+interface SkillActionDescriptor {
+  id: string;
+  label: string;
+  description?: string;
+  direct: true;
+  group: string;
+  feedbackContent: string;
+}
+
+function skillButtonToDescriptor(skill: SkillButton): SkillActionDescriptor {
+  return {
+    id: `skill:${skill.name}`,
+    label: skill.name,
+    description: skill.description,
+    direct: true,
+    group: "skill",
+    feedbackContent: `/${skill.name}`,
+  };
 }
 
 function feedbackInboxDirFor(ctx: ServerContext, sessionId: string): string {
@@ -2625,7 +2655,12 @@ async function getActions(): Promise<Response> {
 }
 
 async function getSessionActions(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
-  return withSession(ctx, params.id, async meta => json({ actions: listAvailableActions({ meta, repoDir: ctx.repoDir }) }));
+  return withSession(ctx, params.id, async meta => {
+    const builtinActions = listAvailableActions({ meta, repoDir: ctx.repoDir });
+    const skillButtons = await currentSkillButtons(ctx);
+    const skillActions = skillButtons.map(skillButtonToDescriptor);
+    return json({ actions: [...builtinActions, ...skillActions] });
+  });
 }
 
 interface ActionInvokeBody {

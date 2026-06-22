@@ -51,6 +51,8 @@
   // Collapses the initial-prompt block — a long opening prompt otherwise eats
   // vertical space above the tabs. Persists across session switches because the
   // header stays mounted; that's intentional, treated as a viewing preference.
+  const headerActions = $derived(appState.actions.filter(a => !a.feedbackContent));
+
   let promptCollapsed = $state(false);
 </script>
 
@@ -61,9 +63,9 @@
   <div class="detail-header">
     <div class="title"><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
     <div class="header-actions">
-      {#if appState.actions.length > 0}
-        {#each appState.actions as a, i (a.id)}
-          {#if groupBoundary(appState.actions, i)}
+      {#if headerActions.length > 0}
+        {#each headerActions as a, i (a.id)}
+          {#if groupBoundary(headerActions, i)}
             <span class="action-group-sep" aria-hidden="true"></span>
           {/if}
           {#if a.direct}
