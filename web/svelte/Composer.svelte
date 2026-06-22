@@ -13,10 +13,12 @@
 
   const skillButtons = $derived(appState.actions.filter(a => a.feedbackContent));
 
-  function fillSkillCommand(feedbackContent) {
+  function appendSkillCommand(feedbackContent) {
     const input = document.getElementById("feedbackInput");
     if (!input) return;
-    input.value = feedbackContent;
+    const existing = input.value;
+    const separator = existing !== "" && !existing.endsWith("\n") ? "\n" : "";
+    input.value = existing + separator + feedbackContent;
     input.focus();
   }
 
@@ -87,7 +89,7 @@
     {#if !isTerminal && skillButtons.length > 0}
       <div class="skill-buttons">
         {#each skillButtons as sb (sb.id)}
-          <button type="button" class="skill-btn" title={sb.description || ""} onclick={() => fillSkillCommand(sb.feedbackContent)}>{sb.label}</button>
+          <button type="button" class="skill-btn" title={sb.description || ""} onclick={() => appendSkillCommand(sb.feedbackContent)}>{sb.label}</button>
         {/each}
       </div>
     {/if}
