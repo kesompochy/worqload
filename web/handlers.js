@@ -1645,10 +1645,27 @@ export async function runOpenAction() {
 }
 
 // A "direct" action's header button: run it immediately, no panel. Ignored
-// while another action is in flight.
+// while another action is in flight. Skill-feedback actions (those carrying a
+// feedbackContent string) bypass the action POST and submit feedback directly.
 export async function runDirectAction(actionId) {
   if (state.actionRunInFlight) return;
   const action = state.actions.find(a => a.id === actionId);
-  if (action) await runAction(action, {});
+  if (!action) return;
+  if (action.feedbackContent && state.selected) {
+    state.actionRunInFlight = true;
+    state.runningActionId = action.id;
+    try {
+      await submitFeedback(state.selected, { content: action.feedbackContent, slug: "skill" }, []);
+      toast("feedback queued");
+      await refreshDetail();
+    } catch (e) {
+      toast(`failed: ${e.message}`);
+    } finally {
+      state.actionRunInFlight = false;
+      state.runningActionId = null;
+    }
+    return;
+  }
+  await runAction(action, {});
 }
 
