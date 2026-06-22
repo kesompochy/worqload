@@ -8,6 +8,7 @@ import { buildProtocolPrefix, RESUME_KICKOFF } from "../session-bootstrap";
 import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
 import { claudePipeDriver, type SessionDriver, type SessionDriverFactory } from "../session-driver";
 import { codexPipeDriver } from "../session-driver-codex";
+import { cursorPipeDriver } from "../session-driver-cursor";
 import { tmuxClaudeDriver } from "../session-driver-tmux";
 import {
   BackpressuredWriter,
@@ -24,6 +25,14 @@ export function resolveDriverFactory(agentName: string, driverName: string): Ses
         return codexPipeDriver;
       default:
         throw new Error(`unsupported driver '${driverName}' for agent 'codex' (expected 'pipe')`);
+    }
+  }
+  if (agentName === "cursor") {
+    switch (driverName) {
+      case "pipe":
+        return cursorPipeDriver;
+      default:
+        throw new Error(`unsupported driver '${driverName}' for agent 'cursor' (expected 'pipe')`);
     }
   }
   switch (driverName) {
@@ -241,9 +250,9 @@ export async function runHost(opts: HostOptions): Promise<number> {
       cwd: meta.worktreePath || undefined,
       env: claudeEnv,
       spawnCommand: opts.spawnCommand,
-      resume: opts.resume === true,
       onEvent: (event) => writeEvent(event),
       log,
+      ...(opts.resume && { resume: true }),
       ...(meta.agentSessionId !== undefined && { priorAgentSessionId: meta.agentSessionId }),
       onAgentSessionId: (id) => { void persistAgentSessionId(id); },
     });
@@ -340,11 +349,8 @@ export async function runHost(opts: HostOptions): Promise<number> {
 }
 
 const HOST_USAGE =
-  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> [--resume] [--log-file <path>] [--agent claude|codex] [--driver pipe|tmux] -- <command...>";
+  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> [--resume] [--log-file <path>] [--agent claude|codex|cursor] [--driver pipe|tmux] -- <command...>";
 
-// Splits the host CLI argv. Layout is `<sessionId> --flag value ... -- <command...>`.
-// Everything after the literal `--` is the agent spawn command verbatim (its
-// args may contain spaces); the sessionId is the leading positional.
 export function parseHostArgs(args: string[]): HostOptions | null {
   const sep = args.indexOf("--");
   const head = sep === -1 ? args : args.slice(0, sep);

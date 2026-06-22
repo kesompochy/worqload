@@ -131,6 +131,23 @@ test("buildHostArgv + parseHostArgs carry --agent codex --driver pipe and resolv
   expect(typeof parsed?.driver).toBe("function");
 });
 
+test("buildHostArgv + parseHostArgs carry --agent cursor with default driver (pipe)", () => {
+  const argv = buildHostArgv({
+    hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],
+    sessionId: "sess-1",
+    sessionsDir: "/repo/.worqload/sessions",
+    socketPath: "/tmp/worqload/sess-1.sock",
+    agentEndpoint: "http://127.0.0.1:3456",
+    spawnCommand: ["agent"],
+    agentName: "cursor",
+  });
+  expect(argv).toContain("--agent");
+  const agentIdx = argv.indexOf("--agent");
+  expect(argv[agentIdx + 1]).toBe("cursor");
+  const parsed = parseHostArgs(argv.slice(3));
+  expect(parsed?.driver).toBeUndefined();
+});
+
 test("buildHostArgv + parseHostArgs carry --driver tmux and resolve to the tmux factory", () => {
   const argv = buildHostArgv({
     hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],

@@ -34,13 +34,10 @@ export interface SpawnHostOptions {
   // Driver name passed through as `--driver <name>` to the host. The host
   // resolves it to a SessionDriverFactory at parse time. Unset → host uses
   // its default (the pipe driver speaking stream-json to `claude -p`).
-  agentName?: "claude" | "codex";
+  agentName?: "claude" | "codex" | "cursor";
   driverName?: "pipe" | "tmux";
 }
 
-// Builds the argv for a `session-host` invocation. Everything after `--` is
-// the claude spawn command verbatim, so argv boundaries (including args that
-// contain spaces) survive intact.
 export function buildHostArgv(opts: SpawnHostOptions): string[] {
   return [
     ...opts.hostCommand,

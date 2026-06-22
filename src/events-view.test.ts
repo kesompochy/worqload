@@ -48,6 +48,7 @@ test("describeEvent renders a session_started prompt", () => {
 test("displayEventKind labels agent events for the configured agent", () => {
   expect(displayEventKind({ kind: "claude_tool_use" }, "claude")).toBe("Claude tool use");
   expect(displayEventKind({ kind: "claude_tool_use" }, "codex")).toBe("Codex tool use");
+  expect(displayEventKind({ kind: "claude_tool_use" }, "cursor")).toBe("Cursor tool use");
   expect(displayEventKind({ kind: "session_started" }, "codex")).toBe("session_started");
 });
 
