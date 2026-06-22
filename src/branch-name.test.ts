@@ -94,26 +94,30 @@ describe("defaultBranchNameGenerator", () => {
     return path;
   }
 
-  async function withSpawnCommand<T>(value: string, run: () => Promise<T>): Promise<T> {
-    const prev = process.env.WORQLOAD_SPAWN_COMMAND;
-    process.env.WORQLOAD_SPAWN_COMMAND = value;
+  async function withPipeEnv<T>(spawnCommand: string, run: () => Promise<T>): Promise<T> {
+    const prevSpawn = process.env.WORQLOAD_SPAWN_COMMAND;
+    const prevDriver = process.env.WORQLOAD_DRIVER;
+    process.env.WORQLOAD_SPAWN_COMMAND = spawnCommand;
+    delete process.env.WORQLOAD_DRIVER;
     try {
       return await run();
     } finally {
-      if (prev === undefined) delete process.env.WORQLOAD_SPAWN_COMMAND;
-      else process.env.WORQLOAD_SPAWN_COMMAND = prev;
+      if (prevSpawn === undefined) delete process.env.WORQLOAD_SPAWN_COMMAND;
+      else process.env.WORQLOAD_SPAWN_COMMAND = prevSpawn;
+      if (prevDriver === undefined) delete process.env.WORQLOAD_DRIVER;
+      else process.env.WORQLOAD_DRIVER = prevDriver;
     }
   }
 
   test("invokes the WORQLOAD_SPAWN_COMMAND binary and returns its sanitized output", async () => {
     const fake = writeFakeClaude("echo 'auto-generated-name extra words'");
-    const name = await withSpawnCommand(fake, () => defaultBranchNameGenerator("do a thing"));
+    const name = await withPipeEnv(fake, () => defaultBranchNameGenerator("do a thing"));
     expect(name).toBe("auto-generated-name");
   });
 
   test("returns null when the spawned binary exits non-zero", async () => {
     const fake = writeFakeClaude("exit 1");
-    const name = await withSpawnCommand(fake, () => defaultBranchNameGenerator("do a thing"));
+    const name = await withPipeEnv(fake, () => defaultBranchNameGenerator("do a thing"));
     expect(name).toBeNull();
   });
 });

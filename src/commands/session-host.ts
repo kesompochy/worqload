@@ -8,6 +8,7 @@ import { buildProtocolPrefix, RESUME_KICKOFF } from "../session-bootstrap";
 import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
 import { claudePipeDriver, type SessionDriver, type SessionDriverFactory } from "../session-driver";
 import { codexPipeDriver } from "../session-driver-codex";
+import { cursorPipeDriver } from "../session-driver-cursor";
 import { tmuxClaudeDriver } from "../session-driver-tmux";
 import {
   BackpressuredWriter,
@@ -17,18 +18,30 @@ import {
   type ServeToHostMessage,
 } from "../session-host-protocol";
 
-export type DriverName = "pipe" | "tmux" | "codex";
-
-export function resolveDriverByName(name: string): SessionDriverFactory {
-  switch (name) {
+export function resolveDriverFactory(agentName: string, driverName: string): SessionDriverFactory {
+  if (agentName === "codex") {
+    switch (driverName) {
+      case "pipe":
+        return codexPipeDriver;
+      default:
+        throw new Error(`unsupported driver '${driverName}' for agent 'codex' (expected 'pipe')`);
+    }
+  }
+  if (agentName === "cursor") {
+    switch (driverName) {
+      case "pipe":
+        return cursorPipeDriver;
+      default:
+        throw new Error(`unsupported driver '${driverName}' for agent 'cursor' (expected 'pipe')`);
+    }
+  }
+  switch (driverName) {
     case "pipe":
       return claudePipeDriver;
     case "tmux":
       return tmuxClaudeDriver;
-    case "codex":
-      return codexPipeDriver;
     default:
-      throw new Error(`unknown WORQLOAD_DRIVER: ${name} (expected 'pipe', 'tmux', or 'codex')`);
+      throw new Error(`unknown WORQLOAD_DRIVER: ${driverName} (expected 'pipe' or 'tmux')`);
   }
 }
 
@@ -232,7 +245,8 @@ export async function runHost(opts: HostOptions): Promise<number> {
   };
 
   try {
-    driver = await (opts.driver ?? claudePipeDriver)({
+    const defaultDriver = resolveDriverFactory(meta.agentName ?? "claude", "pipe");
+    driver = await (opts.driver ?? defaultDriver)({
       cwd: meta.worktreePath || undefined,
       env: claudeEnv,
       spawnCommand: opts.spawnCommand,
@@ -334,11 +348,8 @@ export async function runHost(opts: HostOptions): Promise<number> {
 }
 
 const HOST_USAGE =
-  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> [--resume] [--log-file <path>] [--driver pipe|tmux] -- <claude command...>";
+  "worqload session-host <sessionId> --sessions-dir <dir> --socket-path <path> --agent-endpoint <url> [--resume] [--log-file <path>] [--agent claude|codex|cursor] [--driver pipe|tmux] -- <command...>";
 
-// Splits the host CLI argv. Layout is `<sessionId> --flag value ... -- <claude command...>`.
-// Everything after the literal `--` is the claude spawn command verbatim (its
-// args may contain spaces); the sessionId is the leading positional.
 export function parseHostArgs(args: string[]): HostOptions | null {
   const sep = args.indexOf("--");
   const head = sep === -1 ? args : args.slice(0, sep);
@@ -349,12 +360,15 @@ export function parseHostArgs(args: string[]): HostOptions | null {
   const socketPath = takeFlag(head, "--socket-path");
   const agentEndpoint = takeFlag(head, "--agent-endpoint");
   const logFile = takeFlag(head, "--log-file");
+  const agentName = takeFlag(head, "--agent");
   const driverName = takeFlag(head, "--driver");
   const resume = head.includes("--resume");
   if (!sessionId || !sessionsDir || !socketPath || !agentEndpoint || spawnCommand.length === 0) {
     return null;
   }
-  const driver = driverName ? resolveDriverByName(driverName) : undefined;
+  const driver = driverName
+    ? resolveDriverFactory(agentName ?? "claude", driverName)
+    : undefined;
   return {
     sessionId,
     sessionsDir,

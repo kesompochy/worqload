@@ -15,9 +15,11 @@ import {
   isReviseModeEnabled,
   validateTransition,
   type AgentName,
+  type DriverName,
   type SessionMeta,
   type SessionStatus,
 } from "./session";
+import { makeClaudeReportRewriter, makeCodexReportRewriter, makeCursorReportRewriter, type ReportRewriter } from "./report-rewriter";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
@@ -67,7 +69,7 @@ function listenWithFallback(requestedPort: number, listen: (port: number) => Ser
 
 export function buildDefaultSpawnCommand(
   agentName: AgentName,
-  driverName: "pipe" | "tmux",
+  driverName: DriverName,
 ): string[] {
   if (agentName === "codex") {
     // The codex driver appends `exec --json -` (fresh) or `exec --json resume
@@ -76,6 +78,12 @@ export function buildDefaultSpawnCommand(
     // headless worqload session has no human to approve a per-command prompt,
     // so the alternative is sessions wedging mid-turn.
     return ["codex", "--dangerously-bypass-approvals-and-sandbox"];
+  }
+  if (agentName === "cursor") {
+    // The cursor driver appends the prompt (and `--resume <session_id>` on
+    // follow-ups). --force auto-approves tool calls; --trust skips workspace
+    // trust prompts in headless mode — both are required for unattended hosts.
+    return ["agent", "-p", "--output-format", "stream-json", "--force", "--trust"];
   }
   // bypassPermissions is the default for v1 ergonomics: a -p session has no
   // human to approve prompts, so any unallowed Bash would auto-fail. Set
@@ -164,7 +172,8 @@ export interface HostLaunchRequest {
   sessionsDir: string;
   agentEndpoint: string;
   spawnCommand: string[];
-  driverName?: "pipe" | "tmux" | "codex";
+  agentName: AgentName;
+  driverName: DriverName;
   resume: boolean;
   onEvent: (event: Event) => void;
   onDisconnect: () => void;
@@ -178,7 +187,7 @@ export interface ServerContext {
   sessionsDir: string;          // <repo>/.worqload/sessions
   worktreesDir: string;         // <repo>/.worktrees
   agentName: AgentName;
-  driverName: "pipe" | "tmux";
+  driverName: DriverName;
   spawnCommand: string[];
   spawnCommandForAgent: (agentName: AgentName) => string[];
   branchNameGenerator: BranchNameGenerator;
@@ -252,18 +261,14 @@ export interface StartServerOptions {
   port?: number;                // 0 = random
   repoDir?: string;
   spawnCommand?: string[];      // override the agent binary command
-  // Which CLI worqload spawns per session. "claude" (default) runs `claude -p`
-  // or interactive claude via tmux (see driverName). "codex" runs the codex
-  // CLI via `codex exec --json` — one process per turn — using the codex
-  // session driver. Picked by the WORQLOAD_AGENT env var in production.
+  // Which agent CLI worqload spawns per session. "claude" (default), "codex",
+  // or "cursor". Picked by the WORQLOAD_AGENT env var in production.
   agentName?: AgentName;
-  // Which claude SessionDriver implementation to spawn each session with.
-  // "pipe" (default) runs `claude -p` and exchanges stream-json over stdio.
-  // "tmux" runs interactive `claude` inside a tmux session, reading claude's
-  // JSONL transcript for output — avoids the Agent SDK credit pool that
-  // `claude -p` will draw from starting 2026-06-15. Ignored when
-  // agentName === "codex".
-  driverName?: "pipe" | "tmux";
+  // Which SessionDriver communication method to use. "pipe" (default) talks
+  // to the agent CLI over stdin/stdout; "tmux" drives interactive claude in a
+  // tmux session. The effective SessionDriverFactory is resolved from the
+  // (agentName, driverName) pair — e.g. codex+pipe uses codexPipeDriver.
+  driverName?: DriverName;
   // Overrides the helper that turns a prompt into a short branch name.
   // Return null to skip generation; the caller then falls back to <shortId>.
   branchNameGenerator?: BranchNameGenerator;
@@ -646,7 +651,7 @@ async function transitionStatus(
 // session). The host — not serve — writes the session_started / session_resumed
 // event and sends the agent its first message.
 function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher {
-  return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, driverName, resume, onEvent, onDisconnect }) => {
+  return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, agentName, driverName, resume, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
     const logFile = hostLogPath(sessionsDir, meta.id);
     // The hello handshake asks the host to replay events with seq > sinceSeq.
@@ -665,9 +670,8 @@ function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher 
       spawnCommand,
       hostCommand: config.hostCommand,
       logFile,
-      // Only pass `--driver` when it differs from the host CLI's default
-      // ("pipe"). Avoids churning host argv in the common case.
-      ...(driverName !== undefined && driverName !== "pipe" ? { driverName } : {}),
+      ...(agentName !== "claude" ? { agentName } : {}),
+      ...(driverName !== "pipe" ? { driverName } : {}),
       ...(resume && { resume: true }),
     });
     const client = await connectToHost({ socketPath, sinceSeq: lastSeq, onEvent, onDisconnect });
@@ -885,16 +889,17 @@ async function spawnAndAttachHost(
     // newer attachment. Same guard runWakeWatchdog already uses.
     let attachment: SessionAttachment | undefined;
     const agentName = meta.agentName ?? ctx.agentName;
+    const driverName = meta.driverName ?? ctx.driverName;
     const spawnCommand = ctx.spawnCommandForAgent(agentName);
     const effectiveSpawnCommand = opts.resume && agentName === "claude"
       ? [...spawnCommand, "--continue"]
       : spawnCommand;
-    const driverName = agentName === "codex" ? "codex" : ctx.driverName;
     const { client, hostProc } = await ctx.hostLauncher({
       meta,
       sessionsDir: ctx.sessionsDir,
       agentEndpoint: ctx.baseUrlForAgent,
       spawnCommand: effectiveSpawnCommand,
+      agentName,
       driverName,
       resume: opts.resume ?? false,
       onEvent: (event) => broadcastEvent(ctx, meta.id, event),
@@ -953,6 +958,15 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand });
+  const overriddenReportRewriter = opts.reportRewriter;
+  const reportRewriterForAgent: (name: AgentName) => ReportRewriter = overriddenReportRewriter !== undefined
+    ? () => overriddenReportRewriter
+    : (name) => name === "codex"
+      ? makeCodexReportRewriter({ spawnCommand: spawnCommandForAgent(name) })
+      : name === "cursor"
+        ? makeCursorReportRewriter({ spawnCommand: spawnCommandForAgent(name) })
+        : makeClaudeReportRewriter({ spawnCommand: spawnCommandForAgent(name) });
+  const reportRewriter = reportRewriterForAgent(agentName);
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
   // Cache wraps whatever resolver is in play (the gh one in production, a fake
   // in tests) so the sidebar's background prefetch doesn't respawn `gh` per
@@ -1340,7 +1354,7 @@ interface PostSessionsBody {
 }
 
 function isAgentName(value: unknown): value is AgentName {
-  return value === "claude" || value === "codex";
+  return value === "claude" || value === "codex" || value === "cursor";
 }
 
 async function postSessions(req: Request, ctx: ServerContext): Promise<Response> {
@@ -1349,7 +1363,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     return json({ error: "prompt is required" }, 400);
   }
   if (body.agentName !== undefined && !isAgentName(body.agentName)) {
-    return json({ error: "agentName must be 'claude' or 'codex'" }, 400);
+    return json({ error: "agentName must be 'claude', 'codex', or 'cursor'" }, 400);
   }
 
   const agentName = body.agentName ?? ctx.agentName;
