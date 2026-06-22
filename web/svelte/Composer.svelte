@@ -13,9 +13,9 @@
 
   const skillActions = $derived(appState.actions.filter(a => a.feedbackContent));
 
-  let skillPickerOpen = $state(false);
   let skillFilter = $state("");
   let skillSelectedIndex = $state(0);
+  let skillDropdownVisible = $state(false);
 
   const filteredSkills = $derived(
     skillFilter === ""
@@ -23,19 +23,17 @@
       : skillActions.filter(a => a.label.toLowerCase().includes(skillFilter.toLowerCase()))
   );
 
-  function openSkillPicker() {
-    skillFilter = "";
+  function onSkillFilterInput() {
     skillSelectedIndex = 0;
-    skillPickerOpen = true;
-    requestAnimationFrame(() => {
-      const input = document.getElementById("skillFilterInput");
-      if (input) input.focus();
-    });
+    skillDropdownVisible = skillFilter !== "";
   }
 
-  function closeSkillPicker() {
-    skillPickerOpen = false;
-    skillFilter = "";
+  function onSkillFilterFocus() {
+    if (skillFilter !== "") skillDropdownVisible = true;
+  }
+
+  function closeSkillDropdown() {
+    skillDropdownVisible = false;
   }
 
   function selectSkill(feedbackContent) {
@@ -46,15 +44,18 @@
       input.value = existing + separator + feedbackContent;
       input.focus();
     }
-    closeSkillPicker();
+    skillFilter = "";
+    skillDropdownVisible = false;
   }
 
   function onSkillPickerKeydown(event) {
     if (event.key === "Escape") {
       event.preventDefault();
-      closeSkillPicker();
+      skillFilter = "";
+      skillDropdownVisible = false;
       return;
     }
+    if (!skillDropdownVisible) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       skillSelectedIndex = Math.min(skillSelectedIndex + 1, filteredSkills.length - 1);
@@ -137,20 +138,18 @@
     <div class="row">
       {#if !isTerminal && skillActions.length > 0}
         <div class="skill-picker-wrapper">
-          <button type="button" class="skill-picker-trigger" onclick={openSkillPicker}>/skill</button>
-          {#if skillPickerOpen}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y-no-static-element-interactions -->
-            <div class="skill-picker-backdrop" onclick={closeSkillPicker}></div>
+          <input
+            type="text"
+            class="skill-picker-input"
+            placeholder="/skill..."
+            bind:value={skillFilter}
+            oninput={onSkillFilterInput}
+            onfocus={onSkillFilterFocus}
+            onkeydown={onSkillPickerKeydown}
+            onblur={() => { setTimeout(closeSkillDropdown, 150); }}
+          />
+          {#if skillDropdownVisible && filteredSkills.length > 0}
             <div class="skill-picker-dropdown">
-              <input
-                id="skillFilterInput"
-                type="text"
-                class="skill-picker-filter"
-                placeholder="filter..."
-                bind:value={skillFilter}
-                oninput={() => { skillSelectedIndex = 0; }}
-                onkeydown={onSkillPickerKeydown}
-              />
               <ul class="skill-picker-list" role="listbox">
                 {#each filteredSkills as skill, i (skill.id)}
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
@@ -159,9 +158,6 @@
                     {#if skill.description}<span class="skill-picker-desc">{skill.description}</span>{/if}
                   </li>
                 {/each}
-                {#if filteredSkills.length === 0}
-                  <li class="skill-picker-empty">no match</li>
-                {/if}
               </ul>
             </div>
           {/if}
