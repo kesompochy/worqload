@@ -76,7 +76,7 @@ test("POST /sessions persists the selected agentName and passes its runtime to t
   expect(launches).toHaveLength(1);
   expect(launches[0].agentName).toBe("codex");
   expect(launches[0].spawnCommand[0]).toBe("codex");
-  expect(launches[0].driverName).toBe("codex");
+  expect(launches[0].driverName).toBe("pipe");
 });
 
 test("POST /sessions defaults agentName to the server agent", async () => {

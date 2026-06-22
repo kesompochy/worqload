@@ -68,27 +68,13 @@ function listenWithFallback(requestedPort: number, listen: (port: number) => Ser
 
 export function buildDefaultSpawnCommand(
   agentName: AgentName,
-  driverName: "pipe" | "tmux",
+  driverName: DriverName,
 ): string[] {
   if (agentName === "codex") {
-    // The codex driver appends `exec --json -` (fresh) or `exec --json resume
-    // <id> -` (subsequent turns) to this prefix. --dangerously-bypass-approvals-
-    // and-sandbox is the codex equivalent of claude's bypassPermissions: a
-    // headless worqload session has no human to approve a per-command prompt,
-    // so the alternative is sessions wedging mid-turn.
     return ["codex", "--dangerously-bypass-approvals-and-sandbox"];
   }
-  // bypassPermissions is the default for v1 ergonomics: a -p session has no
-  // human to approve prompts, so any unallowed Bash would auto-fail. Set
-  // WORQLOAD_PERMISSION_MODE=default (or acceptEdits) to lock the session
-  // down to only the protocol allowlist above (the agent will then be able
-  // to write reports etc. but not run arbitrary dev commands).
   const permissionMode = process.env.WORQLOAD_PERMISSION_MODE || "bypassPermissions";
   if (driverName === "tmux") {
-    // The tmux driver runs interactive `claude` inside a detached tmux session
-    // (see src/session-driver-tmux.ts). Interactive mode does not understand
-    // --input-format or --output-format; `--dangerously-skip-permissions` is
-    // the interactive equivalent of bypassPermissions.
     return ["claude", "--dangerously-skip-permissions"];
   }
   return [
@@ -165,7 +151,8 @@ export interface HostLaunchRequest {
   sessionsDir: string;
   agentEndpoint: string;
   spawnCommand: string[];
-  driverName?: DriverName;
+  agentName: AgentName;
+  driverName: DriverName;
   resume: boolean;
   onEvent: (event: Event) => void;
   onDisconnect: () => void;
@@ -253,17 +240,13 @@ export interface StartServerOptions {
   port?: number;                // 0 = random
   repoDir?: string;
   spawnCommand?: string[];      // override the agent binary command
-  // Which CLI worqload spawns per session. "claude" (default) runs `claude -p`
-  // or interactive claude via tmux (see driverName). "codex" runs the codex
-  // CLI via `codex exec --json` — one process per turn — using the codex
-  // session driver. Picked by the WORQLOAD_AGENT env var in production.
+  // Which agent CLI worqload spawns per session. "claude" (default) or
+  // "codex". Picked by the WORQLOAD_AGENT env var in production.
   agentName?: AgentName;
-  // Which claude SessionDriver implementation to spawn each session with.
-  // "pipe" (default) runs `claude -p` and exchanges stream-json over stdio.
-  // "tmux" runs interactive `claude` inside a tmux session, reading claude's
-  // JSONL transcript for output — avoids the Agent SDK credit pool that
-  // `claude -p` will draw from starting 2026-06-15. Ignored when
-  // agentName === "codex".
+  // Which SessionDriver communication method to use. "pipe" (default) talks
+  // to the agent CLI over stdin/stdout; "tmux" drives interactive claude in a
+  // tmux session. The effective SessionDriverFactory is resolved from the
+  // (agentName, driverName) pair — e.g. codex+pipe uses codexPipeDriver.
   driverName?: DriverName;
   // Overrides the helper that turns a prompt into a short branch name.
   // Return null to skip generation; the caller then falls back to <shortId>.
@@ -639,7 +622,7 @@ async function transitionStatus(
 // session). The host — not serve — writes the session_started / session_resumed
 // event and sends the agent its first message.
 function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher {
-  return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, driverName, resume, onEvent, onDisconnect }) => {
+  return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, agentName, driverName, resume, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
     const logFile = hostLogPath(sessionsDir, meta.id);
     // The hello handshake asks the host to replay events with seq > sinceSeq.
@@ -658,9 +641,8 @@ function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher 
       spawnCommand,
       hostCommand: config.hostCommand,
       logFile,
-      // Only pass `--driver` when it differs from the host CLI's default
-      // ("pipe"). Avoids churning host argv in the common case.
-      ...(driverName !== undefined && driverName !== "pipe" ? { driverName } : {}),
+      ...(agentName !== "claude" ? { agentName } : {}),
+      ...(driverName !== "pipe" ? { driverName } : {}),
       ...(resume && { resume: true }),
     });
     const client = await connectToHost({ socketPath, sinceSeq: lastSeq, onEvent, onDisconnect });
@@ -878,16 +860,17 @@ async function spawnAndAttachHost(
     // newer attachment. Same guard runWakeWatchdog already uses.
     let attachment: SessionAttachment | undefined;
     const agentName = meta.agentName ?? ctx.agentName;
+    const driverName = meta.driverName ?? ctx.driverName;
     const spawnCommand = ctx.spawnCommandForAgent(agentName);
     const effectiveSpawnCommand = opts.resume && agentName === "claude"
       ? [...spawnCommand, "--continue"]
       : spawnCommand;
-    const driverName = agentName === "codex" ? "codex" : ctx.driverName;
     const { client, hostProc } = await ctx.hostLauncher({
       meta,
       sessionsDir: ctx.sessionsDir,
       agentEndpoint: ctx.baseUrlForAgent,
       spawnCommand: effectiveSpawnCommand,
+      agentName,
       driverName,
       resume: opts.resume ?? false,
       onEvent: (event) => broadcastEvent(ctx, meta.id, event),
@@ -1346,7 +1329,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   }
 
   const agentName = body.agentName ?? ctx.agentName;
-  const driverName = agentName === "codex" ? "codex" : ctx.driverName;
+  const driverName = ctx.driverName;
   const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
   const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
 
