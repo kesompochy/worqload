@@ -96,7 +96,7 @@ test("buildHostArgv omits --driver when driverName is unset", () => {
   expect(parsed?.driver).toBeUndefined();
 });
 
-test("buildHostArgv + parseHostArgs carry --driver codex and resolve to the codex factory", () => {
+test("buildHostArgv + parseHostArgs carry --agent codex with default driver (pipe)", () => {
   const argv = buildHostArgv({
     hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],
     sessionId: "sess-1",
@@ -104,13 +104,48 @@ test("buildHostArgv + parseHostArgs carry --driver codex and resolve to the code
     socketPath: "/tmp/worqload/sess-1.sock",
     agentEndpoint: "http://127.0.0.1:3456",
     spawnCommand: ["codex"],
-    driverName: "codex",
+    agentName: "codex",
   });
+  expect(argv).toContain("--agent");
+  const agentIdx = argv.indexOf("--agent");
+  expect(argv[agentIdx + 1]).toBe("codex");
+  expect(argv).not.toContain("--driver");
+  const parsed = parseHostArgs(argv.slice(3));
+  expect(parsed?.driver).toBeUndefined();
+});
+
+test("buildHostArgv + parseHostArgs carry --agent codex --driver pipe and resolve to the codex pipe factory", () => {
+  const argv = buildHostArgv({
+    hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],
+    sessionId: "sess-1",
+    sessionsDir: "/repo/.worqload/sessions",
+    socketPath: "/tmp/worqload/sess-1.sock",
+    agentEndpoint: "http://127.0.0.1:3456",
+    spawnCommand: ["codex"],
+    agentName: "codex",
+    driverName: "pipe",
+  });
+  expect(argv).toContain("--agent");
   expect(argv).toContain("--driver");
-  const driverIdx = argv.indexOf("--driver");
-  expect(argv[driverIdx + 1]).toBe("codex");
   const parsed = parseHostArgs(argv.slice(3));
   expect(typeof parsed?.driver).toBe("function");
+});
+
+test("buildHostArgv + parseHostArgs carry --agent cursor with default driver (pipe)", () => {
+  const argv = buildHostArgv({
+    hostCommand: ["bun", "/repo/src/cli.ts", "session-host"],
+    sessionId: "sess-1",
+    sessionsDir: "/repo/.worqload/sessions",
+    socketPath: "/tmp/worqload/sess-1.sock",
+    agentEndpoint: "http://127.0.0.1:3456",
+    spawnCommand: ["agent"],
+    agentName: "cursor",
+  });
+  expect(argv).toContain("--agent");
+  const agentIdx = argv.indexOf("--agent");
+  expect(argv[agentIdx + 1]).toBe("cursor");
+  const parsed = parseHostArgs(argv.slice(3));
+  expect(parsed?.driver).toBeUndefined();
 });
 
 test("buildHostArgv + parseHostArgs carry --driver tmux and resolve to the tmux factory", () => {
