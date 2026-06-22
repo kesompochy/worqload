@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, trackCleanup } from "./test-helpers";
+import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 import { loadSessionMeta, type AgentName } from "./session";
 import { buildDefaultSpawnCommand, startServer, type HostLauncher } from "./web-server";
 
@@ -44,6 +44,7 @@ test("buildDefaultSpawnCommand for cursor returns the agent -p prefix without th
 test("startServer with agentName=codex defaults spawnCommand to the codex prefix", async () => {
   const started = await startServer({
     port: 0,
+    repoDir: makeTmpDir("repo"),
     agentName: "codex",
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
@@ -66,6 +67,7 @@ test("POST /sessions persists the selected agentName and passes its runtime to t
   };
   const started = await startServer({
     port: 0,
+    repoDir: makeTmpDir("repo"),
     branchNameGenerator: async () => null,
     hostLauncher,
     worktreeOps: fakeWorktreeOps(),
@@ -91,6 +93,7 @@ test("POST /sessions persists the selected agentName and passes its runtime to t
 test("POST /sessions defaults agentName to the server agent", async () => {
   const started = await startServer({
     port: 0,
+    repoDir: makeTmpDir("repo"),
     agentName: "codex",
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
@@ -112,6 +115,7 @@ test("POST /sessions defaults agentName to the server agent", async () => {
 test("startServer with agentName=cursor defaults spawnCommand to the cursor agent prefix", async () => {
   const started = await startServer({
     port: 0,
+    repoDir: makeTmpDir("repo"),
     agentName: "cursor",
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
@@ -135,6 +139,7 @@ test("POST /sessions persists cursor agentName and passes driver cursor to the h
   };
   const started = await startServer({
     port: 0,
+    repoDir: makeTmpDir("repo"),
     branchNameGenerator: async () => null,
     hostLauncher,
     worktreeOps: fakeWorktreeOps(),
@@ -160,6 +165,7 @@ test("POST /sessions persists cursor agentName and passes driver cursor to the h
 test("POST /sessions rejects unknown agentName", async () => {
   const started = await startServer({
     port: 0,
+    repoDir: makeTmpDir("repo"),
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
