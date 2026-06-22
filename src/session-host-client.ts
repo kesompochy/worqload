@@ -34,7 +34,8 @@ export interface SpawnHostOptions {
   // Driver name passed through as `--driver <name>` to the host. The host
   // resolves it to a SessionDriverFactory at parse time. Unset → host uses
   // its default (the pipe driver speaking stream-json to `claude -p`).
-  driverName?: "pipe" | "tmux" | "codex";
+  agentName?: "claude" | "codex";
+  driverName?: "pipe" | "tmux";
 }
 
 // Builds the argv for a `session-host` invocation. Everything after `--` is
@@ -52,6 +53,7 @@ export function buildHostArgv(opts: SpawnHostOptions): string[] {
     opts.agentEndpoint,
     ...(opts.resume ? ["--resume"] : []),
     ...(opts.logFile !== undefined ? ["--log-file", opts.logFile] : []),
+    ...(opts.agentName !== undefined ? ["--agent", opts.agentName] : []),
     ...(opts.driverName !== undefined ? ["--driver", opts.driverName] : []),
     "--",
     ...opts.spawnCommand,

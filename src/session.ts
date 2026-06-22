@@ -3,7 +3,7 @@ import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 export type SessionStatus = "running" | "waiting_human" | "stopped" | "crashed";
 export type AgentName = "claude" | "codex";
 
-export type DriverName = "pipe" | "tmux" | "codex";
+export type DriverName = "pipe" | "tmux";
 
 export interface SessionMeta {
   id: string;
