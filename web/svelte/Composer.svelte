@@ -11,15 +11,68 @@
   import { state as appState, anchorLabel } from "../state.svelte.js";
   import { onFeedback, onResume, clearAnchor, copyAnchorPermalink, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
-  const skillButtons = $derived(appState.actions.filter(a => a.feedbackContent));
+  const skillActions = $derived(appState.actions.filter(a => a.feedbackContent));
 
-  function appendSkillCommand(feedbackContent) {
+  let skillFilter = $state("");
+  let skillSelectedIndex = $state(0);
+  let skillDropdownVisible = $state(false);
+
+  const filteredSkills = $derived(
+    skillFilter === ""
+      ? skillActions
+      : skillActions.filter(a => a.label.toLowerCase().includes(skillFilter.toLowerCase()))
+  );
+
+  function onSkillFilterInput() {
+    skillSelectedIndex = 0;
+    skillDropdownVisible = skillFilter !== "";
+  }
+
+  function onSkillFilterFocus() {
+    if (skillFilter !== "") skillDropdownVisible = true;
+  }
+
+  function closeSkillDropdown() {
+    skillDropdownVisible = false;
+  }
+
+  function selectSkill(feedbackContent) {
     const input = document.getElementById("feedbackInput");
-    if (!input) return;
-    const existing = input.value;
-    const separator = existing !== "" && !existing.endsWith("\n") ? "\n" : "";
-    input.value = existing + separator + feedbackContent;
-    input.focus();
+    if (input) {
+      const existing = input.value;
+      const separator = existing !== "" && !existing.endsWith("\n") ? "\n" : "";
+      input.value = existing + separator + feedbackContent;
+      input.focus();
+    }
+    skillFilter = "";
+    skillDropdownVisible = false;
+  }
+
+  function onSkillPickerKeydown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      skillFilter = "";
+      skillDropdownVisible = false;
+      return;
+    }
+    if (!skillDropdownVisible) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      skillSelectedIndex = Math.min(skillSelectedIndex + 1, filteredSkills.length - 1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      skillSelectedIndex = Math.max(skillSelectedIndex - 1, 0);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (filteredSkills.length > 0) {
+        selectSkill(filteredSkills[skillSelectedIndex].feedbackContent);
+      }
+      return;
+    }
   }
 
   // Tracked across the textarea's keydowns so a confirming Enter mid-IME
@@ -83,15 +136,35 @@
       ondrop={(e) => { if (!isTerminal) onComposerDrop(e); }}
     ></textarea>
     <div class="row">
+      {#if !isTerminal && skillActions.length > 0}
+        <div class="skill-picker-wrapper">
+          <input
+            type="text"
+            class="skill-picker-input"
+            placeholder="/skill..."
+            bind:value={skillFilter}
+            oninput={onSkillFilterInput}
+            onfocus={onSkillFilterFocus}
+            onkeydown={onSkillPickerKeydown}
+            onblur={() => { setTimeout(closeSkillDropdown, 150); }}
+          />
+          {#if skillDropdownVisible && filteredSkills.length > 0}
+            <div class="skill-picker-dropdown">
+              <ul class="skill-picker-list" role="listbox">
+                {#each filteredSkills as skill, i (skill.id)}
+                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+                  <li class="skill-picker-item" role="option" aria-selected={i === skillSelectedIndex} class:selected={i === skillSelectedIndex} onmouseenter={() => { skillSelectedIndex = i; }} onclick={() => selectSkill(skill.feedbackContent)}>
+                    <span class="skill-picker-name">/{skill.label}</span>
+                    {#if skill.description}<span class="skill-picker-desc">{skill.description}</span>{/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
+        </div>
+      {/if}
       <span class="spacer"></span>
       <button type="submit">{isTerminal ? "Resume session" : "Send feedback"}</button>
     </div>
-    {#if !isTerminal && skillButtons.length > 0}
-      <div class="skill-buttons">
-        {#each skillButtons as sb (sb.id)}
-          <button type="button" class="skill-btn" title={sb.description || ""} onclick={() => appendSkillCommand(sb.feedbackContent)}>{sb.label}</button>
-        {/each}
-      </div>
-    {/if}
   </form>
 {/if}
