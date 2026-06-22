@@ -439,9 +439,15 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .event-section-code { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .45rem .65rem; font-size: 12.5px; max-height: 26em; overflow: auto; }
 .feedback-form { border-top: 1px solid var(--border); padding: .9rem 1.1rem; background: var(--panel); }
 .feedback-form textarea { margin-bottom: .5rem; }
-.skill-buttons { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .4rem; }
-.skill-btn { font-size: 12px; padding: .15rem .5rem; border-radius: 3px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); cursor: pointer; white-space: nowrap; }
-.skill-btn:hover { background: var(--panel-2); color: var(--text); border-color: var(--accent); }
+.skill-picker-wrapper { position: relative; }
+.skill-picker-input { font-size: 12px; padding: .2rem .5rem; border-radius: 3px; border: 1px solid var(--border); background: transparent; color: var(--text); font-family: ui-monospace, monospace; width: 8rem; outline: none; }
+.skill-picker-input:focus { border-color: var(--accent); }
+.skill-picker-dropdown { position: absolute; bottom: calc(100% + 4px); left: 0; width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.3); z-index: 41; overflow: hidden; }
+.skill-picker-list { list-style: none; margin: 0; padding: .25rem 0; max-height: 200px; overflow-y: auto; }
+.skill-picker-item { padding: .3rem .6rem; cursor: pointer; display: flex; flex-direction: column; gap: .05rem; }
+.skill-picker-item.selected { background: var(--panel-2); }
+.skill-picker-name { font-family: ui-monospace, monospace; font-size: 13px; color: var(--text); }
+.skill-picker-desc { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Image attachments staged in either composer. The chips strip sits above the
    textarea; in the floating anchored composer it sits above its own textarea
    too. Each chip is a thumbnail + truncated filename + remove button. */
