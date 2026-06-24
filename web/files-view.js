@@ -22,6 +22,19 @@ export function buildFileTree(paths) {
   return root;
 }
 
+export function collectDirectoryPaths(paths) {
+  const dirs = new Set();
+  for (const p of paths) {
+    const parts = p.split("/");
+    let prefix = "";
+    for (let i = 0; i < parts.length - 1; i++) {
+      prefix = prefix ? `${prefix}/${parts[i]}` : parts[i];
+      dirs.add(prefix);
+    }
+  }
+  return dirs;
+}
+
 // Walk the directory tree depth-first (dirs before files, each alphabetical —
 // the order the explorer shows) into a flat row list the component renders with
 // a single {#each}: dirs the user collapsed are emitted but their subtree is
