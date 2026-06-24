@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildFileTree, flattenFileTree } from "../web/files-view.js";
+import { buildFileTree, flattenFileTree, collectDirectoryPaths } from "../web/files-view.js";
 
 test("buildFileTree groups flat paths into a directory tree", () => {
   const root = buildFileTree(["src/a.js", "src/b/c.js", "README.md"]);
@@ -41,4 +41,19 @@ test("flattenFileTree omits the subtree of a collapsed directory", () => {
     { kind: "dir", name: "src", path: "src", depth: 0, collapsed: true },
     { kind: "file", name: "README.md", path: "README.md", depth: 0 },
   ]);
+});
+
+test("collectDirectoryPaths returns all directory paths from flat file paths", () => {
+  const dirs = collectDirectoryPaths(["src/a.js", "src/b/c.js", "README.md"]);
+  expect(dirs).toEqual(new Set(["src", "src/b"]));
+});
+
+test("collectDirectoryPaths returns an empty set for root-only files", () => {
+  const dirs = collectDirectoryPaths(["README.md", "package.json"]);
+  expect(dirs).toEqual(new Set());
+});
+
+test("collectDirectoryPaths handles deeply nested paths", () => {
+  const dirs = collectDirectoryPaths(["a/b/c/d.js"]);
+  expect(dirs).toEqual(new Set(["a", "a/b", "a/b/c"]));
 });
