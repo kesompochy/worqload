@@ -5,6 +5,7 @@
 import { workLoad, notificationForEvent, notificationsFromSessionPoll, pendingNotificationCount } from "./notifications.js";
 import { notify, fireNotification } from "./notify.js";
 import { isAgentWorkEvent } from "./events-view.js";
+import { collectDirectoryPaths } from "./files-view.js";
 import { state } from "./state.svelte.js";
 import { toast } from "./dom.js";
 
@@ -195,6 +196,9 @@ export async function ensureFilesLoaded(force = false) {
     state.files = Array.isArray(paths) ? paths : [];
   } catch {
     state.files = [];
+  }
+  if (!state.filesLoaded) {
+    state.fileTreeCollapsed = collectDirectoryPaths(state.files);
   }
   state.filesLoaded = true;
 }
