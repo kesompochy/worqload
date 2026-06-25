@@ -1269,7 +1269,7 @@ async function getFavicon(_req: Request, ctx: ServerContext): Promise<Response> 
 }
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
-  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir) });
+  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName });
 }
 
 // Vite emits content-hashed bundles under web/dist/assets/. Serving any basename
