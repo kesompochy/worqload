@@ -136,12 +136,15 @@
       ondrop={(e) => { if (!isTerminal) onComposerDrop(e); }}
     ></textarea>
     <div class="row">
-      {#if !isTerminal && skillActions.length > 0}
+      {#if !isTerminal}
+        {@const noSkills = skillActions.length === 0}
         <div class="skill-picker-wrapper">
           <input
             type="text"
             class="skill-picker-input"
             placeholder="/skill..."
+            disabled={noSkills}
+            title={noSkills ? "config の skillPaths にスキルディレクトリを登録すると有効になります" : ""}
             bind:value={skillFilter}
             oninput={onSkillFilterInput}
             onfocus={onSkillFilterFocus}
