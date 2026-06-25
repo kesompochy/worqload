@@ -115,15 +115,16 @@ test("startServer auto-shifts to a free port when the requested port is in use",
   expect(second.ctx.baseUrlForAgent).toBe(`http://127.0.0.1:${second.ctx.port}`);
 });
 
-test("GET /meta returns the repo directory and its basename", async () => {
+test("GET /meta returns the repo directory, its basename, and the driver name", async () => {
   const repoDir = makeTmpDir("repo");
-  const { baseUrl } = await bootServer(repoDir);
+  const { baseUrl } = await bootServer(repoDir, { driverName: "tmux" });
 
   const res = await fetch(`${baseUrl}/meta`);
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body.repoDir).toBe(repoDir);
   expect(body.repoName).toBe(repoDir.split("/").pop());
+  expect(body.driverName).toBe("tmux");
 });
 
 test("POST /sessions creates a session, worktree, meta.json", async () => {
