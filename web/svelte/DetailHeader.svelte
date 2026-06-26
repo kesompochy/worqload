@@ -53,7 +53,7 @@
   // header stays mounted; that's intentional, treated as a viewing preference.
   const headerActions = $derived(appState.actions.filter(a => !a.feedbackContent));
 
-  let promptCollapsed = $state(false);
+  let promptCollapsed = $state(true);
 </script>
 
 {#if appState.selected && appState.detail}
