@@ -40,7 +40,7 @@
     const input = document.getElementById("feedbackInput");
     if (input) {
       const existing = input.value;
-      const separator = existing !== "" && !existing.endsWith("\n") ? "\n" : "";
+      const separator = existing !== "" && !existing.endsWith(" ") ? " " : "";
       input.value = existing + separator + feedbackContent;
       input.focus();
     }
