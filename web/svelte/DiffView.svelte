@@ -56,12 +56,19 @@
               <div class="diff-hunk">{hunk.header}</div>
               {#each hunk.segments as seg}
                 {#if seg.type === "gap"}
-                  <!-- The whole row falls back to data-expand-dir="all"; the ↑/↓ buttons override it. -->
-                  <div class="diff-line diff-expand-row" data-expand-path={file.path} data-expand-from={seg.from} data-expand-to={seg.to} data-expand-dir={seg.chunked ? "down" : "all"} role="button">
+                  {#if seg.chunked}
+                  <div class="diff-line diff-expand-row">
                     <span class="ln">⋯</span>
                     <span class="ln"></span>
-                    <span class="body">{#if seg.chunked}<button type="button" class="diff-expand-btn" data-expand-path={file.path} data-expand-from={seg.from} data-expand-to={seg.to} data-expand-dir="down" title="Expand {DIFF_EXPAND_CHUNK} lines from above">↓</button>{/if}<span class="diff-expand-label">{seg.count} unchanged line{seg.count === 1 ? "" : "s"}</span>{#if seg.chunked}<button type="button" class="diff-expand-btn" data-expand-path={file.path} data-expand-from={seg.from} data-expand-to={seg.to} data-expand-dir="up" title="Expand {DIFF_EXPAND_CHUNK} lines from below">↑</button><button type="button" class="diff-expand-btn" data-expand-path={file.path} data-expand-from={seg.from} data-expand-to={seg.to} data-expand-dir="all" title="Expand all">⤓</button>{/if}</span>
+                    <span class="body"><button type="button" class="diff-expand-btn" data-expand-path={file.path} data-expand-from={seg.from} data-expand-to={seg.to} data-expand-dir="down" title="Expand {DIFF_EXPAND_CHUNK} lines from above">↓</button><span class="diff-expand-label">{seg.count} unchanged line{seg.count === 1 ? "" : "s"}</span><button type="button" class="diff-expand-btn" data-expand-path={file.path} data-expand-from={seg.from} data-expand-to={seg.to} data-expand-dir="up" title="Expand {DIFF_EXPAND_CHUNK} lines from below">↑</button><button type="button" class="diff-expand-btn" data-expand-path={file.path} data-expand-from={seg.from} data-expand-to={seg.to} data-expand-dir="all" title="Expand all">⤓</button></span>
                   </div>
+                  {:else}
+                  <div class="diff-line diff-expand-row" data-expand-path={file.path} data-expand-from={seg.from} data-expand-to={seg.to} data-expand-dir="all" role="button">
+                    <span class="ln">⋯</span>
+                    <span class="ln"></span>
+                    <span class="body"><span class="diff-expand-label">{seg.count} unchanged line{seg.count === 1 ? "" : "s"}</span></span>
+                  </div>
+                  {/if}
                 {:else if seg.row.kind === "meta"}
                   <div class="diff-line meta"><span class="ln"></span><span class="ln"></span><span class="body">{seg.row.body}</span></div>
                 {:else}
