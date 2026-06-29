@@ -368,11 +368,13 @@ function renderInline(text) {
   // bare-URL autolinks (so an autolinked URL is never re-scanned by another
   // rule and a URL already inside a markdown link is never linked twice).
   const placeholders = [];
+  const placeholderRe = new RegExp(`${CODE_SENTINEL}(\\d+)${CODE_SENTINEL}`, "g");
   const stash = html => {
     const idx = placeholders.length;
     placeholders.push(html);
     return `${CODE_SENTINEL}${idx}${CODE_SENTINEL}`;
   };
+  const unstash = s => s.replace(placeholderRe, (_, idx) => placeholders[Number(idx)]);
 
   let s = text.replace(/`+([^`]+?)`+/g, (_, code) => stash(`<code>${escapeHtml(code)}</code>`));
 
@@ -384,7 +386,7 @@ function renderInline(text) {
     /\[([^\]]+)\]\(([^\s)]+)(?:\s+"([^"]*)")?\)/g,
     (_, body, url, title) => {
       const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
-      return stash(`<a href="${escapeAttr(url)}"${titleAttr} rel="noreferrer" target="_blank">${body}</a>`);
+      return stash(`<a href="${escapeAttr(url)}"${titleAttr} rel="noreferrer" target="_blank">${unstash(body)}</a>`);
     },
   );
 
@@ -396,8 +398,7 @@ function renderInline(text) {
   // _italic_ requires word boundaries so identifiers like foo_bar_baz are not mangled.
   s = s.replace(/(^|[\s(])_([^_\s][^_]*?)_(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
 
-  const placeholderRe = new RegExp(`${CODE_SENTINEL}(\\d+)${CODE_SENTINEL}`, "g");
-  s = s.replace(placeholderRe, (_, idx) => placeholders[Number(idx)]);
+  s = unstash(s);
   return s;
 }
 
