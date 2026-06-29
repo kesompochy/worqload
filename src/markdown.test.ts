@@ -243,3 +243,12 @@ test("extractHeadings ignores '#' lines inside a fenced code block", () => {
 test("extractHeadings returns an empty array when there are no headings", () => {
   expect(extractHeadings("just a paragraph\n\n- a list item\n")).toEqual([]);
 });
+
+test("inline code inside a link text is rendered", () => {
+  const html = renderMarkdown(
+    "[`proxy.ts` L4-19](https://example.com/proxy.ts#L4-L19)",
+  );
+  expect(html).toContain("<code>proxy.ts</code>");
+  expect(html).toContain("L4-19</a>");
+  expect(html).toContain(`href="https://example.com/proxy.ts#L4-L19"`);
+});
