@@ -292,11 +292,25 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
       // empty once it processes the first message.
       const initialOffset = isResume ? attachedContent.length : 0;
       opts.log("transcript_attached", { transcriptPath });
+      // Claude's interactive transcript sometimes splits one turn into two
+      // assistant lines that both carry stop_reason: "end_turn". Without a
+      // guard, each line would fire turn_completed and the auto-nudge logic
+      // would treat the second as a fresh report-less turn. Track whether a
+      // user line has appeared since the last turn end; suppress duplicate
+      // turn_completed until the next user message resets the gate.
+      let turnEndSeen = false;
       await tailJsonl(
         transcriptPath,
         deps,
         () => exitedFlag,
-        (parsed) => emitAgentLine(parsed, CLAUDE_TRANSCRIPT_FORMAT, opts.onEvent),
+        (parsed) => {
+          if (parsed.type === "user") turnEndSeen = false;
+          const format: AgentLineFormat = turnEndSeen
+            ? { ...CLAUDE_TRANSCRIPT_FORMAT, isTurnEnd: () => false }
+            : CLAUDE_TRANSCRIPT_FORMAT;
+          if (!turnEndSeen && CLAUDE_TRANSCRIPT_FORMAT.isTurnEnd(parsed)) turnEndSeen = true;
+          return emitAgentLine(parsed, format, opts.onEvent);
+        },
         initialOffset,
       );
     })();

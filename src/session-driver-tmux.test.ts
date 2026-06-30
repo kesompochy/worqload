@@ -487,6 +487,68 @@ test("an assistant transcript line that yields the turn emits a normalized turn_
   await driver.exited;
 });
 
+test("back-to-back end_turn assistant lines without an intervening user line emit only one turn_completed", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  const { deps } = makeFakeTmuxDeps(transcriptDir);
+
+  const events: SessionDriverEvent[] = [];
+  const launch = await buildLaunchOptions(cwd, events);
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const driver = await factory(launch);
+  await driver.sendUserMessage("hi", "bootstrap");
+
+  const transcriptPath = join(transcriptDir, `${SAMPLE_SESSION_ID}.jsonl`);
+  // Claude sometimes splits one turn into two assistant lines, both with
+  // stop_reason: "end_turn". The first is typically empty text.
+  await writeFile(
+    transcriptPath,
+    `{"type":"assistant","message":{"content":[{"type":"text","text":""}],"stop_reason":"end_turn"}}\n` +
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"real answer"}],"stop_reason":"end_turn"}}\n`,
+  );
+
+  const deadline = Date.now() + 2000;
+  while (!events.some((e) => e.kind === "turn_completed") && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  expect(events.filter((e) => e.kind === "turn_completed").length).toBe(1);
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
+test("a user line between two end_turn assistant lines correctly emits two turn_completed events", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  const { deps } = makeFakeTmuxDeps(transcriptDir);
+
+  const events: SessionDriverEvent[] = [];
+  const launch = await buildLaunchOptions(cwd, events);
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const driver = await factory(launch);
+  await driver.sendUserMessage("hi", "bootstrap");
+
+  const transcriptPath = join(transcriptDir, `${SAMPLE_SESSION_ID}.jsonl`);
+  // Two genuine turns separated by a user message.
+  await writeFile(
+    transcriptPath,
+    `{"type":"assistant","message":{"content":[{"type":"text","text":"first answer"}],"stop_reason":"end_turn"}}\n` +
+      `{"type":"user","message":{"content":[{"type":"text","text":"followup"}]}}\n` +
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"second answer"}],"stop_reason":"end_turn"}}\n`,
+  );
+
+  const deadline = Date.now() + 2000;
+  while (events.filter((e) => e.kind === "turn_completed").length < 2 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  expect(events.filter((e) => e.kind === "turn_completed").length).toBe(2);
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
 test("factory returns immediately, without waiting for tmux or the transcript", async () => {
   const cwd = makeTmpDir("tmux-driver-cwd");
   const transcriptDir = makeTmpDir("tmux-driver-tx");
