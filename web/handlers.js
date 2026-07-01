@@ -4,7 +4,7 @@
 // and/or calls the data layer; the Svelte components re-render reactively.
 
 import { $, toast } from "./dom.js";
-import { state, isReportExpanded, isFeedbackExpanded, feedbackPreviewEntries, DIFF_EXPAND_CHUNK, ATTACHMENT_ALLOWED_MIMES, ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT } from "./state.svelte.js";
+import { state, isReportExpanded, isReportViewRaw, isFeedbackExpanded, feedbackPreviewEntries, DIFF_EXPAND_CHUNK, ATTACHMENT_ALLOWED_MIMES, ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT } from "./state.svelte.js";
 import { parseDiffFiles, mergeLineRanges } from "./diff-view.js";
 import { languageForPath } from "./syntax-highlight.js";
 import { isIdentifierName, resolveDefinitions, resolveReferences } from "./code-nav.js";
@@ -62,6 +62,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   state.diffExpansions = new Map();
   state.diffTreeCollapsed = new Set();
   state.reportToggle = new Map();
+  state.reportViewRaw = new Map();
   state.feedbackToggle = new Map();
   state.eventToggle = new Map();
   state.tabScroll = new Map();
@@ -164,6 +165,15 @@ export function onDetailBodyClick(e) {
     // collapsing the card on its way out.
     e.stopPropagation();
     onReportDelete(deleteBtn.getAttribute("data-report-delete"));
+    return;
+  }
+  const viewToggle = e.target.closest("[data-report-view-toggle]");
+  if (viewToggle) {
+    e.stopPropagation();
+    const filename = viewToggle.getAttribute("data-report-view-toggle");
+    const report = state.reports.find(r => r.filename === filename);
+    const currentlyRaw = report ? isReportViewRaw(report) : false;
+    state.reportViewRaw = new Map(state.reportViewRaw).set(filename, !currentlyRaw);
     return;
   }
   const reportToggle = e.target.closest("[data-report-toggle]");

@@ -12,7 +12,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
-  import { state as appState, isReportExpanded, isFeedbackExpanded, anchorLabel, feedbackAnchorsForPath } from "../state.svelte.js";
+  import { state as appState, isReportExpanded, isReportViewRaw, isFeedbackExpanded, anchorLabel, feedbackAnchorsForPath } from "../state.svelte.js";
   import { renderMarkdown, extractHeadings } from "../markdown.js";
   import { formatRelative } from "../dom.js";
   import { clock } from "../clock.svelte.js";
@@ -95,6 +95,7 @@
     void appState.fileContent;
     void appState.eventToggle.size;
     void appState.reportToggle.size;
+    void appState.reportViewRaw.size;
     void appState.feedbackToggle.size;
     void appState.detail?.events?.length;
     void appState.detail;
@@ -265,6 +266,7 @@
         <div class="reports-column">
           {#each reportsNewestFirst as r (r.filename)}
             {@const expanded = isReportExpanded(r)}
+            {@const viewRaw = isReportViewRaw(r)}
             {@const markTo = r.read ? "unread" : "read"}
             {@const reportAnchorPath = `./.worqload-reports/${r.filename}`}
             {@const reportFeedbackAnchors = feedbackAnchorsForPath(reportAnchorPath).map(f => ({ lineStart: f.anchor.lineStart, lineEnd: f.anchor.lineEnd, filename: f.filename }))}
@@ -279,10 +281,15 @@
                   <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
                 {/if}
                 <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
+                <button class="report-view-toggle" type="button" data-report-view-toggle={r.filename} title={viewRaw ? "レンダリング表示に切り替え" : "ソーステキスト表示に切り替え"} aria-label={viewRaw ? "レンダリング表示" : "ソーステキスト表示"}>{viewRaw ? "Rich" : "Source"}</button>
                 <button class="report-delete" type="button" data-report-delete={r.filename} title="このレポートを削除する" aria-label="レポートを削除">✕</button>
               </div>
               <div class="report-body">
-                <div class="md">{@html renderMarkdown(r.content, { anchorPath: reportAnchorPath, anchor: appState.anchor, feedbackAnchors: reportFeedbackAnchors })}</div>
+                {#if viewRaw}
+                  <pre class="report-source">{r.content}</pre>
+                {:else}
+                  <div class="md">{@html renderMarkdown(r.content, { anchorPath: reportAnchorPath, anchor: appState.anchor, feedbackAnchors: reportFeedbackAnchors })}</div>
+                {/if}
                 {#if r.attachments && r.attachments.length > 0}
                   <div class="attachment-strip">
                     {#each r.attachments as name (name)}
