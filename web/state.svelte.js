@@ -62,6 +62,7 @@ export const state = $state({
   structureAnchor: null,       // Structure tab: { kind:"file", path } | { kind:"symbol", path, line } | null. null = default scope (the diff's changeset); a file anchor re-seeds the graph from that file's neighbourhood; a symbol anchor (function mode) re-seeds the call graph from that specific function (1-based line for human-readability — converted to 0-based at the api boundary). Pushed in from the Files/Diff tabs' "Show in Structure" buttons (file kind) and the code-nav popover (symbol kind).
   structureHops: null,         // Structure tab: neighbourhood radius override (integer 0–4) | null = server default (2). The toolbar exposes a small selector once the user wants something other than the default.
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
+  reportViewRaw: new Map(),   // filename -> true: show raw markdown source instead of rendered HTML
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked
   actions: [],           // [{ id, label, description?, confirmMessage?, direct?, params? }]
@@ -131,6 +132,10 @@ export function feedbackPreviewEntries(filenames) {
       return { feedback, replies: state.reports.filter(r => r.replyTo === name) };
     })
     .filter(Boolean);
+}
+
+export function isReportViewRaw(report) {
+  return state.reportViewRaw.get(report.filename) === true;
 }
 
 export function isReportExpanded(report) {
