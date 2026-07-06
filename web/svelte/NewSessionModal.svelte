@@ -10,6 +10,7 @@
   let visible = $state(false);
   let prompt = $state("");
   let agentName = $state("claude");
+  let model = $state("");
   let baseBranch = $state("");
   let branchName = $state("");
   let submitting = $state(false);
@@ -18,6 +19,7 @@
   export function open() {
     prompt = "";
     agentName = "claude";
+    model = "";
     baseBranch = "";
     branchName = "";
     submitting = false;
@@ -45,8 +47,10 @@
     errorMessage = "";
     try {
       const body = { prompt: trimmedPrompt, agentName };
+      const trimmedModel = model.trim();
       const trimmedBase = baseBranch.trim();
       const trimmedBranchName = branchName.trim();
+      if (agentName === "claude" && trimmedModel) body.model = trimmedModel;
       if (trimmedBase) body.baseBranch = trimmedBase;
       if (trimmedBranchName) body.branchName = trimmedBranchName;
       const { meta } = await api("POST", "/sessions", body);
@@ -93,6 +97,12 @@
           <option value="cursor">Cursor</option>
         </select>
       </div>
+      {#if agentName === "claude"}
+        <div class="row" style="margin-top:.7rem">
+          <label for="new-session-model" style="color:var(--text-dim); font-size:12px">Model</label>
+          <input id="new-session-model" bind:value={model} placeholder="(default)" style="flex:1" />
+        </div>
+      {/if}
       <div class="row" style="margin-top:.7rem">
         <span class="spacer"></span>
         <button onclick={create} disabled={submitting}>

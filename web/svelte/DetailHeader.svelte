@@ -92,7 +92,7 @@
   </div>
   <ActionBar />
   <div class="detail-meta">
-    {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}base: <code>{m.baseBranch}</code>
+    {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}{#if m.model}model: <code>{m.model}</code> · {/if}base: <code>{m.baseBranch}</code>
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}
     · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}

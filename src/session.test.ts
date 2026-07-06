@@ -69,6 +69,16 @@ test("createSession accepts optional driverName", () => {
   expect(meta.driverName).toBe("tmux");
 });
 
+test("createSession accepts optional model", () => {
+  const meta = createSession({ ...baseParams, model: "opus" });
+  expect(meta.model).toBe("opus");
+});
+
+test("createSession omits model when not provided", () => {
+  const meta = createSession(baseParams);
+  expect(meta.model).toBeUndefined();
+});
+
 test("createSession omits driverName when not provided", () => {
   const meta = createSession(baseParams);
   expect(meta.driverName).toBeUndefined();
