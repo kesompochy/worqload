@@ -100,7 +100,13 @@
       {#if agentName === "claude"}
         <div class="row" style="margin-top:.7rem">
           <label for="new-session-model" style="color:var(--text-dim); font-size:12px">Model</label>
-          <input id="new-session-model" bind:value={model} placeholder="(default)" style="flex:1" />
+          <select id="new-session-model" bind:value={model} style="flex:1">
+            <option value="">(default)</option>
+            <option value="sonnet">Sonnet</option>
+            <option value="opus">Opus</option>
+            <option value="haiku">Haiku</option>
+            <option value="fable">Fable</option>
+          </select>
         </div>
       {/if}
       <div class="row" style="margin-top:.7rem">
