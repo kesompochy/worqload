@@ -100,7 +100,36 @@
       {#if agentName === "claude"}
         <div class="row" style="margin-top:.7rem">
           <label for="new-session-model" style="color:var(--text-dim); font-size:12px">Model</label>
-          <input id="new-session-model" bind:value={model} placeholder="(default)" style="flex:1" />
+          <select id="new-session-model" bind:value={model} style="flex:1">
+            <option value="">(default)</option>
+            <optgroup label="Alias (latest)">
+              <option value="sonnet">sonnet</option>
+              <option value="opus">opus</option>
+              <option value="haiku">haiku</option>
+              <option value="fable">fable</option>
+            </optgroup>
+            <optgroup label="Sonnet">
+              <option value="claude-sonnet-5">claude-sonnet-5</option>
+              <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+              <option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m]</option>
+              <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+            </optgroup>
+            <optgroup label="Opus">
+              <option value="claude-opus-4-8">claude-opus-4-8</option>
+              <option value="claude-opus-4-7">claude-opus-4-7</option>
+              <option value="claude-opus-4-7[1m]">claude-opus-4-7[1m]</option>
+              <option value="claude-opus-4-6">claude-opus-4-6</option>
+              <option value="claude-opus-4-6[1m]">claude-opus-4-6[1m]</option>
+              <option value="claude-opus-4-5">claude-opus-4-5</option>
+            </optgroup>
+            <optgroup label="Haiku">
+              <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+            </optgroup>
+            <optgroup label="Fable / Mythos">
+              <option value="claude-fable-5">claude-fable-5</option>
+              <option value="claude-mythos-5">claude-mythos-5</option>
+            </optgroup>
+          </select>
         </div>
       {/if}
       <div class="row" style="margin-top:.7rem">
