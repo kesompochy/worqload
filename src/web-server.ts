@@ -71,6 +71,7 @@ function listenWithFallback(requestedPort: number, listen: (port: number) => Ser
 export function buildDefaultSpawnCommand(
   agentName: AgentName,
   driverName: DriverName,
+  model?: string,
 ): string[] {
   if (agentName === "codex") {
     // The codex driver appends `exec --json -` (fresh) or `exec --json resume
@@ -92,12 +93,13 @@ export function buildDefaultSpawnCommand(
   // down to only the protocol allowlist above (the agent will then be able
   // to write reports etc. but not run arbitrary dev commands).
   const permissionMode = process.env.WORQLOAD_PERMISSION_MODE || "bypassPermissions";
+  const modelArgs = agentName === "claude" && model ? ["--model", model] : [];
   if (driverName === "tmux") {
     // The tmux driver runs interactive `claude` inside a detached tmux session
     // (see src/session-driver-tmux.ts). Interactive mode does not understand
     // --input-format or --output-format; `--dangerously-skip-permissions` is
     // the interactive equivalent of bypassPermissions.
-    return ["claude", "--dangerously-skip-permissions"];
+    return ["claude", "--dangerously-skip-permissions", ...modelArgs];
   }
   return [
     "claude",
@@ -107,6 +109,7 @@ export function buildDefaultSpawnCommand(
     "--output-format", "stream-json",
     "--permission-mode", permissionMode,
     "--allowedTools", WORQLOAD_PROTOCOL_ALLOW,
+    ...modelArgs,
   ];
 }
 
@@ -190,7 +193,7 @@ export interface ServerContext {
   agentName: AgentName;
   driverName: DriverName;
   spawnCommand: string[];
-  spawnCommandForAgent: (agentName: AgentName) => string[];
+  spawnCommandForAgent: (agentName: AgentName, model?: string) => string[];
   branchNameGenerator: BranchNameGenerator;
   hostLauncher: HostLauncher;
   worktreeOps: WorktreeOps;
@@ -910,7 +913,7 @@ async function spawnAndAttachHost(
     let attachment: SessionAttachment | undefined;
     const agentName = meta.agentName ?? ctx.agentName;
     const driverName = meta.driverName ?? ctx.driverName;
-    const spawnCommand = ctx.spawnCommandForAgent(agentName);
+    const spawnCommand = ctx.spawnCommandForAgent(agentName, meta.model);
     const effectiveSpawnCommand = opts.resume && agentName === "claude"
       ? [...spawnCommand, "--continue"]
       : spawnCommand;
@@ -972,9 +975,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const driverName = opts.driverName ?? "pipe";
   const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand(agentName, driverName);
   const overriddenSpawnCommand = opts.spawnCommand;
-  const spawnCommandForAgent: (name: AgentName) => string[] = overriddenSpawnCommand !== undefined
+  const spawnCommandForAgent: (name: AgentName, model?: string) => string[] = overriddenSpawnCommand !== undefined
     ? () => overriddenSpawnCommand
-    : (name) => buildDefaultSpawnCommand(name, driverName);
+    : (name, model) => buildDefaultSpawnCommand(name, driverName, model);
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand });
@@ -1371,6 +1374,7 @@ interface PostSessionsBody {
   title?: string;
   branchName?: string;
   agentName?: AgentName;
+  model?: string;
 }
 
 function isAgentName(value: unknown): value is AgentName {
@@ -1387,6 +1391,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   }
 
   const agentName = body.agentName ?? ctx.agentName;
+  const model = agentName === "claude" ? body.model : undefined;
   const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
   const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
 
@@ -1399,6 +1404,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     worktreePath: "",
     branchName: "",
     agentName,
+    model,
     title: body.title,
   });
 
