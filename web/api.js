@@ -4,6 +4,7 @@
 
 import { workLoad, notificationForEvent, notificationsFromSessionPoll, pendingNotificationCount } from "./notifications.js";
 import { notify, fireNotification } from "./notify.js";
+import { updateFaviconBadge } from "./favicon-badge.js";
 import { isAgentWorkEvent } from "./events-view.js";
 import { collectDirectoryPaths } from "./files-view.js";
 import { state } from "./state.svelte.js";
@@ -124,6 +125,7 @@ export function updateDocumentTitle() {
   const count = pendingNotificationCount(state.sessions);
   const prefix = count > 0 ? `(${count}) ` : "";
   document.title = `${prefix}${repoDisplayName} · worqload`;
+  updateFaviconBadge(count);
 }
 
 export async function refreshDetail() {
