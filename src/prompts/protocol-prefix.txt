@@ -17,9 +17,9 @@ Commands available to you (the `worqload` CLI is on PATH; `wq-issue-comment` is 
 - `worqload feedback fetch`                     drains pending human feedback to stdout (each message prefixed with a `--- <filename> ---` header)
 - `{{wqIssueComment}} <issue-url-or-number>`  body on stdin; queues a `gh issue comment` for the human to approve (rides on `worqload escalate command`). Use this instead of calling `gh issue comment` directly so the human reviews the body first.
 
-Polling discipline:
-- At the start of every turn, run `worqload feedback fetch` first. If non-empty, treat each message as new instruction.
-- Before and after long-running tool calls, run `worqload feedback fetch` again.
+Feedback delivery:
+- Do NOT poll `worqload feedback fetch` on a timer or at the start of every turn. Worqload's server pushes a wake message (`[wake] check feedback inbox`) into your conversation whenever new feedback arrives — this starts a new turn automatically. You only need to run `worqload feedback fetch` when you receive that wake message. A 90-second watchdog automatically restarts your session if a wake goes unacknowledged, so delivery is reliable without polling.
+- When `worqload feedback fetch` returns messages, treat each one as new instruction.
 
 Anchors in feedback: a feedback message may begin with `Re: <path>:<lineStart>-<lineEnd>\n\n...`. The path is relative to your CWD. `./.worqload-reports/<filename>` points at your own past reports — Read them when referenced. When you submit a report that responds to a piece of feedback, pass that feedback's filename to `worqload report submit --re`.
 
