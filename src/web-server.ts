@@ -1182,6 +1182,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("GET",  "/sessions/:id/feedback/:filename/attachments/:name", getFeedbackAttachment),
+  defineRoute("DELETE", "/sessions/:id/feedback/:filename", deleteFeedback),
   defineRoute("POST", "/sessions/:id/escalations/:filename/resolve", postEscalationResolve),
   defineRoute("GET",  "/sessions/:id/reports", getReports),
   defineRoute("GET",  "/sessions/:id/reports/:filename/attachments/:name", getReportAttachment),
@@ -1708,6 +1709,23 @@ async function getFeedbackAttachment(_req: Request, ctx: ServerContext, params: 
       }
     }
     return json({ error: "attachment not found" }, 404);
+  });
+}
+
+async function deleteFeedback(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    if (!isSafeAttachmentName(filename) || !filename.endsWith(".md")) {
+      return json({ error: "invalid feedback filename" }, 400);
+    }
+    const inbox = feedbackInboxDirFor(ctx, meta.id);
+    const read = feedbackReadDirFor(ctx, meta.id);
+    const inInbox = await Bun.file(join(inbox, filename)).exists();
+    const inRead = !inInbox && await Bun.file(join(read, filename)).exists();
+    if (!inInbox && !inRead) return json({ error: "feedback not found" }, 404);
+    await deleteNumberedFile(inInbox ? inbox : read, filename);
+    await appendAndBroadcast(ctx, meta.id, { kind: "feedback_deleted", payload: { filename } });
+    return json({ ok: true, filename });
   });
 }
 
