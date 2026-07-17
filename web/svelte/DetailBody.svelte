@@ -220,6 +220,7 @@
                 <button class="report-anchor-chip" type="button" title="addressed by {rep.filename} — クリックでレポートへ" data-goto-report={rep.filename}>↳ {rep.filename}</button>
               {/each}
               <span class="badge badge-{f.status === 'unread' ? 'waiting_human' : 'stopped'}">{f.status}</span>
+              <button class="report-delete" type="button" data-feedback-delete={f.filename} title="このフィードバックを削除する" aria-label="フィードバックを削除">✕</button>
             </div>
             <div class="report-body">
               <div class="md">{@html renderMarkdown(f.content)}</div>

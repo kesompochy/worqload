@@ -292,6 +292,58 @@ test("DELETE /sessions/:id/reports/:filename 404s for an unknown report", async 
   expect(res.status).toBe(404);
 });
 
+test("DELETE /sessions/:id/feedback/:filename removes feedback from inbox and emits feedback_deleted", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "keep", slug: "keep" });
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "drop", slug: "drop" });
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/002-drop.md`, { method: "DELETE" });
+  expect(res.status).toBe(200);
+
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  expect(readdirSync(inboxDir).filter((f) => f.endsWith(".md"))).toEqual(["001-keep.md"]);
+
+  const remaining = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then((r) => r.json());
+  expect(remaining.messages.map((m: { filename: string }) => m.filename)).toEqual(["001-keep.md"]);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.filter((e) => e.kind === "feedback_deleted")).toHaveLength(1);
+});
+
+test("DELETE /sessions/:id/feedback/:filename removes feedback from read dir", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "will read", slug: "readit" });
+  // Agent fetches → moves inbox to read
+  await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/001-readit.md`, { method: "DELETE" });
+  expect(res.status).toBe(200);
+
+  const readDir = join(ctx.sessionsDir, sid, "feedback", "read");
+  expect(readdirSync(readDir).filter((f) => f.endsWith(".md"))).toEqual([]);
+});
+
+test("DELETE /sessions/:id/feedback/:filename 404s for an unknown feedback", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/feedback/999-nope.md`, { method: "DELETE" });
+  expect(res.status).toBe(404);
+});
+
 test("GET /sessions exposes unresolved escalation counts per session", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

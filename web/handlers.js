@@ -186,6 +186,12 @@ export function onDetailBodyClick(e) {
     state.reportToggle = new Map(state.reportToggle).set(filename, !currentlyExpanded);
     return;
   }
+  const feedbackDeleteBtn = e.target.closest("[data-feedback-delete]");
+  if (feedbackDeleteBtn) {
+    e.stopPropagation();
+    onFeedbackDelete(feedbackDeleteBtn.getAttribute("data-feedback-delete"));
+    return;
+  }
   const feedbackToggle = e.target.closest("[data-feedback-toggle]");
   if (feedbackToggle) {
     const filename = feedbackToggle.getAttribute("data-feedback-toggle");
@@ -552,6 +558,20 @@ export async function onReportDelete(filename) {
     state.reportToggle = nextToggle;
     await refreshDetail();
     await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
+export async function onFeedbackDelete(filename) {
+  if (!state.selected) return;
+  if (!confirm(`フィードバック「${filename}」を削除します。元に戻せません。よろしいですか？`)) return;
+  try {
+    await api("DELETE", `/sessions/${state.selected}/feedback/${encodeURIComponent(filename)}`);
+    const nextToggle = new Map(state.feedbackToggle);
+    nextToggle.delete(filename);
+    state.feedbackToggle = nextToggle;
+    await refreshDetail();
   } catch (e) {
     toast(`failed: ${e.message}`);
   }
