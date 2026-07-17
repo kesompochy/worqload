@@ -51,7 +51,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback, onResume, onStopAndResume, onToggleReviseMode } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback, onFeedbackDelete, onResume, onStopAndResume, onToggleReviseMode } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -1598,5 +1598,74 @@ test("onStopAndResume keeps the textarea cleared when refreshDetail throws after
     expect(inputEl.value).toBe("");
   } finally {
     globalThis.document = saved.document;
+  }
+});
+
+test("onFeedbackDelete confirms, calls DELETE, cleans toggle, and refreshes detail", async () => {
+  state.selected = "session-fd";
+  state.feedbackToggle = new Map([["003-anchored.md", true]]);
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+  let refreshed = false;
+
+  const savedConfirm = globalThis.confirm;
+  (globalThis as unknown as { confirm: unknown }).confirm = () => true;
+
+  try {
+    await withApiMock(async (method, path, body) => {
+      calls.push({ method, path, body });
+      return { ok: true, filename: "003-anchored.md" };
+    }, async () => {
+      await onFeedbackDelete("003-anchored.md");
+    }, { refreshDetail: async () => { refreshed = true; } });
+  } finally {
+    (globalThis as unknown as { confirm: unknown }).confirm = savedConfirm;
+  }
+
+  expect(calls).toEqual([{ method: "DELETE", path: "/sessions/session-fd/feedback/003-anchored.md", body: undefined }]);
+  expect(state.feedbackToggle.has("003-anchored.md")).toBe(false);
+  expect(refreshed).toBe(true);
+});
+
+test("onFeedbackDelete bails when the human cancels the confirm dialog", async () => {
+  state.selected = "session-fd";
+  const calls: Array<{ method: string; path: string }> = [];
+
+  const savedConfirm = globalThis.confirm;
+  (globalThis as unknown as { confirm: unknown }).confirm = () => false;
+
+  try {
+    await withApiMock(async (method, path) => {
+      calls.push({ method, path });
+      return {};
+    }, async () => {
+      await onFeedbackDelete("003-anchored.md");
+    });
+  } finally {
+    (globalThis as unknown as { confirm: unknown }).confirm = savedConfirm;
+  }
+
+  expect(calls).toEqual([]);
+});
+
+test("clicking data-feedback-delete routes to onFeedbackDelete", async () => {
+  state.selected = "session-fd";
+  state.feedbackHistory = [{ filename: "002-feedback.md", content: "x", status: "read" }];
+  state.feedbackToggle = new Map();
+
+  const savedConfirm = globalThis.confirm;
+  (globalThis as unknown as { confirm: unknown }).confirm = () => true;
+
+  try {
+    await withApiMock(async () => ({ ok: true, filename: "002-feedback.md" }), async () => {
+      const btn = { getAttribute: (a: string) => (a === "data-feedback-delete" ? "002-feedback.md" : null) };
+      const event = {
+        target: { closest: (sel: string) => (sel === "[data-feedback-delete]" ? btn : null) },
+        stopPropagation: () => {},
+      };
+      onDetailBodyClick(event);
+      await new Promise(resolve => setTimeout(resolve, 10));
+    });
+  } finally {
+    (globalThis as unknown as { confirm: unknown }).confirm = savedConfirm;
   }
 });
