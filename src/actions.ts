@@ -177,6 +177,39 @@ export const syncBaseFromRemoteAction: Action = {
   },
 };
 
+export const mergeFromBaseAction: Action = {
+  id: "merge-from-base",
+  label: "Merge from base branch",
+  description: "Merge the base branch into this session's worktree branch to pick up changes from other sessions or upstream.",
+  group: "sync-base",
+  idempotent: true,
+  confirmMessage:
+    "Merge the base branch into this session's worktree branch?\n\nThe session worktree must have no uncommitted changes. If the merge would conflict, it is aborted before it touches the session branch.",
+  params: [{ name: "message", label: "Commit message", type: "text", placeholder: "(default: Merge base branch '<base>' into session)" }],
+  async run({ meta, repoDir }, params) {
+    if (await isWorktreeDirty(meta.worktreePath)) {
+      return fail("session worktree has uncommitted changes; commit or stash them before merging");
+    }
+    const branchName = sessionBranchName(meta);
+    const probe = await probeMerge(repoDir, branchName, meta.baseBranch);
+    if (probe.status === "error") {
+      return { ok: false, exitCode: -1, stdout: probe.output, stderr: "", message: "could not pre-check the merge for conflicts; the merge was not attempted" };
+    }
+    if (probe.status === "conflict") {
+      const where = probe.files.length > 0 ? `: ${probe.files.join(", ")}` : "";
+      return {
+        ok: false,
+        exitCode: -1,
+        stdout: probe.output,
+        stderr: "",
+        message: `merging '${meta.baseBranch}' into '${branchName}' would conflict${where}. The merge was not performed; resolve the conflict manually.`,
+      };
+    }
+    const message = params.message?.trim() || `Merge base branch '${meta.baseBranch}' into session`;
+    return runCommand(["git", "merge", "--no-ff", "-m", message, meta.baseBranch], meta.worktreePath);
+  },
+};
+
 export const mergeToBaseAction: Action = {
   id: "merge-to-base",
   label: "Merge into base branch",
@@ -506,7 +539,7 @@ export const stopPreviewAction: Action = {
   },
 };
 
-const ACTIONS: Action[] = [syncBaseFromRemoteAction, mergeToBaseAction, createPrAction, previewAction, stopPreviewAction];
+const ACTIONS: Action[] = [syncBaseFromRemoteAction, mergeFromBaseAction, mergeToBaseAction, createPrAction, previewAction, stopPreviewAction];
 
 function toDescriptor({ run: _run, availableFor: _availableFor, ...rest }: Action): ActionDescriptor {
   return rest;
