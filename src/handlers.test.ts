@@ -23,11 +23,16 @@ const createFileCalls: string[] = [];
 const deleteFileCalls: string[] = [];
 const renameFileCalls: string[] = [];
 const submitFeedbackCalls: Array<{ sessionId: string; payload: unknown; attachments: unknown }> = [];
+const submitFeedbackBatchCalls: Array<{ sessionId: string; items: unknown }> = [];
 mock.module("../web/api.js", () => ({
   api: async (method: string, path: string, body?: unknown) => { apiCalls.push({ method, path, body }); return {}; },
   submitFeedback: async (sessionId: string, payload: unknown, attachments: unknown) => {
     submitFeedbackCalls.push({ sessionId, payload, attachments });
     return { filename: "001-x.md", seq: 1 };
+  },
+  submitFeedbackBatch: async (sessionId: string, items: unknown) => {
+    submitFeedbackBatchCalls.push({ sessionId, items });
+    return { results: [{ filename: "001-x.md", seq: 1 }] };
   },
   fetchSessions: async () => { fetchSessionsCalls++; },
   fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
@@ -51,7 +56,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback, onFeedbackDelete, onResume, onStopAndResume, onToggleReviseMode } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onResume, onStopAndResume, onToggleReviseMode } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -1599,6 +1604,74 @@ test("onStopAndResume keeps the textarea cleared when refreshDetail throws after
   } finally {
     globalThis.document = saved.document;
   }
+});
+
+test("onQueueFeedback adds an item to feedbackQueue and clears the textarea", () => {
+  state.selected = "session-q";
+  state.anchor = null;
+  state.feedbackQueue = [];
+
+  const inputEl = { value: "first" };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : toastEl),
+  } as unknown as Document;
+  try {
+    onQueueFeedback();
+    expect(state.feedbackQueue).toHaveLength(1);
+    expect(state.feedbackQueue[0].content).toBe("first");
+    expect(inputEl.value).toBe("");
+  } finally {
+    globalThis.document = saved.document;
+  }
+});
+
+test("onFeedback flushes the queue via submitFeedbackBatch when items are queued", async () => {
+  state.selected = "session-batch";
+  state.anchor = null;
+  state.feedbackQueue = [
+    { content: "queued-1", slug: "feedback" },
+    { content: "queued-2", slug: "feedback" },
+  ];
+  state.pendingAttachments = [];
+  submitFeedbackBatchCalls.length = 0;
+  submitFeedbackCalls.length = 0;
+
+  const inputEl = { value: "final" };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = { document: globalThis.document };
+  globalThis.document = {
+    querySelector: (sel: string) => (sel === "#feedbackInput" ? inputEl : toastEl),
+  } as unknown as Document;
+  try {
+    await onFeedback();
+    expect(submitFeedbackBatchCalls).toHaveLength(1);
+    expect(submitFeedbackBatchCalls[0].items).toHaveLength(3);
+    expect(submitFeedbackCalls).toHaveLength(0);
+    expect(state.feedbackQueue).toEqual([]);
+    expect(inputEl.value).toBe("");
+  } finally {
+    globalThis.document = saved.document;
+  }
+});
+
+test("selectSession clears feedbackQueue", async () => {
+  state.feedbackQueue = [{ content: "stale", slug: "feedback" }];
+  await selectSession("session-new");
+  expect(state.feedbackQueue).toEqual([]);
+});
+
+test("removeQueuedFeedback removes the item at the given index", () => {
+  state.feedbackQueue = [
+    { content: "a", slug: "feedback" },
+    { content: "b", slug: "feedback" },
+    { content: "c", slug: "feedback" },
+  ];
+  removeQueuedFeedback(1);
+  expect(state.feedbackQueue).toHaveLength(2);
+  expect(state.feedbackQueue[0].content).toBe("a");
+  expect(state.feedbackQueue[1].content).toBe("c");
 });
 
 test("onFeedbackDelete confirms, calls DELETE, cleans toggle, and refreshes detail", async () => {

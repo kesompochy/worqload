@@ -9,7 +9,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState, anchorLabel } from "../state.svelte.js";
-  import { onFeedback, onResume, clearAnchor, copyAnchorPermalink, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
+  import { onFeedback, onQueueFeedback, removeQueuedFeedback, onResume, clearAnchor, copyAnchorPermalink, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
   const skillActions = $derived(appState.actions.filter(a => a.feedbackContent));
 
@@ -88,7 +88,11 @@
     if (event.key !== "Enter" || event.shiftKey) return;
     if (composing || event.isComposing || event.keyCode === 229) return;
     event.preventDefault();
-    submit(isTerminal);
+    if (!isTerminal && (event.ctrlKey || event.metaKey)) {
+      onQueueFeedback();
+    } else {
+      submit(isTerminal);
+    }
   }
 
   // onFeedback/onResume read the textarea via getElementById("feedbackInput"),
@@ -120,14 +124,25 @@
         {/each}
       </div>
     {/if}
+    {#if !isTerminal && appState.feedbackQueue.length > 0}
+      <div class="feedback-queue">
+        <div class="feedback-queue-header">Queued ({appState.feedbackQueue.length})</div>
+        {#each appState.feedbackQueue as item, i (i)}
+          <div class="feedback-queue-item">
+            <span class="feedback-queue-text">{item.content}</span>
+            <button type="button" title="remove" class="feedback-queue-remove" onclick={() => removeQueuedFeedback(i)}>×</button>
+          </div>
+        {/each}
+      </div>
+    {/if}
     <textarea
       id="feedbackInput"
       rows="3"
       placeholder={isTerminal
         ? "Instructions for the resumed session (optional — picked up via worqload feedback fetch). Enter で再開 / Shift+Enter で改行"
         : appState.anchor
-          ? "Comment on the selected lines... (Enter で送信 / Shift+Enter で改行 / 画像はペースト・ドロップで添付)"
-          : "Plain feedback (picked up at the agent's next turn). Click a diff, file, or report line to anchor. (Enter で送信 / Shift+Enter で改行 / 画像はペースト・ドロップで添付)"}
+          ? "Comment on the selected lines... (Enter で送信 / Ctrl+Enter でキューに追加 / Shift+Enter で改行)"
+          : "Plain feedback. Enter で送信 / Ctrl+Enter でキューに追加して一括送信 / Shift+Enter で改行"}
       oncompositionstart={() => (composing = true)}
       oncompositionend={() => (composing = false)}
       onkeydown={(e) => onKeydown(e, isTerminal)}

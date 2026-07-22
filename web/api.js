@@ -36,6 +36,10 @@ export async function submitFeedback(sessionId, payload, attachments) {
   return res.json();
 }
 
+export async function submitFeedbackBatch(sessionId, items) {
+  return api("POST", `/sessions/${sessionId}/feedback/batch`, { items });
+}
+
 export async function fetchSessions() {
   const { sessions } = await api("GET", "/sessions");
   const previous = state.sessions;
