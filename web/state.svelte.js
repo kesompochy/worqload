@@ -79,6 +79,9 @@ export const state = $state({
   // { id, file, previewUrl }; previewUrl is a blob: URL the chip <img> renders
   // and is revoked when the entry is removed or cleared.
   pendingAttachments: [],
+  // Batch feedback queue: items staged by Ctrl+Enter, flushed together by Enter.
+  // Each entry is { content, slug, anchor? }.
+  feedbackQueue: [],
 });
 
 // Image-only attachments, capped per-file and per-feedback. The browser does

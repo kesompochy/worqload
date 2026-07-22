@@ -11,6 +11,7 @@ import { isIdentifierName, resolveDefinitions, resolveReferences } from "./code-
 import {
   api,
   submitFeedback,
+  submitFeedbackBatch,
   fetchSessions,
   fetchArchivedSessions,
   fetchActions,
@@ -101,6 +102,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   // (the multipart POST targets that session's id). Drop them and revoke the
   // blob URLs so the chips don't leak across sessions or memory.
   clearAttachments();
+  state.feedbackQueue = [];
   if (!id) return;
   await refreshDetail();
   // Cold cache only (first boot, before the prefetch resolved). The warm case
@@ -1221,18 +1223,47 @@ export async function onResolveCommand(filename, decision, articleEl, buttonEl) 
   }
 }
 
+// Queue the current composer text as a batch item without sending yet.
+// The human presses Ctrl+Enter to queue, then Enter to flush all at once.
+export function onQueueFeedback(inputId = "feedbackInput") {
+  if (!state.selected) return;
+  const inputEl = $("#" + inputId);
+  if (!inputEl) return;
+  const text = inputEl.value.trim();
+  if (text === "") return;
+  const item = { content: text, slug: state.anchor ? "anchored" : "feedback" };
+  if (state.anchor) {
+    item.anchor = {
+      path: state.anchor.path,
+      lineStart: state.anchor.lineStart,
+      lineEnd: state.anchor.lineEnd,
+    };
+  }
+  state.feedbackQueue = [...state.feedbackQueue, item];
+  inputEl.value = "";
+  state.anchor = null;
+  toast(`queued (${state.feedbackQueue.length})`);
+}
+
+export function removeQueuedFeedback(index) {
+  state.feedbackQueue = state.feedbackQueue.filter((_, i) => i !== index);
+}
+
 export async function onFeedback(inputId = "feedbackInput") {
   if (!state.selected) return;
   const inputEl = $("#" + inputId);
   if (!inputEl) return;
   const text = inputEl.value.trim();
   const attachments = state.pendingAttachments;
+  const hasQueue = state.feedbackQueue.length > 0;
   // Plain feedback needs body text. A composer that only has attachments still
   // needs a one-line note from the human; require at least one of the two.
-  if (text === "" && attachments.length === 0) return;
-  const body = { content: text, slug: state.anchor ? "anchored" : "feedback" };
-  if (state.anchor) {
-    body.anchor = {
+  if (text === "" && attachments.length === 0 && !hasQueue) return;
+  const currentItem = text !== ""
+    ? { content: text, slug: state.anchor ? "anchored" : "feedback" }
+    : null;
+  if (currentItem && state.anchor) {
+    currentItem.anchor = {
       path: state.anchor.path,
       lineStart: state.anchor.lineStart,
       lineEnd: state.anchor.lineEnd,
@@ -1244,23 +1275,23 @@ export async function onFeedback(inputId = "feedbackInput") {
   // after the await could be stranded by that re-render — the same race fixed
   // for the resume prompt.
   inputEl.value = "";
+  const allItems = [...state.feedbackQueue, ...(currentItem ? [currentItem] : [])];
+  const useBatch = allItems.length > 1 || (allItems.length === 1 && hasQueue);
   let feedbackPosted = false;
   try {
-    await submitFeedback(state.selected, body, attachments);
+    if (useBatch) {
+      await submitFeedbackBatch(state.selected, allItems);
+    } else if (allItems.length === 1) {
+      await submitFeedback(state.selected, allItems[0], attachments);
+    }
     feedbackPosted = true;
+    state.feedbackQueue = [];
     state.anchor = null;
     clearAttachments();
-    // Stay on whatever tab the human was reading (often the diff/file/report the
-    // anchor points at): the sent feedback now shows at its anchor and in the
-    // Feedbacks tab, so yanking the view away to the list is just disruptive.
-    toast("feedback queued");
+    toast(useBatch ? `${allItems.length} feedback sent` : "feedback queued");
     await refreshDetail();
   } catch (e) {
-    // Restore the captured text only if submitFeedback itself failed AND the
-    // user hasn't typed something new while the request was in flight. A
-    // refreshDetail failure after a successful submit must not drag the text
-    // back — the feedback was sent.
-    if (!feedbackPosted && inputEl.value === "") inputEl.value = text;
+    if (!feedbackPosted && inputEl.value === "" && currentItem) inputEl.value = text;
     toast(`failed: ${e.message}`);
   }
 }
