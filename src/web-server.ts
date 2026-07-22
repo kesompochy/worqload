@@ -1179,6 +1179,7 @@ const ROUTES: Route[] = [
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/revise-mode", postReviseMode),
+  defineRoute("POST", "/sessions/:id/feedback/batch", postFeedbackBatch),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("GET",  "/sessions/:id/feedback/:filename/attachments/:name", getFeedbackAttachment),
@@ -2550,6 +2551,55 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     }
 
     return json({ filename: file.filename, seq: file.seq });
+  });
+}
+
+interface FeedbackBatchBody {
+  items: FeedbackBody[];
+}
+
+async function postFeedbackBatch(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const raw = await req.json().catch(() => null) as FeedbackBatchBody | null;
+    if (!raw || !Array.isArray(raw.items) || raw.items.length === 0) {
+      return json({ error: "items array is required and must not be empty" }, 400);
+    }
+    for (const item of raw.items) {
+      if (typeof item.content !== "string" || item.content === "") {
+        return json({ error: "each item must have a non-empty content string" }, 400);
+      }
+    }
+
+    const inbox = feedbackInboxDirFor(ctx, meta.id);
+    const results: { filename: string; seq: number }[] = [];
+
+    for (const item of raw.items) {
+      const slug = item.slug ?? "feedback";
+      const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
+      if (item.anchor) {
+        const { path, lineStart, lineEnd } = item.anchor;
+        writeOpts.meta = { anchor: { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart } };
+      }
+      const file = await writeNumberedFile(inbox, slug, item.content, writeOpts);
+      await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
+      results.push({ filename: file.filename, seq: file.seq });
+    }
+
+    const att = ctx.clients.get(meta.id);
+    appendHostLog(ctx, meta.id, "wake_sent", {
+      filenames: results.map(r => r.filename),
+      count: results.length,
+      hasClient: att !== undefined,
+      status: meta.status,
+    });
+    if (att) {
+      att.client.send("[wake] check feedback inbox").catch(() => {});
+      scheduleWakeWatchdog(ctx, meta.id, att);
+    } else if (!isTerminal(meta.status)) {
+      await respawnMissingClient(ctx, meta, "feedback_batch_no_client");
+    }
+
+    return json({ results });
   });
 }
 

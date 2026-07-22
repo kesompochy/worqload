@@ -3520,3 +3520,83 @@ test("GET / links the favicon route in the document head", async () => {
   const html = await fetch(`${baseUrl}/`).then((r) => r.text());
   expect(html).toMatch(/<link[^>]+rel="icon"[^>]+href="\/favicon"/);
 });
+
+// ---------------------------------------------------------------------------
+// POST /sessions/:id/feedback/batch
+// ---------------------------------------------------------------------------
+
+test("POST /feedback/batch writes multiple feedback files and sends one wake", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/feedback/batch`, {
+    items: [
+      { content: "first item", slug: "feedback" },
+      { content: "second item", slug: "feedback" },
+      { content: "third item", slug: "anchored", anchor: { path: "README.md", lineStart: 1, lineEnd: 3 } },
+    ],
+  });
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.results).toHaveLength(3);
+  expect(body.results[0].filename).toBe("001-feedback.md");
+  expect(body.results[1].filename).toBe("002-feedback.md");
+  expect(body.results[2].filename).toBe("003-anchored.md");
+
+  const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
+  expect(readFileSync(join(inboxDir, "001-feedback.md"), "utf8")).toBe("first item");
+  expect(readFileSync(join(inboxDir, "002-feedback.md"), "utf8")).toBe("second item");
+  expect(readFileSync(join(inboxDir, "003-anchored.md"), "utf8")).toBe("third item");
+
+  const logPath = hostLogPath(ctx.sessionsDir, sid);
+  const entries = readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const wakes = entries.filter((e) => e.event === "wake_sent");
+  expect(wakes).toHaveLength(1);
+});
+
+test("POST /feedback/batch rejects an empty items array", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/feedback/batch`, { items: [] });
+  expect(res.status).toBe(400);
+});
+
+test("POST /feedback/batch rejects when items is missing", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/feedback/batch`, { content: "not batch" });
+  expect(res.status).toBe(400);
+});
+
+test("POST /feedback/batch broadcasts one feedback_received event per item", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback/batch`, {
+    items: [
+      { content: "a", slug: "feedback" },
+      { content: "b", slug: "feedback" },
+    ],
+  });
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const feedbackEvents = events.filter((e) => e.kind === "feedback_received");
+  expect(feedbackEvents).toHaveLength(2);
+});
