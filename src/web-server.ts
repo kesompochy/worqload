@@ -79,7 +79,8 @@ export function buildDefaultSpawnCommand(
     // and-sandbox is the codex equivalent of claude's bypassPermissions: a
     // headless worqload session has no human to approve a per-command prompt,
     // so the alternative is sessions wedging mid-turn.
-    return ["codex", "--dangerously-bypass-approvals-and-sandbox"];
+    const codexModelArgs = model ? ["--model", model] : [];
+    return ["codex", "--dangerously-bypass-approvals-and-sandbox", ...codexModelArgs];
   }
   if (agentName === "cursor") {
     // The cursor driver appends the prompt (and `--resume <session_id>` on
@@ -1393,7 +1394,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   }
 
   const agentName = body.agentName ?? ctx.agentName;
-  const model = agentName === "claude" ? body.model : undefined;
+  const model = agentName === "claude" || agentName === "codex" ? body.model : undefined;
   const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
   const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
 

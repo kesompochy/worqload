@@ -50,7 +50,7 @@
       const trimmedModel = model.trim();
       const trimmedBase = baseBranch.trim();
       const trimmedBranchName = branchName.trim();
-      if (agentName === "claude" && trimmedModel) body.model = trimmedModel;
+      if ((agentName === "claude" || agentName === "codex") && trimmedModel) body.model = trimmedModel;
       if (trimmedBase) body.baseBranch = trimmedBase;
       if (trimmedBranchName) body.branchName = trimmedBranchName;
       const { meta } = await api("POST", "/sessions", body);
@@ -91,7 +91,7 @@
       {/if}
       <div class="row" style="margin-top:.7rem">
         <label for="new-session-agent" style="color:var(--text-dim); font-size:12px">Agent</label>
-        <select id="new-session-agent" bind:value={agentName} style="flex:1">
+        <select id="new-session-agent" bind:value={agentName} onchange={() => { model = ""; }} style="flex:1">
           <option value="claude">Claude</option>
           <option value="codex">Codex</option>
           <option value="cursor">Cursor</option>
@@ -128,6 +128,22 @@
             <optgroup label="Fable / Mythos">
               <option value="claude-fable-5">claude-fable-5</option>
               <option value="claude-mythos-5">claude-mythos-5</option>
+            </optgroup>
+          </select>
+        </div>
+      {:else if agentName === "codex"}
+        <div class="row" style="margin-top:.7rem">
+          <label for="new-session-model" style="color:var(--text-dim); font-size:12px">Model</label>
+          <select id="new-session-model" bind:value={model} style="flex:1">
+            <option value="">(default)</option>
+            <optgroup label="o-series">
+              <option value="o3">o3</option>
+              <option value="o4-mini">o4-mini</option>
+            </optgroup>
+            <optgroup label="GPT">
+              <option value="gpt-4.1">gpt-4.1</option>
+              <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+              <option value="gpt-4.1-nano">gpt-4.1-nano</option>
             </optgroup>
           </select>
         </div>

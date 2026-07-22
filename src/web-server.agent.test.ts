@@ -41,6 +41,17 @@ test("buildDefaultSpawnCommand for cursor returns the agent -p prefix without th
   expect(argv).toContain("--trust");
 });
 
+test("buildDefaultSpawnCommand for codex includes --model when provided", () => {
+  const argv = buildDefaultSpawnCommand("codex", "pipe", "o3");
+  expect(argv).toContain("--model");
+  expect(argv[argv.indexOf("--model") + 1]).toBe("o3");
+});
+
+test("buildDefaultSpawnCommand for codex omits --model when not provided", () => {
+  const argv = buildDefaultSpawnCommand("codex", "pipe");
+  expect(argv).not.toContain("--model");
+});
+
 test("buildDefaultSpawnCommand for claude/pipe includes --model when provided", () => {
   const argv = buildDefaultSpawnCommand("claude", "pipe", "opus");
   expect(argv).toContain("--model");
@@ -237,6 +248,37 @@ test("POST /sessions persists cursor agentName and passes driver cursor to the h
   expect(launches[0].agentName).toBe("cursor");
   expect(launches[0].spawnCommand[0]).toBe("agent");
   expect(launches[0].driverName).toBe("pipe");
+});
+
+test("POST /sessions persists model for codex and passes it to the spawn command", async () => {
+  const launches: Array<{ spawnCommand: string[] }> = [];
+  const baseLauncher = inProcessHostLauncher();
+  const hostLauncher: HostLauncher = async (req) => {
+    launches.push({ spawnCommand: req.spawnCommand });
+    return baseLauncher(req);
+  };
+  const started = await startServer({
+    port: 0,
+    repoDir: makeTmpDir("repo"),
+    branchNameGenerator: async () => null,
+    hostLauncher,
+    worktreeOps: fakeWorktreeOps(),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+
+  const res = await fetch(`http://127.0.0.1:${started.server.port}/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "use o3", baseBranch: "trunk", agentName: "codex", model: "o3" }),
+  });
+
+  expect(res.status).toBe(201);
+  const body = await res.json();
+  expect(body.meta.model).toBe("o3");
+  expect((await loadSessionMeta(body.meta.id, started.ctx.sessionsDir))?.model).toBe("o3");
+  expect(launches).toHaveLength(1);
+  expect(launches[0].spawnCommand).toContain("--model");
+  expect(launches[0].spawnCommand[launches[0].spawnCommand.indexOf("--model") + 1]).toBe("o3");
 });
 
 test("POST /sessions rejects unknown agentName", async () => {
