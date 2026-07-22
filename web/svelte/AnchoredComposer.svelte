@@ -17,7 +17,7 @@
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
   import { state as appState } from "../state.svelte.js";
-  import { onAnchoredFeedback, clearAnchor, copyAnchorPermalink, onAnchorOutsideClick, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
+  import { onAnchoredFeedback, onQueueFeedback, clearAnchor, copyAnchorPermalink, onAnchorOutsideClick, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
   let anchorRect = $state(null);
   let textareaEl = $state();
@@ -137,7 +137,11 @@
     if (e.key !== "Enter" || e.shiftKey) return;
     if (composing || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
-    onAnchoredFeedback();
+    if (e.ctrlKey || e.metaKey) {
+      onQueueFeedback("anchoredFeedbackInput");
+    } else {
+      onAnchoredFeedback();
+    }
   }
 
   const POPOVER_WIDTH = 540;
@@ -200,7 +204,7 @@
       id="anchoredFeedbackInput"
       bind:this={textareaEl}
       rows="3"
-      placeholder="Comment on the selected lines... (Enter で送信 / Shift+Enter で改行 / Esc で解除 / 画像はペースト・ドロップで添付)"
+      placeholder="Comment on the selected lines... (Enter で送信 / Ctrl+Enter でキューに追加 / Shift+Enter で改行 / Esc で解除)"
       oncompositionstart={() => (composing = true)}
       oncompositionend={() => (composing = false)}
       onkeydown={onKeydown}
