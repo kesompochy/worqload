@@ -1,8 +1,12 @@
 import { toast } from "./dom.js";
 
-const SpeechRecognition = globalThis.webkitSpeechRecognition || globalThis.SpeechRecognition;
+const SpeechRecognitionCtor = globalThis.webkitSpeechRecognition || globalThis.SpeechRecognition;
 
-export const voiceInputSupported = !!SpeechRecognition;
+const isWebKit = !globalThis.chrome && /webkit/i.test(navigator.userAgent);
+
+export const voiceInputSupported = !!SpeechRecognitionCtor;
+
+export const usesNativeDictation = voiceInputSupported && isWebKit;
 
 let activeRecognition = null;
 let activeTextareaId = null;
@@ -11,6 +15,14 @@ let stoppingIntentionally = false;
 
 export function startVoiceInput(textareaId, onStateChange) {
   if (!voiceInputSupported) return;
+
+  if (usesNativeDictation) {
+    const textarea = document.getElementById(textareaId);
+    if (textarea) textarea.focus();
+    toast("このブラウザでは macOS の音声入力をお使いください（fn を2回押すか、設定 → キーボード → 音声入力）");
+    return;
+  }
+
   if (activeRecognition) {
     stopVoiceInput();
     return;
@@ -19,7 +31,7 @@ export function startVoiceInput(textareaId, onStateChange) {
   const textarea = document.getElementById(textareaId);
   if (!textarea) return;
 
-  const recognition = new SpeechRecognition();
+  const recognition = new SpeechRecognitionCtor();
   recognition.continuous = true;
   recognition.interimResults = true;
   recognition.lang = "ja-JP";
@@ -57,10 +69,7 @@ export function startVoiceInput(textareaId, onStateChange) {
     if (event.error === "not-allowed") {
       toast("マイクへのアクセスが拒否されました");
     } else if (event.error === "network") {
-      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-      toast(isSafari
-        ? "Safari では音声認識 API が制限されています。Chrome を使うか、macOS の音声入力（fn fn）をお試しください"
-        : "音声認識サーバーに接続できません。ネットワーク接続を確認してください");
+      toast("音声認識サーバーに接続できません。ネットワーク接続を確認してください");
     } else {
       toast(`音声認識エラー: ${event.error}`);
     }

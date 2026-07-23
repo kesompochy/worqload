@@ -10,7 +10,7 @@
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState, anchorLabel } from "../state.svelte.js";
   import { onFeedback, onQueueFeedback, removeQueuedFeedback, onResume, clearAnchor, copyAnchorPermalink, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
-  import { voiceInputSupported, startVoiceInput, stopVoiceInput, isVoiceInputActive } from "../voice-input.js";
+  import { voiceInputSupported, usesNativeDictation, startVoiceInput, stopVoiceInput, isVoiceInputActive } from "../voice-input.js";
 
   let voiceRecording = $state(false);
 
@@ -193,7 +193,7 @@
         </div>
       {/if}
       {#if !isTerminal && voiceInputSupported}
-        <button type="button" class="voice-btn" class:recording={voiceRecording} title={voiceRecording ? "音声入力を停止" : "音声入力"} onclick={toggleVoice}>🎙</button>
+        <button type="button" class="voice-btn" class:recording={voiceRecording} title={usesNativeDictation ? "音声入力（macOS: fn fn）" : voiceRecording ? "音声入力を停止" : "音声入力"} onclick={toggleVoice}>🎙</button>
       {/if}
       <span class="spacer"></span>
       <button type="submit">{isTerminal ? "Resume session" : "Send feedback"}</button>
