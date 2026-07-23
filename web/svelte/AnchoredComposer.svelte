@@ -18,6 +18,17 @@
   import { tick } from "svelte";
   import { state as appState } from "../state.svelte.js";
   import { onAnchoredFeedback, onQueueFeedback, clearAnchor, copyAnchorPermalink, onAnchorOutsideClick, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
+  import { voiceInputSupported, startVoiceInput, stopVoiceInput, isVoiceInputActive } from "../voice-input.js";
+
+  let voiceRecording = $state(false);
+
+  function toggleVoice() {
+    if (voiceRecording) {
+      stopVoiceInput();
+    } else {
+      startVoiceInput("anchoredFeedbackInput", (active) => { voiceRecording = active; });
+    }
+  }
 
   let anchorRect = $state(null);
   let textareaEl = $state();
@@ -214,6 +225,9 @@
     ></textarea>
     <div class="row">
       <button type="button" class="anchored-composer-permalink" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button>
+      {#if voiceInputSupported}
+        <button type="button" class="voice-btn" class:recording={voiceRecording} title={voiceRecording ? "音声入力を停止" : "音声入力"} onclick={toggleVoice}>🎙</button>
+      {/if}
       <span class="spacer"></span>
       <button type="submit">Send feedback</button>
     </div>
