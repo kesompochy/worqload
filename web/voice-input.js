@@ -1,3 +1,5 @@
+import { toast } from "./dom.js";
+
 const SpeechRecognition = globalThis.webkitSpeechRecognition || globalThis.SpeechRecognition;
 
 export const voiceInputSupported = !!SpeechRecognition;
@@ -5,6 +7,7 @@ export const voiceInputSupported = !!SpeechRecognition;
 let activeRecognition = null;
 let activeTextareaId = null;
 let activeCallback = null;
+let stoppingIntentionally = false;
 
 export function startVoiceInput(textareaId, onStateChange) {
   if (!voiceInputSupported) return;
@@ -24,6 +27,7 @@ export function startVoiceInput(textareaId, onStateChange) {
   activeRecognition = recognition;
   activeTextareaId = textareaId;
   activeCallback = onStateChange;
+  stoppingIntentionally = false;
 
   const baseText = textarea.value;
   let finalTranscript = "";
@@ -32,8 +36,9 @@ export function startVoiceInput(textareaId, onStateChange) {
     const el = document.getElementById(activeTextareaId);
     if (!el) return;
 
+    finalTranscript = "";
     let interim = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
+    for (let i = 0; i < event.results.length; i++) {
       const transcript = event.results[i][0].transcript;
       if (event.results[i].isFinal) {
         finalTranscript += transcript;
@@ -48,10 +53,21 @@ export function startVoiceInput(textareaId, onStateChange) {
 
   recognition.onerror = (event) => {
     if (event.error === "aborted") return;
+    if (event.error === "not-allowed") {
+      toast("マイクへのアクセスが拒否されました");
+    } else if (event.error === "no-speech") {
+      return;
+    } else {
+      toast(`音声認識エラー: ${event.error}`);
+    }
     stopVoiceInput();
   };
 
   recognition.onend = () => {
+    if (!stoppingIntentionally && activeRecognition === recognition) {
+      try { recognition.start(); } catch { stopVoiceInput(); }
+      return;
+    }
     stopVoiceInput();
   };
 
@@ -61,6 +77,7 @@ export function startVoiceInput(textareaId, onStateChange) {
 
 export function stopVoiceInput() {
   if (!activeRecognition) return;
+  stoppingIntentionally = true;
   try { activeRecognition.stop(); } catch { /* already stopped */ }
   const callback = activeCallback;
   activeRecognition = null;
