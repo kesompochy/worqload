@@ -57,7 +57,10 @@ export function startVoiceInput(textareaId, onStateChange) {
     if (event.error === "not-allowed") {
       toast("マイクへのアクセスが拒否されました");
     } else if (event.error === "network") {
-      toast("音声認識サーバーに接続できません（localhost 以外では HTTPS が必要です）");
+      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+      toast(isSafari
+        ? "Safari では音声認識 API が制限されています。Chrome を使うか、macOS の音声入力（fn fn）をお試しください"
+        : "音声認識サーバーに接続できません。ネットワーク接続を確認してください");
     } else {
       toast(`音声認識エラー: ${event.error}`);
     }
