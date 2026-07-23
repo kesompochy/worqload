@@ -53,10 +53,11 @@ export function startVoiceInput(textareaId, onStateChange) {
 
   recognition.onerror = (event) => {
     if (event.error === "aborted") return;
+    if (event.error === "no-speech") return;
     if (event.error === "not-allowed") {
       toast("マイクへのアクセスが拒否されました");
-    } else if (event.error === "no-speech") {
-      return;
+    } else if (event.error === "network") {
+      toast("音声認識サーバーに接続できません（localhost 以外では HTTPS が必要です）");
     } else {
       toast(`音声認識エラー: ${event.error}`);
     }
