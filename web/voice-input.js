@@ -19,7 +19,7 @@ export function startVoiceInput(textareaId, onStateChange) {
   if (usesNativeDictation) {
     const textarea = document.getElementById(textareaId);
     if (textarea) textarea.focus();
-    toast("このブラウザでは macOS の音声入力をお使いください（fn を2回押すか、設定 → キーボード → 音声入力）");
+    toast("このブラウザでは macOS の音声入力をお使いください。有効にするには: システム設定 → キーボード → 音声入力 → ON。有効化後、fn を2回押すと起動します");
     return;
   }
 
