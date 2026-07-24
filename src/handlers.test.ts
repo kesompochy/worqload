@@ -437,7 +437,7 @@ test("an idempotent action whose request is severed mid-flight (serve --watch re
   };
   try {
     state.selected = "session-a";
-    state.actions = [{ id: "merge-to-base", label: "Merge into base branch", params: [], idempotent: true }];
+    state.actions = [{ id: "merge-to-base", label: "⬆️ Merge into base branch", params: [], idempotent: true }];
     state.openActionId = "merge-to-base";
     state.actionResults = new Map();
     state.actionRunInFlight = false;
