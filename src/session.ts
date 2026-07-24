@@ -85,6 +85,7 @@ export interface CreateSessionParams {
   driverName?: DriverName;
   model?: string;
   title?: string;
+  startPaused?: boolean;
 }
 
 export function createSession(params: CreateSessionParams): SessionMeta {
@@ -103,7 +104,7 @@ export function createSession(params: CreateSessionParams): SessionMeta {
     ...(params.agentName !== undefined && { agentName: params.agentName }),
     ...(params.driverName !== undefined && { driverName: params.driverName }),
     ...(params.model !== undefined && { model: params.model }),
-    status: "running",
+    status: params.startPaused ? "stopped" : "running",
     createdAt: new Date().toISOString(),
   };
 }
