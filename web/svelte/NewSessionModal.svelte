@@ -136,7 +136,7 @@
         </div>
       {/if}
       <div class="row" style="margin-top:.7rem">
-        <label style="color:var(--text-dim); font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer">
+        <label style="color:var(--text-dim); font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap; flex-shrink:0">
           <input type="checkbox" bind:checked={startPaused} />
           Start paused
         </label>
