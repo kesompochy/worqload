@@ -1377,6 +1377,7 @@ interface PostSessionsBody {
   branchName?: string;
   agentName?: AgentName;
   model?: string;
+  startPaused?: boolean;
 }
 
 function isAgentName(value: unknown): value is AgentName {
@@ -1399,6 +1400,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   // worktreePath and branchName are populated after the id is assigned below
   // (we need the id to compute the worktree dir and the shortId fallback).
+  const startPaused = body.startPaused === true;
   const tentative = createSession({
     prompt: body.prompt,
     baseBranch,
@@ -1408,6 +1410,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     agentName,
     model,
     title: body.title,
+    startPaused,
   });
 
   const branchName = await resolveBranchName({
@@ -1437,7 +1440,9 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const meta: SessionMeta = { ...tentative, worktreePath, branchName };
   await saveSessionMeta(meta, ctx.sessionsDir);
-  await spawnAndAttachHost(ctx, meta);
+  if (!startPaused) {
+    await spawnAndAttachHost(ctx, meta);
+  }
 
   const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
   return json({ meta: stored ?? meta }, 201);

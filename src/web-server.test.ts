@@ -201,6 +201,35 @@ test("POST /sessions returns 400 when branchName is invalid", async () => {
   expect(res.status).toBe(400);
 });
 
+test("POST /sessions with startPaused creates a stopped session without spawning a host", async () => {
+  const repoDir = makeTmpDir("repo");
+  let hostLauncherCalled = false;
+  const trackingLauncher: HostLauncher = async (req) => {
+    hostLauncherCalled = true;
+    return inProcessHostLauncher()(req);
+  };
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: trackingLauncher,
+    worktreeOps: fakeWorktreeOps(),
+    configPath: join(repoDir, "no-such-worqload-config.yaml"),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const res = await postJson(baseUrl, "/sessions", {
+    prompt: "do thing",
+    baseBranch: TEST_BASE,
+    startPaused: true,
+  });
+  expect(res.status).toBe(201);
+  const body = await res.json();
+  expect(body.meta.status).toBe("stopped");
+  expect(hostLauncherCalled).toBe(false);
+});
+
 test("GET /sessions lists created sessions", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
