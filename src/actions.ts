@@ -179,7 +179,7 @@ export const syncBaseFromRemoteAction: Action = {
 
 export const mergeFromBaseAction: Action = {
   id: "merge-from-base",
-  label: "⬇️ Merge from base branch",
+  label: "📥 Merge from base branch",
   description: "Merge the base branch into this session's worktree branch to pick up changes from other sessions or upstream.",
   group: "sync-base",
   idempotent: true,
@@ -212,7 +212,7 @@ export const mergeFromBaseAction: Action = {
 
 export const mergeToBaseAction: Action = {
   id: "merge-to-base",
-  label: "⬆️ Merge into base branch",
+  label: "📤 Merge into base branch",
   description: "Merge this session's branch into the base branch in the main repo.",
   group: "ship",
   idempotent: true,
