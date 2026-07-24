@@ -158,7 +158,7 @@ function defaultPrTitle(meta: SessionMeta): string {
 
 export const syncBaseFromRemoteAction: Action = {
   id: "sync-base-from-remote",
-  label: "Sync base from remote",
+  label: "🔄 Sync base from remote",
   description: "Pull the latest commits for the base branch from origin into the main repo's local base branch.",
   confirmMessage:
     "Fetch origin and fast-forward the local base branch to match it.\n\nNon-fast-forward updates are refused. Uncommitted changes in the main repo are allowed when they don't overlap the incoming changes — git's own fast-forward decides.",
@@ -179,7 +179,7 @@ export const syncBaseFromRemoteAction: Action = {
 
 export const mergeFromBaseAction: Action = {
   id: "merge-from-base",
-  label: "Merge from base branch",
+  label: "⬇️ Merge from base branch",
   description: "Merge the base branch into this session's worktree branch to pick up changes from other sessions or upstream.",
   group: "sync-base",
   idempotent: true,
@@ -212,7 +212,7 @@ export const mergeFromBaseAction: Action = {
 
 export const mergeToBaseAction: Action = {
   id: "merge-to-base",
-  label: "Merge into base branch",
+  label: "⬆️ Merge into base branch",
   description: "Merge this session's branch into the base branch in the main repo.",
   group: "ship",
   idempotent: true,
