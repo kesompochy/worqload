@@ -2373,10 +2373,13 @@ async function postResume(req: Request, ctx: ServerContext, params: Record<strin
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
     }
 
+    const events = await readEvents(meta.id, 1, ctx.sessionsDir);
+    const hasBeenStarted = events.some(e => e.kind === "session_started");
+
     const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = meta;
     const resumed: SessionMeta = { ...rest, status: "running" };
     await saveSessionMeta(resumed, ctx.sessionsDir);
-    await spawnAndAttachHost(ctx, resumed, { resume: true });
+    await spawnAndAttachHost(ctx, resumed, { resume: hasBeenStarted });
 
     const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
     return json({ meta: stored ?? resumed });
