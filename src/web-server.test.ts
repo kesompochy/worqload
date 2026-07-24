@@ -3128,6 +3128,40 @@ test("POST /sessions/:id/resume launches a fresh (non-resume) host for a startPa
   expect(launches[0].resume).toBe(false);
 });
 
+test("POST /sessions/:id/resume sends a wake after fresh-starting a startPaused session with feedback", async () => {
+  const repoDir = makeTmpDir("repo");
+  const sentMessages: string[] = [];
+  const trackingLauncher: HostLauncher = async (req) => {
+    const result = await inProcessHostLauncher()(req);
+    const origSend = result.client.send.bind(result.client);
+    result.client.send = async (text: string) => {
+      sentMessages.push(text);
+      return origSend(text);
+    };
+    return result;
+  };
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: trackingLauncher,
+    worktreeOps: fakeWorktreeOps(),
+    configPath: join(repoDir, "no-such-worqload-config.yaml"),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const created = await postJson(baseUrl, "/sessions", {
+    prompt: "x",
+    baseBranch: TEST_BASE,
+    startPaused: true,
+  }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/resume`, { prompt: "now do stuff" });
+  expect(sentMessages.some(m => m.includes("[wake]"))).toBe(true);
+});
+
 test("POST /sessions/:id/resume rejects a session that is still running", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

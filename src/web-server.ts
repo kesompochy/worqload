@@ -2381,6 +2381,14 @@ async function postResume(req: Request, ctx: ServerContext, params: Record<strin
     await saveSessionMeta(resumed, ctx.sessionsDir);
     await spawnAndAttachHost(ctx, resumed, { resume: hasBeenStarted });
 
+    if (!hasBeenStarted && prompt !== "") {
+      const att = ctx.clients.get(meta.id);
+      if (att) {
+        att.client.send("[wake] check feedback inbox").catch(() => {});
+        scheduleWakeWatchdog(ctx, meta.id, att);
+      }
+    }
+
     const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
     return json({ meta: stored ?? resumed });
   });
