@@ -3095,6 +3095,39 @@ test("POST /sessions/:id/resume queues the optional prompt as feedback", async (
   expect(readFileSync(join(inboxDir, files[0]), "utf8")).toContain("now do the other thing");
 });
 
+test("POST /sessions/:id/resume launches a fresh (non-resume) host for a startPaused session", async () => {
+  const repoDir = makeTmpDir("repo");
+  const launches: { resume: boolean }[] = [];
+  const trackingLauncher: HostLauncher = async (req) => {
+    launches.push({ resume: req.resume });
+    return inProcessHostLauncher()(req);
+  };
+  const started = await startServer({
+    port: 0,
+    repoDir,
+    branchNameGenerator: async () => null,
+    hostLauncher: trackingLauncher,
+    worktreeOps: fakeWorktreeOps(),
+    configPath: join(repoDir, "no-such-worqload-config.yaml"),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+  const baseUrl = `http://127.0.0.1:${started.server.port}`;
+
+  const created = await postJson(baseUrl, "/sessions", {
+    prompt: "x",
+    baseBranch: TEST_BASE,
+    startPaused: true,
+  }).then((r) => r.json());
+  const sid = created.meta.id;
+  expect(created.meta.status).toBe("stopped");
+  expect(launches).toHaveLength(0);
+
+  const resumed = await postJson(baseUrl, `/sessions/${sid}/resume`, {}).then((r) => r.json());
+  expect(resumed.meta.status).toBe("running");
+  expect(launches).toHaveLength(1);
+  expect(launches[0].resume).toBe(false);
+});
+
 test("POST /sessions/:id/resume rejects a session that is still running", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);
