@@ -13,6 +13,7 @@
   let model = $state("");
   let baseBranch = $state("");
   let branchName = $state("");
+  let startPaused = $state(false);
   let submitting = $state(false);
   let errorMessage = $state("");
 
@@ -22,6 +23,7 @@
     model = "";
     baseBranch = "";
     branchName = "";
+    startPaused = false;
     submitting = false;
     errorMessage = "";
     visible = true;
@@ -53,6 +55,7 @@
       if (agentName === "claude" && trimmedModel) body.model = trimmedModel;
       if (trimmedBase) body.baseBranch = trimmedBase;
       if (trimmedBranchName) body.branchName = trimmedBranchName;
+      if (startPaused) body.startPaused = true;
       const { meta } = await api("POST", "/sessions", body);
       visible = false;
       await fetchSessions();
@@ -133,6 +136,10 @@
         </div>
       {/if}
       <div class="row" style="margin-top:.7rem">
+        <label style="color:var(--text-dim); font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer">
+          <input type="checkbox" bind:checked={startPaused} />
+          Start paused
+        </label>
         <span class="spacer"></span>
         <button onclick={create} disabled={submitting}>
           {#if submitting}<span class="spinner"></span> Creating…{:else}Create{/if}

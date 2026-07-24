@@ -74,6 +74,16 @@ test("createSession accepts optional model", () => {
   expect(meta.model).toBe("opus");
 });
 
+test("createSession with startPaused sets status to stopped", () => {
+  const meta = createSession({ ...baseParams, startPaused: true });
+  expect(meta.status).toBe("stopped");
+});
+
+test("createSession without startPaused sets status to running", () => {
+  const meta = createSession(baseParams);
+  expect(meta.status).toBe("running");
+});
+
 test("createSession omits model when not provided", () => {
   const meta = createSession(baseParams);
   expect(meta.model).toBeUndefined();
