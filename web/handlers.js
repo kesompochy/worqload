@@ -636,7 +636,8 @@ export function onLineClick(e) {
   }
 }
 
-export function onTextSelectionAnchor() {
+export function onTextSelectionAnchor(e) {
+  if (!e.altKey) return;
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed) return;
   const quote = selection.toString().trim();
