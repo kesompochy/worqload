@@ -517,6 +517,14 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
   background: transparent; border-color: var(--border); color: var(--text-dim);
 }
 .anchored-composer-permalink:hover { color: var(--text); background: var(--panel-2); }
+.anchor-quote {
+  margin: 0 0 .4rem; padding: .3rem .6rem;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim); font-size: 11px; line-height: 1.4;
+  white-space: pre-wrap; max-height: 4.5em; overflow-y: auto;
+  background: var(--panel-2); border-radius: 2px;
+  width: 100%; box-sizing: border-box;
+}
 .row { display: flex; gap: .5rem; align-items: center; }
 .spacer { flex: 1; }
 .danger { color: var(--crashed); border-color: rgba(248,81,73,.5); }
