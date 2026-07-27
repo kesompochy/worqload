@@ -207,7 +207,7 @@
       id="anchoredFeedbackInput"
       bind:this={textareaEl}
       rows="3"
-      placeholder="Comment on the selected lines... (Enter で送信 / Ctrl+Enter でキューに追加 / Shift+Enter で改行 / Esc で解除)"
+      placeholder="Comment on the selected lines... (Enter で送信 / Ctrl+Enter でキューに追加 / Shift+Enter で改行 / Esc で解除 / Option+ドラッグで部分引用)"
       oncompositionstart={() => (composing = true)}
       oncompositionend={() => (composing = false)}
       onkeydown={onKeydown}
