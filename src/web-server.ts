@@ -2396,7 +2396,7 @@ async function postResume(req: Request, ctx: ServerContext, params: Record<strin
 
 interface FeedbackBody {
   content: string;
-  anchor?: { path: string; lineStart: number; lineEnd?: number };
+  anchor?: { path: string; lineStart: number; lineEnd?: number; quote?: string };
   slug?: string;
 }
 
@@ -2538,8 +2538,10 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     const slug = body.slug ?? "feedback";
     const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
     if (body.anchor) {
-      const { path, lineStart, lineEnd } = body.anchor;
-      writeOpts.meta = { anchor: { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart } };
+      const { path, lineStart, lineEnd, quote } = body.anchor;
+      const anchorMeta: { path: string; lineStart: number; lineEnd: number; quote?: string } = { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart };
+      if (quote) anchorMeta.quote = quote;
+      writeOpts.meta = { anchor: anchorMeta };
     }
     if (attachments.length > 0) writeOpts.attachments = attachments;
     const inbox = feedbackInboxDirFor(ctx, meta.id);
@@ -2593,8 +2595,10 @@ async function postFeedbackBatch(req: Request, ctx: ServerContext, params: Recor
       const slug = item.slug ?? "feedback";
       const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
       if (item.anchor) {
-        const { path, lineStart, lineEnd } = item.anchor;
-        writeOpts.meta = { anchor: { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart } };
+        const { path, lineStart, lineEnd, quote } = item.anchor;
+        const anchorMeta: { path: string; lineStart: number; lineEnd: number; quote?: string } = { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart };
+        if (quote) anchorMeta.quote = quote;
+        writeOpts.meta = { anchor: anchorMeta };
       }
       const file = await writeNumberedFile(inbox, slug, item.content, writeOpts);
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });

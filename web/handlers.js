@@ -636,6 +636,35 @@ export function onLineClick(e) {
   }
 }
 
+export function onTextSelectionAnchor() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) return;
+  const quote = selection.toString().trim();
+  if (!quote) return;
+  const range = selection.getRangeAt(0);
+  const startAnchorable = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer.closest?.("[data-anchor-line]")
+    : range.startContainer.parentElement?.closest("[data-anchor-line]");
+  const endAnchorable = range.endContainer.nodeType === Node.ELEMENT_NODE
+    ? range.endContainer.closest?.("[data-anchor-line]")
+    : range.endContainer.parentElement?.closest("[data-anchor-line]");
+  if (!startAnchorable || !endAnchorable) return;
+  const startPath = startAnchorable.getAttribute("data-anchor-path");
+  const endPath = endAnchorable.getAttribute("data-anchor-path");
+  if (!startPath || startPath !== endPath) return;
+  const startLine = Number(startAnchorable.getAttribute("data-anchor-line"));
+  const endLine = Number(endAnchorable.getAttribute("data-anchor-line"));
+  const endLineEnd = endAnchorable.getAttribute("data-anchor-line-end");
+  const effectiveEndLine = endLineEnd !== null ? Number(endLineEnd) : endLine;
+  if (!Number.isFinite(startLine) || !Number.isFinite(effectiveEndLine)) return;
+  state.anchor = {
+    path: startPath,
+    lineStart: Math.min(startLine, endLine),
+    lineEnd: Math.max(startLine, effectiveEndLine),
+    quote,
+  };
+}
+
 export function clearAnchor() {
   state.anchor = null;
 }
@@ -1268,6 +1297,7 @@ export async function onFeedback(inputId = "feedbackInput") {
       lineStart: state.anchor.lineStart,
       lineEnd: state.anchor.lineEnd,
     };
+    if (state.anchor.quote) currentItem.anchor.quote = state.anchor.quote;
   }
   // Clear the textarea synchronously on submit, before the network round-trip:
   // submitting feedback writes a feedback_received event that the session's
