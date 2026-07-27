@@ -110,6 +110,9 @@
       <!-- Anchored comments target the feedback inbox; the resume composer
            (terminal sessions) sends a plain prompt, so the chip is hidden there. -->
       <div class="anchor-chip">Re: {anchorLabel(appState.anchor)} <button type="button" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button> <button type="button" title="clear anchor" onclick={clearAnchor}>×</button></div>
+      {#if appState.anchor.quote}
+        <blockquote class="anchor-quote">{appState.anchor.quote}</blockquote>
+      {/if}
     {/if}
     {#if !isTerminal && appState.pendingAttachments.length > 0}
       <!-- Image chips queued for the next submit. The list is shared with the
