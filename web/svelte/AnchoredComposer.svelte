@@ -200,6 +200,9 @@
         {/each}
       </div>
     {/if}
+    {#if appState.anchor.quote}
+      <blockquote class="anchor-quote">{appState.anchor.quote}</blockquote>
+    {/if}
     <textarea
       id="anchoredFeedbackInput"
       bind:this={textareaEl}
