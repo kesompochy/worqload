@@ -1568,6 +1568,21 @@ export async function onToggleReviseMode(id) {
   }
 }
 
+export async function onSwitchModel(id, model) {
+  if (!id || typeof model !== "string") return;
+  try {
+    const res = await api("POST", `/sessions/${id}/model`, { model });
+    if (state.detail && state.detail.meta && state.detail.meta.id === id) {
+      state.detail.meta = res.meta;
+    }
+    const card = state.sessions.find(s => s.id === id);
+    if (card) card.model = res.meta.model;
+    await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 // Drag-reorder the sidebar: move the dragged card so it lands immediately
 // before `beforeId` (or to the end when that's null), update the in-browser
 // list at once, then persist so the 30s poll keeps the new order.

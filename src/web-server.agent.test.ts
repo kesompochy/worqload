@@ -258,3 +258,102 @@ test("POST /sessions rejects unknown agentName", async () => {
   expect(res.status).toBe(400);
   expect(await res.json()).toEqual({ error: "agentName must be 'claude', 'codex', or 'cursor'" });
 });
+
+test("POST /sessions/:id/model updates meta and respawns the host with the new model", async () => {
+  const launches: Array<{ spawnCommand: string[]; resume: boolean }> = [];
+  const baseLauncher = inProcessHostLauncher();
+  const hostLauncher: HostLauncher = async (req) => {
+    launches.push({ spawnCommand: req.spawnCommand, resume: req.resume });
+    return baseLauncher(req);
+  };
+  const started = await startServer({
+    port: 0,
+    repoDir: makeTmpDir("repo"),
+    branchNameGenerator: async () => null,
+    hostLauncher,
+    worktreeOps: fakeWorktreeOps(),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+
+  const create = await fetch(`http://127.0.0.1:${started.server.port}/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "start with sonnet", baseBranch: "trunk", model: "sonnet" }),
+  });
+  const { meta } = await create.json();
+  expect(meta.model).toBe("sonnet");
+
+  const res = await fetch(`http://127.0.0.1:${started.server.port}/sessions/${meta.id}/model`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "opus" }),
+  });
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.meta.model).toBe("opus");
+  expect(body.meta.status).toBe("running");
+
+  const persisted = await loadSessionMeta(meta.id, started.ctx.sessionsDir);
+  expect(persisted?.model).toBe("opus");
+
+  const resumeLaunch = launches.find(l => l.resume);
+  expect(resumeLaunch).toBeDefined();
+  expect(resumeLaunch!.spawnCommand).toContain("--model");
+  expect(resumeLaunch!.spawnCommand[resumeLaunch!.spawnCommand.indexOf("--model") + 1]).toBe("opus");
+});
+
+test("POST /sessions/:id/model rejects non-claude agents", async () => {
+  const started = await startServer({
+    port: 0,
+    repoDir: makeTmpDir("repo"),
+    agentName: "codex",
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+
+  const create = await fetch(`http://127.0.0.1:${started.server.port}/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "codex session", baseBranch: "trunk" }),
+  });
+  const { meta } = await create.json();
+
+  const res = await fetch(`http://127.0.0.1:${started.server.port}/sessions/${meta.id}/model`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "opus" }),
+  });
+
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({ error: "model switching is only supported for claude sessions" });
+});
+
+test("POST /sessions/:id/model rejects missing model field", async () => {
+  const started = await startServer({
+    port: 0,
+    repoDir: makeTmpDir("repo"),
+    branchNameGenerator: async () => null,
+    hostLauncher: inProcessHostLauncher(),
+    worktreeOps: fakeWorktreeOps(),
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+
+  const create = await fetch(`http://127.0.0.1:${started.server.port}/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "test", baseBranch: "trunk" }),
+  });
+  const { meta } = await create.json();
+
+  const res = await fetch(`http://127.0.0.1:${started.server.port}/sessions/${meta.id}/model`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({ error: "model must be a non-empty string" });
+});
