@@ -1178,6 +1178,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/archived/prune", postPruneArchived),
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
+  defineRoute("POST", "/sessions/:id/model", postModel),
   defineRoute("POST", "/sessions/:id/revise-mode", postReviseMode),
   defineRoute("POST", "/sessions/:id/feedback/batch", postFeedbackBatch),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
@@ -1656,6 +1657,54 @@ async function postReviseMode(req: Request, ctx: ServerContext, params: Record<s
     const updated: SessionMeta = { ...rest, reviseModeEnabled: body.enabled };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
+  });
+}
+
+interface ModelBody {
+  model?: unknown;
+}
+
+async function postModel(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json().catch(() => ({}))) as ModelBody;
+    if (typeof body.model !== "string" || body.model.trim() === "") {
+      return json({ error: "model must be a non-empty string" }, 400);
+    }
+    const agentName = meta.agentName ?? ctx.agentName;
+    if (agentName !== "claude") {
+      return json({ error: "model switching is only supported for claude sessions" }, 400);
+    }
+    const newModel = body.model.trim();
+    if (newModel === meta.model) {
+      return json({ meta });
+    }
+
+    if (!isTerminal(meta.status)) {
+      const att = ctx.clients.get(meta.id);
+      if (att) {
+        await att.client.kill("SIGTERM");
+        await Promise.race([att.client.exited, new Promise((r) => setTimeout(r, 500))]);
+        if (ctx.clients.has(meta.id)) {
+          await att.client.kill("SIGKILL");
+          await att.client.exited.catch(() => {});
+        }
+      }
+      ctx.clients.delete(meta.id);
+      await transitionStatus(ctx, meta, "stopped");
+      await appendAndBroadcast(ctx, meta.id, { kind: "session_stopped", payload: { reason: "model_switch" } });
+    }
+
+    const events = await readEvents(meta.id, 1, ctx.sessionsDir);
+    const hasBeenStarted = events.some(e => e.kind === "session_started");
+
+    const stopped = await loadSessionMeta(meta.id, ctx.sessionsDir);
+    const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = stopped ?? meta;
+    const resumed: SessionMeta = { ...rest, model: newModel, status: "running" };
+    await saveSessionMeta(resumed, ctx.sessionsDir);
+    await spawnAndAttachHost(ctx, resumed, { resume: hasBeenStarted });
+
+    const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
+    return json({ meta: stored ?? resumed });
   });
 }
 

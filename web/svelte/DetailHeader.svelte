@@ -15,7 +15,7 @@
   import { formatRelative, eventAgeIsStale } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
   const tabs = [
@@ -92,7 +92,7 @@
   </div>
   <ActionBar />
   <div class="detail-meta">
-    {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}{#if m.model}model: <code>{m.model}</code> · {/if}base: <code>{m.baseBranch}</code>
+    {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}{#if m.agentName === "claude" || (!m.agentName)}model: <select class="model-switch-select" value={m.model || ""} onchange={(e) => onSwitchModel(m.id, e.target.value)}><option value="">(default)</option><optgroup label="Alias"><option value="sonnet">sonnet</option><option value="opus">opus</option><option value="haiku">haiku</option><option value="fable">fable</option></optgroup><optgroup label="Sonnet"><option value="claude-sonnet-5">claude-sonnet-5</option><option value="claude-sonnet-4-6">claude-sonnet-4-6</option><option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m]</option><option value="claude-sonnet-4-5">claude-sonnet-4-5</option></optgroup><optgroup label="Opus"><option value="claude-opus-4-8">claude-opus-4-8</option><option value="claude-opus-4-7">claude-opus-4-7</option><option value="claude-opus-4-7[1m]">claude-opus-4-7[1m]</option><option value="claude-opus-4-6">claude-opus-4-6</option><option value="claude-opus-4-6[1m]">claude-opus-4-6[1m]</option><option value="claude-opus-4-5">claude-opus-4-5</option></optgroup><optgroup label="Haiku"><option value="claude-haiku-4-5">claude-haiku-4-5</option></optgroup><optgroup label="Fable / Mythos"><option value="claude-fable-5">claude-fable-5</option><option value="claude-mythos-5">claude-mythos-5</option></optgroup></select> · {:else if m.model}model: <code>{m.model}</code> · {/if}base: <code>{m.baseBranch}</code>
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}
     · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
