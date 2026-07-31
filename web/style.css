@@ -133,6 +133,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .detail-header { padding: .9rem 1.1rem; border-bottom: 1px solid var(--border); display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .detail-header .title { font-size: 1.05rem; font-weight: 600; flex: 1 1 auto; word-break: break-word; }
 .detail-meta { color: var(--text-dim); font-size: 12px; padding: 0 1.1rem .5rem 1.1rem; border-bottom: 1px solid var(--border); }
+.model-switch-select { font-size: 12px; font-family: inherit; background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 0 2px; cursor: pointer; vertical-align: baseline; }
 /* The session's original opening prompt, shown only once a custom alias hides
    it from the title. The label is a toggle button that collapses the body, so a
    long prompt need not occupy vertical space above the tabs. The body is a
