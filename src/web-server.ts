@@ -2677,6 +2677,33 @@ interface ResolveBody {
   decision?: "approve" | "reject";
 }
 
+async function parseEscalationResolveRequest(req: Request, ctx: ServerContext): Promise<{ body: ResolveBody; attachments: { name: string; bytes: Uint8Array }[] } | FeedbackParseError> {
+  const contentType = req.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+    const body = (await req.json().catch(() => ({}))) as ResolveBody;
+    return { body, attachments: [] };
+  }
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (err) {
+    return { error: `invalid multipart body: ${(err as Error).message}` };
+  }
+  const payloadField = form.get("payload");
+  if (typeof payloadField !== "string" || payloadField === "") {
+    return { error: "payload field is required" };
+  }
+  let body: ResolveBody;
+  try {
+    body = JSON.parse(payloadField) as ResolveBody;
+  } catch (err) {
+    return { error: `payload is not valid JSON: ${(err as Error).message}` };
+  }
+  const parsed = await parseFormAttachments(form, ctx);
+  if ("error" in parsed) return parsed;
+  return { body, attachments: parsed.attachments };
+}
+
 async function postEscalationResolve(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const askingDir = askingDirFor(ctx, meta.id);
@@ -2686,7 +2713,9 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       return json({ error: "escalation not found" }, 404);
     }
 
-    const body = (await req.json().catch(() => ({}))) as ResolveBody;
+    const parsed = await parseEscalationResolveRequest(req, ctx);
+    if ("error" in parsed) return json(parsed, 400);
+    const { body, attachments } = parsed;
     const sidecarPath = join(askingDir, commandSidecarFilename(params.filename));
     const sidecarFile = Bun.file(sidecarPath);
     const isCommandApproval = await sidecarFile.exists();
@@ -2747,9 +2776,9 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
     }
 
     const inbox = feedbackInboxDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(inbox, slug, feedbackContent, {
-      archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
-    });
+    const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
+    if (attachments.length > 0) writeOpts.attachments = attachments;
+    const file = await writeNumberedFile(inbox, slug, feedbackContent, writeOpts);
     await appendAndBroadcast(ctx, meta.id, {
       kind: "escalation_resolved",
       payload: { ...resolvedPayload, answerFilename: file.filename },

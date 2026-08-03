@@ -12,6 +12,7 @@ import {
   api,
   submitFeedback,
   submitFeedbackBatch,
+  resolveEscalation,
   fetchSessions,
   fetchArchivedSessions,
   fetchActions,
@@ -1219,10 +1220,12 @@ function lockAskingArticle(articleEl, activeButton) {
 export async function onResolve(filename, articleEl, buttonEl) {
   if (!state.selected) return;
   const text = articleEl.querySelector(".ask-answer").value.trim();
-  if (text === "") { toast("answer is required"); return; }
+  const attachments = state.askingAttachments.get(filename) ?? [];
+  if (text === "" && attachments.length === 0) { toast("answer is required"); return; }
   const restore = lockAskingArticle(articleEl, buttonEl);
   try {
-    await api("POST", `/sessions/${state.selected}/escalations/${encodeURIComponent(filename)}/resolve`, { content: text });
+    await resolveEscalation(state.selected, filename, { content: text || "(image attached)" }, attachments);
+    clearAskingAttachments(filename);
     toast("answer sent");
     await refreshDetail();
     await fetchSessions();
@@ -1241,9 +1244,11 @@ export async function onResolveCommand(filename, decision, articleEl, buttonEl) 
   const body = { decision };
   const note = articleEl?.querySelector(".ask-answer")?.value.trim() ?? "";
   if (note !== "") body.content = note;
+  const attachments = state.askingAttachments.get(filename) ?? [];
   const restore = lockAskingArticle(articleEl, buttonEl);
   try {
-    const res = await api("POST", `/sessions/${state.selected}/escalations/${encodeURIComponent(filename)}/resolve`, body);
+    const res = await resolveEscalation(state.selected, filename, body, attachments);
+    clearAskingAttachments(filename);
     toast(decision === "approve" ? `command ran (exit ${res.exitCode ?? "?"})` : "command rejected");
     await refreshDetail();
     await fetchSessions();
@@ -1421,6 +1426,95 @@ export function onComposerDrop(event) {
   if (files.length === 0) return false;
   event.preventDefault();
   addAttachmentFiles(files);
+  return true;
+}
+
+// --- escalation (asking) attachment management --------------------------------
+// Each escalation card has its own attachment queue keyed by the asking
+// filename. The same MIME/size/count constraints as the composer apply.
+
+let nextAskingAttachmentId = 0;
+
+export function addAskingAttachmentFiles(askingFilename, files) {
+  const existing = state.askingAttachments.get(askingFilename) ?? [];
+  const additions = [];
+  for (const file of files) {
+    if (existing.length + additions.length >= ATTACHMENT_MAX_COUNT) {
+      toast(`max ${ATTACHMENT_MAX_COUNT} attachments per answer`);
+      break;
+    }
+    if (!ATTACHMENT_ALLOWED_MIMES.has(file.type)) {
+      toast(`skipped ${file.name || "(unnamed)"}: not an allowed image type`);
+      continue;
+    }
+    if (file.size > ATTACHMENT_MAX_BYTES) {
+      toast(`skipped ${file.name}: exceeds ${Math.round(ATTACHMENT_MAX_BYTES / (1024 * 1024))} MiB`);
+      continue;
+    }
+    additions.push({
+      id: ++nextAskingAttachmentId,
+      file,
+      previewUrl: URL.createObjectURL(file),
+    });
+  }
+  if (additions.length === 0) return;
+  state.askingAttachments = new Map(state.askingAttachments).set(askingFilename, [...existing, ...additions]);
+}
+
+export function removeAskingAttachment(askingFilename, id) {
+  const list = state.askingAttachments.get(askingFilename);
+  if (!list) return;
+  const next = [];
+  for (const att of list) {
+    if (att.id === id) {
+      try { URL.revokeObjectURL(att.previewUrl); } catch { /* already revoked */ }
+    } else {
+      next.push(att);
+    }
+  }
+  const updated = new Map(state.askingAttachments);
+  if (next.length === 0) updated.delete(askingFilename);
+  else updated.set(askingFilename, next);
+  state.askingAttachments = updated;
+}
+
+export function clearAskingAttachments(askingFilename) {
+  const list = state.askingAttachments.get(askingFilename);
+  if (!list || list.length === 0) return;
+  for (const att of list) {
+    try { URL.revokeObjectURL(att.previewUrl); } catch { /* already revoked */ }
+  }
+  const updated = new Map(state.askingAttachments);
+  updated.delete(askingFilename);
+  state.askingAttachments = updated;
+}
+
+export function onAskingPaste(askingFilename, event) {
+  const items = event.clipboardData?.items;
+  if (!items || items.length === 0) return false;
+  const files = [];
+  for (const item of items) {
+    if (item.kind === "file" && typeof item.getAsFile === "function") {
+      const f = item.getAsFile();
+      if (f && ATTACHMENT_ALLOWED_MIMES.has(f.type)) files.push(f);
+    }
+  }
+  if (files.length === 0) return false;
+  event.preventDefault();
+  addAskingAttachmentFiles(askingFilename, files);
+  return true;
+}
+
+export function onAskingDrop(askingFilename, event) {
+  const dt = event.dataTransfer;
+  if (!dt || !dt.files || dt.files.length === 0) return false;
+  const files = [];
+  for (const f of dt.files) {
+    if (ATTACHMENT_ALLOWED_MIMES.has(f.type)) files.push(f);
+  }
+  if (files.length === 0) return false;
+  event.preventDefault();
+  addAskingAttachmentFiles(askingFilename, files);
   return true;
 }
 

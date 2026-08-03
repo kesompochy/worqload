@@ -79,6 +79,11 @@ export const state = $state({
   // { id, file, previewUrl }; previewUrl is a blob: URL the chip <img> renders
   // and is revoked when the entry is removed or cleared.
   pendingAttachments: [],
+  // Image attachments staged per escalation answer textarea. Keyed by
+  // escalation filename so each asking card has its own attachment queue.
+  // Each value is an array of { id, file, previewUrl } — same shape as
+  // pendingAttachments entries.
+  askingAttachments: new Map(),
   // Batch feedback queue: items staged by Ctrl+Enter, flushed together by Enter.
   // Each entry is { content, slug, anchor? }.
   feedbackQueue: [],
