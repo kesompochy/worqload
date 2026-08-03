@@ -20,7 +20,7 @@
   import FilesView from "./FilesView.svelte";
   import StructureView from "./StructureView.svelte";
   import EventsView from "./EventsView.svelte";
-  import { onDetailBodyClick, onTextSelectionAnchor, onResolve, onDetailBodyPointerOver, onDetailBodyPointerOut } from "../handlers.js";
+  import { onDetailBodyClick, onTextSelectionAnchor, onResolve, onAskingPaste, onAskingDrop, removeAskingAttachment, onDetailBodyPointerOver, onDetailBodyPointerOut } from "../handlers.js";
 
   // Tracked across the answer textarea's keydowns so a confirming Enter mid-IME
   // composition doesn't also submit (same guard as Composer.svelte).
@@ -176,17 +176,29 @@
       <section class="asking">
         <div class="label">⚠ Waiting for you — respond below to resume</div>
         {#each appState.asking as a (a.filename)}
+          {@const askAtts = appState.askingAttachments.get(a.filename) ?? []}
           <article data-asking={a.filename} style="margin-top:.6rem">
             <div class="filename">{a.filename}</div>
             <div class="md">{@html renderMarkdown(a.content)}</div>
+            {#if askAtts.length > 0}
+              <div class="attachment-chips">
+                {#each askAtts as att (att.id)}
+                  <span class="attachment-chip" title={att.file.name}>
+                    <img src={att.previewUrl} alt={att.file.name} />
+                    <span class="attachment-chip-name">{att.file.name}</span>
+                    <button type="button" title="remove" onclick={() => removeAskingAttachment(a.filename, att.id)}>×</button>
+                  </span>
+                {/each}
+              </div>
+            {/if}
             {#if typeof a.command === "string"}
-              <textarea class="ask-answer" rows="2" placeholder="Optional note to the agent (sent on approve or reject)..." style="margin-top:.4rem"></textarea>
+              <textarea class="ask-answer" rows="2" placeholder="Optional note to the agent (sent on approve or reject)..." style="margin-top:.4rem" onpaste={(e) => onAskingPaste(a.filename, e)} ondragover={(e) => e.preventDefault()} ondrop={(e) => onAskingDrop(a.filename, e)}></textarea>
               <div class="row" style="margin-top:.3rem">
                 <button class="ask-reject">Reject</button>
                 <button class="ask-approve">Approve &amp; Run</button>
               </div>
             {:else}
-              <textarea class="ask-answer" rows="3" placeholder="Your answer... (Enter で送信 / Shift+Enter で改行)" style="margin-top:.4rem" oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)} onkeydown={onAnswerKeydown}></textarea>
+              <textarea class="ask-answer" rows="3" placeholder="Your answer... (Enter で送信 / Shift+Enter で改行 / 画像ペースト可)" style="margin-top:.4rem" oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)} onkeydown={onAnswerKeydown} onpaste={(e) => onAskingPaste(a.filename, e)} ondragover={(e) => e.preventDefault()} ondrop={(e) => onAskingDrop(a.filename, e)}></textarea>
               <div class="row" style="margin-top:.3rem">
                 <span class="spacer"></span>
                 <button class="ask-resolve">Answer</button>
