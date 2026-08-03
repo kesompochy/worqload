@@ -24,6 +24,7 @@ const deleteFileCalls: string[] = [];
 const renameFileCalls: string[] = [];
 const submitFeedbackCalls: Array<{ sessionId: string; payload: unknown; attachments: unknown }> = [];
 const submitFeedbackBatchCalls: Array<{ sessionId: string; items: unknown }> = [];
+const resolveEscalationCalls: Array<{ sessionId: string; filename: string; payload: unknown; attachments: unknown }> = [];
 mock.module("../web/api.js", () => ({
   api: async (method: string, path: string, body?: unknown) => { apiCalls.push({ method, path, body }); return {}; },
   submitFeedback: async (sessionId: string, payload: unknown, attachments: unknown) => {
@@ -33,6 +34,10 @@ mock.module("../web/api.js", () => ({
   submitFeedbackBatch: async (sessionId: string, items: unknown) => {
     submitFeedbackBatchCalls.push({ sessionId, items });
     return { results: [{ filename: "001-x.md", seq: 1 }] };
+  },
+  resolveEscalation: async (sessionId: string, filename: string, payload: unknown, attachments: unknown) => {
+    resolveEscalationCalls.push({ sessionId, filename, payload, attachments });
+    return { ok: true, answerFilename: "001-answer.md" };
   },
   fetchSessions: async () => { fetchSessionsCalls++; },
   fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
@@ -56,7 +61,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onResume, onStopAndResume, onToggleReviseMode } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onResume, onStopAndResume, onToggleReviseMode, onResolve, onResolveCommand } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // A minimal window fake the URL-state sync writes into. Installed per test that
@@ -1298,6 +1303,10 @@ async function withApiMock(
   mock.module("../web/api.js", () => ({
     api: apiImpl,
     submitFeedback,
+    resolveEscalation: async (sessionId: string, filename: string, payload: unknown, attachments: unknown) => {
+      resolveEscalationCalls.push({ sessionId, filename, payload, attachments });
+      return { ok: true, answerFilename: "001-answer.md" };
+    },
     fetchSessions,
     fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
     fetchActions: async () => {},
@@ -1324,6 +1333,10 @@ async function withApiMock(
       submitFeedback: async (sessionId: string, payload: unknown, attachments: unknown) => {
         submitFeedbackCalls.push({ sessionId, payload, attachments });
         return { filename: "001-x.md", seq: 1 };
+      },
+      resolveEscalation: async (sessionId: string, filename: string, payload: unknown, attachments: unknown) => {
+        resolveEscalationCalls.push({ sessionId, filename, payload, attachments });
+        return { ok: true, answerFilename: "001-answer.md" };
       },
       fetchSessions: async () => { fetchSessionsCalls++; },
       fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
@@ -1740,5 +1753,120 @@ test("clicking data-feedback-delete routes to onFeedbackDelete", async () => {
     });
   } finally {
     (globalThis as unknown as { confirm: unknown }).confirm = savedConfirm;
+  }
+});
+
+// --- asking (escalation) attachments -----------------------------------------
+
+test("addAskingAttachmentFiles stages chips keyed by escalation filename", () => {
+  state.askingAttachments = new Map();
+  addAskingAttachmentFiles("001-q.md", [
+    fakeFile("a.png", "image/png", 100),
+    fakeFile("b.jpg", "image/jpeg", 200),
+  ]);
+  const list = state.askingAttachments.get("001-q.md")!;
+  expect(list).toHaveLength(2);
+  expect(list[0].file.name).toBe("a.png");
+  expect(list[1].file.name).toBe("b.jpg");
+});
+
+test("addAskingAttachmentFiles keeps separate queues per filename", () => {
+  state.askingAttachments = new Map();
+  addAskingAttachmentFiles("001-q.md", [fakeFile("a.png", "image/png", 100)]);
+  addAskingAttachmentFiles("002-q.md", [fakeFile("b.png", "image/png", 100)]);
+  expect(state.askingAttachments.get("001-q.md")!.map(a => a.file.name)).toEqual(["a.png"]);
+  expect(state.askingAttachments.get("002-q.md")!.map(a => a.file.name)).toEqual(["b.png"]);
+});
+
+test("addAskingAttachmentFiles rejects non-image types", async () => {
+  state.askingAttachments = new Map();
+  await withFakeDocument(() => {
+    addAskingAttachmentFiles("001-q.md", [
+      fakeFile("bad.pdf", "application/pdf", 100),
+      fakeFile("good.png", "image/png", 100),
+    ]);
+  });
+  expect((state.askingAttachments.get("001-q.md") ?? []).map(a => a.file.name)).toEqual(["good.png"]);
+});
+
+test("removeAskingAttachment splices a specific chip from the named escalation", () => {
+  state.askingAttachments = new Map();
+  revokedObjectURLs.length = 0;
+  addAskingAttachmentFiles("001-q.md", [
+    fakeFile("a.png", "image/png", 1),
+    fakeFile("b.png", "image/png", 1),
+  ]);
+  const list = state.askingAttachments.get("001-q.md")!;
+  const idA = list[0].id;
+  const urlA = list[0].previewUrl;
+
+  removeAskingAttachment("001-q.md", idA);
+
+  expect((state.askingAttachments.get("001-q.md") ?? []).map(a => a.file.name)).toEqual(["b.png"]);
+  expect(revokedObjectURLs).toContain(urlA);
+});
+
+test("clearAskingAttachments removes all chips for the named escalation", () => {
+  state.askingAttachments = new Map();
+  revokedObjectURLs.length = 0;
+  addAskingAttachmentFiles("001-q.md", [
+    fakeFile("a.png", "image/png", 1),
+    fakeFile("b.png", "image/png", 1),
+  ]);
+  addAskingAttachmentFiles("002-q.md", [fakeFile("c.png", "image/png", 1)]);
+
+  clearAskingAttachments("001-q.md");
+
+  expect(state.askingAttachments.has("001-q.md")).toBe(false);
+  expect(state.askingAttachments.get("002-q.md")!.map(a => a.file.name)).toEqual(["c.png"]);
+});
+
+test("onResolve sends text and asking attachments via resolveEscalation then clears chips", async () => {
+  state.selected = "sess-esc";
+  state.askingAttachments = new Map();
+  resolveEscalationCalls.length = 0;
+  addAskingAttachmentFiles("001-q.md", [fakeFile("pic.png", "image/png", 50)]);
+
+  const textarea = { value: "here is context" };
+  const article = {
+    querySelector: (sel: string) => (sel === ".ask-answer" ? textarea : sel === ".ask-resolve" ? {} : null),
+    querySelectorAll: () => [],
+  };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = globalThis.document;
+  globalThis.document = { querySelector: () => toastEl } as unknown as Document;
+  try {
+    await onResolve("001-q.md", article, null);
+    expect(resolveEscalationCalls).toHaveLength(1);
+    expect(resolveEscalationCalls[0].sessionId).toBe("sess-esc");
+    expect(resolveEscalationCalls[0].filename).toBe("001-q.md");
+    expect(resolveEscalationCalls[0].payload).toEqual({ content: "here is context" });
+    expect((resolveEscalationCalls[0].attachments as unknown[]).length).toBe(1);
+    expect(state.askingAttachments.has("001-q.md")).toBe(false);
+  } finally {
+    globalThis.document = saved;
+  }
+});
+
+test("onResolve allows image-only answers (no text) with a placeholder body", async () => {
+  state.selected = "sess-esc2";
+  state.askingAttachments = new Map();
+  resolveEscalationCalls.length = 0;
+  addAskingAttachmentFiles("002-q.md", [fakeFile("pic.png", "image/png", 50)]);
+
+  const textarea = { value: "  " };
+  const article = {
+    querySelector: (sel: string) => (sel === ".ask-answer" ? textarea : null),
+    querySelectorAll: () => [],
+  };
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = globalThis.document;
+  globalThis.document = { querySelector: () => toastEl } as unknown as Document;
+  try {
+    await onResolve("002-q.md", article, null);
+    expect(resolveEscalationCalls).toHaveLength(1);
+    expect(resolveEscalationCalls[0].payload).toEqual({ content: "(image attached)" });
+  } finally {
+    globalThis.document = saved;
   }
 });

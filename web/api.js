@@ -36,6 +36,19 @@ export async function submitFeedback(sessionId, payload, attachments) {
   return res.json();
 }
 
+export async function resolveEscalation(sessionId, filename, payload, attachments) {
+  const path = `/sessions/${sessionId}/escalations/${encodeURIComponent(filename)}/resolve`;
+  if (!attachments || attachments.length === 0) {
+    return api("POST", path, payload);
+  }
+  const form = new FormData();
+  form.set("payload", JSON.stringify(payload));
+  for (const att of attachments) form.append("attachment", att.file);
+  const res = await fetch(path, { method: "POST", body: form });
+  if (!res.ok) throw new Error(`POST ${path} → ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
 export async function submitFeedbackBatch(sessionId, items) {
   return api("POST", `/sessions/${sessionId}/feedback/batch`, { items });
 }
