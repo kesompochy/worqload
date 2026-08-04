@@ -2418,7 +2418,9 @@ async function postResume(req: Request, ctx: ServerContext, params: Record<strin
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     if (prompt !== "") {
       const inbox = feedbackInboxDirFor(ctx, meta.id);
-      const file = await writeNumberedFile(inbox, "resume", prompt);
+      const file = await writeNumberedFile(inbox, "feedback", prompt, {
+        archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
+      });
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
     }
 
