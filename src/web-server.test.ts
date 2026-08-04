@@ -3091,7 +3091,7 @@ test("POST /sessions/:id/resume queues the optional prompt as feedback", async (
   const inboxDir = join(ctx.sessionsDir, sid, "feedback", "inbox");
   const files = readdirSync(inboxDir);
   expect(files).toHaveLength(1);
-  expect(files[0]).toMatch(/-resume\.md$/);
+  expect(files[0]).toMatch(/-feedback\.md$/);
   expect(readFileSync(join(inboxDir, files[0]), "utf8")).toContain("now do the other thing");
 });
 
