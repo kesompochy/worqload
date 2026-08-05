@@ -96,7 +96,7 @@
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}
     · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
-    · worktree: <code>{m.worktreePath}</code>
+    · worktree: <code>{m.worktreePath}</code><button type="button" class="copy-path-btn" data-copy-path={m.worktreePath} title="ディレクトリパスをコピー">⧉</button>
   </div>
   <div class="tabs">
     {#each tabs as tab}
