@@ -243,6 +243,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .diff-file.collapsed .diff-file-body { display: none; }
 .copy-path-btn { background: transparent; border: 0; color: var(--text-dim); cursor: pointer; padding: 0 .25rem; font-size: 12px; line-height: 1; opacity: 0; transition: opacity .12s ease, color .08s ease; }
 .diff-file-header:hover .copy-path-btn, .file-content-header:hover .copy-path-btn { opacity: .6; }
+.detail-meta .copy-path-btn { opacity: .6; padding: .15rem .4rem; font-size: 13px; }
 .copy-path-btn:hover { opacity: 1; color: var(--accent); }
 .diff-summary { margin-left: auto; font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace; }
 .diff-summary .add-count { color: var(--running); margin-right: .35rem; }
