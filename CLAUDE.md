@@ -5,7 +5,7 @@ A browser UI for observing and steering parallel `claude` / `codex` sessions.
 ## Development
 
 ```sh
-bun test                   # run tests (pretest runs `vite build`)
+bun run test               # run tests (parallel execution; web-bundle runs separately)
 bun run dev                # vite build → serve with --watch
 bun run preview            # vite build → run THIS checkout against a throwaway scratch repo (~/.worqload-preview)
 bun run web:build          # build the browser frontend (web/ → web/dist/)
