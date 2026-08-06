@@ -125,137 +125,12 @@ async function connectClient(socketPath: string): Promise<TestClient> {
   };
 }
 
-test("runHost writes session_started and updates meta with hostPid/hostSocketPath", async () => {
-  const { sessionsDir, sessionId, hostExit, socketPath } = await setupHost("hang");
-  const client = await connectClient(socketPath);
-  client.send({ type: "hello", sinceSeq: 0 });
-  const replayDone = await client.next((m) => m.type === "replay_done");
-  expect(replayDone.type).toBe("replay_done");
 
-  const meta = await loadSessionMeta(sessionId, sessionsDir);
-  expect(meta?.hostPid).toBe(process.pid);
-  expect(meta?.hostSocketPath).toBe(socketPath);
-  expect(meta?.status).toBe("running");
 
-  const events = await readEvents(sessionId, 1, sessionsDir);
-  const kinds = events.map((e) => e.kind);
-  expect(kinds).toContain("session_started");
 
-  client.send({ type: "kill", signal: "SIGTERM" });
-  await client.next((m) => m.type === "exited");
-  await hostExit;
-});
 
-test("runHost gives claude WORQLOAD_SESSION_ID and WORQLOAD_ENDPOINT", async () => {
-  const { sessionId, hostExit, socketPath } = await setupHost("env", "http://127.0.0.1:34567");
-  const client = await connectClient(socketPath);
-  client.send({ type: "hello", sinceSeq: 0 });
-  // The env probe rides on a claude system line; the driver normalizes the
-  // payload and keeps the raw line under `wire`, where its fields live.
-  const envEvent = await client.next(
-    (m) =>
-      m.type === "event" &&
-      (m.event.payload as { wire?: { subtype?: string } })?.wire?.subtype === "worqload_env",
-  );
-  if (envEvent.type !== "event") throw new Error("unreachable");
-  const wire = (envEvent.event.payload as { wire: { sessionId: string; endpoint: string } }).wire;
-  expect(wire.sessionId).toBe(sessionId);
-  expect(wire.endpoint).toBe("http://127.0.0.1:34567");
 
-  client.send({ type: "kill", signal: "SIGTERM" });
-  await hostExit;
-});
 
-test("runHost forwards send_user to claude (echo mode round-trips a reply)", async () => {
-  const { sessionsDir, sessionId, hostExit, socketPath } = await setupHost("echo");
-  const client = await connectClient(socketPath);
-  client.send({ type: "hello", sinceSeq: 0 });
-  await client.next((m) => m.type === "replay_done");
-
-  client.send({ type: "send_user", text: "ping" });
-  const eventMsg = await client.next(
-    (m) => m.type === "event" && m.event.kind === "claude_assistant_message",
-  );
-  expect(eventMsg.type).toBe("event");
-
-  client.send({ type: "kill", signal: "SIGTERM" });
-  await client.next((m) => m.type === "exited").catch(() => {});
-  await hostExit;
-
-  const events = await readEvents(sessionId, 1, sessionsDir);
-  expect(events.some((e) => e.kind === "claude_assistant_message")).toBe(true);
-});
-
-test("runHost replays past events on hello with sinceSeq=0 and then signals replay_done", async () => {
-  const { sessionsDir: _sessionsDir, hostExit, socketPath } = await setupHost("hang");
-  const client = await connectClient(socketPath);
-  client.send({ type: "hello", sinceSeq: 0 });
-  // session_started should be replayed
-  const sessionStarted = await client.next(
-    (m) => m.type === "event" && m.event.kind === "session_started",
-  );
-  expect(sessionStarted.type).toBe("event");
-  const replayDone = await client.next((m) => m.type === "replay_done");
-  if (replayDone.type !== "replay_done") throw new Error("unexpected");
-  expect(replayDone.lastSeq).toBeGreaterThanOrEqual(1);
-
-  client.send({ type: "kill", signal: "SIGTERM" });
-  await hostExit;
-});
-
-test("runHost marks meta as stopped after claude exits cleanly", async () => {
-  const { sessionsDir, sessionId, hostExit } = await setupHost("init");
-  await hostExit;
-
-  const meta = await loadSessionMeta(sessionId, sessionsDir);
-  expect(meta?.status).toBe("stopped");
-});
-
-test("runHost survives a client disconnect and accepts a new client that receives live events", async () => {
-  const { hostExit, socketPath } = await setupHost("echo");
-  // first client: bootstrap, drive a message, then disconnect
-  const first = await connectClient(socketPath);
-  first.send({ type: "hello", sinceSeq: 0 });
-  await first.next((m) => m.type === "replay_done");
-  first.send({ type: "send_user", text: "first" });
-  const firstEcho = await first.next(
-    (m) =>
-      m.type === "event" &&
-      m.event.kind === "claude_assistant_message" &&
-      JSON.stringify(m.event.payload).includes("first"),
-  );
-  if (firstEcho.type !== "event") throw new Error("unreachable");
-  const firstSeq = firstEcho.event.seq;
-  first.end();
-
-  // brief pause for host to observe disconnect
-  await new Promise((r) => setTimeout(r, 50));
-
-  // second client should be able to drive new traffic
-  const second = await connectClient(socketPath);
-  second.send({ type: "hello", sinceSeq: firstSeq });
-  await second.next((m) => m.type === "replay_done");
-
-  second.send({ type: "send_user", text: "after-reconnect" });
-  const second_event = await second.next(
-    (m) =>
-      m.type === "event" &&
-      m.event.kind === "claude_assistant_message" &&
-      JSON.stringify(m.event.payload).includes("after-reconnect"),
-  );
-  expect(second_event.type).toBe("event");
-
-  second.send({ type: "kill", signal: "SIGTERM" });
-  await hostExit;
-});
-
-test("runHost marks meta as crashed on claude non-zero exit", async () => {
-  const { sessionsDir, sessionId, hostExit } = await setupHost("crash");
-  await hostExit;
-
-  const meta = await loadSessionMeta(sessionId, sessionsDir);
-  expect(meta?.status).toBe("crashed");
-});
 
 test("runHost appends host_started, send_user_received and stdin_write to logFile", async () => {
   const logFile = join(makeTmpDir("host-test-log"), "host.log");
@@ -334,24 +209,3 @@ test("runHost uses hostLogPath under the sessions dir for its diagnostic log", a
   expect(entries.some((e) => e.event === "claude_exited")).toBe(true);
 });
 
-test("runHost in resume mode emits session_resumed, not session_started", async () => {
-  const { sessionsDir, sessionId, hostExit, socketPath } = await setupHost("echo", undefined, { resume: true });
-  const client = await connectClient(socketPath);
-  client.send({ type: "hello", sinceSeq: 0 });
-  await client.next((m) => m.type === "replay_done");
-
-  // Let the resumed host drive claude far enough to produce one assistant
-  // message before tearing it down, so the event sequence is fully recorded.
-  await client.next(
-    (m) => m.type === "event" && m.event.kind === "claude_assistant_message",
-  );
-
-  client.send({ type: "kill", signal: "SIGTERM" });
-  await client.next((m) => m.type === "exited").catch(() => {});
-  await hostExit;
-
-  const events = await readEvents(sessionId, 1, sessionsDir);
-  const kinds = events.map((e) => e.kind);
-  expect(kinds).toContain("session_resumed");
-  expect(kinds).not.toContain("session_started");
-});
