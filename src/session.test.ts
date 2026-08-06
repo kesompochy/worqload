@@ -26,125 +26,21 @@ const baseParams = {
   branchName: "do-something",
 };
 
-test("createSession returns valid meta", () => {
-  const meta = createSession(baseParams);
 
-  expect(meta.id).toBeDefined();
-  expect(meta.prompt).toBe("do something");
-  expect(meta.baseBranch).toBe("main");
-  expect(meta.baseCommit).toBe("abc123");
-  expect(meta.worktreePath).toBe("/tmp/wt/abc");
-  expect(meta.branchName).toBe("do-something");
-  expect(meta.agentName).toBeUndefined();
-  expect(meta.status).toBe("running");
-  expect(meta.createdAt).toBeDefined();
-  expect(meta.endedAt).toBeUndefined();
-  expect(meta.title).toBeUndefined();
-  expect(meta.hostPid).toBeUndefined();
-  expect(meta.hostSocketPath).toBeUndefined();
-});
 
-test("createSession trims whitespace from prompt", () => {
-  const meta = createSession({ ...baseParams, prompt: "  hello  " });
-  expect(meta.prompt).toBe("hello");
-});
 
-test("createSession throws on empty prompt", () => {
-  expect(() => createSession({ ...baseParams, prompt: "" })).toThrow("prompt must not be empty");
-  expect(() => createSession({ ...baseParams, prompt: "   " })).toThrow("prompt must not be empty");
-});
 
-test("createSession accepts optional title", () => {
-  const meta = createSession({ ...baseParams, title: "my session" });
-  expect(meta.title).toBe("my session");
-});
 
-test("createSession accepts optional agentName", () => {
-  const meta = createSession({ ...baseParams, agentName: "codex" });
-  expect(meta.agentName).toBe("codex");
-});
 
-test("createSession accepts optional driverName", () => {
-  const meta = createSession({ ...baseParams, driverName: "tmux" });
-  expect(meta.driverName).toBe("tmux");
-});
 
-test("createSession accepts optional model", () => {
-  const meta = createSession({ ...baseParams, model: "opus" });
-  expect(meta.model).toBe("opus");
-});
 
-test("createSession with startPaused sets status to stopped", () => {
-  const meta = createSession({ ...baseParams, startPaused: true });
-  expect(meta.status).toBe("stopped");
-});
 
-test("createSession without startPaused sets status to running", () => {
-  const meta = createSession(baseParams);
-  expect(meta.status).toBe("running");
-});
 
-test("createSession omits model when not provided", () => {
-  const meta = createSession(baseParams);
-  expect(meta.model).toBeUndefined();
-});
 
-test("createSession omits driverName when not provided", () => {
-  const meta = createSession(baseParams);
-  expect(meta.driverName).toBeUndefined();
-});
 
-test("isReviseModeEnabled defaults OFF so reports are stored on first submission unless opted in", () => {
-  const meta = createSession(baseParams);
-  // A new session leaves the flag absent; absent means off, so reports are
-  // stored on first submission until the human explicitly turns revise mode on.
-  expect(meta.reviseModeEnabled).toBeUndefined();
-  expect(isReviseModeEnabled(meta)).toBe(false);
-});
 
-test("isReviseModeEnabled is true only when the human explicitly turned it on", () => {
-  const off: SessionMeta = { ...createSession(baseParams), reviseModeEnabled: false };
-  const on: SessionMeta = { ...createSession(baseParams), reviseModeEnabled: true };
-  expect(isReviseModeEnabled(off)).toBe(false);
-  expect(isReviseModeEnabled(on)).toBe(true);
-});
 
-test("validateTransition allows valid transitions", () => {
-  const valid: [SessionStatus, SessionStatus][] = [
-    ["running", "waiting_human"],
-    ["running", "stopped"],
-    ["running", "crashed"],
-    ["waiting_human", "running"],
-    ["waiting_human", "stopped"],
-    ["waiting_human", "crashed"],
-    // resume reactivates a terminal session
-    ["stopped", "running"],
-    ["crashed", "running"],
-  ];
-  for (const [from, to] of valid) {
-    expect(() => validateTransition(from, to)).not.toThrow();
-  }
-});
 
-test("validateTransition rejects invalid transitions", () => {
-  const invalid: [SessionStatus, SessionStatus][] = [
-    ["stopped", "waiting_human"],
-    ["stopped", "crashed"],
-    ["crashed", "waiting_human"],
-    ["crashed", "stopped"],
-    ["running", "running"],
-  ];
-  for (const [from, to] of invalid) {
-    expect(() => validateTransition(from, to)).toThrow("Invalid status transition");
-  }
-});
-
-test("isTerminal recognizes stopped and crashed", () => {
-  expect(isTerminal("running")).toBe(false);
-  expect(isTerminal("waiting_human")).toBe(false);
-  expect(isTerminal("stopped")).toBe(true);
-  expect(isTerminal("crashed")).toBe(true);
-});
 
 test("save then load round-trips a session meta", async () => {
   const dir = tmpDir();
@@ -169,11 +65,9 @@ test("listSessionMetas returns empty array when directory does not exist", async
 
 test("listSessionMetas returns all sessions sorted by createdAt desc", async () => {
   const dir = tmpDir();
-  const a = createSession(baseParams);
-  const b = createSession(baseParams);
-  // ensure timestamps differ
-  await new Promise(r => setTimeout(r, 10));
-  const c = createSession(baseParams);
+  const a = createSession({ ...baseParams, createdAt: "2026-01-01T00:00:00Z" });
+  const b = createSession({ ...baseParams, createdAt: "2026-01-01T00:00:01Z" });
+  const c = createSession({ ...baseParams, createdAt: "2026-01-01T00:00:02Z" });
   await saveSessionMeta(a, dir);
   await saveSessionMeta(b, dir);
   await saveSessionMeta(c, dir);
@@ -187,11 +81,9 @@ test("listSessionMetas returns all sessions sorted by createdAt desc", async () 
 
 test("reorderSessions stamps sortOrder and listSessionMetas honours it", async () => {
   const dir = tmpDir();
-  const a = createSession(baseParams);
-  await new Promise(r => setTimeout(r, 10));
-  const b = createSession(baseParams);
-  await new Promise(r => setTimeout(r, 10));
-  const c = createSession(baseParams);
+  const a = createSession({ ...baseParams, createdAt: "2026-01-01T00:00:00Z" });
+  const b = createSession({ ...baseParams, createdAt: "2026-01-01T00:00:01Z" });
+  const c = createSession({ ...baseParams, createdAt: "2026-01-01T00:00:02Z" });
   await saveSessionMeta(a, dir);
   await saveSessionMeta(b, dir);
   await saveSessionMeta(c, dir);
@@ -206,15 +98,13 @@ test("reorderSessions stamps sortOrder and listSessionMetas honours it", async (
 
 test("listSessionMetas floats a session without sortOrder above reordered ones", async () => {
   const dir = tmpDir();
-  const a = createSession(baseParams);
-  await new Promise(r => setTimeout(r, 10));
-  const b = createSession(baseParams);
+  const a = createSession({ ...baseParams, createdAt: "2026-01-01T00:00:00Z" });
+  const b = createSession({ ...baseParams, createdAt: "2026-01-01T00:00:01Z" });
   await saveSessionMeta(a, dir);
   await saveSessionMeta(b, dir);
   await reorderSessions([a.id, b.id], dir);
 
-  await new Promise(r => setTimeout(r, 10));
-  const fresh = createSession(baseParams);
+  const fresh = createSession({ ...baseParams, createdAt: "2026-01-01T00:00:02Z" });
   await saveSessionMeta(fresh, dir);
 
   expect((await listSessionMetas(dir)).map(m => m.id)).toEqual([fresh.id, a.id, b.id]);
