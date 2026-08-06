@@ -1,9 +1,12 @@
+src/actions-registry.small.test.ts
 src/anchor-ref.test.ts
 src/call-graph.test.ts
 src/claude-stream.test.ts
 src/code-nav.test.ts
 src/codex-stream.test.ts
+src/commands/cli-helpers.small.test.ts
 src/commands/preview.test.ts
+src/commands/serve.small.test.ts
 src/cursor-stream.test.ts
 src/diff-view.test.ts
 src/dom.test.ts
@@ -23,8 +26,10 @@ src/session-bootstrap.test.ts
 src/session-driver-cursor.test.ts
 src/session-host-client.argv.test.ts
 src/session-host-protocol.test.ts
+src/skill-buttons.small.test.ts
 src/structure-view-layout.test.ts
 src/structure-view.test.ts
 src/syntax-highlight.test.ts
+src/textlint.small.test.ts
 src/url-state.test.ts
 src/utils/json-store.test.ts
