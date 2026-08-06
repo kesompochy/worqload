@@ -12,7 +12,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { formatRelative, eventAgeIsStale } from "../dom.js";
+  import { formatRelative, eventAgeIsStale, toast } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
   import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel } from "../handlers.js";
@@ -96,7 +96,7 @@
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}
     · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
-    · worktree: <code>{m.worktreePath}</code><button type="button" class="copy-path-btn" data-copy-path={m.worktreePath} title="ディレクトリパスをコピー">⧉</button>
+    · worktree: <code>{m.worktreePath}</code><button type="button" class="copy-path-btn" title="ディレクトリパスをコピー" onclick={() => navigator.clipboard.writeText(m.worktreePath).then(() => toast("path copied")).catch(() => toast("copy failed"))}>⧉</button>
   </div>
   <div class="tabs">
     {#each tabs as tab}
