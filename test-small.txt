@@ -16,6 +16,7 @@ src/favicon-badge.test.ts
 src/file-name-search.test.ts
 src/file-store.test.ts
 src/files-view.test.ts
+src/handlers.small.test.ts
 src/import-graph.test.ts
 src/markdown.test.ts
 src/notifications.test.ts
