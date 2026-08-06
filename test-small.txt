@@ -30,6 +30,7 @@ src/session-bootstrap.test.ts
 src/session-driver-cursor.test.ts
 src/session-host-client.argv.test.ts
 src/session-host-protocol.test.ts
+src/session.small.test.ts
 src/skill-buttons.small.test.ts
 src/structure-view-layout.test.ts
 src/structure-view.test.ts
