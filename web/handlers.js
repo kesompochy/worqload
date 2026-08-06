@@ -114,7 +114,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   openWs(id);
 }
 
-export function onDetailBodyClick(e) {
+export async function onDetailBodyClick(e) {
   // A link inside report markdown carries target="_blank"; let the browser
   // open it natively. Intercepting the click would fall through to onLineClick,
   // which re-renders the pane and detaches the <a> before navigation, so the
@@ -125,22 +125,19 @@ export function onDetailBodyClick(e) {
   // the feedback header (which carries that attribute).
   const gotoAnchor = e.target.closest("[data-goto-anchor-path]");
   if (gotoAnchor) {
-    gotoAnchorTarget(
+    return gotoAnchorTarget(
       gotoAnchor.getAttribute("data-goto-anchor-path"),
       Number(gotoAnchor.getAttribute("data-goto-anchor-line")),
       Number(gotoAnchor.getAttribute("data-goto-anchor-line-end")),
     );
-    return;
   }
   const gotoFeedbackEl = e.target.closest("[data-goto-feedback]");
   if (gotoFeedbackEl) {
-    gotoArticle("feedback", gotoFeedbackEl.getAttribute("data-goto-feedback"));
-    return;
+    return gotoArticle("feedback", gotoFeedbackEl.getAttribute("data-goto-feedback"));
   }
   const gotoReportEl = e.target.closest("[data-goto-report]");
   if (gotoReportEl) {
-    gotoArticle("reports", gotoReportEl.getAttribute("data-goto-report"));
-    return;
+    return gotoArticle("reports", gotoReportEl.getAttribute("data-goto-report"));
   }
   // The pending-asking section (DetailBody.svelte) renders its resolve buttons
   // natively; the answer textarea is read here off the enclosing article.
@@ -159,16 +156,12 @@ export function onDetailBodyClick(e) {
     e.stopPropagation();
     const filename = markBtn.getAttribute("data-report-mark");
     const to = markBtn.getAttribute("data-report-mark-to");
-    onReportMark(filename, to === "read");
-    return;
+    return onReportMark(filename, to === "read");
   }
   const deleteBtn = e.target.closest("[data-report-delete]");
   if (deleteBtn) {
-    // Sits inside the report header (a toggle target); stop the click from also
-    // collapsing the card on its way out.
     e.stopPropagation();
-    onReportDelete(deleteBtn.getAttribute("data-report-delete"));
-    return;
+    return onReportDelete(deleteBtn.getAttribute("data-report-delete"));
   }
   const viewToggle = e.target.closest("[data-report-view-toggle]");
   if (viewToggle) {
@@ -192,8 +185,7 @@ export function onDetailBodyClick(e) {
   const feedbackDeleteBtn = e.target.closest("[data-feedback-delete]");
   if (feedbackDeleteBtn) {
     e.stopPropagation();
-    onFeedbackDelete(feedbackDeleteBtn.getAttribute("data-feedback-delete"));
-    return;
+    return onFeedbackDelete(feedbackDeleteBtn.getAttribute("data-feedback-delete"));
   }
   const feedbackToggle = e.target.closest("[data-feedback-toggle]");
   if (feedbackToggle) {
@@ -260,8 +252,7 @@ export function onDetailBodyClick(e) {
     return;
   }
   if (e.target.closest("[data-file-edit-save]")) {
-    void saveFile();
-    return;
+    return saveFile();
   }
   if (e.target.closest("[data-file-edit-cancel]")) {
     state.fileEditing = false;
@@ -275,16 +266,14 @@ export function onDetailBodyClick(e) {
     return;
   }
   if (e.target.closest("[data-file-new-confirm]")) {
-    void createFile(state.fileNewPath);
-    return;
+    return createFile(state.fileNewPath);
   }
   if (e.target.closest("[data-file-new-cancel]")) {
     state.fileCreating = false;
     return;
   }
   if (e.target.closest("[data-file-delete]")) {
-    void onDeleteFile();
-    return;
+    return onDeleteFile();
   }
   // Files-tab rename controls: 🏷 turns the header path into an input seeded
   // with the open file's path; 確定/キャンセル commit or drop it.
@@ -383,8 +372,7 @@ export function onDetailBodyClick(e) {
   // works by clicking the line number.
   const identToken = e.target.closest(".tok-ident");
   if (identToken && e.target.closest(".file-content-body, .diff-file-body")) {
-    openCodeNav(identToken);
-    return;
+    return openCodeNav(identToken);
   }
   onLineClick(e);
 }
@@ -460,8 +448,10 @@ export function openCodeNav(tokenEl) {
     if (seq !== codeNavRequestSeq || !state.codeNav) return;
     state.codeNav = { ...state.codeNav, ...patch };
   };
-  resolveDefinitions(ctx).then(locations => apply({ definitions: locations ?? [], definitionsStatus: "done" }));
-  resolveReferences(ctx).then(locations => apply({ references: locations ?? [], referencesStatus: "done" }));
+  return Promise.all([
+    resolveDefinitions(ctx).then(locations => apply({ definitions: locations ?? [], definitionsStatus: "done" })),
+    resolveReferences(ctx).then(locations => apply({ references: locations ?? [], referencesStatus: "done" })),
+  ]);
 }
 
 export function closeCodeNav() {

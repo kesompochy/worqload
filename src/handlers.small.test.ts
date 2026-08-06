@@ -1793,3 +1793,102 @@ test("onResolve allows image-only answers (no text) with a placeholder body", as
     globalThis.document = saved;
   }
 });
+
+test("clicking a symbol token in the Files content pane opens the code-nav popover, then resolves it via the heuristic fallback", async () => {
+  state.selected = null; // no session selected → the server provider declines, heuristic answers
+  state.fileContent = { path: "lib/app.js", content: "function greet(name) {}\ngreet('x');\n" };
+  state.selectedFilePath = "lib/app.js";
+  state.codeNav = null;
+
+  await onDetailBodyClick(identTokenClick("greet", "lib/app.js", 2));
+  expect(state.codeNav?.symbol).toBe("greet");
+  expect(state.codeNav?.path).toBe("lib/app.js");
+  expect(state.codeNav?.definitionsStatus).toBe("done");
+  expect(state.codeNav?.definitions).toEqual([
+    { path: "lib/app.js", line: 1, column: "function ".length, text: "function greet(name) {}" },
+  ]);
+  expect(state.codeNav?.referencesStatus).toBe("done");
+  expect(state.codeNav?.references).toEqual([]);
+
+  closeCodeNav();
+  expect(state.codeNav).toBeNull();
+});
+
+test("clicking a symbol token in the Diff body opens the code-nav popover for that diff file", async () => {
+  // The diff line carries `data-anchor-path` for the file it diffs; the click
+  // happens inside .diff-file-body rather than .file-content-body. Code-nav must
+  // still open. state.fileContent here is a *different* file the user happens to
+  // have viewed in the Files tab; openCodeNav must not feed its content to the
+  // heuristic as if it were the clicked file's source.
+  state.selected = null; // no session → server provider declines, heuristic answers
+  state.fileContent = { path: "lib/other.js", content: "function unrelated() {}\n" };
+  state.selectedFilePath = "lib/other.js";
+  state.codeNav = null;
+
+  await onDetailBodyClick(identTokenClick("greet", "lib/app.js", 2, ".diff-file-body"));
+  expect(state.codeNav?.symbol).toBe("greet");
+  expect(state.codeNav?.path).toBe("lib/app.js");
+  expect(state.codeNav?.definitionsStatus).toBe("done");
+  // No matching sourceText for lib/app.js → heuristic finds no declarations.
+  // The wrong file's content (lib/other.js) must not leak in as a false match.
+  expect(state.codeNav?.definitions).toEqual([]);
+  expect(state.codeNav?.referencesStatus).toBe("done");
+
+  closeCodeNav();
+});
+
+test("the Files-tab delete button deletes the open file", async () => {
+  const before = deleteFileCalls.length;
+  state.selectedFilePath = "src/doomed.ts";
+  await onDetailBodyClick(attrClick("data-file-delete"));
+  expect(deleteFileCalls.slice(before)).toEqual(["src/doomed.ts"]);
+});
+
+test("clicking a feedback anchor chip routes to gotoAnchorTarget", async () => {
+  state.diff = "diff --git a/src/bar.ts b/src/bar.ts\n@@ -1,1 +1,1 @@\n-a\n+b\n";
+  state.collapsedFiles = new Set();
+  state.activeTab = "reports";
+  state.pendingScrollTo = null;
+
+  await onDetailBodyClick(gotoAnchorClick("src/bar.ts", 1, 1));
+
+  expect(state.activeTab).toBe("diff");
+  expect(state.pendingScrollTo).toEqual({ anchor: { path: "src/bar.ts", lineStart: 1, lineEnd: 1 } });
+});
+
+test("clicking a report's reply-link chip routes to the referenced feedback", async () => {
+  state.feedbackHistory = [{ filename: "002-feedback.md", content: "x", status: "read" }];
+  state.feedbackToggle = new Map();
+  state.activeTab = "reports";
+  state.pendingScrollTo = null;
+  const chip = { getAttribute: (a) => (a === "data-goto-feedback" ? "002-feedback.md" : null) };
+  const event = { target: { closest: (sel) => (sel === "[data-goto-feedback]" ? chip : null) } };
+
+  await onDetailBodyClick(event);
+
+  expect(state.activeTab).toBe("feedback");
+  expect(state.pendingScrollTo).toEqual({ article: { attr: "data-feedback-filename", value: "002-feedback.md" } });
+});
+
+test("clicking data-feedback-delete routes to onFeedbackDelete", async () => {
+  state.selected = "session-fd";
+  state.feedbackHistory = [{ filename: "002-feedback.md", content: "x", status: "read" }];
+  state.feedbackToggle = new Map();
+
+  const savedConfirm = globalThis.confirm;
+  (globalThis as unknown as { confirm: unknown }).confirm = () => true;
+
+  try {
+    await withApiMock(async () => ({ ok: true, filename: "002-feedback.md" }), async () => {
+      const btn = { getAttribute: (a: string) => (a === "data-feedback-delete" ? "002-feedback.md" : null) };
+      const event = {
+        target: { closest: (sel: string) => (sel === "[data-feedback-delete]" ? btn : null) },
+        stopPropagation: () => {},
+      };
+      await onDetailBodyClick(event);
+    });
+  } finally {
+    (globalThis as unknown as { confirm: unknown }).confirm = savedConfirm;
+  }
+});
+
