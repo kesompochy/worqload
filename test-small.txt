@@ -1,5 +1,6 @@
 src/actions-registry.small.test.ts
 src/anchor-ref.test.ts
+src/branch-name.small.test.ts
 src/call-graph.test.ts
 src/claude-stream.test.ts
 src/code-nav.test.ts
@@ -7,6 +8,7 @@ src/codex-stream.test.ts
 src/commands/cli-helpers.small.test.ts
 src/commands/preview.test.ts
 src/commands/serve.small.test.ts
+src/commands/session-host.small.test.ts
 src/cursor-stream.test.ts
 src/diff-view.test.ts
 src/dom.test.ts
@@ -18,6 +20,7 @@ src/file-store.test.ts
 src/files-view.test.ts
 src/handlers.small.test.ts
 src/import-graph.test.ts
+src/lsp-client.small.test.ts
 src/markdown.test.ts
 src/notifications.test.ts
 src/permalink.test.ts
