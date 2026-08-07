@@ -259,6 +259,10 @@ export interface ServerContext {
   // lazily on the first revise-mode submission (see currentTextlintTokenizer).
   // undefined = not yet built; null = build failed (gate runs literal-only).
   textlintTokenizer?: Tokenizer<IpadicFeatures> | null;
+  // Sync command-approval waiters: the POST handler holds the HTTP response
+  // open until the escalation is resolved, then returns the result directly.
+  // Key: `${sessionId}/${filename}`.
+  commandApprovalWaiters: Map<string, { resolve: (result: CommandApprovalSyncResult) => void }>;
 }
 
 export interface StartServerOptions {
@@ -334,6 +338,12 @@ function commandSidecarFilename(askingMdFilename: string): string {
 interface CommandApproval {
   command: string;
   reason?: string;
+}
+
+interface CommandApprovalSyncResult {
+  decision: "approve" | "reject";
+  feedbackContent: string;
+  runResult?: ApprovedCommandResult;
 }
 
 function buildCommandApprovalMarkdown(command: string, reason: string): string {
@@ -1107,6 +1117,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     configPath,
     textlintRules,
     reviseFeedbackGuidance,
+    commandApprovalWaiters: new Map(),
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -2777,6 +2788,33 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       resolvedPayload = { filename: params.filename };
     }
 
+    const syncWaiter = isCommandApproval
+      ? ctx.commandApprovalWaiters.get(`${meta.id}/${params.filename}`)
+      : undefined;
+
+    if (syncWaiter) {
+      syncWaiter.resolve({
+        decision: body.decision as "approve" | "reject",
+        feedbackContent,
+        runResult,
+      });
+      await appendAndBroadcast(ctx, meta.id, {
+        kind: "escalation_resolved",
+        payload: resolvedPayload,
+      });
+      const remaining = await listAllFiles(askingDir);
+      let updatedMeta = meta;
+      if (remaining.length === 0 && meta.status === "waiting_human") {
+        updatedMeta = await transitionStatus(ctx, meta, "running");
+      }
+      return json({
+        ok: true,
+        decision: body.decision,
+        ...(runResult ? { exitCode: runResult.exitCode, stdout: runResult.stdout, stderr: runResult.stderr } : {}),
+        meta: updatedMeta,
+      });
+    }
+
     const inbox = feedbackInboxDirFor(ctx, meta.id);
     const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
     if (attachments.length > 0) writeOpts.attachments = attachments;
@@ -2966,6 +3004,7 @@ async function postInternalEscalations(req: Request, ctx: ServerContext, params:
 interface CommandApprovalBody {
   command: string;
   reason?: string;
+  sync?: boolean;
 }
 
 // The agent asks the human to approve running a command outside its allowlist
@@ -2992,7 +3031,28 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
       kind: "escalation_requested",
       payload: { filename: file.filename, command: body.command },
     });
-    return json({ filename: file.filename, seq: file.seq });
+    if (!body.sync) {
+      return json({ filename: file.filename, seq: file.seq });
+    }
+    const waiterKey = `${meta.id}/${file.filename}`;
+    const { promise, resolve } = Promise.withResolvers<CommandApprovalSyncResult>();
+    ctx.commandApprovalWaiters.set(waiterKey, { resolve });
+    try {
+      const syncResult = await promise;
+      return json({
+        filename: file.filename,
+        seq: file.seq,
+        decision: syncResult.decision,
+        feedbackContent: syncResult.feedbackContent,
+        ...(syncResult.runResult ? {
+          exitCode: syncResult.runResult.exitCode,
+          stdout: syncResult.runResult.stdout,
+          stderr: syncResult.runResult.stderr,
+        } : {}),
+      });
+    } finally {
+      ctx.commandApprovalWaiters.delete(waiterKey);
+    }
   });
 }
 
