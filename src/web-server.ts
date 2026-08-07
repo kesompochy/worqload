@@ -1226,6 +1226,8 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/internal/sessions/:id/escalations", postInternalEscalations),
   defineRoute("POST", "/internal/sessions/:id/command-approvals", postInternalCommandApprovals),
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
+  defineRoute("GET",  "/internal/sessions/:id/feedback/history", getInternalFeedbackHistory),
+  defineRoute("GET",  "/internal/sessions/:id/feedback/by-filename/:filename", getInternalFeedbackByFilename),
 ];
 
 const WEB_DIST_DIR = join(import.meta.dir, "..", "web", "dist");
@@ -3066,6 +3068,16 @@ function formatAttachmentsSection(absolutePaths: string[]): string {
   return `## Attachments\n\n${lead}\n\n${lines}`;
 }
 
+function formatFeedbackMessageForAgent(m: { content: string; filename: string; meta?: { anchor?: { path: string; lineStart: number; lineEnd: number; quote?: string } }; attachments?: string[] }, attachmentsBaseDir: string): { filename: string; content: string } {
+  let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
+  if (m.attachments && m.attachments.length > 0) {
+    const dir = join(attachmentsBaseDir, attachmentsDirNameFor(m.filename));
+    const paths = m.attachments.map(name => join(dir, name));
+    content = `${content}\n\n${formatAttachmentsSection(paths)}`;
+  }
+  return { filename: m.filename, content };
+}
+
 async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     // The agent checking its inbox — drained or not — is the wake watchdog's
@@ -3082,19 +3094,45 @@ async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Re
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_fetched", payload: { count: messages.length } });
     }
     return json({
-      messages: messages.map(m => {
-        // The anchor lives in a sidecar now; re-derive the `Re:` line the agent
-        // is told to expect at the head of an anchored message.
-        let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
-        if (m.attachments && m.attachments.length > 0) {
-          // Paths must reflect the post-move location so the agent's Read finds
-          // the files; the listing was taken from inbox a moment ago.
-          const dir = join(readDir, attachmentsDirNameFor(m.filename));
-          const paths = m.attachments.map(name => join(dir, name));
-          content = `${content}\n\n${formatAttachmentsSection(paths)}`;
-        }
-        return { filename: m.filename, content };
-      }),
+      messages: messages.map(m => formatFeedbackMessageForAgent(m, readDir)),
     });
+  });
+}
+
+async function getInternalFeedbackHistory(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const inboxDir = feedbackInboxDirFor(ctx, meta.id);
+    const readDir = feedbackReadDirFor(ctx, meta.id);
+    const inbox = await listAllFiles(inboxDir);
+    const read = await listAllFiles(readDir);
+    const all = [
+      ...inbox.map(f => ({ ...formatFeedbackMessageForAgent(f, inboxDir), status: "unread" as const })),
+      ...read.map(f => ({ ...formatFeedbackMessageForAgent(f, readDir), status: "read" as const })),
+    ];
+    all.sort((a, b) => a.filename.localeCompare(b.filename));
+    return json({ messages: all });
+  });
+}
+
+async function getInternalFeedbackByFilename(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const { filename } = params;
+    const inboxDir = feedbackInboxDirFor(ctx, meta.id);
+    const readDir = feedbackReadDirFor(ctx, meta.id);
+
+    const inboxFiles = await listAllFiles(inboxDir);
+    const inInbox = inboxFiles.find(f => f.filename === filename);
+    if (inInbox) {
+      await moveNumberedFile(inboxDir, readDir, filename);
+      return json({ message: formatFeedbackMessageForAgent(inInbox, readDir) });
+    }
+
+    const readFiles = await listAllFiles(readDir);
+    const inRead = readFiles.find(f => f.filename === filename);
+    if (inRead) {
+      return json({ message: formatFeedbackMessageForAgent(inRead, readDir) });
+    }
+
+    return json({ error: `feedback not found: ${filename}` }, 404);
   });
 }
