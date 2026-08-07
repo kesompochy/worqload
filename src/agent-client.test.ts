@@ -202,6 +202,7 @@ test("requestCommandApproval with custom timeout kills the command after the spe
     await Bun.sleep(5);
   }
 
+  const approvedAt = Date.now();
   await fetch(`${endpoint}/sessions/${sessionId}/escalations/${askingFilename}/resolve`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -209,8 +210,11 @@ test("requestCommandApproval with custom timeout kills the command after the spe
   });
 
   const result = await syncPromise;
+  const elapsed = Date.now() - approvedAt;
   expect(result.decision).toBe("approve");
   expect(result.feedbackContent).toContain("timed out after 1s");
+  // Confirm the command was killed by the 1s timeout, not the default 30s.
+  expect(elapsed).toBeLessThan(5_000);
 }, 10_000);
 
 test("fetchFeedback returns and drains the inbox", async () => {
