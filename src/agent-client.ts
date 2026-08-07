@@ -79,6 +79,7 @@ export async function submitEscalation(
 export interface CommandApprovalResult extends SubmitResult {
   decision?: "approve" | "reject";
   feedbackContent?: string;
+  timedOut?: boolean;
 }
 
 export async function requestCommandApproval(
