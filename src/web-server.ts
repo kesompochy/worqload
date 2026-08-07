@@ -338,6 +338,7 @@ function commandSidecarFilename(askingMdFilename: string): string {
 interface CommandApproval {
   command: string;
   reason?: string;
+  timeoutMs?: number;
 }
 
 interface CommandApprovalSyncResult {
@@ -356,7 +357,7 @@ function buildCommandApprovalMarkdown(command: string, reason: string): string {
   return parts.join("\n\n") + "\n";
 }
 
-const APPROVED_COMMAND_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const APPROVED_COMMAND_OUTPUT_LIMIT = 50_000;
 
 function truncateOutput(text: string): string {
@@ -371,15 +372,13 @@ interface ApprovedCommandResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  timeoutMs: number;
 }
 
-// Runs an approved command via `sh -c` in the session worktree (mirroring how
-// claude's Bash tool would have run it). Killed after a timeout so a hung
-// command can't wedge the resolve request.
-async function runApprovedCommand(command: string, cwd: string): Promise<ApprovedCommandResult> {
+async function runApprovedCommand(command: string, cwd: string, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS): Promise<ApprovedCommandResult> {
   const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: "pipe", stderr: "pipe", env: process.env });
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; try { proc.kill("SIGKILL"); } catch {} }, APPROVED_COMMAND_TIMEOUT_MS);
+  const timer = setTimeout(() => { timedOut = true; try { proc.kill("SIGKILL"); } catch {} }, timeoutMs);
   const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   const exitCode = await proc.exited;
   clearTimeout(timer);
@@ -389,11 +388,15 @@ async function runApprovedCommand(command: string, cwd: string): Promise<Approve
     stdout: truncateOutput(stdout),
     stderr: truncateOutput(stderr),
     timedOut,
+    timeoutMs,
   };
 }
 
 function describeCommandExit(result: ApprovedCommandResult): string {
-  if (result.timedOut) return `killed (timed out after ${APPROVED_COMMAND_TIMEOUT_MS / 60_000}m)`;
+  if (result.timedOut) {
+    const seconds = result.timeoutMs / 1000;
+    return `killed (timed out after ${seconds}s)`;
+  }
   if (result.signal) return `killed by ${result.signal}`;
   return String(result.exitCode ?? "unknown");
 }
@@ -2748,16 +2751,18 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       }
       let command = "";
       let agentReason = "";
+      let timeoutMs: number | undefined;
       try {
         const sidecar = (await sidecarFile.json()) as CommandApproval;
         command = sidecar.command ?? "";
         agentReason = sidecar.reason ?? "";
+        timeoutMs = sidecar.timeoutMs;
       } catch { /* corrupt sidecar */ }
       await moveFile(askingFilePath, join(resolvedDir, params.filename));
       await moveFile(sidecarPath, join(resolvedDir, commandSidecarFilename(params.filename)));
       const note = typeof body.content === "string" ? body.content.trim() : "";
       if (decision === "approve") {
-        runResult = await runApprovedCommand(command, meta.worktreePath);
+        runResult = await runApprovedCommand(command, meta.worktreePath, timeoutMs);
         feedbackContent = formatApprovedCommandFeedback(params.filename, command, agentReason, runResult, note);
       } else {
         feedbackContent = formatRejectedCommandFeedback(params.filename, command, agentReason, note);
@@ -3007,6 +3012,7 @@ interface CommandApprovalBody {
   command: string;
   reason?: string;
   sync?: boolean;
+  timeoutMs?: number;
 }
 
 // The agent asks the human to approve running a command outside its allowlist
@@ -3025,7 +3031,8 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
     const file = await writeNumberedFile(dir, "command-approval", buildCommandApprovalMarkdown(body.command, reason), {
       archiveDirs: [join(dir, "resolved")],
     });
-    await Bun.write(join(dir, commandSidecarFilename(file.filename)), JSON.stringify({ command: body.command, ...(reason ? { reason } : {}) }, null, 2));
+    const timeoutMs = typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? body.timeoutMs : undefined;
+    await Bun.write(join(dir, commandSidecarFilename(file.filename)), JSON.stringify({ command: body.command, ...(reason ? { reason } : {}), ...(timeoutMs ? { timeoutMs } : {}) }, null, 2));
     if (!isTerminal(meta.status) && meta.status !== "waiting_human") {
       await transitionStatus(ctx, meta, "waiting_human");
     }
