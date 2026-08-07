@@ -3057,6 +3057,7 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
           exitCode: syncResult.runResult.exitCode,
           stdout: syncResult.runResult.stdout,
           stderr: syncResult.runResult.stderr,
+          timedOut: syncResult.runResult.timedOut,
         } : {}),
       });
     } finally {

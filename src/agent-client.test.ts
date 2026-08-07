@@ -210,7 +210,7 @@ test("requestCommandApproval with custom timeout kills the command after the spe
 
   const result = await syncPromise;
   expect(result.decision).toBe("approve");
-  expect(result.feedbackContent).toContain("timed out after 1s");
+  expect(result.timedOut).toBe(true);
 }, 10_000);
 
 test("fetchFeedback returns and drains the inbox", async () => {
