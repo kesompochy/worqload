@@ -104,3 +104,40 @@ export async function fetchFeedback(
   }
   return (await res.json()) as FetchFeedbackResult;
 }
+
+export interface FeedbackHistoryMessage {
+  filename: string;
+  content: string;
+  status: "unread" | "read";
+}
+
+export interface FeedbackHistoryResult {
+  messages: FeedbackHistoryMessage[];
+}
+
+export async function listFeedbackHistory(
+  endpoint: string,
+  sessionId: string,
+): Promise<FeedbackHistoryResult> {
+  const res = await fetch(`${endpoint}/internal/sessions/${sessionId}/feedback/history`);
+  if (!res.ok) {
+    throw new Error(`${res.status} ${await res.text()}`);
+  }
+  return (await res.json()) as FeedbackHistoryResult;
+}
+
+export interface FetchFeedbackByFilenameResult {
+  message: FeedbackMessage;
+}
+
+export async function fetchFeedbackByFilename(
+  endpoint: string,
+  sessionId: string,
+  filename: string,
+): Promise<FetchFeedbackByFilenameResult> {
+  const res = await fetch(`${endpoint}/internal/sessions/${sessionId}/feedback/by-filename/${encodeURIComponent(filename)}`);
+  if (!res.ok) {
+    throw new Error(`${res.status} ${await res.text()}`);
+  }
+  return (await res.json()) as FetchFeedbackByFilenameResult;
+}
