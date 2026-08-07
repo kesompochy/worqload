@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { startServer } from "./web-server";
-import { submitReport, submitEscalation, requestCommandApproval, fetchFeedback } from "./agent-client";
+import { submitReport, submitEscalation, requestCommandApproval, fetchFeedback, listFeedbackHistory, fetchFeedbackByFilename } from "./agent-client";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -203,6 +203,92 @@ test("fetchFeedback returns and drains the inbox", async () => {
   // second fetch returns empty (already drained)
   const second = await fetchFeedback(endpoint, sessionId);
   expect(second.messages).toEqual([]);
+});
+
+test("listFeedbackHistory returns all feedback without draining the inbox", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+
+  await fetch(`${endpoint}/sessions/${sessionId}/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "first", slug: "first" }),
+  });
+  await fetch(`${endpoint}/sessions/${sessionId}/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "second", slug: "second" }),
+  });
+
+  // Drain the first message so it moves to read/
+  await fetchFeedback(endpoint, sessionId);
+
+  // Post a third while inbox is empty
+  await fetch(`${endpoint}/sessions/${sessionId}/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "third", slug: "third" }),
+  });
+
+  const history = await listFeedbackHistory(endpoint, sessionId);
+  expect(history.messages).toHaveLength(3);
+  expect(history.messages.map(m => m.filename)).toEqual([
+    "001-first.md", "002-second.md", "003-third.md",
+  ]);
+  // read messages stay read, unread stays unread
+  expect(history.messages[0].status).toBe("read");
+  expect(history.messages[1].status).toBe("read");
+  expect(history.messages[2].status).toBe("unread");
+
+  // The unread message is still in the inbox (list didn't drain it)
+  const inbox = await fetchFeedback(endpoint, sessionId);
+  expect(inbox.messages).toHaveLength(1);
+  expect(inbox.messages[0].content).toBe("third");
+});
+
+test("fetchFeedbackByFilename returns a specific message and moves it to read", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+
+  await fetch(`${endpoint}/sessions/${sessionId}/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "target msg", slug: "target" }),
+  });
+  await fetch(`${endpoint}/sessions/${sessionId}/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "other msg", slug: "other" }),
+  });
+
+  const result = await fetchFeedbackByFilename(endpoint, sessionId, "001-target.md");
+  expect(result.message.filename).toBe("001-target.md");
+  expect(result.message.content).toBe("target msg");
+
+  // The fetched message is now read; the other is still in the inbox
+  const inbox = await fetchFeedback(endpoint, sessionId);
+  expect(inbox.messages).toHaveLength(1);
+  expect(inbox.messages[0].filename).toBe("002-other.md");
+});
+
+test("fetchFeedbackByFilename returns a message already in read without error", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+
+  await fetch(`${endpoint}/sessions/${sessionId}/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "already read", slug: "done" }),
+  });
+
+  // Drain to read/
+  await fetchFeedback(endpoint, sessionId);
+
+  // Fetch by filename still works
+  const result = await fetchFeedbackByFilename(endpoint, sessionId, "001-done.md");
+  expect(result.message.content).toBe("already read");
+});
+
+test("fetchFeedbackByFilename throws 404 for nonexistent filename", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+  await expect(fetchFeedbackByFilename(endpoint, sessionId, "999-nope.md")).rejects.toThrow("404");
 });
 
 test("submitReport throws on non-existent session", async () => {
