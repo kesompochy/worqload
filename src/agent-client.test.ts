@@ -187,6 +187,32 @@ test("sync requestCommandApproval returns rejection", async () => {
   expect(result.feedbackContent).toContain("too dangerous");
 });
 
+test("requestCommandApproval with custom timeout kills the command after the specified duration", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+
+  const syncPromise = requestCommandApproval(endpoint, sessionId, "sleep 999", "long job", true, 1);
+
+  let askingFilename: string;
+  while (true) {
+    const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
+    if (asking.asking.length > 0) {
+      askingFilename = asking.asking[0].filename;
+      break;
+    }
+    await Bun.sleep(5);
+  }
+
+  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${askingFilename}/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ decision: "approve" }),
+  });
+
+  const result = await syncPromise;
+  expect(result.decision).toBe("approve");
+  expect(result.feedbackContent).toContain("timed out after 1s");
+}, 10_000);
+
 test("fetchFeedback returns and drains the inbox", async () => {
   const { endpoint, sessionId } = await bootAndCreateSession();
 
