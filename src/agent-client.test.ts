@@ -130,6 +130,63 @@ test("requestCommandApproval files a command-approval escalation", async () => {
   expect(asking.asking[0].command).toBe("npm publish");
 });
 
+test("sync requestCommandApproval blocks until resolved and returns the result", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+
+  const syncPromise = requestCommandApproval(endpoint, sessionId, "echo sync-test", "verify sync", true);
+
+  let askingFilename: string;
+  while (true) {
+    const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
+    if (asking.asking.length > 0) {
+      askingFilename = asking.asking[0].filename;
+      break;
+    }
+    await Bun.sleep(5);
+  }
+
+  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${askingFilename}/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ decision: "approve" }),
+  });
+
+  const result = await syncPromise;
+  expect(result.decision).toBe("approve");
+  expect(result.feedbackContent).toContain("echo sync-test");
+  expect(result.feedbackContent).toContain("sync-test");
+
+  const feedback = await fetchFeedback(endpoint, sessionId);
+  expect(feedback.messages).toEqual([]);
+});
+
+test("sync requestCommandApproval returns rejection", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+
+  const syncPromise = requestCommandApproval(endpoint, sessionId, "rm -rf /", "cleanup", true);
+
+  let askingFilename: string;
+  while (true) {
+    const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
+    if (asking.asking.length > 0) {
+      askingFilename = asking.asking[0].filename;
+      break;
+    }
+    await Bun.sleep(5);
+  }
+
+  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${askingFilename}/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ decision: "reject", content: "too dangerous" }),
+  });
+
+  const result = await syncPromise;
+  expect(result.decision).toBe("reject");
+  expect(result.feedbackContent).toContain("rejected");
+  expect(result.feedbackContent).toContain("too dangerous");
+});
+
 test("fetchFeedback returns and drains the inbox", async () => {
   const { endpoint, sessionId } = await bootAndCreateSession();
 
