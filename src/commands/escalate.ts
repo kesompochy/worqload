@@ -48,8 +48,8 @@ async function escalateCommand(args: string[]): Promise<void> {
   const sessionId = requireEnv("WORQLOAD_SESSION_ID");
   const endpoint = resolveAgentEndpoint();
   try {
-    const result = await requestCommandApproval(endpoint, sessionId, command, reason);
-    console.log(result.filename);
+    const result = await requestCommandApproval(endpoint, sessionId, command, reason, true);
+    console.log(result.feedbackContent ?? result.filename);
   } catch (err) {
     console.error(`escalate command failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);

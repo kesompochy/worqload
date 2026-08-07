@@ -76,15 +76,21 @@ export async function submitEscalation(
   );
 }
 
+export interface CommandApprovalResult extends SubmitResult {
+  decision?: "approve" | "reject";
+  feedbackContent?: string;
+}
+
 export async function requestCommandApproval(
   endpoint: string,
   sessionId: string,
   command: string,
   reason: string,
-): Promise<SubmitResult> {
-  return postJson<SubmitResult>(
+  sync = false,
+): Promise<CommandApprovalResult> {
+  return postJson<CommandApprovalResult>(
     `${endpoint}/internal/sessions/${sessionId}/command-approvals`,
-    { command, ...(reason ? { reason } : {}) },
+    { command, ...(reason ? { reason } : {}), ...(sync ? { sync: true } : {}) },
   );
 }
 
