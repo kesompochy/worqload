@@ -103,7 +103,7 @@ export function expandSkillReferences(content: string, skills: SkillButton[]): s
     replacements.push({
       start: matchStart,
       end: matchEnd,
-      replacement: `<skill name="${name}">\n${body.trim()}\n</skill>`,
+      replacement: `[The following skill instructions were automatically loaded by worqload from /${name}.]\n<skill name="${name}">\n${body.trim()}\n</skill>`,
     });
   }
   for (let i = replacements.length - 1; i >= 0; i--) {
