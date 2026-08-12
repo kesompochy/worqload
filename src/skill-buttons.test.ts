@@ -124,7 +124,7 @@ test("expandSkillReferences expands /skill-name at the start of content", () => 
   writeFileSync(skillPath, "---\nname: review\n---\nReview the code.\n");
   const skills = [{ name: "review", sourcePath: skillPath }];
   const result = expandSkillReferences("/review", skills);
-  expect(result).toBe('<skill name="review">\nReview the code.\n</skill>');
+  expect(result).toBe('[The following skill instructions were automatically loaded by worqload from /review.]\n<skill name="review">\nReview the code.\n</skill>');
 });
 
 test("expandSkillReferences expands /skill-name in the middle of content", () => {
