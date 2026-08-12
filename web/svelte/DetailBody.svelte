@@ -35,6 +35,16 @@
     onResolve(article.getAttribute("data-asking"), article, article.querySelector(".ask-resolve"));
   }
 
+  const skillNames = $derived(
+    new Set(appState.actions.filter(a => a.group === "skill").map(a => a.label)),
+  );
+  function highlightSkillRefs(html) {
+    if (skillNames.size === 0) return html;
+    const escaped = [...skillNames].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const re = new RegExp(`(^|(?<=\\s))/(${escaped.join("|")})(?=\\s|$)`, "g");
+    return html.replace(re, (_, pre, name) => `${pre}<span class="skill-ref">/${name}</span>`);
+  }
+
   // Reports are stored oldest-first; the pane shows newest-first.
   const reportsNewestFirst = $derived([...appState.reports].reverse());
 
@@ -238,7 +248,7 @@
               {#if f.anchor?.quote}
                 <blockquote class="anchor-quote">{f.anchor.quote}</blockquote>
               {/if}
-              <div class="md">{@html renderMarkdown(f.content)}</div>
+              <div class="md">{@html highlightSkillRefs(renderMarkdown(f.content))}</div>
               {#if f.attachments && f.attachments.length > 0}
                 <div class="attachment-strip">
                   {#each f.attachments as name (name)}
