@@ -76,6 +76,43 @@ function expandTilde(path: string): string {
   return path;
 }
 
+export function readSkillContent(sourcePath: string): string | null {
+  try {
+    const raw = readFileSync(sourcePath, "utf8");
+    const fmEnd = raw.match(/^---\n[\s\S]*?\n---\n?/);
+    return fmEnd ? raw.slice(fmEnd[0].length) : raw;
+  } catch {
+    return null;
+  }
+}
+
+export function expandSkillReferences(content: string, skills: SkillButton[]): string {
+  if (skills.length === 0) return content;
+  const nameSet = new Set(skills.map(s => s.name));
+  const pattern = /(^|(?<=\s))\/([\w-]+)/g;
+  let result = content;
+  const replacements: { start: number; end: number; replacement: string }[] = [];
+  for (const m of content.matchAll(pattern)) {
+    const name = m[2];
+    if (!nameSet.has(name)) continue;
+    const skill = skills.find(s => s.name === name)!;
+    const body = readSkillContent(skill.sourcePath);
+    if (!body) continue;
+    const matchStart = m.index! + m[1].length;
+    const matchEnd = m.index! + m[0].length;
+    replacements.push({
+      start: matchStart,
+      end: matchEnd,
+      replacement: `<skill name="${name}">\n${body.trim()}\n</skill>`,
+    });
+  }
+  for (let i = replacements.length - 1; i >= 0; i--) {
+    const r = replacements[i];
+    result = result.slice(0, r.start) + r.replacement + result.slice(r.end);
+  }
+  return result;
+}
+
 export async function loadSkillButtons(configPath: string): Promise<SkillButton[]> {
   const file = Bun.file(configPath);
   if (!(await file.exists())) return [];
