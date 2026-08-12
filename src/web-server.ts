@@ -38,7 +38,7 @@ import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import type { IpadicFeatures, Tokenizer } from "kuromoji";
 import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
-import { loadSkillButtons, type SkillButton } from "./skill-buttons";
+import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
@@ -3076,8 +3076,11 @@ function formatAttachmentsSection(absolutePaths: string[]): string {
   return `## Attachments\n\n${lead}\n\n${lines}`;
 }
 
-function formatFeedbackMessageForAgent(m: { content: string; filename: string; meta?: { anchor?: { path: string; lineStart: number; lineEnd: number; quote?: string } }; attachments?: string[] }, attachmentsBaseDir: string): { filename: string; content: string } {
+function formatFeedbackMessageForAgent(m: { content: string; filename: string; meta?: { anchor?: { path: string; lineStart: number; lineEnd: number; quote?: string } }; attachments?: string[] }, attachmentsBaseDir: string, skills?: SkillButton[]): { filename: string; content: string } {
   let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
+  if (skills && skills.length > 0) {
+    content = expandSkillReferences(content, skills);
+  }
   if (m.attachments && m.attachments.length > 0) {
     const dir = join(attachmentsBaseDir, attachmentsDirNameFor(m.filename));
     const paths = m.attachments.map(name => join(dir, name));
@@ -3101,8 +3104,9 @@ async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Re
     if (messages.length > 0) {
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_fetched", payload: { count: messages.length } });
     }
+    const skills = await currentSkillButtons(ctx);
     return json({
-      messages: messages.map(m => formatFeedbackMessageForAgent(m, readDir)),
+      messages: messages.map(m => formatFeedbackMessageForAgent(m, readDir, skills)),
     });
   });
 }
@@ -3128,17 +3132,18 @@ async function getInternalFeedbackByFilename(_req: Request, ctx: ServerContext, 
     const inboxDir = feedbackInboxDirFor(ctx, meta.id);
     const readDir = feedbackReadDirFor(ctx, meta.id);
 
+    const skills = await currentSkillButtons(ctx);
     const inboxFiles = await listAllFiles(inboxDir);
     const inInbox = inboxFiles.find(f => f.filename === filename);
     if (inInbox) {
       await moveNumberedFile(inboxDir, readDir, filename);
-      return json({ message: formatFeedbackMessageForAgent(inInbox, readDir) });
+      return json({ message: formatFeedbackMessageForAgent(inInbox, readDir, skills) });
     }
 
     const readFiles = await listAllFiles(readDir);
     const inRead = readFiles.find(f => f.filename === filename);
     if (inRead) {
-      return json({ message: formatFeedbackMessageForAgent(inRead, readDir) });
+      return json({ message: formatFeedbackMessageForAgent(inRead, readDir, skills) });
     }
 
     return json({ error: `feedback not found: ${filename}` }, 404);
