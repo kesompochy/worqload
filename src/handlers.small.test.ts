@@ -61,7 +61,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onResume, onStopAndResume, onToggleReviseMode, onResolve, onResolveCommand } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, toggleEventsTab, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onResume, onStopAndResume, onToggleReviseMode, onResolve, onResolveCommand } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 
@@ -87,6 +87,7 @@ afterEach(() => {
     actionResults: new Map(), renamingSessionId: null, pendingScrollTo: null,
     feedbackPinAt: null, pendingAttachments: [], askingAttachments: new Map(),
     feedbackQueue: [],
+    eventsTabHidden: true,
   });
   createObjectURLCount = 0;
   revokedObjectURLs.length = 0;
@@ -1890,5 +1891,35 @@ test("clicking data-feedback-delete routes to onFeedbackDelete", async () => {
   } finally {
     (globalThis as unknown as { confirm: unknown }).confirm = savedConfirm;
   }
+});
+
+test("toggleEventsTab flips state.eventsTabHidden and persists to localStorage", () => {
+  state.eventsTabHidden = true;
+  const writes: Array<[string, string]> = [];
+  const savedLocalStorage = (globalThis as unknown as { localStorage?: unknown }).localStorage;
+  (globalThis as unknown as { localStorage: unknown }).localStorage = {
+    setItem: (k: string, v: string) => { writes.push([k, v]); },
+  };
+  try {
+    toggleEventsTab();
+    expect(state.eventsTabHidden).toBe(false);
+    expect(writes).toEqual([["worqload:events-tab-hidden", "0"]]);
+
+    toggleEventsTab();
+    expect(state.eventsTabHidden).toBe(true);
+    expect(writes[1]).toEqual(["worqload:events-tab-hidden", "1"]);
+  } finally {
+    if (savedLocalStorage === undefined) delete (globalThis as unknown as { localStorage?: unknown }).localStorage;
+    else (globalThis as unknown as { localStorage: unknown }).localStorage = savedLocalStorage;
+  }
+});
+
+test("switchTab to events when eventsTabHidden does not throw", async () => {
+  state.eventsTabHidden = true;
+  state.selected = "s1";
+  state.detail = { meta: { id: "s1", status: "running", prompt: "p", baseBranch: "main", createdAt: Date.now(), worktreePath: "/tmp/w" }, events: [] };
+  state.activeTab = "reports";
+  await switchTab("events");
+  expect(state.activeTab).toBe("events");
 });
 
