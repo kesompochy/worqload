@@ -28,11 +28,6 @@
   ];
   const tabs = $derived(appState.eventsTabHidden && appState.activeTab !== "events" ? allTabs.filter(t => t.id !== "events") : allTabs);
 
-  function showEvents() {
-    if (appState.eventsTabHidden) toggleEventsTab();
-    switchTab("events");
-  }
-
   // The selected session's outstanding work asking for the human's attention:
   // reports not yet marked read, plus escalations that pause the agent's turn
   // until answered. Surfaced as a single badge on the Reports tab so the human
@@ -98,17 +93,10 @@
   </div>
   <ActionBar />
   <div class="detail-meta">
-    {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}{#if m.agentName === "claude" || (!m.agentName)}model: <select class="model-switch-select" value={m.model || ""} onchange={(e) => onSwitchModel(m.id, e.target.value)}><option value="">(default)</option><optgroup label="Alias"><option value="sonnet">sonnet</option><option value="opus">opus</option><option value="haiku">haiku</option><option value="fable">fable</option></optgroup><optgroup label="Sonnet"><option value="claude-sonnet-5">claude-sonnet-5</option><option value="claude-sonnet-4-6">claude-sonnet-4-6</option><option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m]</option><option value="claude-sonnet-4-5">claude-sonnet-4-5</option></optgroup><optgroup label="Opus"><option value="claude-opus-4-8">claude-opus-4-8</option><option value="claude-opus-4-7">claude-opus-4-7</option><option value="claude-opus-4-7[1m]">claude-opus-4-7[1m]</option><option value="claude-opus-4-6">claude-opus-4-6</option><option value="claude-opus-4-6[1m]">claude-opus-4-6[1m]</option><option value="claude-opus-4-5">claude-opus-4-5</option></optgroup><optgroup label="Haiku"><option value="claude-haiku-4-5">claude-haiku-4-5</option></optgroup><optgroup label="Fable / Mythos"><option value="claude-fable-5">claude-fable-5</option><option value="claude-mythos-5">claude-mythos-5</option></optgroup></select> · {:else if m.model}model: <code>{m.model}</code> · {/if}base: <code>{m.baseBranch}</code>
+    {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}{#if m.agentName === "claude" || (!m.agentName)}model: <select class="model-switch-select" value={m.model || ""} onchange={(e) => onSwitchModel(m.id, e.target.value)}><option value="">(default)</option><optgroup label="Alias"><option value="sonnet">sonnet</option><option value="opus">opus</option><option value="haiku">haiku</option><option value="fable">fable</option></optgroup><optgroup label="Sonnet"><option value="claude-sonnet-5">claude-sonnet-5</option><option value="claude-sonnet-4-6">claude-sonnet-4-6</option><option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m]</option><option value="claude-sonnet-4-5">claude-sonnet-4-5</option></optgroup><optgroup label="Opus"><option value="claude-opus-4-8">claude-opus-4-8</option><option value="claude-opus-4-7">claude-opus-4-7</option><option value="claude-opus-4-7[1m]">claude-opus-4-7[1m]</option><option value="claude-opus-4-6">claude-opus-4-6</option><option value="claude-opus-4-6[1m]">claude-opus-4-6[1m]</option><option value="claude-opus-4-5">claude-opus-4-5</option></optgroup><optgroup label="Haiku"><option value="claude-haiku-4-5">claude-haiku-4-5</option></optgroup><optgroup label="Fable / Mythos"><option value="claude-fable-5">claude-fable-5</option><option value="claude-mythos-5">claude-mythos-5</option></optgroup></select>{:else if m.model}model: <code>{m.model}</code>{/if}
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}
-    · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
     · worktree: <code>{m.worktreePath}</code><button type="button" class="copy-path-btn" title="ディレクトリパスをコピー" onclick={() => navigator.clipboard.writeText(m.worktreePath).then(() => toast("path copied")).catch(() => toast("copy failed"))}>⧉</button>
-    {#if lastEvent}
-      · <button type="button" class="header-event-age" class:stale={eventAgeIsStale(lastEvent.timestamp, clock.now)} title="Eventsタブを開く" onclick={showEvents}>last event {formatRelative(lastEvent.timestamp, clock.now)}</button>
-    {/if}
-    {#if eventCountLevel(events.length)}
-      · <span class="header-event-count header-event-count-{eventCountLevel(events.length)}" title="agent-work events: {events.length}">{events.length} events</span>
-    {/if}
   </div>
   <div class="tabs">
     {#each tabs as tab}
