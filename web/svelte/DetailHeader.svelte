@@ -18,7 +18,7 @@
   import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel, toggleEventsTab } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
-  const allTabs = [
+  const tabs = [
     { id: "reports", label: "Reports" },
     { id: "feedback", label: "Feedbacks" },
     { id: "diff", label: "Diff" },
@@ -26,7 +26,6 @@
     { id: "structure", label: "Structure" },
     { id: "events", label: "Events" },
   ];
-  const tabs = $derived(appState.eventsTabHidden ? allTabs.filter(t => t.id !== "events") : allTabs);
 
   // The selected session's outstanding work asking for the human's attention:
   // reports not yet marked read, plus escalations that pause the agent's turn
@@ -98,10 +97,17 @@
     · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
     · worktree: <code>{m.worktreePath}</code><button type="button" class="copy-path-btn" title="ディレクトリパスをコピー" onclick={() => navigator.clipboard.writeText(m.worktreePath).then(() => toast("path copied")).catch(() => toast("copy failed"))}>⧉</button>
+    {#if lastEvent}
+      · <span class="header-event-age" class:stale={eventAgeIsStale(lastEvent.timestamp, clock.now)}>last event {formatRelative(lastEvent.timestamp, clock.now)}</span>
+    {/if}
   </div>
   <div class="tabs">
     {#each tabs as tab}
-      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span>{/if}</button>
+      {#if tab.id === "events" && appState.eventsTabHidden}
+        <button class="tab-btn tab-ghost" data-tab={tab.id} onclick={() => { toggleEventsTab(); switchTab(tab.id); }} title="Eventsタブを表示">{tab.label}</button>
+      {:else}
+        <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span><span class="tab-dismiss" role="button" tabindex="0" title="Eventsタブを非表示" onclick={(e) => { e.stopPropagation(); toggleEventsTab(); if (appState.activeTab === "events") switchTab("reports"); }} onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); toggleEventsTab(); if (appState.activeTab === "events") switchTab("reports"); } }}>×</span>{/if}</button>
+      {/if}
     {/each}
     {#if appState.activeTab === "diff"}
       <span class="diff-base-toggle">
@@ -109,6 +115,5 @@
         <button id="btnCollapseAll" type="button" class="diff-tool-btn" onclick={onCollapseAllDiffFiles}>Collapse all</button>
       </span>
     {/if}
-    <button type="button" class="tab-toggle-events" title={appState.eventsTabHidden ? "Eventsタブを表示" : "Eventsタブを非表示"} onclick={toggleEventsTab}>{appState.eventsTabHidden ? "···" : "···"}</button>
   </div>
 {/if}
