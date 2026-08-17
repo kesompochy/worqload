@@ -1503,8 +1503,10 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
     // The sidebar's liveness signal: when the agent last did something — its run
     // or a step within it, not a report/feedback/escalation. Undefined until the
     // session has produced one.
-    const lastAgentEventAt = events.filter(isAgentWorkEvent).at(-1)?.timestamp;
-    return { ...meta, unreadReportCount, unresolvedEscalationCount, lastAgentEventAt };
+    const agentEvents = events.filter(isAgentWorkEvent);
+    const lastAgentEventAt = agentEvents.at(-1)?.timestamp;
+    const agentEventCount = agentEvents.length;
+    return { ...meta, unreadReportCount, unresolvedEscalationCount, lastAgentEventAt, agentEventCount };
   }));
   return json({ sessions: decorated });
 }

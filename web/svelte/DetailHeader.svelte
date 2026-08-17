@@ -12,7 +12,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { formatRelative, eventAgeIsStale, toast } from "../dom.js";
+  import { formatRelative, eventAgeIsStale, eventCountLevel, toast } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
   import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel, toggleEventsTab } from "../handlers.js";
@@ -106,10 +106,13 @@
     {#if lastEvent}
       · <button type="button" class="header-event-age" class:stale={eventAgeIsStale(lastEvent.timestamp, clock.now)} title="Eventsタブを開く" onclick={showEvents}>last event {formatRelative(lastEvent.timestamp, clock.now)}</button>
     {/if}
+    {#if eventCountLevel(events.length)}
+      · <span class="header-event-count header-event-count-{eventCountLevel(events.length)}" title="agent-work events: {events.length}">{events.length} events</span>
+    {/if}
   </div>
   <div class="tabs">
     {#each tabs as tab}
-      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span><span class="tab-dismiss" role="button" tabindex="0" title="Eventsタブを非表示" onclick={(e) => { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); }} onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); } }}>×</span>{/if}</button>
+      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count" class:tab-count-warning={eventCountLevel(events.length) === "warning"} class:tab-count-danger={eventCountLevel(events.length) === "danger"}>({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span><span class="tab-dismiss" role="button" tabindex="0" title="Eventsタブを非表示" onclick={(e) => { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); }} onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); } }}>×</span>{/if}</button>
     {/each}
     {#if appState.activeTab === "diff"}
       <span class="diff-base-toggle">

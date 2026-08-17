@@ -556,7 +556,10 @@ export function openWs(id) {
     // between polls.
     if (isAgentWorkEvent(ev)) {
       const card = state.sessions.find(s => s.id === id);
-      if (card) card.lastAgentEventAt = ev.timestamp;
+      if (card) {
+        card.lastAgentEventAt = ev.timestamp;
+        card.agentEventCount = (card.agentEventCount ?? 0) + 1;
+      }
     }
     // For "interesting" events refresh the relevant slice.
     if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread" || ev.kind === "report_deleted"
