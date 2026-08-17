@@ -232,8 +232,12 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .tab-event-age { margin-left: .35rem; }
 .tab-event-age.stale { color: var(--waiting); font-weight: 600; }
 .diff-base-toggle { margin-left: auto; padding: .35rem .5rem; font-size: 12px; color: var(--text-dim); }
-.tab-toggle-events { margin-left: auto; background: transparent; border: none; color: var(--text-dim); cursor: pointer; padding: .45rem .5rem; font-size: 14px; letter-spacing: 1px; }
-.tab-toggle-events:hover { color: var(--text); }
+.tab-btn.tab-ghost { opacity: .4; border: 1px dashed var(--border); border-bottom: none; }
+.tab-btn.tab-ghost:hover { opacity: .7; }
+.tab-dismiss { background: transparent; border: none; color: var(--text-dim); cursor: pointer; padding: 0 .2rem; margin-left: .3rem; font-size: 12px; line-height: 1; opacity: 0; transition: opacity .15s; }
+.tab-btn:hover .tab-dismiss { opacity: 1; }
+.header-event-age { color: var(--text-dim); }
+.header-event-age.stale { color: var(--waiting); font-weight: 600; }
 .diff-empty { color: var(--text-dim); font-style: italic; padding: 1rem 0; }
 .diff-file { margin-bottom: 1.2rem; border: 1px solid var(--border); border-radius: 4px; }
 .diff-file-header { position: sticky; top: 0; z-index: 2; background: var(--panel-2); padding: .4rem .7rem; border-radius: 4px 4px 0 0; font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); display: flex; align-items: center; gap: .5rem; cursor: pointer; user-select: none; }
