@@ -5,7 +5,7 @@ import "./style.css";
 import "./app.js";
 import { mount } from "svelte";
 import { state } from "./state.svelte.js";
-import { toggleSidebar, SIDEBAR_HIDDEN_KEY } from "./handlers.js";
+import { toggleSidebar, SIDEBAR_HIDDEN_KEY, EVENTS_TAB_HIDDEN_KEY } from "./handlers.js";
 import NewSessionModal from "./svelte/NewSessionModal.svelte";
 import FileSearchModal from "./svelte/FileSearchModal.svelte";
 import CodeNavPopover from "./svelte/CodeNavPopover.svelte";
@@ -30,6 +30,9 @@ function applySidebarClass() {
 }
 state.sidebarHidden = localStorage.getItem(SIDEBAR_HIDDEN_KEY) === "1";
 applySidebarClass();
+
+const eventsHiddenRaw = localStorage.getItem(EVENTS_TAB_HIDDEN_KEY);
+state.eventsTabHidden = eventsHiddenRaw === null ? true : eventsHiddenRaw === "1";
 function onToggleSidebar() {
   toggleSidebar();
   applySidebarClass();
