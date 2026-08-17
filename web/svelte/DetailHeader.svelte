@@ -18,7 +18,7 @@
   import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel, toggleEventsTab } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
-  const tabs = [
+  const allTabs = [
     { id: "reports", label: "Reports" },
     { id: "feedback", label: "Feedbacks" },
     { id: "diff", label: "Diff" },
@@ -26,6 +26,12 @@
     { id: "structure", label: "Structure" },
     { id: "events", label: "Events" },
   ];
+  const tabs = $derived(appState.eventsTabHidden && appState.activeTab !== "events" ? allTabs.filter(t => t.id !== "events") : allTabs);
+
+  function showEvents() {
+    if (appState.eventsTabHidden) toggleEventsTab();
+    switchTab("events");
+  }
 
   // The selected session's outstanding work asking for the human's attention:
   // reports not yet marked read, plus escalations that pause the agent's turn
@@ -98,16 +104,12 @@
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
     · worktree: <code>{m.worktreePath}</code><button type="button" class="copy-path-btn" title="ディレクトリパスをコピー" onclick={() => navigator.clipboard.writeText(m.worktreePath).then(() => toast("path copied")).catch(() => toast("copy failed"))}>⧉</button>
     {#if lastEvent}
-      · <span class="header-event-age" class:stale={eventAgeIsStale(lastEvent.timestamp, clock.now)}>last event {formatRelative(lastEvent.timestamp, clock.now)}</span>
+      · <button type="button" class="header-event-age" class:stale={eventAgeIsStale(lastEvent.timestamp, clock.now)} title="Eventsタブを開く" onclick={showEvents}>last event {formatRelative(lastEvent.timestamp, clock.now)}</button>
     {/if}
   </div>
   <div class="tabs">
     {#each tabs as tab}
-      {#if tab.id === "events" && appState.eventsTabHidden}
-        <button class="tab-btn tab-ghost" data-tab={tab.id} onclick={() => { toggleEventsTab(); switchTab(tab.id); }} title="Eventsタブを表示">{tab.label}</button>
-      {:else}
-        <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span><span class="tab-dismiss" role="button" tabindex="0" title="Eventsタブを非表示" onclick={(e) => { e.stopPropagation(); toggleEventsTab(); if (appState.activeTab === "events") switchTab("reports"); }} onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); toggleEventsTab(); if (appState.activeTab === "events") switchTab("reports"); } }}>×</span>{/if}</button>
-      {/if}
+      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span><span class="tab-dismiss" role="button" tabindex="0" title="Eventsタブを非表示" onclick={(e) => { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); }} onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); } }}>×</span>{/if}</button>
     {/each}
     {#if appState.activeTab === "diff"}
       <span class="diff-base-toggle">
