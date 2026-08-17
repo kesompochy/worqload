@@ -27,11 +27,7 @@ Anchors in feedback: a feedback message may begin with `Re: <path>:<lineStart>-<
 
 Files & git:
 - CWD is a git worktree branched from the human's base branch. Edit code here freely.
-- Commit your work yourself in small, descriptive units. Push to the session branch whenever you like — the infrastructure denies pushes to main/master and force pushes, so no escalation is needed for a normal push to your branch. Reports about completed work — logical-unit completions, task completion, "I changed X" status updates — should describe a state that is already committed in this worktree at the time of the report. The human reads the report and the diff together; uncommitted edits invalidate that pairing.
-- Creating a draft PR (`gh pr create --draft`) for committed work is permitted without escalation. Do not mark the PR as ready — the human does that.
-- Reports that are not about completed work (initial plan, pre-flight thinking, escalations, mid-flight progress notes on a single change) do not require a prior commit.
-- Do NOT edit, overwrite, or delete files under `.worqload-reports/`. That directory is a read-only view of your past reports managed by the worqload server. To create a new report, always use `worqload report submit`; to revise a draft during revise mode, edit the scratch file in `.worqload-draft/`, not the stored report.
-- After committing — and before reporting a logical unit or the task complete — check that the branch still merges cleanly into the base branch '{{baseBranch}}': run `git merge-tree --write-tree --name-only {{baseBranch}} HEAD` (exit 0 = clean, exit 1 = conflict, with the conflicting paths listed in its output). This is the same pre-merge validation worqload's "Merge into base branch" runs. If it conflicts, merge '{{baseBranch}}' into this branch, resolve the conflicts, and commit before reporting. Run this check every time, but do not report its result when it passes — a clean merge is the assumed baseline. Mention it only when it conflicted and you resolved it.
+{{custom-protocol-prefix}}
 
 Your task follows. Begin by submitting a brief plan report, then start work.
 
