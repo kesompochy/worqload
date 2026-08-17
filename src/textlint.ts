@@ -130,6 +130,26 @@ export function getTextlintTokenizer(): Promise<Tokenizer<IpadicFeatures>> {
   return sharedTokenizer;
 }
 
+export async function loadProtocolPrefix(configPath: string): Promise<string | null> {
+  const file = Bun.file(configPath);
+  if (!(await file.exists())) return null;
+  return parseProtocolPrefix(await file.text());
+}
+
+export function parseProtocolPrefix(yamlText: string): string | null {
+  const parsed = Bun.YAML.parse(yamlText) as unknown;
+  if (parsed == null) return null;
+  if (typeof parsed !== "object") {
+    throw new Error("config: top level must be a YAML mapping");
+  }
+  const raw = (parsed as Record<string, unknown>).protocolPrefix;
+  if (raw == null) return null;
+  if (typeof raw !== "string" || raw === "") {
+    throw new Error("config: `protocolPrefix` must be a non-empty string");
+  }
+  return raw;
+}
+
 // Returns one violation per rule that the report trips. A rule fires when its
 // string occurs as an unescaped literal substring, or — when a tokenizer is
 // supplied — when its word appears in the report in an inflected form. Without

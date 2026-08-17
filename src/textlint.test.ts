@@ -6,8 +6,10 @@ import { makeTmpDir } from "./test-helpers";
 import {
   getTextlintTokenizer,
   lintReport,
+  loadProtocolPrefix,
   loadReviseFeedbackGuidance,
   loadTextlintRules,
+  parseProtocolPrefix,
   parseReviseFeedbackGuidance,
   parseTextlintRules,
 } from "./textlint";
@@ -36,6 +38,27 @@ test("loadReviseFeedbackGuidance reads the guidance from the config file on disk
   mkdirSync(join(dir, ".config", "worqload"), { recursive: true });
   writeFileSync(configPath, 'reviseFeedback: "結論から書け"\n');
   expect(await loadReviseFeedbackGuidance(configPath)).toBe("結論から書け");
+});
+
+test("loadProtocolPrefix returns null when the config file is absent", async () => {
+  const dir = makeTmpDir("protocol-prefix-config");
+  expect(await loadProtocolPrefix(join(dir, "config.yaml"))).toBeNull();
+});
+
+test("loadProtocolPrefix reads the protocol prefix from the config file on disk", async () => {
+  const dir = makeTmpDir("protocol-prefix-config");
+  const configPath = join(dir, ".config", "worqload", "config.yaml");
+  mkdirSync(join(dir, ".config", "worqload"), { recursive: true });
+  writeFileSync(configPath, 'protocolPrefix: "Custom git instructions here."\n');
+  expect(await loadProtocolPrefix(configPath)).toBe("Custom git instructions here.");
+});
+
+test("parseProtocolPrefix returns null when key is absent", () => {
+  expect(parseProtocolPrefix("textlint: []\n")).toBeNull();
+});
+
+test("parseProtocolPrefix throws on empty string value", () => {
+  expect(() => parseProtocolPrefix('protocolPrefix: ""\n')).toThrow();
 });
 
 const RULES = [
