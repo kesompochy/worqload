@@ -239,12 +239,6 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .diff-base-toggle { margin-left: auto; padding: .35rem .5rem; font-size: 12px; color: var(--text-dim); }
 .tab-dismiss { background: transparent; border: none; color: var(--text-dim); cursor: pointer; padding: 0 .2rem; margin-left: .3rem; font-size: 12px; line-height: 1; opacity: 0; transition: opacity .15s; }
 .tab-btn:hover .tab-dismiss { opacity: 1; }
-.header-event-age { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font: inherit; padding: 0; text-decoration: underline dotted; text-underline-offset: 2px; }
-.header-event-age:hover { color: var(--text); }
-.header-event-age.stale { color: var(--waiting); font-weight: 600; }
-.header-event-count { font-weight: 600; }
-.header-event-count-warning { color: var(--waiting); }
-.header-event-count-danger { color: var(--crashed); }
 .diff-empty { color: var(--text-dim); font-style: italic; padding: 1rem 0; }
 .diff-file { margin-bottom: 1.2rem; border: 1px solid var(--border); border-radius: 4px; }
 .diff-file-header { position: sticky; top: 0; z-index: 2; background: var(--panel-2); padding: .4rem .7rem; border-radius: 4px 4px 0 0; font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); display: flex; align-items: center; gap: .5rem; cursor: pointer; user-select: none; }
