@@ -6,7 +6,7 @@
   // (`state` is imported as `appState` because a local binding named `state`
   // would make Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { formatRelative, eventAgeIsStale } from "../dom.js";
+  import { formatRelative, eventAgeIsStale, eventCountLevel } from "../dom.js";
   import { clock } from "../clock.svelte.js";
   import {
     selectSession,
@@ -241,7 +241,7 @@
             {/if}
           </div>
         {/if}
-        <div class="meta">{#if session.agentName}{session.agentName}{#if session.model} <span class="model-name">({session.model})</span>{/if} · {/if}{session.baseBranch} · {formatRelative(session.createdAt)}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}</div>
+        <div class="meta">{#if session.agentName}{session.agentName}{#if session.model} <span class="model-name">({session.model})</span>{/if} · {/if}{session.baseBranch} · {formatRelative(session.createdAt)}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}{#if eventCountLevel(session.agentEventCount)}<span class="session-event-count session-event-count-{eventCountLevel(session.agentEventCount)}">{session.agentEventCount}</span>{/if}</div>
         <div class="session-card-actions">
           {#if archivedView}
             <button class="btn-card-unarchive" onclick={(e) => { e.stopPropagation(); onUnarchive(session.id); }}>Unarchive</button>
