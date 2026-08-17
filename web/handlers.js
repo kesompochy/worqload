@@ -1025,6 +1025,15 @@ export function toggleSidebar() {
   }
 }
 
+export const EVENTS_TAB_HIDDEN_KEY = "worqload:events-tab-hidden";
+
+export function toggleEventsTab() {
+  state.eventsTabHidden = !state.eventsTabHidden;
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(EVENTS_TAB_HIDDEN_KEY, state.eventsTabHidden ? "1" : "0");
+  }
+}
+
 // Multi-select checkbox toggle in the archived feed. The selection drives the
 // bulk-delete bar in SessionList.svelte. Reassigning the Set wholesale rather
 // than mutating it lets Svelte 5's $state notice the change (it doesn't proxy
