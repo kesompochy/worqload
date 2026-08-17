@@ -57,8 +57,8 @@ export function eventAgeIsStale(iso, now = Date.now()) {
   return now - new Date(iso).getTime() >= STALE_EVENT_AGE_MS;
 }
 
-export const EVENT_COUNT_WARNING = 200;
-export const EVENT_COUNT_DANGER = 400;
+export const EVENT_COUNT_WARNING = 1000;
+export const EVENT_COUNT_DANGER = 2000;
 
 export function eventCountLevel(count) {
   if (count >= EVENT_COUNT_DANGER) return "danger";
