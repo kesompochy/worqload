@@ -26,7 +26,7 @@
     { id: "structure", label: "Structure" },
     { id: "events", label: "Events" },
   ];
-  const tabs = $derived(appState.eventsTabHidden && appState.activeTab !== "events" ? allTabs.filter(t => t.id !== "events") : allTabs);
+  const tabs = allTabs;
 
   // The selected session's outstanding work asking for the human's attention:
   // reports not yet marked read, plus escalations that pause the agent's turn
@@ -100,7 +100,11 @@
   </div>
   <div class="tabs">
     {#each tabs as tab}
-      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count" class:tab-count-warning={eventCountLevel(events.length) === "warning"} class:tab-count-danger={eventCountLevel(events.length) === "danger"}>({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span><span class="tab-dismiss" role="button" tabindex="0" title="Eventsタブを非表示" onclick={(e) => { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); }} onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); } }}>×</span>{/if}</button>
+      {#if tab.id === "events" && appState.eventsTabHidden}
+        <button class="tab-btn tab-ghost" class:tab-ghost-warning={eventCountLevel(events.length) === "warning"} class:tab-ghost-danger={eventCountLevel(events.length) === "danger"} data-tab={tab.id} onclick={() => { toggleEventsTab(); switchTab(tab.id); }} title="Eventsタブを表示">{tab.label}</button>
+      {:else}
+        <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count" class:tab-count-warning={eventCountLevel(events.length) === "warning"} class:tab-count-danger={eventCountLevel(events.length) === "danger"}>({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span><span class="tab-dismiss" role="button" tabindex="0" title="Eventsタブを非表示" onclick={(e) => { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); }} onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); } }}>×</span>{/if}</button>
+      {/if}
     {/each}
     {#if appState.activeTab === "diff"}
       <span class="diff-base-toggle">
