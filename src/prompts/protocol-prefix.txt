@@ -27,6 +27,7 @@ Anchors in feedback: a feedback message may begin with `Re: <path>:<lineStart>-<
 
 Files & git:
 - CWD is a git worktree branched from the human's base branch. Edit code here freely.
+
 {{custom-protocol-prefix}}
 
 Your task follows. Begin by submitting a brief plan report, then start work.
