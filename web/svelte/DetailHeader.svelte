@@ -15,10 +15,10 @@
   import { formatRelative, eventAgeIsStale, toast } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel, toggleEventsTab } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
-  const tabs = [
+  const allTabs = [
     { id: "reports", label: "Reports" },
     { id: "feedback", label: "Feedbacks" },
     { id: "diff", label: "Diff" },
@@ -26,6 +26,7 @@
     { id: "structure", label: "Structure" },
     { id: "events", label: "Events" },
   ];
+  const tabs = $derived(appState.eventsTabHidden ? allTabs.filter(t => t.id !== "events") : allTabs);
 
   // The selected session's outstanding work asking for the human's attention:
   // reports not yet marked read, plus escalations that pause the agent's turn
@@ -108,5 +109,6 @@
         <button id="btnCollapseAll" type="button" class="diff-tool-btn" onclick={onCollapseAllDiffFiles}>Collapse all</button>
       </span>
     {/if}
+    <button type="button" class="tab-toggle-events" title={appState.eventsTabHidden ? "Eventsタブを表示" : "Eventsタブを非表示"} onclick={toggleEventsTab}>{appState.eventsTabHidden ? "···" : "···"}</button>
   </div>
 {/if}
