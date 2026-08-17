@@ -28,6 +28,11 @@
   ];
   const tabs = $derived(appState.eventsTabHidden && appState.activeTab !== "events" ? allTabs.filter(t => t.id !== "events") : allTabs);
 
+  function showEvents() {
+    if (appState.eventsTabHidden) toggleEventsTab();
+    switchTab("events");
+  }
+
   // The selected session's outstanding work asking for the human's attention:
   // reports not yet marked read, plus escalations that pause the agent's turn
   // until answered. Surfaced as a single badge on the Reports tab so the human
@@ -97,6 +102,7 @@
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
     · worktree: <code>{m.worktreePath}</code><button type="button" class="copy-path-btn" title="ディレクトリパスをコピー" onclick={() => navigator.clipboard.writeText(m.worktreePath).then(() => toast("path copied")).catch(() => toast("copy failed"))}>⧉</button>
+    · <button type="button" class="meta-events-link" class:meta-events-warning={eventCountLevel(events.length) === "warning"} class:meta-events-danger={eventCountLevel(events.length) === "danger"} onclick={showEvents}>events</button>
   </div>
   <div class="tabs">
     {#each tabs as tab}
