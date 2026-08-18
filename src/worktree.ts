@@ -6,6 +6,22 @@ function cleanGitEnv(): Record<string, string | undefined> {
   return { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
 }
 
+async function branchExists(name: string, repoDir: string): Promise<boolean> {
+  const proc = Bun.spawn(
+    ["git", "rev-parse", "--verify", `refs/heads/${name}`],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
+  );
+  return (await proc.exited) === 0;
+}
+
+async function deduplicateBranchName(name: string, repoDir: string): Promise<string> {
+  if (!(await branchExists(name, repoDir))) return name;
+  for (let i = 2; ; i++) {
+    const candidate = `${name}-${i}`;
+    if (!(await branchExists(candidate, repoDir))) return candidate;
+  }
+}
+
 export interface WorktreeInfo {
   worktreePath: string;
   branchName: string;
@@ -18,11 +34,13 @@ export async function createSessionWorktree(params: {
   branchName: string;
   reportsDirAbsolute: string;
 }): Promise<WorktreeInfo> {
-  const { sessionId, repoDir, baseBranch, branchName, reportsDirAbsolute } = params;
+  const { sessionId, repoDir, baseBranch, reportsDirAbsolute } = params;
   const shortId = sessionId.slice(0, 8);
   const worktreePath = join(resolve(repoDir), ".worktrees", shortId);
 
   await mkdir(reportsDirAbsolute, { recursive: true });
+
+  const branchName = await deduplicateBranchName(params.branchName, repoDir);
 
   const proc = Bun.spawn(
     ["git", "worktree", "add", "-b", branchName, worktreePath, baseBranch],
