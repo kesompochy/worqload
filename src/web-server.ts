@@ -1442,8 +1442,9 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const reportsDir = reportsDirFor(ctx, tentative.id);
   let worktreePath: string;
+  let actualBranchName: string;
   try {
-    ({ worktreePath } = await ctx.worktreeOps.createSessionWorktree({
+    ({ worktreePath, branchName: actualBranchName } = await ctx.worktreeOps.createSessionWorktree({
       sessionId: tentative.id,
       repoDir: ctx.repoDir,
       baseBranch,
@@ -1455,7 +1456,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     return json({ error: message }, 400);
   }
 
-  const meta: SessionMeta = { ...tentative, worktreePath, branchName };
+  const meta: SessionMeta = { ...tentative, worktreePath, branchName: actualBranchName };
   await saveSessionMeta(meta, ctx.sessionsDir);
   if (!startPaused) {
     await spawnAndAttachHost(ctx, meta);

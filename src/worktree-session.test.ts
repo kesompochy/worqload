@@ -147,6 +147,51 @@ describe("createSessionWorktree", () => {
     });
     expect(branchName).toBe(requested);
   });
+
+  test("appends a numeric suffix when the branch name already exists", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const reportsDir1 = join(repoDir, ".worqload", "sessions", "aaa", "reports");
+    const reportsDir2 = join(repoDir, ".worqload", "sessions", "bbb", "reports");
+
+    const first = await createSessionWorktree({
+      sessionId: crypto.randomUUID(),
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      branchName: "feature-x",
+      reportsDirAbsolute: reportsDir1,
+    });
+    expect(first.branchName).toBe("feature-x");
+
+    const second = await createSessionWorktree({
+      sessionId: crypto.randomUUID(),
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      branchName: "feature-x",
+      reportsDirAbsolute: reportsDir2,
+    });
+    expect(second.branchName).toBe("feature-x-2");
+  });
+
+  test("increments suffix until a free name is found", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+
+    git(["branch", "taken-name"], repoDir);
+    git(["branch", "taken-name-2"], repoDir);
+    git(["branch", "taken-name-3"], repoDir);
+
+    const sessionId = crypto.randomUUID();
+    const reportsDir = join(repoDir, ".worqload", "sessions", sessionId, "reports");
+    const { branchName } = await createSessionWorktree({
+      sessionId,
+      repoDir,
+      baseBranch: TEST_BASE_BRANCH,
+      branchName: "taken-name",
+      reportsDirAbsolute: reportsDir,
+    });
+    expect(branchName).toBe("taken-name-4");
+  });
 });
 
 describe("removeWorktree", () => {
