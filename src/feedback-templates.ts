@@ -54,9 +54,20 @@ export function parseFeedbackTemplates(yamlText: string): FeedbackTemplate[] | n
   });
 }
 
+export function mergeFeedbackTemplates(defaults: FeedbackTemplate[], overrides: FeedbackTemplate[]): FeedbackTemplate[] {
+  const merged = [...defaults];
+  for (const o of overrides) {
+    const idx = merged.findIndex(t => t.id === o.id);
+    if (idx >= 0) merged[idx] = o;
+    else merged.push(o);
+  }
+  return merged;
+}
+
 export async function loadFeedbackTemplates(configPath: string): Promise<FeedbackTemplate[]> {
   const file = Bun.file(configPath);
   if (!(await file.exists())) return DEFAULT_FEEDBACK_TEMPLATES;
   const configured = parseFeedbackTemplates(await file.text());
-  return configured ?? DEFAULT_FEEDBACK_TEMPLATES;
+  if (configured == null) return DEFAULT_FEEDBACK_TEMPLATES;
+  return mergeFeedbackTemplates(DEFAULT_FEEDBACK_TEMPLATES, configured);
 }
