@@ -54,12 +54,10 @@
     return (actions[index - 1].group || actions[index - 1].id) !== (actions[index].group || actions[index].id);
   }
 
-  // Collapses the initial-prompt block — a long opening prompt otherwise eats
-  // vertical space above the tabs. Persists across session switches because the
-  // header stays mounted; that's intentional, treated as a viewing preference.
   const headerActions = $derived(appState.actions.filter(a => !a.feedbackContent));
 
   let promptCollapsed = $state(true);
+  $effect(() => { appState.selected; promptCollapsed = true; });
 </script>
 
 {#if appState.selected && appState.detail}
