@@ -18,6 +18,11 @@ export const DEFAULT_FEEDBACK_TEMPLATES: FeedbackTemplate[] = [
     label: "Do not push",
     text: "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\nDo not push. Any git operation that touches the remote is forbidden. Pushing is absolutely unacceptable.",
   },
+  {
+    id: "answer-the-question",
+    label: "Answer the question",
+    text: "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\nThe user is asking a question. Answer the question directly and concisely, and do nothing else. Do not edit code, do not take actions beyond what is needed to answer. Submit your answer as a report.",
+  },
 ];
 
 export function parseFeedbackTemplates(yamlText: string): FeedbackTemplate[] | null {
