@@ -13,21 +13,29 @@
 
   const skillActions = $derived(appState.actions.filter(a => a.feedbackContent));
 
-  function loadCheckedTemplates() {
+  function storageKey(sessionId) {
+    return sessionId ? `${TEMPLATES_STORAGE_KEY}:${sessionId}` : TEMPLATES_STORAGE_KEY;
+  }
+
+  function loadCheckedTemplates(sessionId) {
     try {
-      const stored = localStorage.getItem(TEMPLATES_STORAGE_KEY);
+      const stored = localStorage.getItem(storageKey(sessionId));
       return stored ? new Set(JSON.parse(stored)) : new Set();
     } catch { return new Set(); }
   }
 
-  let checkedTemplates = $state(loadCheckedTemplates());
+  let checkedTemplates = $state(loadCheckedTemplates(appState.selected));
+
+  $effect(() => {
+    checkedTemplates = loadCheckedTemplates(appState.selected);
+  });
 
   function toggleTemplate(id) {
     const next = new Set(checkedTemplates);
     if (next.has(id)) next.delete(id);
     else next.add(id);
     checkedTemplates = next;
-    try { localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify([...next])); } catch {}
+    try { localStorage.setItem(storageKey(appState.selected), JSON.stringify([...next])); } catch {}
   }
 
   function prependTemplates() {
