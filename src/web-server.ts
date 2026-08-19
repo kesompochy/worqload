@@ -262,8 +262,10 @@ export interface ServerContext {
   textlintTokenizer?: Tokenizer<IpadicFeatures> | null;
   // Sync command-approval waiters: the POST handler holds the HTTP response
   // open until the escalation is resolved, then returns the result directly.
-  // Key: `${sessionId}/${filename}`.
-  commandApprovalWaiters: Map<string, { resolve: (result: CommandApprovalSyncResult) => void }>;
+  // Key: `${sessionId}/${filename}`. Multiple waiters per key: a duplicate
+  // escalation (same command already pending) attaches an additional waiter
+  // instead of creating a second asking entry.
+  commandApprovalWaiters: Map<string, { resolve: (result: CommandApprovalSyncResult) => void }[]>;
 }
 
 export interface StartServerOptions {
@@ -2809,16 +2811,19 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       resolvedPayload = { filename: params.filename };
     }
 
-    const syncWaiter = isCommandApproval
-      ? ctx.commandApprovalWaiters.get(`${meta.id}/${params.filename}`)
+    const waiterKey = `${meta.id}/${params.filename}`;
+    const syncWaiters = isCommandApproval
+      ? ctx.commandApprovalWaiters.get(waiterKey)
       : undefined;
 
-    if (syncWaiter) {
-      syncWaiter.resolve({
+    if (syncWaiters && syncWaiters.length > 0) {
+      const syncResult: CommandApprovalSyncResult = {
         decision: body.decision as "approve" | "reject",
         feedbackContent,
         runResult,
-      });
+      };
+      for (const waiter of syncWaiters) waiter.resolve(syncResult);
+      ctx.commandApprovalWaiters.delete(waiterKey);
       await appendAndBroadcast(ctx, meta.id, {
         kind: "escalation_resolved",
         payload: resolvedPayload,
@@ -3029,11 +3034,30 @@ interface CommandApprovalBody {
   timeoutMs?: number;
 }
 
+// Scans pending command-approvals for one whose command string matches. Returns
+// the asking filename if found, null otherwise.
+async function findPendingCommandApproval(dir: string, command: string): Promise<string | null> {
+  const pending = await listAllFiles(dir);
+  for (const entry of pending) {
+    const sidecarPath = join(dir, commandSidecarFilename(entry.filename));
+    try {
+      const sidecar = (await Bun.file(sidecarPath).json()) as CommandApproval;
+      if (sidecar.command === command) return entry.filename;
+    } catch { /* no sidecar or corrupt — skip */ }
+  }
+  return null;
+}
+
 // The agent asks the human to approve running a command outside its allowlist
 // (`worqload escalate command`). Stored like an escalation — an `asking/*.md`
 // plus a `.command.json` sidecar — so it shows up in the same waiting_human
 // flow; the resolve endpoint then runs (or refuses) the command and feeds the
 // result back via the inbox.
+//
+// Deduplication: if a pending command-approval for the exact same command
+// string already exists, the new request attaches to the existing escalation
+// instead of creating a duplicate asking entry. This handles the common case
+// where the agent's Bash tool times out on the sync HTTP request and retries.
 async function postInternalCommandApprovals(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const body = (await req.json()) as CommandApprovalBody;
@@ -3042,6 +3066,42 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
     }
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
     const dir = askingDirFor(ctx, meta.id);
+
+    const existingFilename = await findPendingCommandApproval(dir, body.command);
+    if (existingFilename) {
+      if (!body.sync) {
+        return json({ filename: existingFilename, seq: 0, deduplicated: true });
+      }
+      const waiterKey = `${meta.id}/${existingFilename}`;
+      const { promise, resolve } = Promise.withResolvers<CommandApprovalSyncResult>();
+      const waiters = ctx.commandApprovalWaiters.get(waiterKey) ?? [];
+      waiters.push({ resolve });
+      ctx.commandApprovalWaiters.set(waiterKey, waiters);
+      try {
+        const syncResult = await promise;
+        return json({
+          filename: existingFilename,
+          seq: 0,
+          deduplicated: true,
+          decision: syncResult.decision,
+          feedbackContent: syncResult.feedbackContent,
+          ...(syncResult.runResult ? {
+            exitCode: syncResult.runResult.exitCode,
+            stdout: syncResult.runResult.stdout,
+            stderr: syncResult.runResult.stderr,
+            timedOut: syncResult.runResult.timedOut,
+          } : {}),
+        });
+      } finally {
+        const remaining = ctx.commandApprovalWaiters.get(waiterKey);
+        if (remaining) {
+          const filtered = remaining.filter(w => w.resolve !== resolve);
+          if (filtered.length === 0) ctx.commandApprovalWaiters.delete(waiterKey);
+          else ctx.commandApprovalWaiters.set(waiterKey, filtered);
+        }
+      }
+    }
+
     const file = await writeNumberedFile(dir, "command-approval", buildCommandApprovalMarkdown(body.command, reason), {
       archiveDirs: [join(dir, "resolved")],
     });
@@ -3059,7 +3119,7 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
     }
     const waiterKey = `${meta.id}/${file.filename}`;
     const { promise, resolve } = Promise.withResolvers<CommandApprovalSyncResult>();
-    ctx.commandApprovalWaiters.set(waiterKey, { resolve });
+    ctx.commandApprovalWaiters.set(waiterKey, [{ resolve }]);
     try {
       const syncResult = await promise;
       return json({
