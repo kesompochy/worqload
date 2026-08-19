@@ -88,7 +88,12 @@ export const state = $state({
   // Batch feedback queue: items staged by Ctrl+Enter, flushed together by Enter.
   // Each entry is { content, slug, anchor? }.
   feedbackQueue: [],
+  // Feedback templates loaded from the server (sourced from config.yaml).
+  // Populated by fetchMeta; empty until then.
+  feedbackTemplates: [],
 });
+
+export const TEMPLATES_STORAGE_KEY = "worqload:feedback-templates-checked";
 
 // Image-only attachments, capped per-file and per-feedback. The browser does
 // the same checks on the server (see web-server.ts); these are the immediate

@@ -8,10 +8,37 @@
   // in-progress text survives without a manual save/restore.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
-  import { state as appState, anchorLabel } from "../state.svelte.js";
+  import { state as appState, anchorLabel, TEMPLATES_STORAGE_KEY } from "../state.svelte.js";
   import { onFeedback, onQueueFeedback, removeQueuedFeedback, onResume, clearAnchor, copyAnchorPermalink, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
   const skillActions = $derived(appState.actions.filter(a => a.feedbackContent));
+
+  function loadCheckedTemplates() {
+    try {
+      const stored = localStorage.getItem(TEMPLATES_STORAGE_KEY);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch { return new Set(); }
+  }
+
+  let checkedTemplates = $state(loadCheckedTemplates());
+
+  function toggleTemplate(id) {
+    const next = new Set(checkedTemplates);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    checkedTemplates = next;
+    try { localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify([...next])); } catch {}
+  }
+
+  function prependTemplates() {
+    const checked = appState.feedbackTemplates.filter(t => checkedTemplates.has(t.id));
+    if (checked.length === 0) return;
+    const input = document.getElementById("feedbackInput");
+    if (!input) return;
+    const prefix = checked.map(t => t.text).join("\n");
+    const existing = input.value.trim();
+    input.value = existing ? `${prefix}\n\n${existing}` : prefix;
+  }
 
   let skillFilter = $state("");
   let skillSelectedIndex = $state(0);
@@ -80,6 +107,7 @@
   let composing = $state(false);
 
   function submit(isTerminal) {
+    if (!isTerminal) prependTemplates();
     if (isTerminal) onResume();
     else onFeedback();
   }
@@ -89,6 +117,7 @@
     if (composing || event.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     if (!isTerminal && (event.ctrlKey || event.metaKey)) {
+      prependTemplates();
       onQueueFeedback();
     } else {
       submit(isTerminal);
@@ -135,6 +164,16 @@
             <span class="feedback-queue-text">{item.content}</span>
             <button type="button" title="remove" class="feedback-queue-remove" onclick={() => removeQueuedFeedback(i)}>×</button>
           </div>
+        {/each}
+      </div>
+    {/if}
+    {#if !isTerminal && appState.feedbackTemplates.length > 0}
+      <div class="feedback-templates">
+        {#each appState.feedbackTemplates as tmpl (tmpl.id)}
+          <label class="feedback-template-label">
+            <input type="checkbox" checked={checkedTemplates.has(tmpl.id)} onchange={() => toggleTemplate(tmpl.id)} />
+            {tmpl.label}
+          </label>
         {/each}
       </div>
     {/if}

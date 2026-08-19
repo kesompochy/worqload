@@ -15,6 +15,7 @@ src/dom.test.ts
 src/event-log.test.ts
 src/events-view.test.ts
 src/favicon-badge.test.ts
+src/feedback-templates.test.ts
 src/file-name-search.test.ts
 src/file-store.test.ts
 src/files-view.test.ts
