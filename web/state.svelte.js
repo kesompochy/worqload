@@ -88,14 +88,11 @@ export const state = $state({
   // Batch feedback queue: items staged by Ctrl+Enter, flushed together by Enter.
   // Each entry is { content, slug, anchor? }.
   feedbackQueue: [],
+  // Feedback templates loaded from the server (sourced from config.yaml).
+  // Populated by fetchMeta; empty until then.
+  feedbackTemplates: [],
 });
 
-// Predefined feedback templates the human can toggle on via checkboxes in the
-// composer. Checked templates are prepended to the feedback content on submit.
-export const FEEDBACK_TEMPLATES = [
-  { id: "no-edit", label: "Do not edit any code", text: "Do not edit any code." },
-  { id: "no-commit", label: "Do not commit", text: "Do not commit." },
-];
 export const TEMPLATES_STORAGE_KEY = "worqload:feedback-templates-checked";
 
 // Image-only attachments, capped per-file and per-feedback. The browser does

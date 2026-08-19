@@ -8,7 +8,7 @@
   // in-progress text survives without a manual save/restore.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
-  import { state as appState, anchorLabel, FEEDBACK_TEMPLATES, TEMPLATES_STORAGE_KEY } from "../state.svelte.js";
+  import { state as appState, anchorLabel, TEMPLATES_STORAGE_KEY } from "../state.svelte.js";
   import { onFeedback, onQueueFeedback, removeQueuedFeedback, onResume, clearAnchor, copyAnchorPermalink, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
   const skillActions = $derived(appState.actions.filter(a => a.feedbackContent));
@@ -31,7 +31,7 @@
   }
 
   function prependTemplates() {
-    const checked = FEEDBACK_TEMPLATES.filter(t => checkedTemplates.has(t.id));
+    const checked = appState.feedbackTemplates.filter(t => checkedTemplates.has(t.id));
     if (checked.length === 0) return;
     const input = document.getElementById("feedbackInput");
     if (!input) return;
@@ -167,9 +167,9 @@
         {/each}
       </div>
     {/if}
-    {#if !isTerminal && FEEDBACK_TEMPLATES.length > 0}
+    {#if !isTerminal && appState.feedbackTemplates.length > 0}
       <div class="feedback-templates">
-        {#each FEEDBACK_TEMPLATES as tmpl (tmpl.id)}
+        {#each appState.feedbackTemplates as tmpl (tmpl.id)}
           <label class="feedback-template-label">
             <input type="checkbox" checked={checkedTemplates.has(tmpl.id)} onchange={() => toggleTemplate(tmpl.id)} />
             {tmpl.label}
