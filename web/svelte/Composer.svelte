@@ -114,10 +114,18 @@
   // composition doesn't also submit (same guard as dom.js's bindInlineEdit).
   let composing = $state(false);
 
+  function clearCheckedTemplates() {
+    checkedTemplates = new Set();
+    try { localStorage.removeItem(storageKey(appState.selected)); } catch {}
+  }
+
   function submit(isTerminal) {
     if (!isTerminal) prependTemplates();
     if (isTerminal) onResume();
-    else onFeedback();
+    else {
+      onFeedback();
+      if (checkedTemplates.size > 0) clearCheckedTemplates();
+    }
   }
 
   function onKeydown(event, isTerminal) {
