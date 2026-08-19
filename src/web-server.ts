@@ -39,6 +39,7 @@ import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import type { IpadicFeatures, Tokenizer } from "kuromoji";
 import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
+import { DEFAULT_FEEDBACK_TEMPLATES, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
@@ -565,6 +566,15 @@ async function currentSkillButtons(ctx: ServerContext): Promise<SkillButton[]> {
   } catch (err) {
     console.error(`[skillButtons] config reload failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
+  }
+}
+
+async function currentFeedbackTemplates(ctx: ServerContext): Promise<FeedbackTemplate[]> {
+  try {
+    return await loadFeedbackTemplates(ctx.configPath);
+  } catch (err) {
+    console.error(`[feedbackTemplates] config reload failed: ${err instanceof Error ? err.message : String(err)}`);
+    return DEFAULT_FEEDBACK_TEMPLATES;
   }
 }
 
@@ -1291,7 +1301,8 @@ async function getFavicon(_req: Request, ctx: ServerContext): Promise<Response> 
 }
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
-  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName });
+  const feedbackTemplates = await currentFeedbackTemplates(ctx);
+  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName, feedbackTemplates });
 }
 
 // Vite emits content-hashed bundles under web/dist/assets/. Serving any basename

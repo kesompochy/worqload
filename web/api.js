@@ -122,7 +122,8 @@ export async function fetchMeta() {
 
 let repoDisplayName = "worqload";
 
-function applyMeta({ repoDir, repoName, driverName }) {
+function applyMeta({ repoDir, repoName, driverName, feedbackTemplates }) {
+  if (Array.isArray(feedbackTemplates)) state.feedbackTemplates = feedbackTemplates;
   repoDisplayName = repoName || "worqload";
   updateDocumentTitle();
   const repoEl = document.getElementById("repoName");
