@@ -90,6 +90,14 @@ export const state = $state({
   feedbackQueue: [],
 });
 
+// Predefined feedback templates the human can toggle on via checkboxes in the
+// composer. Checked templates are prepended to the feedback content on submit.
+export const FEEDBACK_TEMPLATES = [
+  { id: "no-edit", label: "Do not edit any code", text: "Do not edit any code." },
+  { id: "no-commit", label: "Do not commit", text: "Do not commit." },
+];
+export const TEMPLATES_STORAGE_KEY = "worqload:feedback-templates-checked";
+
 // Image-only attachments, capped per-file and per-feedback. The browser does
 // the same checks on the server (see web-server.ts); these are the immediate
 // feedback the human gets while staging chips.
