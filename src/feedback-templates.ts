@@ -18,6 +18,11 @@ export const DEFAULT_FEEDBACK_TEMPLATES: FeedbackTemplate[] = [
     label: "Do not push",
     text: "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\nDo not push. Any git operation that touches the remote is forbidden. Pushing is absolutely unacceptable.",
   },
+  {
+    id: "answer-the-question",
+    label: "Answer the question",
+    text: "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\nThe user is asking a question. Answer the question directly and concisely, and do nothing else. Do not edit code, do not take actions beyond what is needed to answer. Submit your answer as a report.",
+  },
 ];
 
 export function parseFeedbackTemplates(yamlText: string): FeedbackTemplate[] | null {
@@ -49,9 +54,20 @@ export function parseFeedbackTemplates(yamlText: string): FeedbackTemplate[] | n
   });
 }
 
+export function mergeFeedbackTemplates(defaults: FeedbackTemplate[], overrides: FeedbackTemplate[]): FeedbackTemplate[] {
+  const merged = [...defaults];
+  for (const o of overrides) {
+    const idx = merged.findIndex(t => t.id === o.id);
+    if (idx >= 0) merged[idx] = o;
+    else merged.push(o);
+  }
+  return merged;
+}
+
 export async function loadFeedbackTemplates(configPath: string): Promise<FeedbackTemplate[]> {
   const file = Bun.file(configPath);
   if (!(await file.exists())) return DEFAULT_FEEDBACK_TEMPLATES;
   const configured = parseFeedbackTemplates(await file.text());
-  return configured ?? DEFAULT_FEEDBACK_TEMPLATES;
+  if (configured == null) return DEFAULT_FEEDBACK_TEMPLATES;
+  return mergeFeedbackTemplates(DEFAULT_FEEDBACK_TEMPLATES, configured);
 }
