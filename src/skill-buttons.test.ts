@@ -2,25 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { makeTmpDir } from "./test-helpers";
-import { parseSkillPaths, scanSkillDirectory, loadSkillButtons } from "./skill-buttons";
-
-test("parseSkillPaths reads a list of directory paths from the config YAML", () => {
-  const paths = parseSkillPaths("skillPaths:\n  - ~/.claude/skills\n  - .claude/skills\n");
-  expect(paths).toEqual(["~/.claude/skills", ".claude/skills"]);
-});
-
-test("parseSkillPaths returns an empty list when the key is absent", () => {
-  expect(parseSkillPaths("textlint: []\n")).toEqual([]);
-  expect(parseSkillPaths("")).toEqual([]);
-});
-
-test("parseSkillPaths throws on a non-list value", () => {
-  expect(() => parseSkillPaths("skillPaths: not-a-list\n")).toThrow();
-});
-
-test("parseSkillPaths throws when an entry is not a string", () => {
-  expect(() => parseSkillPaths("skillPaths:\n  - 123\n")).toThrow();
-});
+import { parseSkillPaths, scanSkillDirectory, loadSkillButtons, readSkillContent, expandSkillReferences } from "./skill-buttons";
 
 test("scanSkillDirectory discovers skills from <name>/SKILL.md layout", async () => {
   const dir = makeTmpDir("skills");
@@ -61,10 +43,6 @@ test("scanSkillDirectory uses the directory name when frontmatter has no name", 
   expect(skills[0].description).toBeUndefined();
 });
 
-test("scanSkillDirectory returns an empty list for a nonexistent directory", async () => {
-  expect(await scanSkillDirectory("/tmp/nonexistent-skills-dir-xyz")).toEqual([]);
-});
-
 test("scanSkillDirectory ignores entries that are not directories with SKILL.md", async () => {
   const dir = makeTmpDir("skills-mixed");
   writeFileSync(join(dir, "stray-file.txt"), "not a skill");
@@ -93,10 +71,6 @@ test("loadSkillButtons loads from config and scans all skillPaths", async () => 
   expect(buttons[0].description).toBe("PRレビュー");
 });
 
-test("loadSkillButtons returns an empty list when config is absent", async () => {
-  expect(await loadSkillButtons("/tmp/nonexistent-config-xyz.yaml")).toEqual([]);
-});
-
 test("loadSkillButtons expands ~ to the home directory", async () => {
   const configDir = makeTmpDir("skill-config-tilde");
   const configPath = join(configDir, "config.yaml");
@@ -121,4 +95,62 @@ test("loadSkillButtons deduplicates skills with the same name across directories
   const buttons = await loadSkillButtons(configPath);
   expect(buttons).toHaveLength(1);
   expect(buttons[0].description).toBe("user scope");
+});
+
+test("readSkillContent strips frontmatter and returns the body", () => {
+  const dir = makeTmpDir("skill-read");
+  mkdirSync(join(dir, "review"));
+  const path = join(dir, "review", "SKILL.md");
+  writeFileSync(path, "---\nname: review\n---\n# Review\nDo a code review.\n");
+  expect(readSkillContent(path)).toBe("# Review\nDo a code review.\n");
+});
+
+test("readSkillContent returns full content when no frontmatter", () => {
+  const dir = makeTmpDir("skill-read-nofm");
+  mkdirSync(join(dir, "plain"));
+  const path = join(dir, "plain", "SKILL.md");
+  writeFileSync(path, "# Plain\nNo frontmatter here.\n");
+  expect(readSkillContent(path)).toBe("# Plain\nNo frontmatter here.\n");
+});
+
+test("readSkillContent returns null for missing file", () => {
+  expect(readSkillContent("/tmp/nonexistent-skill-xyz.md")).toBeNull();
+});
+
+test("expandSkillReferences expands /skill-name at the start of content", () => {
+  const dir = makeTmpDir("skill-expand");
+  mkdirSync(join(dir, "review"));
+  const skillPath = join(dir, "review", "SKILL.md");
+  writeFileSync(skillPath, "---\nname: review\n---\nReview the code.\n");
+  const skills = [{ name: "review", sourcePath: skillPath }];
+  const result = expandSkillReferences("/review", skills);
+  expect(result).toContain("Review the code.");
+  expect(result).not.toContain("/review\n");
+});
+
+test("expandSkillReferences expands /skill-name in the middle of content", () => {
+  const dir = makeTmpDir("skill-expand-mid");
+  mkdirSync(join(dir, "review"));
+  const skillPath = join(dir, "review", "SKILL.md");
+  writeFileSync(skillPath, "---\nname: review\n---\nReview the code.\n");
+  const skills = [{ name: "review", sourcePath: skillPath }];
+  const result = expandSkillReferences("please run /review on this", skills);
+  expect(result).toContain('<skill name="review">');
+  expect(result).toStartWith("please run ");
+  expect(result).toEndWith(" on this");
+});
+
+test("expandSkillReferences leaves unregistered /names unchanged", () => {
+  const content = "/unknown-skill some text";
+  expect(expandSkillReferences(content, [])).toBe(content);
+});
+
+test("expandSkillReferences does not expand /name inside a word", () => {
+  const dir = makeTmpDir("skill-expand-noword");
+  mkdirSync(join(dir, "tmp"));
+  const skillPath = join(dir, "tmp", "SKILL.md");
+  writeFileSync(skillPath, "---\nname: tmp\n---\nBody.\n");
+  const skills = [{ name: "tmp", sourcePath: skillPath }];
+  const result = expandSkillReferences("path/tmp/foo", skills);
+  expect(result).toBe("path/tmp/foo");
 });

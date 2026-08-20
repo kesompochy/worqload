@@ -11,6 +11,8 @@ import { isIdentifierName, resolveDefinitions, resolveReferences } from "./code-
 import {
   api,
   submitFeedback,
+  submitFeedbackBatch,
+  resolveEscalation,
   fetchSessions,
   fetchArchivedSessions,
   fetchActions,
@@ -101,6 +103,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   // (the multipart POST targets that session's id). Drop them and revoke the
   // blob URLs so the chips don't leak across sessions or memory.
   clearAttachments();
+  state.feedbackQueue = [];
   if (!id) return;
   await refreshDetail();
   // Cold cache only (first boot, before the prefetch resolved). The warm case
@@ -111,7 +114,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   openWs(id);
 }
 
-export function onDetailBodyClick(e) {
+export async function onDetailBodyClick(e) {
   // A link inside report markdown carries target="_blank"; let the browser
   // open it natively. Intercepting the click would fall through to onLineClick,
   // which re-renders the pane and detaches the <a> before navigation, so the
@@ -122,22 +125,19 @@ export function onDetailBodyClick(e) {
   // the feedback header (which carries that attribute).
   const gotoAnchor = e.target.closest("[data-goto-anchor-path]");
   if (gotoAnchor) {
-    gotoAnchorTarget(
+    return gotoAnchorTarget(
       gotoAnchor.getAttribute("data-goto-anchor-path"),
       Number(gotoAnchor.getAttribute("data-goto-anchor-line")),
       Number(gotoAnchor.getAttribute("data-goto-anchor-line-end")),
     );
-    return;
   }
   const gotoFeedbackEl = e.target.closest("[data-goto-feedback]");
   if (gotoFeedbackEl) {
-    gotoArticle("feedback", gotoFeedbackEl.getAttribute("data-goto-feedback"));
-    return;
+    return gotoArticle("feedback", gotoFeedbackEl.getAttribute("data-goto-feedback"));
   }
   const gotoReportEl = e.target.closest("[data-goto-report]");
   if (gotoReportEl) {
-    gotoArticle("reports", gotoReportEl.getAttribute("data-goto-report"));
-    return;
+    return gotoArticle("reports", gotoReportEl.getAttribute("data-goto-report"));
   }
   // The pending-asking section (DetailBody.svelte) renders its resolve buttons
   // natively; the answer textarea is read here off the enclosing article.
@@ -156,16 +156,12 @@ export function onDetailBodyClick(e) {
     e.stopPropagation();
     const filename = markBtn.getAttribute("data-report-mark");
     const to = markBtn.getAttribute("data-report-mark-to");
-    onReportMark(filename, to === "read");
-    return;
+    return onReportMark(filename, to === "read");
   }
   const deleteBtn = e.target.closest("[data-report-delete]");
   if (deleteBtn) {
-    // Sits inside the report header (a toggle target); stop the click from also
-    // collapsing the card on its way out.
     e.stopPropagation();
-    onReportDelete(deleteBtn.getAttribute("data-report-delete"));
-    return;
+    return onReportDelete(deleteBtn.getAttribute("data-report-delete"));
   }
   const viewToggle = e.target.closest("[data-report-view-toggle]");
   if (viewToggle) {
@@ -185,6 +181,11 @@ export function onDetailBodyClick(e) {
     // Maps, so the components only re-render when the property itself is replaced.
     state.reportToggle = new Map(state.reportToggle).set(filename, !currentlyExpanded);
     return;
+  }
+  const feedbackDeleteBtn = e.target.closest("[data-feedback-delete]");
+  if (feedbackDeleteBtn) {
+    e.stopPropagation();
+    return onFeedbackDelete(feedbackDeleteBtn.getAttribute("data-feedback-delete"));
   }
   const feedbackToggle = e.target.closest("[data-feedback-toggle]");
   if (feedbackToggle) {
@@ -251,8 +252,7 @@ export function onDetailBodyClick(e) {
     return;
   }
   if (e.target.closest("[data-file-edit-save]")) {
-    void saveFile();
-    return;
+    return saveFile();
   }
   if (e.target.closest("[data-file-edit-cancel]")) {
     state.fileEditing = false;
@@ -266,16 +266,14 @@ export function onDetailBodyClick(e) {
     return;
   }
   if (e.target.closest("[data-file-new-confirm]")) {
-    void createFile(state.fileNewPath);
-    return;
+    return createFile(state.fileNewPath);
   }
   if (e.target.closest("[data-file-new-cancel]")) {
     state.fileCreating = false;
     return;
   }
   if (e.target.closest("[data-file-delete]")) {
-    void onDeleteFile();
-    return;
+    return onDeleteFile();
   }
   // Files-tab rename controls: 🏷 turns the header path into an input seeded
   // with the open file's path; 確定/キャンセル commit or drop it.
@@ -374,8 +372,7 @@ export function onDetailBodyClick(e) {
   // works by clicking the line number.
   const identToken = e.target.closest(".tok-ident");
   if (identToken && e.target.closest(".file-content-body, .diff-file-body")) {
-    openCodeNav(identToken);
-    return;
+    return openCodeNav(identToken);
   }
   onLineClick(e);
 }
@@ -451,8 +448,10 @@ export function openCodeNav(tokenEl) {
     if (seq !== codeNavRequestSeq || !state.codeNav) return;
     state.codeNav = { ...state.codeNav, ...patch };
   };
-  resolveDefinitions(ctx).then(locations => apply({ definitions: locations ?? [], definitionsStatus: "done" }));
-  resolveReferences(ctx).then(locations => apply({ references: locations ?? [], referencesStatus: "done" }));
+  return Promise.all([
+    resolveDefinitions(ctx).then(locations => apply({ definitions: locations ?? [], definitionsStatus: "done" })),
+    resolveReferences(ctx).then(locations => apply({ references: locations ?? [], referencesStatus: "done" })),
+  ]);
 }
 
 export function closeCodeNav() {
@@ -557,6 +556,20 @@ export async function onReportDelete(filename) {
   }
 }
 
+export async function onFeedbackDelete(filename) {
+  if (!state.selected) return;
+  if (!confirm(`フィードバック「${filename}」を削除します。元に戻せません。よろしいですか？`)) return;
+  try {
+    await api("DELETE", `/sessions/${state.selected}/feedback/${encodeURIComponent(filename)}`);
+    const nextToggle = new Map(state.feedbackToggle);
+    nextToggle.delete(filename);
+    state.feedbackToggle = nextToggle;
+    await refreshDetail();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 // collapsedFiles / diffExpansions are reassigned wholesale rather than mutated
 // in place: Svelte 5's $state doesn't proxy Sets/Maps, so DiffView (and the
 // scroll-capture effect in DetailBody) only react when the property is replaced.
@@ -612,6 +625,36 @@ export function onLineClick(e) {
   } else {
     state.anchor = { path, lineStart, lineEnd };
   }
+}
+
+export function onTextSelectionAnchor(e) {
+  if (!e.altKey) return;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) return;
+  const quote = selection.toString().trim();
+  if (!quote) return;
+  const range = selection.getRangeAt(0);
+  const startAnchorable = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer.closest?.("[data-anchor-line]")
+    : range.startContainer.parentElement?.closest("[data-anchor-line]");
+  const endAnchorable = range.endContainer.nodeType === Node.ELEMENT_NODE
+    ? range.endContainer.closest?.("[data-anchor-line]")
+    : range.endContainer.parentElement?.closest("[data-anchor-line]");
+  if (!startAnchorable || !endAnchorable) return;
+  const startPath = startAnchorable.getAttribute("data-anchor-path");
+  const endPath = endAnchorable.getAttribute("data-anchor-path");
+  if (!startPath || startPath !== endPath) return;
+  const startLine = Number(startAnchorable.getAttribute("data-anchor-line"));
+  const endLine = Number(endAnchorable.getAttribute("data-anchor-line"));
+  const endLineEnd = endAnchorable.getAttribute("data-anchor-line-end");
+  const effectiveEndLine = endLineEnd !== null ? Number(endLineEnd) : endLine;
+  if (!Number.isFinite(startLine) || !Number.isFinite(effectiveEndLine)) return;
+  state.anchor = {
+    path: startPath,
+    lineStart: Math.min(startLine, endLine),
+    lineEnd: Math.max(startLine, effectiveEndLine),
+    quote,
+  };
 }
 
 export function clearAnchor() {
@@ -982,6 +1025,15 @@ export function toggleSidebar() {
   }
 }
 
+export const EVENTS_TAB_HIDDEN_KEY = "worqload:events-tab-hidden";
+
+export function toggleEventsTab() {
+  state.eventsTabHidden = !state.eventsTabHidden;
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(EVENTS_TAB_HIDDEN_KEY, state.eventsTabHidden ? "1" : "0");
+  }
+}
+
 // Multi-select checkbox toggle in the archived feed. The selection drives the
 // bulk-delete bar in SessionList.svelte. Reassigning the Set wholesale rather
 // than mutating it lets Svelte 5's $state notice the change (it doesn't proxy
@@ -1167,10 +1219,12 @@ function lockAskingArticle(articleEl, activeButton) {
 export async function onResolve(filename, articleEl, buttonEl) {
   if (!state.selected) return;
   const text = articleEl.querySelector(".ask-answer").value.trim();
-  if (text === "") { toast("answer is required"); return; }
+  const attachments = state.askingAttachments.get(filename) ?? [];
+  if (text === "" && attachments.length === 0) { toast("answer is required"); return; }
   const restore = lockAskingArticle(articleEl, buttonEl);
   try {
-    await api("POST", `/sessions/${state.selected}/escalations/${encodeURIComponent(filename)}/resolve`, { content: text });
+    await resolveEscalation(state.selected, filename, { content: text || "(image attached)" }, attachments);
+    clearAskingAttachments(filename);
     toast("answer sent");
     await refreshDetail();
     await fetchSessions();
@@ -1189,9 +1243,11 @@ export async function onResolveCommand(filename, decision, articleEl, buttonEl) 
   const body = { decision };
   const note = articleEl?.querySelector(".ask-answer")?.value.trim() ?? "";
   if (note !== "") body.content = note;
+  const attachments = state.askingAttachments.get(filename) ?? [];
   const restore = lockAskingArticle(articleEl, buttonEl);
   try {
-    const res = await api("POST", `/sessions/${state.selected}/escalations/${encodeURIComponent(filename)}/resolve`, body);
+    const res = await resolveEscalation(state.selected, filename, body, attachments);
+    clearAskingAttachments(filename);
     toast(decision === "approve" ? `command ran (exit ${res.exitCode ?? "?"})` : "command rejected");
     await refreshDetail();
     await fetchSessions();
@@ -1201,22 +1257,52 @@ export async function onResolveCommand(filename, decision, articleEl, buttonEl) 
   }
 }
 
+// Queue the current composer text as a batch item without sending yet.
+// The human presses Ctrl+Enter to queue, then Enter to flush all at once.
+export function onQueueFeedback(inputId = "feedbackInput") {
+  if (!state.selected) return;
+  const inputEl = $("#" + inputId);
+  if (!inputEl) return;
+  const text = inputEl.value.trim();
+  if (text === "") return;
+  const item = { content: text, slug: state.anchor ? "anchored" : "feedback" };
+  if (state.anchor) {
+    item.anchor = {
+      path: state.anchor.path,
+      lineStart: state.anchor.lineStart,
+      lineEnd: state.anchor.lineEnd,
+    };
+  }
+  state.feedbackQueue = [...state.feedbackQueue, item];
+  inputEl.value = "";
+  state.anchor = null;
+  toast(`queued (${state.feedbackQueue.length})`);
+}
+
+export function removeQueuedFeedback(index) {
+  state.feedbackQueue = state.feedbackQueue.filter((_, i) => i !== index);
+}
+
 export async function onFeedback(inputId = "feedbackInput") {
   if (!state.selected) return;
   const inputEl = $("#" + inputId);
   if (!inputEl) return;
   const text = inputEl.value.trim();
   const attachments = state.pendingAttachments;
+  const hasQueue = state.feedbackQueue.length > 0;
   // Plain feedback needs body text. A composer that only has attachments still
   // needs a one-line note from the human; require at least one of the two.
-  if (text === "" && attachments.length === 0) return;
-  const body = { content: text, slug: state.anchor ? "anchored" : "feedback" };
-  if (state.anchor) {
-    body.anchor = {
+  if (text === "" && attachments.length === 0 && !hasQueue) return;
+  const currentItem = text !== ""
+    ? { content: text, slug: state.anchor ? "anchored" : "feedback" }
+    : null;
+  if (currentItem && state.anchor) {
+    currentItem.anchor = {
       path: state.anchor.path,
       lineStart: state.anchor.lineStart,
       lineEnd: state.anchor.lineEnd,
     };
+    if (state.anchor.quote) currentItem.anchor.quote = state.anchor.quote;
   }
   // Clear the textarea synchronously on submit, before the network round-trip:
   // submitting feedback writes a feedback_received event that the session's
@@ -1224,23 +1310,23 @@ export async function onFeedback(inputId = "feedbackInput") {
   // after the await could be stranded by that re-render — the same race fixed
   // for the resume prompt.
   inputEl.value = "";
+  const allItems = [...state.feedbackQueue, ...(currentItem ? [currentItem] : [])];
+  const useBatch = allItems.length > 1 || (allItems.length === 1 && hasQueue);
   let feedbackPosted = false;
   try {
-    await submitFeedback(state.selected, body, attachments);
+    if (useBatch) {
+      await submitFeedbackBatch(state.selected, allItems);
+    } else if (allItems.length === 1) {
+      await submitFeedback(state.selected, allItems[0], attachments);
+    }
     feedbackPosted = true;
+    state.feedbackQueue = [];
     state.anchor = null;
     clearAttachments();
-    // Stay on whatever tab the human was reading (often the diff/file/report the
-    // anchor points at): the sent feedback now shows at its anchor and in the
-    // Feedbacks tab, so yanking the view away to the list is just disruptive.
-    toast("feedback queued");
+    toast(useBatch ? `${allItems.length} feedback sent` : "feedback queued");
     await refreshDetail();
   } catch (e) {
-    // Restore the captured text only if submitFeedback itself failed AND the
-    // user hasn't typed something new while the request was in flight. A
-    // refreshDetail failure after a successful submit must not drag the text
-    // back — the feedback was sent.
-    if (!feedbackPosted && inputEl.value === "") inputEl.value = text;
+    if (!feedbackPosted && inputEl.value === "" && currentItem) inputEl.value = text;
     toast(`failed: ${e.message}`);
   }
 }
@@ -1339,6 +1425,95 @@ export function onComposerDrop(event) {
   if (files.length === 0) return false;
   event.preventDefault();
   addAttachmentFiles(files);
+  return true;
+}
+
+// --- escalation (asking) attachment management --------------------------------
+// Each escalation card has its own attachment queue keyed by the asking
+// filename. The same MIME/size/count constraints as the composer apply.
+
+let nextAskingAttachmentId = 0;
+
+export function addAskingAttachmentFiles(askingFilename, files) {
+  const existing = state.askingAttachments.get(askingFilename) ?? [];
+  const additions = [];
+  for (const file of files) {
+    if (existing.length + additions.length >= ATTACHMENT_MAX_COUNT) {
+      toast(`max ${ATTACHMENT_MAX_COUNT} attachments per answer`);
+      break;
+    }
+    if (!ATTACHMENT_ALLOWED_MIMES.has(file.type)) {
+      toast(`skipped ${file.name || "(unnamed)"}: not an allowed image type`);
+      continue;
+    }
+    if (file.size > ATTACHMENT_MAX_BYTES) {
+      toast(`skipped ${file.name}: exceeds ${Math.round(ATTACHMENT_MAX_BYTES / (1024 * 1024))} MiB`);
+      continue;
+    }
+    additions.push({
+      id: ++nextAskingAttachmentId,
+      file,
+      previewUrl: URL.createObjectURL(file),
+    });
+  }
+  if (additions.length === 0) return;
+  state.askingAttachments = new Map(state.askingAttachments).set(askingFilename, [...existing, ...additions]);
+}
+
+export function removeAskingAttachment(askingFilename, id) {
+  const list = state.askingAttachments.get(askingFilename);
+  if (!list) return;
+  const next = [];
+  for (const att of list) {
+    if (att.id === id) {
+      try { URL.revokeObjectURL(att.previewUrl); } catch { /* already revoked */ }
+    } else {
+      next.push(att);
+    }
+  }
+  const updated = new Map(state.askingAttachments);
+  if (next.length === 0) updated.delete(askingFilename);
+  else updated.set(askingFilename, next);
+  state.askingAttachments = updated;
+}
+
+export function clearAskingAttachments(askingFilename) {
+  const list = state.askingAttachments.get(askingFilename);
+  if (!list || list.length === 0) return;
+  for (const att of list) {
+    try { URL.revokeObjectURL(att.previewUrl); } catch { /* already revoked */ }
+  }
+  const updated = new Map(state.askingAttachments);
+  updated.delete(askingFilename);
+  state.askingAttachments = updated;
+}
+
+export function onAskingPaste(askingFilename, event) {
+  const items = event.clipboardData?.items;
+  if (!items || items.length === 0) return false;
+  const files = [];
+  for (const item of items) {
+    if (item.kind === "file" && typeof item.getAsFile === "function") {
+      const f = item.getAsFile();
+      if (f && ATTACHMENT_ALLOWED_MIMES.has(f.type)) files.push(f);
+    }
+  }
+  if (files.length === 0) return false;
+  event.preventDefault();
+  addAskingAttachmentFiles(askingFilename, files);
+  return true;
+}
+
+export function onAskingDrop(askingFilename, event) {
+  const dt = event.dataTransfer;
+  if (!dt || !dt.files || dt.files.length === 0) return false;
+  const files = [];
+  for (const f of dt.files) {
+    if (ATTACHMENT_ALLOWED_MIMES.has(f.type)) files.push(f);
+  }
+  if (files.length === 0) return false;
+  event.preventDefault();
+  addAskingAttachmentFiles(askingFilename, files);
   return true;
 }
 
@@ -1481,6 +1656,21 @@ export async function onToggleReviseMode(id) {
     state.detail.meta = res.meta;
     const card = state.sessions.find(s => s.id === id);
     if (card) card.reviseModeEnabled = res.meta.reviseModeEnabled;
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
+export async function onSwitchModel(id, model) {
+  if (!id || typeof model !== "string") return;
+  try {
+    const res = await api("POST", `/sessions/${id}/model`, { model });
+    if (state.detail && state.detail.meta && state.detail.meta.id === id) {
+      state.detail.meta = res.meta;
+    }
+    const card = state.sessions.find(s => s.id === id);
+    if (card) card.model = res.meta.model;
+    await fetchSessions();
   } catch (e) {
     toast(`failed: ${e.message}`);
   }

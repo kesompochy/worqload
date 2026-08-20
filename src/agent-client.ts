@@ -76,15 +76,26 @@ export async function submitEscalation(
   );
 }
 
+export interface CommandApprovalResult extends SubmitResult {
+  decision?: "approve" | "reject";
+  feedbackContent?: string;
+  timedOut?: boolean;
+}
+
 export async function requestCommandApproval(
   endpoint: string,
   sessionId: string,
   command: string,
   reason: string,
-): Promise<SubmitResult> {
-  return postJson<SubmitResult>(
+  sync = false,
+  timeoutSeconds?: number,
+): Promise<CommandApprovalResult> {
+  const timeoutMs = typeof timeoutSeconds === "number" && timeoutSeconds > 0
+    ? timeoutSeconds * 1000
+    : undefined;
+  return postJson<CommandApprovalResult>(
     `${endpoint}/internal/sessions/${sessionId}/command-approvals`,
-    { command, ...(reason ? { reason } : {}) },
+    { command, ...(reason ? { reason } : {}), ...(sync ? { sync: true } : {}), ...(timeoutMs ? { timeoutMs } : {}) },
   );
 }
 
@@ -97,4 +108,41 @@ export async function fetchFeedback(
     throw new Error(`${res.status} ${await res.text()}`);
   }
   return (await res.json()) as FetchFeedbackResult;
+}
+
+export interface FeedbackHistoryMessage {
+  filename: string;
+  content: string;
+  status: "unread" | "read";
+}
+
+export interface FeedbackHistoryResult {
+  messages: FeedbackHistoryMessage[];
+}
+
+export async function listFeedbackHistory(
+  endpoint: string,
+  sessionId: string,
+): Promise<FeedbackHistoryResult> {
+  const res = await fetch(`${endpoint}/internal/sessions/${sessionId}/feedback/history`);
+  if (!res.ok) {
+    throw new Error(`${res.status} ${await res.text()}`);
+  }
+  return (await res.json()) as FeedbackHistoryResult;
+}
+
+export interface FetchFeedbackByFilenameResult {
+  message: FeedbackMessage;
+}
+
+export async function fetchFeedbackByFilename(
+  endpoint: string,
+  sessionId: string,
+  filename: string,
+): Promise<FetchFeedbackByFilenameResult> {
+  const res = await fetch(`${endpoint}/internal/sessions/${sessionId}/feedback/by-filename/${encodeURIComponent(filename)}`);
+  if (!res.ok) {
+    throw new Error(`${res.status} ${await res.text()}`);
+  }
+  return (await res.json()) as FetchFeedbackByFilenameResult;
 }

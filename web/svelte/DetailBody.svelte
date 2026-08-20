@@ -20,7 +20,7 @@
   import FilesView from "./FilesView.svelte";
   import StructureView from "./StructureView.svelte";
   import EventsView from "./EventsView.svelte";
-  import { onDetailBodyClick, onResolve, onDetailBodyPointerOver, onDetailBodyPointerOut } from "../handlers.js";
+  import { onDetailBodyClick, onTextSelectionAnchor, onResolve, onAskingPaste, onAskingDrop, removeAskingAttachment, onDetailBodyPointerOver, onDetailBodyPointerOut } from "../handlers.js";
 
   // Tracked across the answer textarea's keydowns so a confirming Enter mid-IME
   // composition doesn't also submit (same guard as Composer.svelte).
@@ -33,6 +33,16 @@
     const article = event.target.closest("[data-asking]");
     if (!article) return;
     onResolve(article.getAttribute("data-asking"), article, article.querySelector(".ask-resolve"));
+  }
+
+  const skillNames = $derived(
+    new Set(appState.actions.filter(a => a.group === "skill").map(a => a.label)),
+  );
+  function highlightSkillRefs(html) {
+    if (skillNames.size === 0) return html;
+    const escaped = [...skillNames].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const re = new RegExp(`(^|(?<=\\s))/(${escaped.join("|")})(?=\\s|$)`, "g");
+    return html.replace(re, (_, pre, name) => `${pre}<span class="skill-ref">/${name}</span>`);
   }
 
   // Reports are stored oldest-first; the pane shows newest-first.
@@ -171,22 +181,34 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_mouse_events_have_key_events -->
-  <div class="detail-body" class:diff-view={appState.activeTab === "diff"} bind:this={bodyEl} onclick={onDetailBodyClick} onmouseover={onDetailBodyPointerOver} onmouseout={onDetailBodyPointerOut}>
+  <div class="detail-body" class:diff-view={appState.activeTab === "diff"} bind:this={bodyEl} onclick={onDetailBodyClick} onmouseup={onTextSelectionAnchor} onmouseover={onDetailBodyPointerOver} onmouseout={onDetailBodyPointerOut}>
     {#if appState.asking.length > 0}
       <section class="asking">
         <div class="label">⚠ Waiting for you — respond below to resume</div>
         {#each appState.asking as a (a.filename)}
+          {@const askAtts = appState.askingAttachments.get(a.filename) ?? []}
           <article data-asking={a.filename} style="margin-top:.6rem">
             <div class="filename">{a.filename}</div>
             <div class="md">{@html renderMarkdown(a.content)}</div>
+            {#if askAtts.length > 0}
+              <div class="attachment-chips">
+                {#each askAtts as att (att.id)}
+                  <span class="attachment-chip" title={att.file.name}>
+                    <img src={att.previewUrl} alt={att.file.name} />
+                    <span class="attachment-chip-name">{att.file.name}</span>
+                    <button type="button" title="remove" onclick={() => removeAskingAttachment(a.filename, att.id)}>×</button>
+                  </span>
+                {/each}
+              </div>
+            {/if}
             {#if typeof a.command === "string"}
-              <textarea class="ask-answer" rows="2" placeholder="Optional note to the agent (sent on approve or reject)..." style="margin-top:.4rem"></textarea>
+              <textarea class="ask-answer" rows="2" placeholder="Optional note to the agent (sent on approve or reject)..." style="margin-top:.4rem" onpaste={(e) => onAskingPaste(a.filename, e)} ondragover={(e) => e.preventDefault()} ondrop={(e) => onAskingDrop(a.filename, e)}></textarea>
               <div class="row" style="margin-top:.3rem">
                 <button class="ask-reject">Reject</button>
                 <button class="ask-approve">Approve &amp; Run</button>
               </div>
             {:else}
-              <textarea class="ask-answer" rows="3" placeholder="Your answer... (Enter で送信 / Shift+Enter で改行)" style="margin-top:.4rem" oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)} onkeydown={onAnswerKeydown}></textarea>
+              <textarea class="ask-answer" rows="3" placeholder="Your answer... (Enter で送信 / Shift+Enter で改行 / 画像ペースト可)" style="margin-top:.4rem" oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)} onkeydown={onAnswerKeydown} onpaste={(e) => onAskingPaste(a.filename, e)} ondragover={(e) => e.preventDefault()} ondrop={(e) => onAskingDrop(a.filename, e)}></textarea>
               <div class="row" style="margin-top:.3rem">
                 <span class="spacer"></span>
                 <button class="ask-resolve">Answer</button>
@@ -220,9 +242,13 @@
                 <button class="report-anchor-chip" type="button" title="addressed by {rep.filename} — クリックでレポートへ" data-goto-report={rep.filename}>↳ {rep.filename}</button>
               {/each}
               <span class="badge badge-{f.status === 'unread' ? 'waiting_human' : 'stopped'}">{f.status}</span>
+              <button class="report-delete" type="button" data-feedback-delete={f.filename} title="このフィードバックを削除する" aria-label="フィードバックを削除">✕</button>
             </div>
             <div class="report-body">
-              <div class="md">{@html renderMarkdown(f.content)}</div>
+              {#if f.anchor?.quote}
+                <blockquote class="anchor-quote">{f.anchor.quote}</blockquote>
+              {/if}
+              <div class="md">{@html highlightSkillRefs(renderMarkdown(f.content))}</div>
               {#if f.attachments && f.attachments.length > 0}
                 <div class="attachment-strip">
                   {#each f.attachments as name (name)}
