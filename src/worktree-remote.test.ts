@@ -127,4 +127,30 @@ describe("fetchBranch", () => {
     const newSha = gitStdout(["rev-parse", BRANCH], repoDir);
     expect(newSha).not.toBe(oldSha);
   });
+
+  test("updates origin/<branch> even when working tree is dirty and local branch can't fast-forward", async () => {
+    const { repoDir, bareDir } = makeRepoWithRemote();
+    cleanupDirs.push(repoDir, bareDir);
+
+    const clone2 = mkdtempSync(join(tmpdir(), "worqload-clone2c-"));
+    cleanupDirs.push(clone2);
+    rmSync(clone2, { recursive: true });
+    git(["clone", bareDir, clone2], tmpdir());
+    git(["config", "user.email", "test@test.com"], clone2);
+    git(["config", "user.name", "Test"], clone2);
+    writeFileSync(join(clone2, "README.md"), "# updated\n");
+    git(["add", "."], clone2);
+    git(["commit", "--no-verify", "-m", "update readme"], clone2);
+    git(["push", "origin", BRANCH], clone2);
+
+    // Dirty the same file locally so pull --ff-only would fail
+    writeFileSync(join(repoDir, "README.md"), "# local edit\n");
+
+    const oldRemoteSha = gitStdout(["rev-parse", `origin/${BRANCH}`], repoDir);
+
+    await fetchBranch(repoDir, BRANCH);
+
+    const newRemoteSha = gitStdout(["rev-parse", `origin/${BRANCH}`], repoDir);
+    expect(newRemoteSha).not.toBe(oldRemoteSha);
+  });
 });
