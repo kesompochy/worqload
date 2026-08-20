@@ -2,25 +2,18 @@ import { join } from "node:path";
 import protocolPrefixTemplate from "./prompts/protocol-prefix.txt" with { type: "text" };
 import resumeKickoff from "./prompts/resume-kickoff.txt" with { type: "text" };
 import turnWithoutReportNudge from "./prompts/turn-without-report-nudge.txt" with { type: "text" };
+import { defaultConfigPath, loadProtocolPrefix } from "./textlint";
 
-// The wq-issue-comment script ships inside the worqload install, not on PATH.
-// A session's CWD is a worktree of whatever target repo worqload was started
-// in, so the agent is handed the script's absolute path: a bare command would
-// depend on `bun link` having been re-run, and a `bin/`-relative path would
-// only resolve when the target repo happens to be worqload itself.
 const defaultWqIssueCommentPath = join(import.meta.dir, "..", "bin", "wq-issue-comment");
 
-// Prepended to the first user message so the agent learns the worqload
-// protocol without depending on user-side .claude/skills/ setup. The template
-// in prompts/protocol-prefix.txt carries a {{baseBranch}} placeholder so the
-// agent can name the base branch when checking for merge conflicts, and a
-// {{wqIssueComment}} placeholder for the absolute path of the wq-issue-comment
-// script.
-export function buildProtocolPrefix(
+export async function buildProtocolPrefix(
   baseBranch: string,
   wqIssueCommentPath: string = defaultWqIssueCommentPath,
-): string {
+  configPath: string = defaultConfigPath(),
+): Promise<string> {
+  const customPrefix = (await loadProtocolPrefix(configPath)) ?? "";
   return protocolPrefixTemplate
+    .replaceAll("{{custom-protocol-prefix}}", customPrefix)
     .replaceAll("{{baseBranch}}", baseBranch)
     .replaceAll("{{wqIssueComment}}", wqIssueCommentPath);
 }

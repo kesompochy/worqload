@@ -10,16 +10,20 @@
   let visible = $state(false);
   let prompt = $state("");
   let agentName = $state("claude");
+  let model = $state("");
   let baseBranch = $state("");
   let branchName = $state("");
+  let startPaused = $state(false);
   let submitting = $state(false);
   let errorMessage = $state("");
 
   export function open() {
     prompt = "";
     agentName = "claude";
+    model = "";
     baseBranch = "";
     branchName = "";
+    startPaused = false;
     submitting = false;
     errorMessage = "";
     visible = true;
@@ -45,10 +49,13 @@
     errorMessage = "";
     try {
       const body = { prompt: trimmedPrompt, agentName };
+      const trimmedModel = model.trim();
       const trimmedBase = baseBranch.trim();
       const trimmedBranchName = branchName.trim();
+      if (agentName === "claude" && trimmedModel) body.model = trimmedModel;
       if (trimmedBase) body.baseBranch = trimmedBase;
       if (trimmedBranchName) body.branchName = trimmedBranchName;
+      if (startPaused) body.startPaused = true;
       const { meta } = await api("POST", "/sessions", body);
       visible = false;
       await fetchSessions();
@@ -93,7 +100,46 @@
           <option value="cursor">Cursor</option>
         </select>
       </div>
+      {#if agentName === "claude"}
+        <div class="row" style="margin-top:.7rem">
+          <label for="new-session-model" style="color:var(--text-dim); font-size:12px">Model</label>
+          <select id="new-session-model" bind:value={model} style="flex:1">
+            <option value="">(default)</option>
+            <optgroup label="Alias (latest)">
+              <option value="sonnet">sonnet</option>
+              <option value="opus">opus</option>
+              <option value="haiku">haiku</option>
+              <option value="fable">fable</option>
+            </optgroup>
+            <optgroup label="Sonnet">
+              <option value="claude-sonnet-5">claude-sonnet-5</option>
+              <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+              <option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m]</option>
+              <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+            </optgroup>
+            <optgroup label="Opus">
+              <option value="claude-opus-4-8">claude-opus-4-8</option>
+              <option value="claude-opus-4-7">claude-opus-4-7</option>
+              <option value="claude-opus-4-7[1m]">claude-opus-4-7[1m]</option>
+              <option value="claude-opus-4-6">claude-opus-4-6</option>
+              <option value="claude-opus-4-6[1m]">claude-opus-4-6[1m]</option>
+              <option value="claude-opus-4-5">claude-opus-4-5</option>
+            </optgroup>
+            <optgroup label="Haiku">
+              <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+            </optgroup>
+            <optgroup label="Fable / Mythos">
+              <option value="claude-fable-5">claude-fable-5</option>
+              <option value="claude-mythos-5">claude-mythos-5</option>
+            </optgroup>
+          </select>
+        </div>
+      {/if}
       <div class="row" style="margin-top:.7rem">
+        <label style="color:var(--text-dim); font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap; flex-shrink:0">
+          <input type="checkbox" bind:checked={startPaused} />
+          Start paused
+        </label>
         <span class="spacer"></span>
         <button onclick={create} disabled={submitting}>
           {#if submitting}<span class="spinner"></span> Creating…{:else}Create{/if}
@@ -101,7 +147,7 @@
         <button onclick={close} disabled={submitting}>Cancel</button>
       </div>
       <div class="row" style="margin-top:.7rem">
-        <input bind:value={baseBranch} placeholder="base branch (default: current HEAD)" style="flex:1" />
+        <input bind:value={baseBranch} placeholder="base branch (default: remote default branch)" style="flex:1" />
       </div>
       <div class="row" style="margin-top:.7rem">
         <input bind:value={branchName} placeholder="branch name (default: auto-generated)" style="flex:1" />

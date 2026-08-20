@@ -8,6 +8,7 @@ export interface AnchorRef {
   path: string;
   lineStart: number;
   lineEnd: number;
+  quote?: string;
 }
 
 const ANCHOR_REF_RE = /^Re: (.+):(\d+)(?:-(\d+))?$/;
@@ -25,5 +26,8 @@ export function formatAnchorRefLine(anchor: AnchorRef): string {
   const range = anchor.lineEnd !== anchor.lineStart
     ? `${anchor.lineStart}-${anchor.lineEnd}`
     : `${anchor.lineStart}`;
-  return `Re: ${anchor.path}:${range}`;
+  const refLine = `Re: ${anchor.path}:${range}`;
+  if (!anchor.quote) return refLine;
+  const blockquote = anchor.quote.split("\n").map(line => `> ${line}`).join("\n");
+  return `${refLine}\n${blockquote}`;
 }

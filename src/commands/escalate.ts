@@ -1,13 +1,13 @@
 // agent-side CLI:
 //   `worqload escalate submit --slug <slug>`        (question body via stdin)
-//   `worqload escalate command --command "<cmd>"`   (optional reason via stdin)
+//   `worqload escalate command --command "<cmd>"`   (reason via stdin, required)
 
 import { submitEscalation, requestCommandApproval } from "../agent-client";
-import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, exitWithUsage } from "./cli-helpers";
+import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, exitWithUsage } from "./cli-helpers";
 
 const USAGE =
   "worqload escalate submit --slug <slug>          (question body via stdin)\n" +
-  "       worqload escalate command --command <cmd>      (optional reason via stdin)";
+  "       worqload escalate command --command <cmd> [--timeout <seconds>]  (reason via stdin, required)";
 
 export async function escalate(args: string[]): Promise<void> {
   switch (args[0]) {
@@ -44,12 +44,25 @@ async function escalateCommand(args: string[]): Promise<void> {
     console.error("--command must not be empty");
     process.exit(2);
   }
+  const timeoutRaw = optionalFlag(args, "--timeout");
+  let timeoutSeconds: number | undefined;
+  if (timeoutRaw !== undefined) {
+    timeoutSeconds = Number(timeoutRaw);
+    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+      console.error("--timeout must be a positive number (seconds)");
+      process.exit(2);
+    }
+  }
   const reason = (await readAllStdin()).trim();
+  if (reason === "") {
+    console.error("reason must be provided on stdin");
+    process.exit(2);
+  }
   const sessionId = requireEnv("WORQLOAD_SESSION_ID");
   const endpoint = resolveAgentEndpoint();
   try {
-    const result = await requestCommandApproval(endpoint, sessionId, command, reason);
-    console.log(result.filename);
+    const result = await requestCommandApproval(endpoint, sessionId, command, reason, true, timeoutSeconds);
+    console.log(result.feedbackContent ?? result.filename);
   } catch (err) {
     console.error(`escalate command failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
