@@ -20,6 +20,7 @@ src/file-name-search.test.ts
 src/file-store.test.ts
 src/files-view.test.ts
 src/handlers.small.test.ts
+src/hooks.small.test.ts
 src/import-graph.test.ts
 src/lsp-client.small.test.ts
 src/markdown.test.ts
