@@ -1425,7 +1425,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const agentName = body.agentName ?? ctx.agentName;
   const model = agentName === "claude" ? body.model : undefined;
-  const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
+  const baseBranch = body.baseBranch?.trim() || await resolveDefaultBaseBranch(ctx);
   const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
 
   // worktreePath and branchName are populated after the id is assigned below
@@ -1477,6 +1477,15 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
   return json({ meta: stored ?? meta }, 201);
+}
+
+async function resolveDefaultBaseBranch(ctx: ServerContext): Promise<string> {
+  const remoteBranch = await ctx.worktreeOps.resolveRemoteDefaultBranch(ctx.repoDir);
+  if (remoteBranch) {
+    await ctx.worktreeOps.fetchBranch(ctx.repoDir, remoteBranch);
+    return remoteBranch;
+  }
+  return ctx.worktreeOps.currentBranch(ctx.repoDir);
 }
 
 async function resolveBranchName(params: {
