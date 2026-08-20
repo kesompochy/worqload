@@ -147,7 +147,7 @@
         <button onclick={close} disabled={submitting}>Cancel</button>
       </div>
       <div class="row" style="margin-top:.7rem">
-        <input bind:value={baseBranch} placeholder="base branch (default: current HEAD)" style="flex:1" />
+        <input bind:value={baseBranch} placeholder="base branch (default: remote default branch)" style="flex:1" />
       </div>
       <div class="row" style="margin-top:.7rem">
         <input bind:value={branchName} placeholder="branch name (default: auto-generated)" style="flex:1" />
