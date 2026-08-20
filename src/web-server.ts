@@ -1425,8 +1425,10 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const agentName = body.agentName ?? ctx.agentName;
   const model = agentName === "claude" ? body.model : undefined;
-  const baseBranch = body.baseBranch?.trim() || await resolveDefaultBaseBranch(ctx);
-  const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
+  const { baseBranch, startPoint } = body.baseBranch?.trim()
+    ? { baseBranch: body.baseBranch.trim(), startPoint: body.baseBranch.trim() }
+    : await resolveDefaultBaseBranch(ctx);
+  const baseCommit = await ctx.worktreeOps.resolveBaseCommit(startPoint, ctx.repoDir);
 
   // worktreePath and branchName are populated after the id is assigned below
   // (we need the id to compute the worktree dir and the shortId fallback).
@@ -1460,7 +1462,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     ({ worktreePath, branchName: actualBranchName } = await ctx.worktreeOps.createSessionWorktree({
       sessionId: tentative.id,
       repoDir: ctx.repoDir,
-      baseBranch,
+      baseBranch: startPoint,
       branchName,
       reportsDirAbsolute: reportsDir,
     }));
@@ -1479,13 +1481,14 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   return json({ meta: stored ?? meta }, 201);
 }
 
-async function resolveDefaultBaseBranch(ctx: ServerContext): Promise<string> {
+async function resolveDefaultBaseBranch(ctx: ServerContext): Promise<{ baseBranch: string; startPoint: string }> {
   const remoteBranch = await ctx.worktreeOps.resolveRemoteDefaultBranch(ctx.repoDir);
   if (remoteBranch) {
     await ctx.worktreeOps.fetchBranch(ctx.repoDir, remoteBranch);
-    return remoteBranch;
+    return { baseBranch: remoteBranch, startPoint: `origin/${remoteBranch}` };
   }
-  return ctx.worktreeOps.currentBranch(ctx.repoDir);
+  const local = await ctx.worktreeOps.currentBranch(ctx.repoDir);
+  return { baseBranch: local, startPoint: local };
 }
 
 async function resolveBranchName(params: {
