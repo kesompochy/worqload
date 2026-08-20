@@ -194,6 +194,34 @@ export async function currentBranch(repoDir: string): Promise<string> {
   return out.trim();
 }
 
+// The short name of origin's default branch (e.g. "main"). Reads the local
+// `refs/remotes/origin/HEAD` symbolic ref — which `git clone` sets and
+// `git remote set-head --auto` refreshes — so this never hits the network.
+// Returns null when there is no remote or the HEAD ref is absent.
+export async function resolveRemoteDefaultBranch(repoDir: string): Promise<string | null> {
+  const ref = await gitOutput(repoDir, ["symbolic-ref", "refs/remotes/origin/HEAD"]);
+  if (!ref) return null;
+  const prefix = "refs/remotes/origin/";
+  return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
+}
+
+// Fetch a single branch from origin and fast-forward the local ref to match.
+// When the branch is currently checked out, uses `git pull --ff-only` (git
+// refuses to update a checked-out branch via fetch). When it is not checked
+// out, uses `git fetch origin <branch>:<branch>` to advance the local ref
+// without touching the working tree.
+export async function fetchBranch(repoDir: string, branch: string): Promise<void> {
+  const head = await currentBranch(repoDir);
+  const args = head === branch
+    ? ["pull", "--ff-only", "origin", branch]
+    : ["fetch", "origin", `${branch}:${branch}`];
+  const proc = Bun.spawn(
+    ["git", ...args],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
+  );
+  await proc.exited;
+}
+
 // worqload injects two entries at the worktree root: the `.worqload-reports`
 // symlink (points into .worqload/ so the agent can read its own reports) and
 // the `.worqload-draft/` directory (session-private scratch where the agent
@@ -668,6 +696,8 @@ export interface WorktreeOps {
   baseWorktreePathFor(sessionWorktreePath: string): string;
   gitRemoteUrl(worktreePath: string): Promise<string | null>;
   gitHeadSha(worktreePath: string): Promise<string | null>;
+  resolveRemoteDefaultBranch(repoDir: string): Promise<string | null>;
+  fetchBranch(repoDir: string, branch: string): Promise<void>;
 }
 
 export const realWorktreeOps: WorktreeOps = {
@@ -689,4 +719,6 @@ export const realWorktreeOps: WorktreeOps = {
   baseWorktreePathFor,
   gitRemoteUrl,
   gitHeadSha,
+  resolveRemoteDefaultBranch,
+  fetchBranch,
 };
