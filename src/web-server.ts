@@ -40,6 +40,7 @@ import type { IpadicFeatures, Tokenizer } from "kuromoji";
 import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import { DEFAULT_FEEDBACK_TEMPLATES, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
+import { runSessionCreateHooks } from "./hooks";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
@@ -1471,12 +1472,15 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const meta: SessionMeta = { ...tentative, worktreePath, branchName: actualBranchName };
   await saveSessionMeta(meta, ctx.sessionsDir);
+
+  const hookResults = await runSessionCreateHooks(ctx.configPath, ctx.repoDir, worktreePath);
+
   if (!startPaused) {
     await spawnAndAttachHost(ctx, meta);
   }
 
   const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
-  return json({ meta: stored ?? meta }, 201);
+  return json({ meta: stored ?? meta, hookResults: hookResults.length > 0 ? hookResults : undefined }, 201);
 }
 
 async function resolveDefaultBaseBranch(ctx: ServerContext): Promise<string> {
