@@ -43,9 +43,10 @@
     if (checked.length === 0) return;
     const input = document.getElementById("feedbackInput");
     if (!input) return;
-    const prefix = checked.map(t => t.text).join("\n");
+    const prefix = checked.map(t => `[${t.text}]`).join("\n");
     const existing = input.value.trim();
     input.value = existing ? `${prefix}\n\n${existing}` : prefix;
+    clearCheckedTemplates();
   }
 
   let skillFilter = $state("");
@@ -122,10 +123,7 @@
   function submit(isTerminal) {
     if (!isTerminal) prependTemplates();
     if (isTerminal) onResume();
-    else {
-      onFeedback();
-      if (checkedTemplates.size > 0) clearCheckedTemplates();
-    }
+    else onFeedback();
   }
 
   function onKeydown(event, isTerminal) {
