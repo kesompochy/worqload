@@ -19,6 +19,7 @@ button { background: var(--panel-2); border: 1px solid var(--border); padding: .
 button:hover { background: #232b3a; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 textarea, input { background: var(--bg); border: 1px solid var(--border); padding: .4rem .5rem; border-radius: 4px; color: var(--text); width: 100%; }
+input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; background: transparent; border: 0; border-radius: 0; }
 textarea { resize: vertical; min-height: 4rem; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
 .layout { display: grid; grid-template-columns: 320px 1fr; height: 100%; }
