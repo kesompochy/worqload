@@ -12,6 +12,7 @@ src/commands/session-host.driver.test.ts
 src/commands/session-host.test.ts
 src/feedback-anchor-backfill.test.ts
 src/handlers.test.ts
+src/hooks.test.ts
 src/language-servers.test.ts
 src/lock.test.ts
 src/lsp-client.test.ts
