@@ -1,13 +1,13 @@
 // agent-side CLI:
 //   `worqload escalate submit --slug <slug>`        (question body via stdin)
-//   `worqload escalate command --command "<cmd>"`   (optional reason via stdin)
+//   `worqload escalate command --command "<cmd>"`   (reason via stdin, required)
 
 import { submitEscalation, requestCommandApproval } from "../agent-client";
 import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, exitWithUsage } from "./cli-helpers";
 
 const USAGE =
   "worqload escalate submit --slug <slug>          (question body via stdin)\n" +
-  "       worqload escalate command --command <cmd> [--timeout <seconds>]  (optional reason via stdin)";
+  "       worqload escalate command --command <cmd> [--timeout <seconds>]  (reason via stdin, required)";
 
 export async function escalate(args: string[]): Promise<void> {
   switch (args[0]) {
@@ -54,6 +54,10 @@ async function escalateCommand(args: string[]): Promise<void> {
     }
   }
   const reason = (await readAllStdin()).trim();
+  if (reason === "") {
+    console.error("reason must be provided on stdin");
+    process.exit(2);
+  }
   const sessionId = requireEnv("WORQLOAD_SESSION_ID");
   const endpoint = resolveAgentEndpoint();
   try {
