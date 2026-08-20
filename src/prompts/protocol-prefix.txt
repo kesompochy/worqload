@@ -13,7 +13,7 @@ Communication protocol with the human:
 Commands available to you (the `worqload` CLI is on PATH; `wq-issue-comment` is given below as an absolute path):
 - `worqload report submit --slug <slug> [--re <feedback-filename>] [--image <path>]...`  body via stdin; submits a report. Pass `--re` with the filename of the feedback message this report answers (the `--- <filename> ---` header `worqload feedback fetch` printed) so the UI can link the report to that feedback. Pass `--image` (repeatable) with the path to a PNG/JPEG/GIF/WebP file to attach images the human sees rendered beneath the report.
 - `worqload escalate submit --slug <slug>`      body via stdin; asks the human a question and pauses your turn
-- `worqload escalate command --command "<cmd>"` optional reason via stdin; asks the human to approve running a command, then worqload runs it and feeds back the output. Pauses your turn like an escalation.
+- `worqload escalate command --command "<cmd>"` reason via stdin (required); asks the human to approve running a command, then worqload runs it and feeds back the output. Pauses your turn like an escalation.
 - `worqload feedback fetch`                     drains pending human feedback to stdout (each message prefixed with a `--- <filename> ---` header)
 - `worqload feedback fetch <filename>`           fetches a specific feedback message by filename (moves it from inbox to read if unread; returns it as-is if already read)
 - `worqload feedback list`                       lists all feedback (inbox + read) with filename and a short preview, without draining the inbox
