@@ -38,7 +38,9 @@ import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import type { IpadicFeatures, Tokenizer } from "kuromoji";
 import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
-import { loadSkillButtons, type SkillButton } from "./skill-buttons";
+import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
+import { DEFAULT_FEEDBACK_TEMPLATES, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
+import { runSessionCreateHooks } from "./hooks";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
@@ -71,6 +73,7 @@ function listenWithFallback(requestedPort: number, listen: (port: number) => Ser
 export function buildDefaultSpawnCommand(
   agentName: AgentName,
   driverName: DriverName,
+  model?: string,
 ): string[] {
   if (agentName === "codex") {
     // The codex driver appends `exec --json -` (fresh) or `exec --json resume
@@ -92,12 +95,13 @@ export function buildDefaultSpawnCommand(
   // down to only the protocol allowlist above (the agent will then be able
   // to write reports etc. but not run arbitrary dev commands).
   const permissionMode = process.env.WORQLOAD_PERMISSION_MODE || "bypassPermissions";
+  const modelArgs = agentName === "claude" && model ? ["--model", model] : [];
   if (driverName === "tmux") {
     // The tmux driver runs interactive `claude` inside a detached tmux session
     // (see src/session-driver-tmux.ts). Interactive mode does not understand
     // --input-format or --output-format; `--dangerously-skip-permissions` is
     // the interactive equivalent of bypassPermissions.
-    return ["claude", "--dangerously-skip-permissions"];
+    return ["claude", "--dangerously-skip-permissions", ...modelArgs];
   }
   return [
     "claude",
@@ -107,6 +111,7 @@ export function buildDefaultSpawnCommand(
     "--output-format", "stream-json",
     "--permission-mode", permissionMode,
     "--allowedTools", WORQLOAD_PROTOCOL_ALLOW,
+    ...modelArgs,
   ];
 }
 
@@ -190,7 +195,7 @@ export interface ServerContext {
   agentName: AgentName;
   driverName: DriverName;
   spawnCommand: string[];
-  spawnCommandForAgent: (agentName: AgentName) => string[];
+  spawnCommandForAgent: (agentName: AgentName, model?: string) => string[];
   branchNameGenerator: BranchNameGenerator;
   hostLauncher: HostLauncher;
   worktreeOps: WorktreeOps;
@@ -256,6 +261,12 @@ export interface ServerContext {
   // lazily on the first revise-mode submission (see currentTextlintTokenizer).
   // undefined = not yet built; null = build failed (gate runs literal-only).
   textlintTokenizer?: Tokenizer<IpadicFeatures> | null;
+  // Sync command-approval waiters: the POST handler holds the HTTP response
+  // open until the escalation is resolved, then returns the result directly.
+  // Key: `${sessionId}/${filename}`. Multiple waiters per key: a duplicate
+  // escalation (same command already pending) attaches an additional waiter
+  // instead of creating a second asking entry.
+  commandApprovalWaiters: Map<string, { resolve: (result: CommandApprovalSyncResult) => void }[]>;
 }
 
 export interface StartServerOptions {
@@ -331,6 +342,13 @@ function commandSidecarFilename(askingMdFilename: string): string {
 interface CommandApproval {
   command: string;
   reason?: string;
+  timeoutMs?: number;
+}
+
+interface CommandApprovalSyncResult {
+  decision: "approve" | "reject";
+  feedbackContent: string;
+  runResult?: ApprovedCommandResult;
 }
 
 function buildCommandApprovalMarkdown(command: string, reason: string): string {
@@ -343,7 +361,7 @@ function buildCommandApprovalMarkdown(command: string, reason: string): string {
   return parts.join("\n\n") + "\n";
 }
 
-const APPROVED_COMMAND_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const APPROVED_COMMAND_OUTPUT_LIMIT = 50_000;
 
 function truncateOutput(text: string): string {
@@ -358,15 +376,13 @@ interface ApprovedCommandResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  timeoutMs: number;
 }
 
-// Runs an approved command via `sh -c` in the session worktree (mirroring how
-// claude's Bash tool would have run it). Killed after a timeout so a hung
-// command can't wedge the resolve request.
-async function runApprovedCommand(command: string, cwd: string): Promise<ApprovedCommandResult> {
+async function runApprovedCommand(command: string, cwd: string, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS): Promise<ApprovedCommandResult> {
   const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: "pipe", stderr: "pipe", env: process.env });
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; try { proc.kill("SIGKILL"); } catch {} }, APPROVED_COMMAND_TIMEOUT_MS);
+  const timer = setTimeout(() => { timedOut = true; try { proc.kill("SIGKILL"); } catch {} }, timeoutMs);
   const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   const exitCode = await proc.exited;
   clearTimeout(timer);
@@ -376,11 +392,15 @@ async function runApprovedCommand(command: string, cwd: string): Promise<Approve
     stdout: truncateOutput(stdout),
     stderr: truncateOutput(stderr),
     timedOut,
+    timeoutMs,
   };
 }
 
 function describeCommandExit(result: ApprovedCommandResult): string {
-  if (result.timedOut) return `killed (timed out after ${APPROVED_COMMAND_TIMEOUT_MS / 60_000}m)`;
+  if (result.timedOut) {
+    const seconds = result.timeoutMs / 1000;
+    return `killed (timed out after ${seconds}s)`;
+  }
   if (result.signal) return `killed by ${result.signal}`;
   return String(result.exitCode ?? "unknown");
 }
@@ -549,6 +569,15 @@ async function currentSkillButtons(ctx: ServerContext): Promise<SkillButton[]> {
   } catch (err) {
     console.error(`[skillButtons] config reload failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
+  }
+}
+
+async function currentFeedbackTemplates(ctx: ServerContext): Promise<FeedbackTemplate[]> {
+  try {
+    return await loadFeedbackTemplates(ctx.configPath);
+  } catch (err) {
+    console.error(`[feedbackTemplates] config reload failed: ${err instanceof Error ? err.message : String(err)}`);
+    return DEFAULT_FEEDBACK_TEMPLATES;
   }
 }
 
@@ -910,7 +939,7 @@ async function spawnAndAttachHost(
     let attachment: SessionAttachment | undefined;
     const agentName = meta.agentName ?? ctx.agentName;
     const driverName = meta.driverName ?? ctx.driverName;
-    const spawnCommand = ctx.spawnCommandForAgent(agentName);
+    const spawnCommand = ctx.spawnCommandForAgent(agentName, meta.model);
     const effectiveSpawnCommand = opts.resume && agentName === "claude"
       ? [...spawnCommand, "--continue"]
       : spawnCommand;
@@ -972,9 +1001,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const driverName = opts.driverName ?? "pipe";
   const spawnCommand = opts.spawnCommand ?? buildDefaultSpawnCommand(agentName, driverName);
   const overriddenSpawnCommand = opts.spawnCommand;
-  const spawnCommandForAgent: (name: AgentName) => string[] = overriddenSpawnCommand !== undefined
+  const spawnCommandForAgent: (name: AgentName, model?: string) => string[] = overriddenSpawnCommand !== undefined
     ? () => overriddenSpawnCommand
-    : (name) => buildDefaultSpawnCommand(name, driverName);
+    : (name, model) => buildDefaultSpawnCommand(name, driverName, model);
   const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand });
@@ -1104,6 +1133,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     configPath,
     textlintRules,
     reviseFeedbackGuidance,
+    commandApprovalWaiters: new Map(),
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -1175,10 +1205,13 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/archived/prune", postPruneArchived),
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
+  defineRoute("POST", "/sessions/:id/model", postModel),
   defineRoute("POST", "/sessions/:id/revise-mode", postReviseMode),
+  defineRoute("POST", "/sessions/:id/feedback/batch", postFeedbackBatch),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
   defineRoute("GET",  "/sessions/:id/feedback/:filename/attachments/:name", getFeedbackAttachment),
+  defineRoute("DELETE", "/sessions/:id/feedback/:filename", deleteFeedback),
   defineRoute("POST", "/sessions/:id/escalations/:filename/resolve", postEscalationResolve),
   defineRoute("GET",  "/sessions/:id/reports", getReports),
   defineRoute("GET",  "/sessions/:id/reports/:filename/attachments/:name", getReportAttachment),
@@ -1209,6 +1242,8 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/internal/sessions/:id/escalations", postInternalEscalations),
   defineRoute("POST", "/internal/sessions/:id/command-approvals", postInternalCommandApprovals),
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
+  defineRoute("GET",  "/internal/sessions/:id/feedback/history", getInternalFeedbackHistory),
+  defineRoute("GET",  "/internal/sessions/:id/feedback/by-filename/:filename", getInternalFeedbackByFilename),
 ];
 
 const WEB_DIST_DIR = join(import.meta.dir, "..", "web", "dist");
@@ -1269,7 +1304,8 @@ async function getFavicon(_req: Request, ctx: ServerContext): Promise<Response> 
 }
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
-  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName });
+  const feedbackTemplates = await currentFeedbackTemplates(ctx);
+  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName, feedbackTemplates });
 }
 
 // Vite emits content-hashed bundles under web/dist/assets/. Serving any basename
@@ -1371,6 +1407,8 @@ interface PostSessionsBody {
   title?: string;
   branchName?: string;
   agentName?: AgentName;
+  model?: string;
+  startPaused?: boolean;
 }
 
 function isAgentName(value: unknown): value is AgentName {
@@ -1387,12 +1425,15 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   }
 
   const agentName = body.agentName ?? ctx.agentName;
-  const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
-  const latestBase = await ctx.worktreeOps.resolveLatestBase(baseBranch, ctx.repoDir);
-  const baseCommit = latestBase.commit;
+  const model = agentName === "claude" ? body.model : undefined;
+  const { baseBranch, startPoint } = body.baseBranch?.trim()
+    ? await resolveExplicitBaseBranch(body.baseBranch.trim(), ctx)
+    : await resolveDefaultBaseBranch(ctx);
+  const baseCommit = await ctx.worktreeOps.resolveBaseCommit(startPoint, ctx.repoDir);
 
   // worktreePath and branchName are populated after the id is assigned below
   // (we need the id to compute the worktree dir and the shortId fallback).
+  const startPaused = body.startPaused === true;
   const tentative = createSession({
     prompt: body.prompt,
     baseBranch,
@@ -1400,7 +1441,9 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     worktreePath: "",
     branchName: "",
     agentName,
+    model,
     title: body.title,
+    startPaused,
   });
 
   const branchName = await resolveBranchName({
@@ -1415,11 +1458,12 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const reportsDir = reportsDirFor(ctx, tentative.id);
   let worktreePath: string;
+  let actualBranchName: string;
   try {
-    ({ worktreePath } = await ctx.worktreeOps.createSessionWorktree({
+    ({ worktreePath, branchName: actualBranchName } = await ctx.worktreeOps.createSessionWorktree({
       sessionId: tentative.id,
       repoDir: ctx.repoDir,
-      baseBranch: latestBase.ref,
+      baseBranch: startPoint,
       branchName,
       reportsDirAbsolute: reportsDir,
     }));
@@ -1428,12 +1472,35 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     return json({ error: message }, 400);
   }
 
-  const meta: SessionMeta = { ...tentative, worktreePath, branchName };
+  const meta: SessionMeta = { ...tentative, worktreePath, branchName: actualBranchName };
   await saveSessionMeta(meta, ctx.sessionsDir);
-  await spawnAndAttachHost(ctx, meta);
+
+  void runSessionCreateHooks(ctx.configPath, ctx.repoDir, worktreePath).catch(() => {});
+
+  if (!startPaused) {
+    await spawnAndAttachHost(ctx, meta);
+  }
 
   const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
   return json({ meta: stored ?? meta }, 201);
+}
+
+async function resolveDefaultBaseBranch(ctx: ServerContext): Promise<{ baseBranch: string; startPoint: string }> {
+  const remoteBranch = await ctx.worktreeOps.resolveRemoteDefaultBranch(ctx.repoDir);
+  if (remoteBranch) {
+    await ctx.worktreeOps.fetchBranch(ctx.repoDir, remoteBranch);
+    return { baseBranch: remoteBranch, startPoint: `origin/${remoteBranch}` };
+  }
+  const local = await ctx.worktreeOps.currentBranch(ctx.repoDir);
+  return { baseBranch: local, startPoint: local };
+}
+
+async function resolveExplicitBaseBranch(
+  baseBranch: string,
+  ctx: ServerContext,
+): Promise<{ baseBranch: string; startPoint: string }> {
+  const latest = await ctx.worktreeOps.resolveLatestBase(baseBranch, ctx.repoDir);
+  return { baseBranch, startPoint: latest.ref };
 }
 
 async function resolveBranchName(params: {
@@ -1474,8 +1541,10 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
     // The sidebar's liveness signal: when the agent last did something — its run
     // or a step within it, not a report/feedback/escalation. Undefined until the
     // session has produced one.
-    const lastAgentEventAt = events.filter(isAgentWorkEvent).at(-1)?.timestamp;
-    return { ...meta, unreadReportCount, unresolvedEscalationCount, lastAgentEventAt };
+    const agentEvents = events.filter(isAgentWorkEvent);
+    const lastAgentEventAt = agentEvents.at(-1)?.timestamp;
+    const agentEventCount = agentEvents.length;
+    return { ...meta, unreadReportCount, unresolvedEscalationCount, lastAgentEventAt, agentEventCount };
   }));
   return json({ sessions: decorated });
 }
@@ -1647,6 +1716,54 @@ async function postReviseMode(req: Request, ctx: ServerContext, params: Record<s
   });
 }
 
+interface ModelBody {
+  model?: unknown;
+}
+
+async function postModel(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json().catch(() => ({}))) as ModelBody;
+    if (typeof body.model !== "string" || body.model.trim() === "") {
+      return json({ error: "model must be a non-empty string" }, 400);
+    }
+    const agentName = meta.agentName ?? ctx.agentName;
+    if (agentName !== "claude") {
+      return json({ error: "model switching is only supported for claude sessions" }, 400);
+    }
+    const newModel = body.model.trim();
+    if (newModel === meta.model) {
+      return json({ meta });
+    }
+
+    if (!isTerminal(meta.status)) {
+      const att = ctx.clients.get(meta.id);
+      if (att) {
+        await att.client.kill("SIGTERM");
+        await Promise.race([att.client.exited, new Promise((r) => setTimeout(r, 500))]);
+        if (ctx.clients.has(meta.id)) {
+          await att.client.kill("SIGKILL");
+          await att.client.exited.catch(() => {});
+        }
+      }
+      ctx.clients.delete(meta.id);
+      await transitionStatus(ctx, meta, "stopped");
+      await appendAndBroadcast(ctx, meta.id, { kind: "session_stopped", payload: { reason: "model_switch" } });
+    }
+
+    const events = await readEvents(meta.id, 1, ctx.sessionsDir);
+    const hasBeenStarted = events.some(e => e.kind === "session_started");
+
+    const stopped = await loadSessionMeta(meta.id, ctx.sessionsDir);
+    const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = stopped ?? meta;
+    const resumed: SessionMeta = { ...rest, model: newModel, status: "running" };
+    await saveSessionMeta(resumed, ctx.sessionsDir);
+    await spawnAndAttachHost(ctx, resumed, { resume: hasBeenStarted });
+
+    const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
+    return json({ meta: stored ?? resumed });
+  });
+}
+
 async function getFeedbackHistory(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const inbox = await listAllFiles(feedbackInboxDirFor(ctx, meta.id));
@@ -1703,6 +1820,23 @@ async function getFeedbackAttachment(_req: Request, ctx: ServerContext, params: 
       }
     }
     return json({ error: "attachment not found" }, 404);
+  });
+}
+
+async function deleteFeedback(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    if (!isSafeAttachmentName(filename) || !filename.endsWith(".md")) {
+      return json({ error: "invalid feedback filename" }, 400);
+    }
+    const inbox = feedbackInboxDirFor(ctx, meta.id);
+    const read = feedbackReadDirFor(ctx, meta.id);
+    const inInbox = await Bun.file(join(inbox, filename)).exists();
+    const inRead = !inInbox && await Bun.file(join(read, filename)).exists();
+    if (!inInbox && !inRead) return json({ error: "feedback not found" }, 404);
+    await deleteNumberedFile(inInbox ? inbox : read, filename);
+    await appendAndBroadcast(ctx, meta.id, { kind: "feedback_deleted", payload: { filename } });
+    return json({ ok: true, filename });
   });
 }
 
@@ -2340,14 +2474,27 @@ async function postResume(req: Request, ctx: ServerContext, params: Record<strin
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     if (prompt !== "") {
       const inbox = feedbackInboxDirFor(ctx, meta.id);
-      const file = await writeNumberedFile(inbox, "resume", prompt);
+      const file = await writeNumberedFile(inbox, "feedback", prompt, {
+        archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
+      });
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
     }
+
+    const events = await readEvents(meta.id, 1, ctx.sessionsDir);
+    const hasBeenStarted = events.some(e => e.kind === "session_started");
 
     const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = meta;
     const resumed: SessionMeta = { ...rest, status: "running" };
     await saveSessionMeta(resumed, ctx.sessionsDir);
-    await spawnAndAttachHost(ctx, resumed, { resume: true });
+    await spawnAndAttachHost(ctx, resumed, { resume: hasBeenStarted });
+
+    if (!hasBeenStarted && prompt !== "") {
+      const att = ctx.clients.get(meta.id);
+      if (att) {
+        att.client.send("[wake] check feedback inbox").catch(() => {});
+        scheduleWakeWatchdog(ctx, meta.id, att);
+      }
+    }
 
     const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
     return json({ meta: stored ?? resumed });
@@ -2356,7 +2503,7 @@ async function postResume(req: Request, ctx: ServerContext, params: Record<strin
 
 interface FeedbackBody {
   content: string;
-  anchor?: { path: string; lineStart: number; lineEnd?: number };
+  anchor?: { path: string; lineStart: number; lineEnd?: number; quote?: string };
   slug?: string;
 }
 
@@ -2498,8 +2645,10 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     const slug = body.slug ?? "feedback";
     const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
     if (body.anchor) {
-      const { path, lineStart, lineEnd } = body.anchor;
-      writeOpts.meta = { anchor: { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart } };
+      const { path, lineStart, lineEnd, quote } = body.anchor;
+      const anchorMeta: { path: string; lineStart: number; lineEnd: number; quote?: string } = { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart };
+      if (quote) anchorMeta.quote = quote;
+      writeOpts.meta = { anchor: anchorMeta };
     }
     if (attachments.length > 0) writeOpts.attachments = attachments;
     const inbox = feedbackInboxDirFor(ctx, meta.id);
@@ -2530,9 +2679,87 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
   });
 }
 
+interface FeedbackBatchBody {
+  items: FeedbackBody[];
+}
+
+async function postFeedbackBatch(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const raw = await req.json().catch(() => null) as FeedbackBatchBody | null;
+    if (!raw || !Array.isArray(raw.items) || raw.items.length === 0) {
+      return json({ error: "items array is required and must not be empty" }, 400);
+    }
+    for (const item of raw.items) {
+      if (typeof item.content !== "string" || item.content === "") {
+        return json({ error: "each item must have a non-empty content string" }, 400);
+      }
+    }
+
+    const inbox = feedbackInboxDirFor(ctx, meta.id);
+    const results: { filename: string; seq: number }[] = [];
+
+    for (const item of raw.items) {
+      const slug = item.slug ?? "feedback";
+      const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
+      if (item.anchor) {
+        const { path, lineStart, lineEnd, quote } = item.anchor;
+        const anchorMeta: { path: string; lineStart: number; lineEnd: number; quote?: string } = { path, lineStart, lineEnd: lineEnd && lineEnd > lineStart ? lineEnd : lineStart };
+        if (quote) anchorMeta.quote = quote;
+        writeOpts.meta = { anchor: anchorMeta };
+      }
+      const file = await writeNumberedFile(inbox, slug, item.content, writeOpts);
+      await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
+      results.push({ filename: file.filename, seq: file.seq });
+    }
+
+    const att = ctx.clients.get(meta.id);
+    appendHostLog(ctx, meta.id, "wake_sent", {
+      filenames: results.map(r => r.filename),
+      count: results.length,
+      hasClient: att !== undefined,
+      status: meta.status,
+    });
+    if (att) {
+      att.client.send("[wake] check feedback inbox").catch(() => {});
+      scheduleWakeWatchdog(ctx, meta.id, att);
+    } else if (!isTerminal(meta.status)) {
+      await respawnMissingClient(ctx, meta, "feedback_batch_no_client");
+    }
+
+    return json({ results });
+  });
+}
+
 interface ResolveBody {
   content?: string;
   decision?: "approve" | "reject";
+}
+
+async function parseEscalationResolveRequest(req: Request, ctx: ServerContext): Promise<{ body: ResolveBody; attachments: { name: string; bytes: Uint8Array }[] } | FeedbackParseError> {
+  const contentType = req.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+    const body = (await req.json().catch(() => ({}))) as ResolveBody;
+    return { body, attachments: [] };
+  }
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (err) {
+    return { error: `invalid multipart body: ${(err as Error).message}` };
+  }
+  const payloadField = form.get("payload");
+  if (typeof payloadField !== "string" || payloadField === "") {
+    return { error: "payload field is required" };
+  }
+  let body: ResolveBody;
+  try {
+    body = JSON.parse(payloadField) as ResolveBody;
+  } catch (err) {
+    return { error: `payload is not valid JSON: ${(err as Error).message}` };
+  }
+  const parsed = await parseFormAttachments(form, ctx);
+  if ("error" in parsed) return parsed;
+  return { body, attachments: parsed.attachments };
 }
 
 async function postEscalationResolve(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
@@ -2544,7 +2771,9 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       return json({ error: "escalation not found" }, 404);
     }
 
-    const body = (await req.json().catch(() => ({}))) as ResolveBody;
+    const parsed = await parseEscalationResolveRequest(req, ctx);
+    if ("error" in parsed) return json(parsed, 400);
+    const { body, attachments } = parsed;
     const sidecarPath = join(askingDir, commandSidecarFilename(params.filename));
     const sidecarFile = Bun.file(sidecarPath);
     const isCommandApproval = await sidecarFile.exists();
@@ -2562,16 +2791,18 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       }
       let command = "";
       let agentReason = "";
+      let timeoutMs: number | undefined;
       try {
         const sidecar = (await sidecarFile.json()) as CommandApproval;
         command = sidecar.command ?? "";
         agentReason = sidecar.reason ?? "";
+        timeoutMs = sidecar.timeoutMs;
       } catch { /* corrupt sidecar */ }
       await moveFile(askingFilePath, join(resolvedDir, params.filename));
       await moveFile(sidecarPath, join(resolvedDir, commandSidecarFilename(params.filename)));
       const note = typeof body.content === "string" ? body.content.trim() : "";
       if (decision === "approve") {
-        runResult = await runApprovedCommand(command, meta.worktreePath);
+        runResult = await runApprovedCommand(command, meta.worktreePath, timeoutMs);
         feedbackContent = formatApprovedCommandFeedback(params.filename, command, agentReason, runResult, note);
       } else {
         feedbackContent = formatRejectedCommandFeedback(params.filename, command, agentReason, note);
@@ -2604,10 +2835,40 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       resolvedPayload = { filename: params.filename };
     }
 
+    const waiterKey = `${meta.id}/${params.filename}`;
+    const syncWaiters = isCommandApproval
+      ? ctx.commandApprovalWaiters.get(waiterKey)
+      : undefined;
+
+    if (syncWaiters && syncWaiters.length > 0) {
+      const syncResult: CommandApprovalSyncResult = {
+        decision: body.decision as "approve" | "reject",
+        feedbackContent,
+        runResult,
+      };
+      for (const waiter of syncWaiters) waiter.resolve(syncResult);
+      ctx.commandApprovalWaiters.delete(waiterKey);
+      await appendAndBroadcast(ctx, meta.id, {
+        kind: "escalation_resolved",
+        payload: resolvedPayload,
+      });
+      const remaining = await listAllFiles(askingDir);
+      let updatedMeta = meta;
+      if (remaining.length === 0 && meta.status === "waiting_human") {
+        updatedMeta = await transitionStatus(ctx, meta, "running");
+      }
+      return json({
+        ok: true,
+        decision: body.decision,
+        ...(runResult ? { exitCode: runResult.exitCode, stdout: runResult.stdout, stderr: runResult.stderr } : {}),
+        meta: updatedMeta,
+      });
+    }
+
     const inbox = feedbackInboxDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(inbox, slug, feedbackContent, {
-      archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
-    });
+    const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
+    if (attachments.length > 0) writeOpts.attachments = attachments;
+    const file = await writeNumberedFile(inbox, slug, feedbackContent, writeOpts);
     await appendAndBroadcast(ctx, meta.id, {
       kind: "escalation_resolved",
       payload: { ...resolvedPayload, answerFilename: file.filename },
@@ -2793,6 +3054,22 @@ async function postInternalEscalations(req: Request, ctx: ServerContext, params:
 interface CommandApprovalBody {
   command: string;
   reason?: string;
+  sync?: boolean;
+  timeoutMs?: number;
+}
+
+// Scans pending command-approvals for one whose command string matches. Returns
+// the asking filename if found, null otherwise.
+async function findPendingCommandApproval(dir: string, command: string): Promise<string | null> {
+  const pending = await listAllFiles(dir);
+  for (const entry of pending) {
+    const sidecarPath = join(dir, commandSidecarFilename(entry.filename));
+    try {
+      const sidecar = (await Bun.file(sidecarPath).json()) as CommandApproval;
+      if (sidecar.command === command) return entry.filename;
+    } catch { /* no sidecar or corrupt — skip */ }
+  }
+  return null;
 }
 
 // The agent asks the human to approve running a command outside its allowlist
@@ -2800,6 +3077,11 @@ interface CommandApprovalBody {
 // plus a `.command.json` sidecar — so it shows up in the same waiting_human
 // flow; the resolve endpoint then runs (or refuses) the command and feeds the
 // result back via the inbox.
+//
+// Deduplication: if a pending command-approval for the exact same command
+// string already exists, the new request attaches to the existing escalation
+// instead of creating a duplicate asking entry. This handles the common case
+// where the agent's Bash tool times out on the sync HTTP request and retries.
 async function postInternalCommandApprovals(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const body = (await req.json()) as CommandApprovalBody;
@@ -2808,10 +3090,47 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
     }
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
     const dir = askingDirFor(ctx, meta.id);
+
+    const existingFilename = await findPendingCommandApproval(dir, body.command);
+    if (existingFilename) {
+      if (!body.sync) {
+        return json({ filename: existingFilename, seq: 0, deduplicated: true });
+      }
+      const waiterKey = `${meta.id}/${existingFilename}`;
+      const { promise, resolve } = Promise.withResolvers<CommandApprovalSyncResult>();
+      const waiters = ctx.commandApprovalWaiters.get(waiterKey) ?? [];
+      waiters.push({ resolve });
+      ctx.commandApprovalWaiters.set(waiterKey, waiters);
+      try {
+        const syncResult = await promise;
+        return json({
+          filename: existingFilename,
+          seq: 0,
+          deduplicated: true,
+          decision: syncResult.decision,
+          feedbackContent: syncResult.feedbackContent,
+          ...(syncResult.runResult ? {
+            exitCode: syncResult.runResult.exitCode,
+            stdout: syncResult.runResult.stdout,
+            stderr: syncResult.runResult.stderr,
+            timedOut: syncResult.runResult.timedOut,
+          } : {}),
+        });
+      } finally {
+        const remaining = ctx.commandApprovalWaiters.get(waiterKey);
+        if (remaining) {
+          const filtered = remaining.filter(w => w.resolve !== resolve);
+          if (filtered.length === 0) ctx.commandApprovalWaiters.delete(waiterKey);
+          else ctx.commandApprovalWaiters.set(waiterKey, filtered);
+        }
+      }
+    }
+
     const file = await writeNumberedFile(dir, "command-approval", buildCommandApprovalMarkdown(body.command, reason), {
       archiveDirs: [join(dir, "resolved")],
     });
-    await Bun.write(join(dir, commandSidecarFilename(file.filename)), JSON.stringify({ command: body.command, ...(reason ? { reason } : {}) }, null, 2));
+    const timeoutMs = typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? body.timeoutMs : undefined;
+    await Bun.write(join(dir, commandSidecarFilename(file.filename)), JSON.stringify({ command: body.command, ...(reason ? { reason } : {}), ...(timeoutMs ? { timeoutMs } : {}) }, null, 2));
     if (!isTerminal(meta.status) && meta.status !== "waiting_human") {
       await transitionStatus(ctx, meta, "waiting_human");
     }
@@ -2819,7 +3138,29 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
       kind: "escalation_requested",
       payload: { filename: file.filename, command: body.command },
     });
-    return json({ filename: file.filename, seq: file.seq });
+    if (!body.sync) {
+      return json({ filename: file.filename, seq: file.seq });
+    }
+    const waiterKey = `${meta.id}/${file.filename}`;
+    const { promise, resolve } = Promise.withResolvers<CommandApprovalSyncResult>();
+    ctx.commandApprovalWaiters.set(waiterKey, [{ resolve }]);
+    try {
+      const syncResult = await promise;
+      return json({
+        filename: file.filename,
+        seq: file.seq,
+        decision: syncResult.decision,
+        feedbackContent: syncResult.feedbackContent,
+        ...(syncResult.runResult ? {
+          exitCode: syncResult.runResult.exitCode,
+          stdout: syncResult.runResult.stdout,
+          stderr: syncResult.runResult.stderr,
+          timedOut: syncResult.runResult.timedOut,
+        } : {}),
+      });
+    } finally {
+      ctx.commandApprovalWaiters.delete(waiterKey);
+    }
   });
 }
 
@@ -2831,6 +3172,19 @@ function formatAttachmentsSection(absolutePaths: string[]): string {
   const lead = `The human attached ${noun}. Read each with the Read tool:`;
   const lines = absolutePaths.map(p => `- ${p}`).join("\n");
   return `## Attachments\n\n${lead}\n\n${lines}`;
+}
+
+function formatFeedbackMessageForAgent(m: { content: string; filename: string; meta?: { anchor?: { path: string; lineStart: number; lineEnd: number; quote?: string } }; attachments?: string[] }, attachmentsBaseDir: string, skills?: SkillButton[]): { filename: string; content: string } {
+  let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
+  if (skills && skills.length > 0) {
+    content = expandSkillReferences(content, skills);
+  }
+  if (m.attachments && m.attachments.length > 0) {
+    const dir = join(attachmentsBaseDir, attachmentsDirNameFor(m.filename));
+    const paths = m.attachments.map(name => join(dir, name));
+    content = `${content}\n\n${formatAttachmentsSection(paths)}`;
+  }
+  return { filename: m.filename, content };
 }
 
 async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
@@ -2848,20 +3202,48 @@ async function getInternalFeedback(_req: Request, ctx: ServerContext, params: Re
     if (messages.length > 0) {
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_fetched", payload: { count: messages.length } });
     }
+    const skills = await currentSkillButtons(ctx);
     return json({
-      messages: messages.map(m => {
-        // The anchor lives in a sidecar now; re-derive the `Re:` line the agent
-        // is told to expect at the head of an anchored message.
-        let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
-        if (m.attachments && m.attachments.length > 0) {
-          // Paths must reflect the post-move location so the agent's Read finds
-          // the files; the listing was taken from inbox a moment ago.
-          const dir = join(readDir, attachmentsDirNameFor(m.filename));
-          const paths = m.attachments.map(name => join(dir, name));
-          content = `${content}\n\n${formatAttachmentsSection(paths)}`;
-        }
-        return { filename: m.filename, content };
-      }),
+      messages: messages.map(m => formatFeedbackMessageForAgent(m, readDir, skills)),
     });
+  });
+}
+
+async function getInternalFeedbackHistory(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const inboxDir = feedbackInboxDirFor(ctx, meta.id);
+    const readDir = feedbackReadDirFor(ctx, meta.id);
+    const inbox = await listAllFiles(inboxDir);
+    const read = await listAllFiles(readDir);
+    const all = [
+      ...inbox.map(f => ({ ...formatFeedbackMessageForAgent(f, inboxDir), status: "unread" as const })),
+      ...read.map(f => ({ ...formatFeedbackMessageForAgent(f, readDir), status: "read" as const })),
+    ];
+    all.sort((a, b) => a.filename.localeCompare(b.filename));
+    return json({ messages: all });
+  });
+}
+
+async function getInternalFeedbackByFilename(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const { filename } = params;
+    const inboxDir = feedbackInboxDirFor(ctx, meta.id);
+    const readDir = feedbackReadDirFor(ctx, meta.id);
+
+    const skills = await currentSkillButtons(ctx);
+    const inboxFiles = await listAllFiles(inboxDir);
+    const inInbox = inboxFiles.find(f => f.filename === filename);
+    if (inInbox) {
+      await moveNumberedFile(inboxDir, readDir, filename);
+      return json({ message: formatFeedbackMessageForAgent(inInbox, readDir, skills) });
+    }
+
+    const readFiles = await listAllFiles(readDir);
+    const inRead = readFiles.find(f => f.filename === filename);
+    if (inRead) {
+      return json({ message: formatFeedbackMessageForAgent(inRead, readDir, skills) });
+    }
+
+    return json({ error: `feedback not found: ${filename}` }, 404);
   });
 }

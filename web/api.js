@@ -4,6 +4,7 @@
 
 import { workLoad, notificationForEvent, notificationsFromSessionPoll, pendingNotificationCount } from "./notifications.js";
 import { notify, fireNotification } from "./notify.js";
+import { updateFaviconBadge } from "./favicon-badge.js";
 import { isAgentWorkEvent } from "./events-view.js";
 import { collectDirectoryPaths } from "./files-view.js";
 import { state } from "./state.svelte.js";
@@ -33,6 +34,23 @@ export async function submitFeedback(sessionId, payload, attachments) {
   const res = await fetch(path, { method: "POST", body: form });
   if (!res.ok) throw new Error(`POST ${path} → ${res.status}: ${await res.text()}`);
   return res.json();
+}
+
+export async function resolveEscalation(sessionId, filename, payload, attachments) {
+  const path = `/sessions/${sessionId}/escalations/${encodeURIComponent(filename)}/resolve`;
+  if (!attachments || attachments.length === 0) {
+    return api("POST", path, payload);
+  }
+  const form = new FormData();
+  form.set("payload", JSON.stringify(payload));
+  for (const att of attachments) form.append("attachment", att.file);
+  const res = await fetch(path, { method: "POST", body: form });
+  if (!res.ok) throw new Error(`POST ${path} → ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function submitFeedbackBatch(sessionId, items) {
+  return api("POST", `/sessions/${sessionId}/feedback/batch`, { items });
 }
 
 export async function fetchSessions() {
@@ -104,7 +122,8 @@ export async function fetchMeta() {
 
 let repoDisplayName = "worqload";
 
-function applyMeta({ repoDir, repoName, driverName }) {
+function applyMeta({ repoDir, repoName, driverName, feedbackTemplates }) {
+  if (Array.isArray(feedbackTemplates)) state.feedbackTemplates = feedbackTemplates;
   repoDisplayName = repoName || "worqload";
   updateDocumentTitle();
   const repoEl = document.getElementById("repoName");
@@ -124,6 +143,7 @@ export function updateDocumentTitle() {
   const count = pendingNotificationCount(state.sessions);
   const prefix = count > 0 ? `(${count}) ` : "";
   document.title = `${prefix}${repoDisplayName} · worqload`;
+  updateFaviconBadge(count);
 }
 
 export async function refreshDetail() {
@@ -537,11 +557,14 @@ export function openWs(id) {
     // between polls.
     if (isAgentWorkEvent(ev)) {
       const card = state.sessions.find(s => s.id === id);
-      if (card) card.lastAgentEventAt = ev.timestamp;
+      if (card) {
+        card.lastAgentEventAt = ev.timestamp;
+        card.agentEventCount = (card.agentEventCount ?? 0) + 1;
+      }
     }
     // For "interesting" events refresh the relevant slice.
     if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread" || ev.kind === "report_deleted"
-        || ev.kind === "feedback_received" || ev.kind === "feedback_fetched"
+        || ev.kind === "feedback_received" || ev.kind === "feedback_fetched" || ev.kind === "feedback_deleted"
         || ev.kind === "escalation_requested" || ev.kind === "escalation_resolved"
         || ev.kind === "session_stopped" || ev.kind === "session_crashed" || ev.kind === "session_resumed") {
       await refreshDetail();

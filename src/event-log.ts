@@ -23,6 +23,7 @@ export type EventKind =
   | "escalation_resolved"
   | "feedback_received"
   | "feedback_fetched"
+  | "feedback_deleted"
   | "action_invoked"
   | "session_stopped"
   | "session_crashed"
