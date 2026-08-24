@@ -148,6 +148,8 @@ export function fakeWorktreeOps(): WorktreeOps {
     baseWorktreePathFor(sessionWorktreePath) { return `${sessionWorktreePath}-base`; },
     async gitRemoteUrl() { return "git@github.com:owner/repo.git"; },
     async gitHeadSha() { return "f".repeat(40); },
+    async resolveRemoteDefaultBranch() { return "trunk"; },
+    async fetchBranch() {},
   };
 }
 

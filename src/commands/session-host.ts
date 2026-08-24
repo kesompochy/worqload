@@ -305,7 +305,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
   // the protocol prefix and the task from meta.prompt. On resume the prior
   // conversation is restored by `claude --continue`, so we only nudge it back
   // into the loop (any new instruction was queued to the feedback inbox).
-  const firstMessage = opts.resume ? RESUME_KICKOFF : buildProtocolPrefix(meta.baseBranch) + meta.prompt;
+  const firstMessage = opts.resume ? RESUME_KICKOFF : (await buildProtocolPrefix(meta.baseBranch)) + meta.prompt;
   log("bootstrap_send", { textLen: firstMessage.length, resume: opts.resume === true });
   await driver.sendUserMessage(firstMessage, "bootstrap");
 
