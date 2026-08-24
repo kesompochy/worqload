@@ -6,12 +6,14 @@ import { report } from "./commands/report";
 import { escalate } from "./commands/escalate";
 import { feedback } from "./commands/feedback";
 import { sessionHost } from "./commands/session-host";
+import { archiveBackfill } from "./commands/archive-backfill";
 
 type Handler = (args: string[]) => Promise<void>;
 
 const commands: Record<string, Handler> = {
   serve, preview, init, report, escalate, feedback,
   "session-host": sessionHost,
+  "archive-backfill": archiveBackfill,
 };
 
 const [command, ...args] = process.argv.slice(2);
