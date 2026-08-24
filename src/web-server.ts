@@ -39,7 +39,7 @@ import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import type { IpadicFeatures, Tokenizer } from "kuromoji";
 import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
-import { DEFAULT_FEEDBACK_TEMPLATES, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
+import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
@@ -1305,7 +1305,7 @@ async function getFavicon(_req: Request, ctx: ServerContext): Promise<Response> 
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
   const feedbackTemplates = await currentFeedbackTemplates(ctx);
-  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName, feedbackTemplates });
+  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName, feedbackTemplates, feedbackTemplatePrefix: FEEDBACK_TEMPLATE_PREFIX });
 }
 
 // Vite emits content-hashed bundles under web/dist/assets/. Serving any basename

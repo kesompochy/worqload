@@ -7,23 +7,40 @@ export interface FeedbackTemplate {
   text: string;
 }
 
+export const FEEDBACK_TEMPLATE_PREFIX =
+  "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\n";
+
 export const DEFAULT_FEEDBACK_TEMPLATES: FeedbackTemplate[] = [
   {
     id: "no-edit",
     label: "Do not edit any code",
-    text: "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\nDo not edit any code. The user wants to have a discussion with you, not code changes. Keep your hands off the Edit tool and focus on the conversation. You may read code if you need material for the discussion. If you feel you are missing information, escalate immediately instead of deferring.",
+    text: "Do not edit any code. The user wants to have a discussion with you, not code changes. Keep your hands off the Edit tool and focus on the conversation. You may read code if you need material for the discussion. If you feel you are missing information, escalate immediately instead of deferring.",
   },
   {
     id: "no-push",
     label: "Do not push",
-    text: "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\nDo not push. Any git operation that touches the remote is forbidden. Pushing is absolutely unacceptable.",
+    text: "Do not push. Any git operation that touches the remote is forbidden. Pushing is absolutely unacceptable.",
   },
   {
     id: "answer-the-question",
     label: "Answer the question",
-    text: "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\nThe user is asking a question. Answer the question directly and concisely, and do nothing else. Do not edit code, do not take actions beyond what is needed to answer. Submit your answer as a report.",
+    text: "The user is asking a question. Answer the question directly and concisely, and do nothing else. Do not edit code, do not take actions beyond what is needed to answer. Submit your answer as a report.",
   },
 ];
+
+const LEGACY_PREFIXES = [
+  "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\n",
+  "This text was inserted by worqload on behalf of the user. The user expects the following behaviour: ",
+  "このテキストはworqloadがユーザーに代わって挿入した。ユーザーは以下の振る舞いを期待している:\n",
+  "このテキストはworqloadがユーザーに代わって挿入した。ユーザーは以下の振る舞いを期待している: ",
+];
+
+export function stripLegacyPrefix(text: string): string {
+  for (const p of LEGACY_PREFIXES) {
+    if (text.startsWith(p)) return text.slice(p.length);
+  }
+  return text;
+}
 
 export function parseFeedbackTemplates(yamlText: string): FeedbackTemplate[] | null {
   const parsed = Bun.YAML.parse(yamlText) as unknown;
@@ -50,7 +67,8 @@ export function parseFeedbackTemplates(yamlText: string): FeedbackTemplate[] | n
     if (typeof text !== "string" || text === "") {
       throw new Error(`config: feedbackTemplates entry ${index} is missing a non-empty text`);
     }
-    return { id, label, text };
+    const stripped = stripLegacyPrefix(text);
+    return { id, label, text: stripped };
   });
 }
 
