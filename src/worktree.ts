@@ -6,6 +6,22 @@ function cleanGitEnv(): Record<string, string | undefined> {
   return { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
 }
 
+async function branchExists(name: string, repoDir: string): Promise<boolean> {
+  const proc = Bun.spawn(
+    ["git", "rev-parse", "--verify", `refs/heads/${name}`],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
+  );
+  return (await proc.exited) === 0;
+}
+
+async function deduplicateBranchName(name: string, repoDir: string): Promise<string> {
+  if (!(await branchExists(name, repoDir))) return name;
+  for (let i = 2; ; i++) {
+    const candidate = `${name}-${i}`;
+    if (!(await branchExists(candidate, repoDir))) return candidate;
+  }
+}
+
 export interface WorktreeInfo {
   worktreePath: string;
   branchName: string;
@@ -18,11 +34,13 @@ export async function createSessionWorktree(params: {
   branchName: string;
   reportsDirAbsolute: string;
 }): Promise<WorktreeInfo> {
-  const { sessionId, repoDir, baseBranch, branchName, reportsDirAbsolute } = params;
+  const { sessionId, repoDir, baseBranch, reportsDirAbsolute } = params;
   const shortId = sessionId.slice(0, 8);
   const worktreePath = join(resolve(repoDir), ".worktrees", shortId);
 
   await mkdir(reportsDirAbsolute, { recursive: true });
+
+  const branchName = await deduplicateBranchName(params.branchName, repoDir);
 
   const proc = Bun.spawn(
     ["git", "worktree", "add", "-b", branchName, worktreePath, baseBranch],
@@ -166,16 +184,20 @@ export async function resolveLatestBase(
   return { ref: baseBranch, commit: localCommit };
 }
 
-// The push URL of `origin`, or the first remote if there's no `origin`, or null
-// if the worktree has no remotes. Used only to build "open this on GitHub"
-// permalinks — no fetch, just a config read.
+// The configured URL of `origin`, or the first remote if there's no `origin`,
+// or null if the worktree has no remotes. Used only to build "open this on
+// GitHub" permalinks — no fetch, just a config read.
+//
+// Uses `git config` instead of `git remote get-url` so that `url.<base>.insteadOf`
+// rewrites (e.g. SSH Host aliases like `github-emu`) are NOT applied — the
+// permalink needs the real hostname the browser can reach.
 export async function gitRemoteUrl(worktreePath: string): Promise<string | null> {
-  const url = await gitOutput(worktreePath, ["remote", "get-url", "origin"]);
+  const url = await gitOutput(worktreePath, ["config", "remote.origin.url"]);
   if (url !== null) return url;
   const remotes = await gitOutput(worktreePath, ["remote"]);
   const first = remotes?.split("\n").map(r => r.trim()).find(r => r !== "");
   if (!first) return null;
-  return gitOutput(worktreePath, ["remote", "get-url", first]);
+  return gitOutput(worktreePath, ["config", `remote.${first}.url`]);
 }
 
 export async function gitHeadSha(worktreePath: string): Promise<string | null> {
@@ -204,6 +226,42 @@ export async function currentBranch(repoDir: string): Promise<string> {
     throw new Error("Failed to detect current branch");
   }
   return out.trim();
+}
+
+// The short name of origin's default branch (e.g. "main"). Reads the local
+// `refs/remotes/origin/HEAD` symbolic ref — which `git clone` sets and
+// `git remote set-head --auto` refreshes — so this never hits the network.
+// Returns null when there is no remote or the HEAD ref is absent.
+export async function resolveRemoteDefaultBranch(repoDir: string): Promise<string | null> {
+  const ref = await gitOutput(repoDir, ["symbolic-ref", "refs/remotes/origin/HEAD"]);
+  if (!ref) return null;
+  const prefix = "refs/remotes/origin/";
+  return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
+}
+
+// Fetch a single branch from origin so `origin/<branch>` reflects the remote
+// tip. Always runs `git fetch origin <branch>` first (updates the remote
+// tracking ref regardless of working-tree state). Then tries to advance the
+// local ref too: `git pull --ff-only` when the branch is checked out, `git
+// fetch origin <branch>:<branch>` otherwise. The local-ref update is
+// best-effort — it silently fails when the working tree is dirty or the
+// local branch has diverged.
+export async function fetchBranch(repoDir: string, branch: string): Promise<void> {
+  const fetch = Bun.spawn(
+    ["git", "fetch", "origin", branch],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
+  );
+  await fetch.exited;
+
+  const head = await currentBranch(repoDir);
+  const localArgs = head === branch
+    ? ["pull", "--ff-only", "origin", branch]
+    : ["fetch", "origin", `${branch}:${branch}`];
+  const local = Bun.spawn(
+    ["git", ...localArgs],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
+  );
+  await local.exited;
 }
 
 // worqload injects two entries at the worktree root: the `.worqload-reports`
@@ -681,6 +739,8 @@ export interface WorktreeOps {
   baseWorktreePathFor(sessionWorktreePath: string): string;
   gitRemoteUrl(worktreePath: string): Promise<string | null>;
   gitHeadSha(worktreePath: string): Promise<string | null>;
+  resolveRemoteDefaultBranch(repoDir: string): Promise<string | null>;
+  fetchBranch(repoDir: string, branch: string): Promise<void>;
 }
 
 export const realWorktreeOps: WorktreeOps = {
@@ -703,4 +763,6 @@ export const realWorktreeOps: WorktreeOps = {
   baseWorktreePathFor,
   gitRemoteUrl,
   gitHeadSha,
+  resolveRemoteDefaultBranch,
+  fetchBranch,
 };

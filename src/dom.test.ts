@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { escapeHtml, formatBytes, formatRelative, eventAgeIsStale } from "../web/dom.js";
+import { escapeHtml, formatBytes, formatRelative, eventAgeIsStale, EVENT_COUNT_WARNING, EVENT_COUNT_DANGER, eventCountLevel } from "../web/dom.js";
 
 test("escapeHtml escapes the five HTML-significant characters", () => {
   expect(escapeHtml(`<a href="x" data-y='z'>&</a>`)).toBe(
@@ -54,4 +54,19 @@ test("eventAgeIsStale is false for missing timestamp", () => {
   expect(eventAgeIsStale(null, Date.now())).toBe(false);
   expect(eventAgeIsStale(undefined, Date.now())).toBe(false);
   expect(eventAgeIsStale("", Date.now())).toBe(false);
+});
+
+test("eventCountLevel returns null below warning threshold", () => {
+  expect(eventCountLevel(0)).toBe(null);
+  expect(eventCountLevel(EVENT_COUNT_WARNING - 1)).toBe(null);
+});
+
+test("eventCountLevel returns 'warning' at and above warning threshold", () => {
+  expect(eventCountLevel(EVENT_COUNT_WARNING)).toBe("warning");
+  expect(eventCountLevel(EVENT_COUNT_DANGER - 1)).toBe("warning");
+});
+
+test("eventCountLevel returns 'danger' at and above danger threshold", () => {
+  expect(eventCountLevel(EVENT_COUNT_DANGER)).toBe("danger");
+  expect(eventCountLevel(EVENT_COUNT_DANGER + 100)).toBe("danger");
 });

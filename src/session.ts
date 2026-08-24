@@ -17,6 +17,7 @@ export interface SessionMeta {
   branchName: string;
   agentName?: AgentName;
   driverName?: DriverName;
+  model?: string;
   hostPid?: number;
   hostSocketPath?: string;
   status: SessionStatus;
@@ -82,7 +83,10 @@ export interface CreateSessionParams {
   branchName: string;
   agentName?: AgentName;
   driverName?: DriverName;
+  model?: string;
   title?: string;
+  startPaused?: boolean;
+  createdAt?: string;
 }
 
 export function createSession(params: CreateSessionParams): SessionMeta {
@@ -100,8 +104,9 @@ export function createSession(params: CreateSessionParams): SessionMeta {
     branchName: params.branchName,
     ...(params.agentName !== undefined && { agentName: params.agentName }),
     ...(params.driverName !== undefined && { driverName: params.driverName }),
-    status: "running",
-    createdAt: new Date().toISOString(),
+    ...(params.model !== undefined && { model: params.model }),
+    status: params.startPaused ? "stopped" : "running",
+    createdAt: params.createdAt ?? new Date().toISOString(),
   };
 }
 

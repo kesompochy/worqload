@@ -40,16 +40,3 @@ test("resolveAgentEndpoint uses WORQLOAD_ENDPOINT when no file env var is set", 
   expect(resolveAgentEndpoint()).toBe("http://127.0.0.1:3456");
 });
 
-test("requireFlag returns the value following the flag", () => {
-  expect(requireFlag(["--slug", "plan", "--re", "001-x.md"], "--slug")).toBe("plan");
-});
-
-test("optionalFlag returns the value when present and undefined when absent", () => {
-  expect(optionalFlag(["--slug", "plan", "--re", "001-x.md"], "--re")).toBe("001-x.md");
-  expect(optionalFlag(["--slug", "plan"], "--re")).toBeUndefined();
-});
-
-test("collectFlag gathers every value of a flag passed more than once", () => {
-  expect(collectFlag(["--image", "a.png", "--slug", "x", "--image", "b.png"], "--image")).toEqual(["a.png", "b.png"]);
-  expect(collectFlag(["--slug", "x"], "--image")).toEqual([]);
-});

@@ -19,6 +19,7 @@ button { background: var(--panel-2); border: 1px solid var(--border); padding: .
 button:hover { background: #232b3a; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 textarea, input { background: var(--bg); border: 1px solid var(--border); padding: .4rem .5rem; border-radius: 4px; color: var(--text); width: 100%; }
+input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; background: transparent; border: 0; border-radius: 0; }
 textarea { resize: vertical; min-height: 4rem; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
 .layout { display: grid; grid-template-columns: 320px 1fr; height: 100%; }
@@ -93,6 +94,9 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .btn-card-rename { flex-shrink: 0; font-size: 11px; padding: .2rem .55rem; }
 .session-card .meta { color: var(--text-dim); font-size: 12px; }
 .session-event-age.stale { color: var(--waiting); font-weight: 600; }
+.session-event-count { margin-left: .35rem; font-weight: 600; }
+.session-event-count-warning { color: var(--waiting); }
+.session-event-count-danger { color: var(--crashed); }
 .unread-badge {
   flex: 0 0 auto;
   min-width: 20px;
@@ -133,6 +137,11 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .detail-header { padding: .9rem 1.1rem; border-bottom: 1px solid var(--border); display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .detail-header .title { font-size: 1.05rem; font-weight: 600; flex: 1 1 auto; word-break: break-word; }
 .detail-meta { color: var(--text-dim); font-size: 12px; padding: 0 1.1rem .5rem 1.1rem; border-bottom: 1px solid var(--border); }
+.meta-events-link { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font: inherit; padding: 0; text-decoration: underline dotted; text-underline-offset: 2px; }
+.meta-events-link:hover { color: var(--text); }
+.meta-events-link.meta-events-warning { color: var(--waiting); font-weight: 600; }
+.meta-events-link.meta-events-danger { color: var(--crashed); font-weight: 600; }
+.model-switch-select { font-size: 12px; font-family: inherit; background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 0 2px; cursor: pointer; vertical-align: baseline; }
 /* The session's original opening prompt, shown only once a custom alias hides
    it from the title. The label is a toggle button that collapses the body, so a
    long prompt need not occupy vertical space above the tabs. The body is a
@@ -228,9 +237,13 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .tab-btn:hover { color: var(--text); }
 .tab-count, .tab-event-age { color: var(--text-dim); font-weight: normal; }
 .tab-count-unread { color: var(--waiting); font-weight: 600; }
+.tab-count-warning { color: var(--waiting); font-weight: 600; }
+.tab-count-danger { color: var(--crashed); font-weight: 600; }
 .tab-event-age { margin-left: .35rem; }
 .tab-event-age.stale { color: var(--waiting); font-weight: 600; }
 .diff-base-toggle { margin-left: auto; padding: .35rem .5rem; font-size: 12px; color: var(--text-dim); }
+.tab-dismiss { background: transparent; border: none; color: var(--text-dim); cursor: pointer; padding: 0 .2rem; margin-left: .3rem; font-size: 12px; line-height: 1; opacity: 0; transition: opacity .15s; }
+.tab-btn:hover .tab-dismiss { opacity: 1; }
 .diff-empty { color: var(--text-dim); font-style: italic; padding: 1rem 0; }
 .diff-file { margin-bottom: 1.2rem; border: 1px solid var(--border); border-radius: 4px; }
 .diff-file-header { position: sticky; top: 0; z-index: 2; background: var(--panel-2); padding: .4rem .7rem; border-radius: 4px 4px 0 0; font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); display: flex; align-items: center; gap: .5rem; cursor: pointer; user-select: none; }
@@ -242,6 +255,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .diff-file.collapsed .diff-file-body { display: none; }
 .copy-path-btn { background: transparent; border: 0; color: var(--text-dim); cursor: pointer; padding: 0 .25rem; font-size: 12px; line-height: 1; opacity: 0; transition: opacity .12s ease, color .08s ease; }
 .diff-file-header:hover .copy-path-btn, .file-content-header:hover .copy-path-btn { opacity: .6; }
+.detail-meta .copy-path-btn { opacity: .6; padding: .15rem .4rem; font-size: 13px; }
+.detail-original-prompt .copy-path-btn { opacity: .6; padding: .15rem .4rem; font-size: 13px; }
 .copy-path-btn:hover { opacity: 1; color: var(--accent); }
 .diff-summary { margin-left: auto; font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace; }
 .diff-summary .add-count { color: var(--running); margin-right: .35rem; }
@@ -442,6 +457,15 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .event-section-code { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .45rem .65rem; font-size: 12.5px; max-height: 26em; overflow: auto; }
 .feedback-form { border-top: 1px solid var(--border); padding: .9rem 1.1rem; background: var(--panel); }
 .feedback-form textarea { margin-bottom: .5rem; }
+.feedback-queue { margin-bottom: .5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); }
+.feedback-queue-header { font-size: 11px; color: var(--muted); padding: .3rem .5rem; border-bottom: 1px solid var(--border); }
+.feedback-queue-item { display: flex; align-items: flex-start; gap: .4rem; padding: .3rem .5rem; border-bottom: 1px solid var(--border); }
+.feedback-queue-item:last-child { border-bottom: none; }
+.feedback-queue-text { flex: 1; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.feedback-queue-remove { flex-shrink: 0; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 .2rem; line-height: 1; }
+.feedback-templates { display: flex; flex-wrap: wrap; gap: .2rem .8rem; margin-bottom: .4rem; }
+.feedback-template-label { display: inline-flex; align-items: center; gap: .3rem; font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none; }
+.feedback-template-label input[type="checkbox"] { flex: 0 0 auto; width: auto; margin: 0; padding: 0; background: transparent; border: 0; border-radius: 0; cursor: pointer; }
 .skill-picker-wrapper { position: relative; }
 .skill-picker-input { font-size: 12px; padding: .2rem .5rem; border-radius: 3px; border: 1px solid var(--border); background: transparent; color: var(--text); font-family: ui-monospace, monospace; width: 8rem; outline: none; }
 .skill-picker-input:focus { border-color: var(--accent); }
@@ -452,6 +476,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .skill-picker-item.selected { background: var(--panel-2); }
 .skill-picker-name { font-family: ui-monospace, monospace; font-size: 13px; color: var(--text); }
 .skill-picker-desc { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-ref { font-family: ui-monospace, monospace; font-size: .9em; padding: .1rem .35rem; border-radius: 3px; background: rgba(88,166,255,.14); color: var(--accent); }
 /* Image attachments staged in either composer. The chips strip sits above the
    textarea; in the floating anchored composer it sits above its own textarea
    too. Each chip is a thumbnail + truncated filename + remove button. */
@@ -511,6 +536,14 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
   background: transparent; border-color: var(--border); color: var(--text-dim);
 }
 .anchored-composer-permalink:hover { color: var(--text); background: var(--panel-2); }
+.anchor-quote {
+  margin: 0 0 .4rem; padding: .3rem .6rem;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim); font-size: 11px; line-height: 1.4;
+  white-space: pre-wrap; max-height: 4.5em; overflow-y: auto;
+  background: var(--panel-2); border-radius: 2px;
+  width: 100%; box-sizing: border-box;
+}
 .row { display: flex; gap: .5rem; align-items: center; }
 .spacer { flex: 1; }
 .danger { color: var(--crashed); border-color: rgba(248,81,73,.5); }

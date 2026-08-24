@@ -11,6 +11,7 @@ export const state = $state({
   archivedSelection: new Set(),  // ids of archived sessions checked for bulk delete. Cleared on tab switch away from archived. Reassigned wholesale (Svelte 5's $state doesn't proxy Set).
   sidebarTab: "active",  // "active" | "archived": which feed the sidebar renders. Archived cards swap Stop/Archive for a permanent Delete (see SessionList.svelte / handlers.js).
   sidebarHidden: false,  // Whether the left sidebar (.sidebar) is collapsed out of the layout. Persisted in localStorage under "worqload:sidebar-hidden"; toggled via the in-sidebar « button and the fixed-position » button surfaced when hidden.
+  eventsTabHidden: true, // Whether the Events tab is hidden from the tab bar. Persisted in localStorage under "worqload:events-tab-hidden".
   selected: null,        // session id
   detail: null,          // { meta, events }
   prLink: null,          // selected session's branch→PR-URL lookup: { url } | { url: null, reason } | null. Mirrors prLinks[selected]; the header reads this.
@@ -79,7 +80,20 @@ export const state = $state({
   // { id, file, previewUrl }; previewUrl is a blob: URL the chip <img> renders
   // and is revoked when the entry is removed or cleared.
   pendingAttachments: [],
+  // Image attachments staged per escalation answer textarea. Keyed by
+  // escalation filename so each asking card has its own attachment queue.
+  // Each value is an array of { id, file, previewUrl } — same shape as
+  // pendingAttachments entries.
+  askingAttachments: new Map(),
+  // Batch feedback queue: items staged by Ctrl+Enter, flushed together by Enter.
+  // Each entry is { content, slug, anchor? }.
+  feedbackQueue: [],
+  // Feedback templates loaded from the server (sourced from config.yaml).
+  // Populated by fetchMeta; empty until then.
+  feedbackTemplates: [],
 });
+
+export const TEMPLATES_STORAGE_KEY = "worqload:feedback-templates-checked";
 
 // Image-only attachments, capped per-file and per-feedback. The browser does
 // the same checks on the server (see web-server.ts); these are the immediate
