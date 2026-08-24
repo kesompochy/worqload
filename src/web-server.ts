@@ -1489,7 +1489,8 @@ async function resolveDefaultBaseBranch(ctx: ServerContext): Promise<{ baseBranc
   const remoteBranch = await ctx.worktreeOps.resolveRemoteDefaultBranch(ctx.repoDir);
   if (remoteBranch) {
     await ctx.worktreeOps.fetchBranch(ctx.repoDir, remoteBranch);
-    return { baseBranch: remoteBranch, startPoint: `origin/${remoteBranch}` };
+    const latest = await ctx.worktreeOps.resolveLatestBase(remoteBranch, ctx.repoDir);
+    return { baseBranch: remoteBranch, startPoint: latest.ref };
   }
   const local = await ctx.worktreeOps.currentBranch(ctx.repoDir);
   return { baseBranch: local, startPoint: local };
