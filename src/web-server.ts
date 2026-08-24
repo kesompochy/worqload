@@ -41,6 +41,8 @@ import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedback
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
+import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, defaultArchiveDbPath } from "./archive-store";
+import type { Database } from "bun:sqlite";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
@@ -267,6 +269,8 @@ export interface ServerContext {
   // escalation (same command already pending) attaches an additional waiter
   // instead of creating a second asking entry.
   commandApprovalWaiters: Map<string, { resolve: (result: CommandApprovalSyncResult) => void }[]>;
+  archiveDb: Database | null;
+  repoIdentifier: string;
 }
 
 export interface StartServerOptions {
@@ -308,6 +312,7 @@ export interface StartServerOptions {
   // `~/.config/worqload/config.yaml`; tests point it at a temp file to inject
   // settings. A missing file means no rules and the default feedback wording.
   configPath?: string;
+  archiveDbPath?: string;
 }
 
 export interface ShutdownOptions {
@@ -1022,6 +1027,14 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   // session per poll and an opened session shows its link without a beat.
   const prLinkResolver = makeCachedPrLinkResolver(opts.prLinkResolver ?? ghPrLinkResolver);
 
+  let archiveDb: Database | null = null;
+  try {
+    archiveDb = openArchiveDb(opts.archiveDbPath ?? defaultArchiveDbPath());
+  } catch {
+    // archive DB is best-effort; failure should not block the server
+  }
+  const repoIdentifier = (await worktreeOps.gitRemoteUrl(repoDir).catch(() => null)) ?? repoDir;
+
   await mkdir(sessionsDir, { recursive: true });
   // Migrate any anchored feedback still carrying its anchor as a `Re:` line in
   // the body over to the `.meta.json` sidecar (no-op once everything's migrated).
@@ -1134,6 +1147,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     textlintRules,
     reviseFeedbackGuidance,
     commandApprovalWaiters: new Map(),
+    archiveDb,
+    repoIdentifier,
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -1158,6 +1173,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
       }
     }
     ctx.clients.clear();
+    try { ctx.archiveDb?.close(); } catch { /* best-effort */ }
     await shutdownAllLanguageServers();
     server.stop(true);
   }
@@ -2655,6 +2671,20 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     if (attachments.length > 0) writeOpts.attachments = attachments;
     const inbox = feedbackInboxDirFor(ctx, meta.id);
     const file = await writeNumberedFile(inbox, slug, body.content, writeOpts);
+    if (ctx.archiveDb) {
+      try {
+        archiveInsertFeedback(ctx.archiveDb, {
+          repo: ctx.repoIdentifier,
+          sessionId: meta.id,
+          filename: file.filename,
+          body: body.content,
+          anchorPath: body.anchor?.path ?? null,
+          anchorLineStart: body.anchor?.lineStart ?? null,
+          anchorLineEnd: body.anchor?.lineEnd ?? null,
+          createdAt: new Date().toISOString(),
+        });
+      } catch { /* archive is best-effort */ }
+    }
     await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
 
     // Wake the host's claude child if idle (fire-and-forget). The log entry
@@ -2710,6 +2740,20 @@ async function postFeedbackBatch(req: Request, ctx: ServerContext, params: Recor
         writeOpts.meta = { anchor: anchorMeta };
       }
       const file = await writeNumberedFile(inbox, slug, item.content, writeOpts);
+      if (ctx.archiveDb) {
+        try {
+          archiveInsertFeedback(ctx.archiveDb, {
+            repo: ctx.repoIdentifier,
+            sessionId: meta.id,
+            filename: file.filename,
+            body: item.content,
+            anchorPath: item.anchor?.path ?? null,
+            anchorLineStart: item.anchor?.lineStart ?? null,
+            anchorLineEnd: item.anchor?.lineEnd ?? null,
+            createdAt: new Date().toISOString(),
+          });
+        } catch { /* archive is best-effort */ }
+      }
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
       results.push({ filename: file.filename, seq: file.seq });
     }
@@ -3030,6 +3074,22 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
     if (replyTo) writeOpts.meta = { replyTo };
     if (attachments.length > 0) writeOpts.attachments = attachments;
     const file = await writeNumberedFile(dir, body.slug, body.content, writeOpts);
+    if (ctx.archiveDb) {
+      try {
+        archiveInsertReport(ctx.archiveDb, {
+          repo: ctx.repoIdentifier,
+          sessionId: meta.id,
+          filename: file.filename,
+          slug: body.slug,
+          body: body.content,
+          replyTo: replyTo ?? null,
+          anchorPath: null,
+          anchorLineStart: null,
+          anchorLineEnd: null,
+          createdAt: new Date().toISOString(),
+        });
+      } catch { /* archive is best-effort */ }
+    }
     await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
     return json({ filename: file.filename, seq: file.seq });
   });
