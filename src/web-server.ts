@@ -1427,7 +1427,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   const agentName = body.agentName ?? ctx.agentName;
   const model = agentName === "claude" ? body.model : undefined;
   const { baseBranch, startPoint } = body.baseBranch?.trim()
-    ? { baseBranch: body.baseBranch.trim(), startPoint: body.baseBranch.trim() }
+    ? await resolveExplicitBaseBranch(body.baseBranch.trim(), ctx)
     : await resolveDefaultBaseBranch(ctx);
   const baseCommit = await ctx.worktreeOps.resolveBaseCommit(startPoint, ctx.repoDir);
 
@@ -1493,6 +1493,15 @@ async function resolveDefaultBaseBranch(ctx: ServerContext): Promise<{ baseBranc
   }
   const local = await ctx.worktreeOps.currentBranch(ctx.repoDir);
   return { baseBranch: local, startPoint: local };
+}
+
+async function resolveExplicitBaseBranch(
+  baseBranch: string,
+  ctx: ServerContext,
+): Promise<{ baseBranch: string; startPoint: string }> {
+  await ctx.worktreeOps.fetchBranch(ctx.repoDir, baseBranch);
+  const latest = await ctx.worktreeOps.resolveLatestBase(baseBranch, ctx.repoDir);
+  return { baseBranch, startPoint: latest.ref };
 }
 
 async function resolveBranchName(params: {

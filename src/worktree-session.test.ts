@@ -7,6 +7,7 @@ import {
   createSessionWorktree,
   removeWorktree,
   resolveBaseCommit,
+  resolveLatestBase,
   currentBranch,
   listWorktreeFiles,
   gitDiff,
@@ -262,6 +263,115 @@ describe("resolveBaseCommit / currentBranch", () => {
 
     const branch = await currentBranch(repoDir);
     expect(branch).toBe(TEST_BASE_BRANCH);
+  });
+});
+
+describe("resolveLatestBase", () => {
+  function createRepoWithRemote(): { local: string; bare: string } {
+    const bare = makeRepoFromTemplate("latest-bare", (dir) => {
+      git(["init", "--bare"], dir);
+    });
+    const local = makeRepoFromTemplate("latest-local", (dir) => {
+      git(["clone", bare, "."], dir);
+      git(["checkout", "-b", TEST_BASE_BRANCH], dir);
+      git(["config", "user.email", "test@test.com"], dir);
+      git(["config", "user.name", "Test"], dir);
+      writeFileSync(join(dir, "README.md"), "# test\n");
+      git(["add", "."], dir);
+      git(["commit", "-m", "initial"], dir);
+      git(["push", "-u", "origin", TEST_BASE_BRANCH], dir);
+    });
+    return { local, bare };
+  }
+
+  test("returns local when no remote tracking branch exists", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+
+    const result = await resolveLatestBase(TEST_BASE_BRANCH, repoDir);
+    const localSha = await resolveBaseCommit(TEST_BASE_BRANCH, repoDir);
+    expect(result.commit).toBe(localSha);
+    expect(result.ref).toBe(TEST_BASE_BRANCH);
+  });
+
+  test("returns remote ref when origin is ahead of local", async () => {
+    const { local, bare } = createRepoWithRemote();
+    cleanupDirs.push(local, bare);
+
+    const pusher = makeRepoFromTemplate("latest-pusher", (dir) => {
+      git(["clone", bare, "."], dir);
+      git(["checkout", TEST_BASE_BRANCH], dir);
+      git(["config", "user.email", "test@test.com"], dir);
+      git(["config", "user.name", "Test"], dir);
+      writeFileSync(join(dir, "extra.txt"), "extra\n");
+      git(["add", "."], dir);
+      git(["commit", "-m", "remote-ahead"], dir);
+      git(["push", "origin", TEST_BASE_BRANCH], dir);
+    });
+    cleanupDirs.push(pusher);
+
+    git(["fetch", "origin"], local);
+
+    const result = await resolveLatestBase(TEST_BASE_BRANCH, local);
+    const remoteProc = Bun.spawnSync(["git", "rev-parse", `origin/${TEST_BASE_BRANCH}`], {
+      cwd: local, stdout: "pipe", stderr: "pipe", env: cleanGitEnv,
+    });
+    const remoteSha = new TextDecoder().decode(remoteProc.stdout).trim();
+
+    expect(result.commit).toBe(remoteSha);
+    expect(result.ref).toBe(`origin/${TEST_BASE_BRANCH}`);
+  });
+
+  test("returns local ref when local is ahead of origin", async () => {
+    const { local, bare } = createRepoWithRemote();
+    cleanupDirs.push(local, bare);
+
+    writeFileSync(join(local, "local-only.txt"), "local\n");
+    git(["add", "."], local);
+    git(["commit", "-m", "local-ahead"], local);
+
+    const result = await resolveLatestBase(TEST_BASE_BRANCH, local);
+    const localSha = await resolveBaseCommit(TEST_BASE_BRANCH, local);
+    expect(result.commit).toBe(localSha);
+    expect(result.ref).toBe(TEST_BASE_BRANCH);
+  });
+
+  test("returns local ref when local and remote are at the same commit", async () => {
+    const { local, bare } = createRepoWithRemote();
+    cleanupDirs.push(local, bare);
+
+    const result = await resolveLatestBase(TEST_BASE_BRANCH, local);
+    const localSha = await resolveBaseCommit(TEST_BASE_BRANCH, local);
+    expect(result.commit).toBe(localSha);
+    expect(result.ref).toBe(TEST_BASE_BRANCH);
+  });
+
+  test("returns local ref when histories have diverged", async () => {
+    const { local, bare } = createRepoWithRemote();
+    cleanupDirs.push(local, bare);
+
+    const pusher = makeRepoFromTemplate("latest-diverge-pusher", (dir) => {
+      git(["clone", bare, "."], dir);
+      git(["checkout", TEST_BASE_BRANCH], dir);
+      git(["config", "user.email", "test@test.com"], dir);
+      git(["config", "user.name", "Test"], dir);
+      writeFileSync(join(dir, "remote-diverge.txt"), "diverge\n");
+      git(["add", "."], dir);
+      git(["commit", "-m", "remote-diverge"], dir);
+      git(["push", "origin", TEST_BASE_BRANCH], dir);
+    });
+    cleanupDirs.push(pusher);
+
+    writeFileSync(join(local, "local-diverge.txt"), "diverge\n");
+    git(["add", "."], local);
+    git(["commit", "-m", "local-diverge"], local);
+
+    git(["fetch", "origin"], local);
+
+    const result = await resolveLatestBase(TEST_BASE_BRANCH, local);
+    const localSha = await resolveBaseCommit(TEST_BASE_BRANCH, local);
+    expect(result.commit).toBe(localSha);
+    expect(result.ref).toBe(TEST_BASE_BRANCH);
   });
 });
 
