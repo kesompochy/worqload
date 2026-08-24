@@ -1499,6 +1499,7 @@ async function resolveExplicitBaseBranch(
   baseBranch: string,
   ctx: ServerContext,
 ): Promise<{ baseBranch: string; startPoint: string }> {
+  await ctx.worktreeOps.fetchBranch(ctx.repoDir, baseBranch);
   const latest = await ctx.worktreeOps.resolveLatestBase(baseBranch, ctx.repoDir);
   return { baseBranch, startPoint: latest.ref };
 }
