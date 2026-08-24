@@ -122,7 +122,7 @@
   }
 
   function submit(isTerminal) {
-    if (!isTerminal) prependTemplates();
+    prependTemplates();
     if (isTerminal) onResume();
     else onFeedback();
   }
@@ -171,7 +171,7 @@
         {/each}
       </div>
     {/if}
-    {#if !isTerminal && appState.feedbackQueue.length > 0}
+    {#if appState.feedbackQueue.length > 0}
       <div class="feedback-queue">
         <div class="feedback-queue-header">Queued ({appState.feedbackQueue.length})</div>
         {#each appState.feedbackQueue as item, i (i)}
@@ -182,7 +182,7 @@
         {/each}
       </div>
     {/if}
-    {#if !isTerminal && appState.feedbackTemplates.length > 0}
+    {#if appState.feedbackTemplates.length > 0}
       <div class="feedback-templates">
         {#each appState.feedbackTemplates as tmpl (tmpl.id)}
           <label class="feedback-template-label">
