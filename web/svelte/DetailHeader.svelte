@@ -12,13 +12,13 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { formatRelative, eventAgeIsStale } from "../dom.js";
+  import { formatRelative, eventAgeIsStale, eventCountLevel, toast } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel, toggleEventsTab } from "../handlers.js";
   import ActionBar from "./ActionBar.svelte";
 
-  const tabs = [
+  const allTabs = [
     { id: "reports", label: "Reports" },
     { id: "feedback", label: "Feedbacks" },
     { id: "diff", label: "Diff" },
@@ -26,6 +26,12 @@
     { id: "structure", label: "Structure" },
     { id: "events", label: "Events" },
   ];
+  const tabs = $derived(appState.eventsTabHidden && appState.activeTab !== "events" ? allTabs.filter(t => t.id !== "events") : allTabs);
+
+  function showEvents() {
+    if (appState.eventsTabHidden) toggleEventsTab();
+    switchTab("events");
+  }
 
   // The selected session's outstanding work asking for the human's attention:
   // reports not yet marked read, plus escalations that pause the agent's turn
@@ -48,12 +54,10 @@
     return (actions[index - 1].group || actions[index - 1].id) !== (actions[index].group || actions[index].id);
   }
 
-  // Collapses the initial-prompt block — a long opening prompt otherwise eats
-  // vertical space above the tabs. Persists across session switches because the
-  // header stays mounted; that's intentional, treated as a viewing preference.
   const headerActions = $derived(appState.actions.filter(a => !a.feedbackContent));
 
   let promptCollapsed = $state(true);
+  $effect(() => { appState.selected; promptCollapsed = true; });
 </script>
 
 {#if appState.selected && appState.detail}
@@ -88,19 +92,20 @@
     <button type="button" class="prompt-toggle" aria-expanded={!promptCollapsed} onclick={() => (promptCollapsed = !promptCollapsed)}>
       <span class="prompt-caret" aria-hidden="true">{promptCollapsed ? "▸" : "▾"}</span> initial prompt
     </button>
+    <button type="button" class="copy-path-btn" title="initial promptをコピー" onclick={() => navigator.clipboard.writeText(m.prompt).then(() => toast("prompt copied")).catch(() => toast("copy failed"))}>⧉</button>
     {#if !promptCollapsed}<div class="prompt-body">{m.prompt}</div>{/if}
   </div>
   <ActionBar />
   <div class="detail-meta">
-    {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}base: <code>{m.baseBranch}</code>
+    {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}{#if m.agentName === "claude" || (!m.agentName)}model: <select class="model-switch-select" value={m.model || ""} onchange={(e) => onSwitchModel(m.id, e.target.value)}><option value="">(default)</option><optgroup label="Alias"><option value="sonnet">sonnet</option><option value="opus">opus</option><option value="haiku">haiku</option><option value="fable">fable</option></optgroup><optgroup label="Sonnet"><option value="claude-sonnet-5">claude-sonnet-5</option><option value="claude-sonnet-4-6">claude-sonnet-4-6</option><option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m]</option><option value="claude-sonnet-4-5">claude-sonnet-4-5</option></optgroup><optgroup label="Opus"><option value="claude-opus-4-8">claude-opus-4-8</option><option value="claude-opus-4-7">claude-opus-4-7</option><option value="claude-opus-4-7[1m]">claude-opus-4-7[1m]</option><option value="claude-opus-4-6">claude-opus-4-6</option><option value="claude-opus-4-6[1m]">claude-opus-4-6[1m]</option><option value="claude-opus-4-5">claude-opus-4-5</option></optgroup><optgroup label="Haiku"><option value="claude-haiku-4-5">claude-haiku-4-5</option></optgroup><optgroup label="Fable / Mythos"><option value="claude-fable-5">claude-fable-5</option><option value="claude-mythos-5">claude-mythos-5</option></optgroup></select>{:else if m.model}model: <code>{m.model}</code>{/if}
     {#if m.branchName}· branch: <code>{m.branchName}</code>{/if}
-    · started {formatRelative(m.createdAt)}
     {#if m.endedAt}· ended {formatRelative(m.endedAt)}{/if}
-    · worktree: <code>{m.worktreePath}</code>
+    · worktree: <code>{m.worktreePath}</code><button type="button" class="copy-path-btn" title="ディレクトリパスをコピー" onclick={() => navigator.clipboard.writeText(m.worktreePath).then(() => toast("path copied")).catch(() => toast("copy failed"))}>⧉</button>
+    · <button type="button" class="meta-events-link" class:meta-events-warning={eventCountLevel(events.length) === "warning"} class:meta-events-danger={eventCountLevel(events.length) === "danger"} onclick={showEvents}>events</button>
   </div>
   <div class="tabs">
     {#each tabs as tab}
-      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count">({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span>{/if}</button>
+      <button class="tab-btn" class:active={appState.activeTab === tab.id} data-tab={tab.id} onclick={() => switchTab(tab.id)}>{tab.label}{#if tab.id === "reports" && reportsAttentionCount > 0} <span class="tab-count tab-count-unread" title={reportsAttentionTitle}>({reportsAttentionCount})</span>{/if}{#if tab.id === "events"} <span class="tab-count" class:tab-count-warning={eventCountLevel(events.length) === "warning"} class:tab-count-danger={eventCountLevel(events.length) === "danger"}>({events.length})</span><span class="tab-event-age" class:stale={lastEvent && eventAgeIsStale(lastEvent.timestamp, clock.now)} style={lastEvent ? null : "display:none"}>{lastEvent ? `· ${formatRelative(lastEvent.timestamp, clock.now)}` : ""}</span><span class="tab-dismiss" role="button" tabindex="0" title="Eventsタブを非表示" onclick={(e) => { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); }} onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); toggleEventsTab(); switchTab("reports"); } }}>×</span>{/if}</button>
     {/each}
     {#if appState.activeTab === "diff"}
       <span class="diff-base-toggle">
