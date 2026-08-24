@@ -132,6 +132,40 @@ export async function resolveBaseCommit(
   return out.trim();
 }
 
+export interface LatestBase {
+  ref: string;
+  commit: string;
+}
+
+export async function resolveLatestBase(
+  baseBranch: string,
+  repoDir: string,
+): Promise<LatestBase> {
+  const env = cleanGitEnv();
+  const localCommit = await resolveBaseCommit(baseBranch, repoDir);
+
+  const remoteRef = `origin/${baseBranch}`;
+  const remoteProc = Bun.spawn(
+    ["git", "rev-parse", remoteRef],
+    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env },
+  );
+  const remoteOut = await new Response(remoteProc.stdout).text();
+  if ((await remoteProc.exited) !== 0) {
+    return { ref: baseBranch, commit: localCommit };
+  }
+  const remoteCommit = remoteOut.trim();
+
+  if (localCommit === remoteCommit) {
+    return { ref: baseBranch, commit: localCommit };
+  }
+
+  if (await isAncestor(repoDir, localCommit, remoteCommit)) {
+    return { ref: remoteRef, commit: remoteCommit };
+  }
+
+  return { ref: baseBranch, commit: localCommit };
+}
+
 // The push URL of `origin`, or the first remote if there's no `origin`, or null
 // if the worktree has no remotes. Used only to build "open this on GitHub"
 // permalinks — no fetch, just a config read.
@@ -631,6 +665,7 @@ export interface WorktreeOps {
   }): Promise<WorktreeInfo>;
   removeWorktree(worktreePath: string, branchName?: string, repoDir?: string): Promise<void>;
   resolveBaseCommit(baseBranch: string, repoDir: string): Promise<string>;
+  resolveLatestBase(baseBranch: string, repoDir: string): Promise<LatestBase>;
   currentBranch(repoDir: string): Promise<string>;
   resolveDiffBase(worktreePath: string, baseBranch: string, baseCommit: string): Promise<string>;
   gitDiff(worktreePath: string, target: string, contextLines?: number): Promise<string>;
@@ -652,6 +687,7 @@ export const realWorktreeOps: WorktreeOps = {
   createSessionWorktree,
   removeWorktree,
   resolveBaseCommit,
+  resolveLatestBase,
   currentBranch,
   resolveDiffBase,
   gitDiff,

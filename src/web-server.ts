@@ -1388,7 +1388,8 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const agentName = body.agentName ?? ctx.agentName;
   const baseBranch = body.baseBranch?.trim() || (await ctx.worktreeOps.currentBranch(ctx.repoDir));
-  const baseCommit = await ctx.worktreeOps.resolveBaseCommit(baseBranch, ctx.repoDir);
+  const latestBase = await ctx.worktreeOps.resolveLatestBase(baseBranch, ctx.repoDir);
+  const baseCommit = latestBase.commit;
 
   // worktreePath and branchName are populated after the id is assigned below
   // (we need the id to compute the worktree dir and the shortId fallback).
@@ -1418,7 +1419,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     ({ worktreePath } = await ctx.worktreeOps.createSessionWorktree({
       sessionId: tentative.id,
       repoDir: ctx.repoDir,
-      baseBranch,
+      baseBranch: latestBase.ref,
       branchName,
       reportsDirAbsolute: reportsDir,
     }));
