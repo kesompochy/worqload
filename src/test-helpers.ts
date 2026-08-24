@@ -107,6 +107,7 @@ export function fakeWorktreeOps(): WorktreeOps {
       rmSync(worktreePath, { recursive: true, force: true });
     },
     async resolveBaseCommit() { return "0".repeat(40); },
+    async resolveLatestBase(_baseBranch) { return { ref: "trunk", commit: "0".repeat(40) }; },
     async currentBranch() { return "trunk"; },
     async resolveDiffBase(_worktreePath, _baseBranch, baseCommit) { return baseCommit; },
     async gitDiff(_worktreePath, target) { return `--- diff against ${target} ---\n`; },
