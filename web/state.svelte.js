@@ -91,6 +91,7 @@ export const state = $state({
   // Feedback templates loaded from the server (sourced from config.yaml).
   // Populated by fetchMeta; empty until then.
   feedbackTemplates: [],
+  feedbackTemplatePrefix: "",
 });
 
 export const TEMPLATES_STORAGE_KEY = "worqload:feedback-templates-checked";

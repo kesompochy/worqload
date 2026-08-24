@@ -7,6 +7,7 @@ import {
   loadFeedbackTemplates,
   mergeFeedbackTemplates,
   parseFeedbackTemplates,
+  stripLegacyPrefix,
 } from "./feedback-templates";
 
 test("parseFeedbackTemplates returns null when the key is absent", () => {
@@ -72,6 +73,33 @@ test("loadFeedbackTemplates config entry with same id overrides default", async 
   const noEdit = result.find(t => t.id === "no-edit");
   expect(noEdit).toEqual({ id: "no-edit", label: "Custom", text: "Overridden" });
   expect(result.length).toBe(DEFAULT_FEEDBACK_TEMPLATES.length);
+});
+
+test("stripLegacyPrefix removes the English prefix", () => {
+  expect(stripLegacyPrefix(
+    "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\nDo not push.",
+  )).toBe("Do not push.");
+});
+
+test("stripLegacyPrefix removes the Japanese prefix", () => {
+  expect(stripLegacyPrefix(
+    "このテキストはworqloadがユーザーに代わって挿入した。ユーザーは以下の振る舞いを期待している: レポートを推敲せよ。",
+  )).toBe("レポートを推敲せよ。");
+});
+
+test("stripLegacyPrefix returns text unchanged when no prefix matches", () => {
+  expect(stripLegacyPrefix("Custom instruction")).toBe("Custom instruction");
+});
+
+test("parseFeedbackTemplates strips legacy prefix from text", () => {
+  const yaml = `
+feedbackTemplates:
+  - id: custom
+    label: "Custom"
+    text: "This text was inserted by worqload on behalf of the user. The user expects the following behaviour:\\nDo the thing."
+`;
+  const result = parseFeedbackTemplates(yaml);
+  expect(result![0].text).toBe("Do the thing.");
 });
 
 test("mergeFeedbackTemplates appends new and overrides matching ids", () => {
