@@ -108,6 +108,77 @@ export function insertFeedback(db: Database, row: FeedbackRow): void {
   });
 }
 
+export interface SessionSummary {
+  sessionId: string;
+  repo: string;
+  latestAt: string;
+  reportCount: number;
+  feedbackCount: number;
+}
+
+export function listAllReports(db: Database, filter?: { repo?: string }): ReportRow[] {
+  const where = filter?.repo ? "WHERE repo = $repo" : "";
+  const rows = db.query(`SELECT * FROM reports ${where} ORDER BY created_at DESC`).all(
+    filter?.repo ? { $repo: filter.repo } : {},
+  ) as ReportQueryRow[];
+  return rows.map(r => ({
+    repo: r.repo,
+    sessionId: r.session_id,
+    filename: r.filename,
+    slug: r.slug,
+    body: r.body,
+    replyTo: r.reply_to,
+    anchorPath: r.anchor_path,
+    anchorLineStart: r.anchor_line_start,
+    anchorLineEnd: r.anchor_line_end,
+    createdAt: r.created_at,
+  }));
+}
+
+export function listAllFeedback(db: Database, filter?: { repo?: string }): FeedbackRow[] {
+  const where = filter?.repo ? "WHERE repo = $repo" : "";
+  const rows = db.query(`SELECT * FROM feedback ${where} ORDER BY created_at DESC`).all(
+    filter?.repo ? { $repo: filter.repo } : {},
+  ) as FeedbackQueryRow[];
+  return rows.map(r => ({
+    repo: r.repo,
+    sessionId: r.session_id,
+    filename: r.filename,
+    body: r.body,
+    anchorPath: r.anchor_path,
+    anchorLineStart: r.anchor_line_start,
+    anchorLineEnd: r.anchor_line_end,
+    createdAt: r.created_at,
+  }));
+}
+
+export function listAllSessions(db: Database, filter?: { repo?: string }): SessionSummary[] {
+  const where = filter?.repo ? "WHERE repo = $repo" : "";
+  const rows = db.query(`
+    SELECT session_id, repo, MAX(latest) AS latest_at, SUM(rc) AS report_count, SUM(fc) AS feedback_count
+    FROM (
+      SELECT session_id, repo, created_at AS latest, 1 AS rc, 0 AS fc FROM reports ${where}
+      UNION ALL
+      SELECT session_id, repo, created_at AS latest, 0 AS rc, 1 AS fc FROM feedback ${where}
+    )
+    GROUP BY session_id
+    ORDER BY latest_at DESC
+  `).all(filter?.repo ? { $repo: filter.repo } : {}) as {
+    session_id: string;
+    repo: string;
+    latest_at: string;
+    report_count: number;
+    feedback_count: number;
+  }[];
+  return rows.map(r => ({
+    sessionId: r.session_id,
+    repo: r.repo,
+    latestAt: r.latest_at,
+    reportCount: r.report_count,
+    feedbackCount: r.feedback_count,
+  }));
+}
+
 interface ReportQueryRow {
   id: number;
   repo: string;
