@@ -127,8 +127,7 @@
     <button type="button" class="prompt-toggle" aria-expanded={!promptCollapsed} onclick={() => (promptCollapsed = !promptCollapsed)}>
       <span class="prompt-caret" aria-hidden="true">{promptCollapsed ? "▸" : "▾"}</span> initial prompt
     </button>
-    <button type="button" class="copy-path-btn" title="initial promptをコピー" onclick={() => navigator.clipboard.writeText(m.prompt).then(() => toast("prompt copied")).catch(() => toast("copy failed"))}>⧉</button>
-    {#if !promptCollapsed}<div class="prompt-body">{m.prompt}</div>{/if}
+    {#if !promptCollapsed}<div class="prompt-body">{m.prompt}<button type="button" class="copy-path-btn prompt-copy-btn" title="initial promptをコピー" onclick={() => navigator.clipboard.writeText(m.prompt).then(() => toast("prompt copied")).catch(() => toast("copy failed"))}>⧉</button></div>{/if}
   </div>
   {#if sessionLinks.length > 0 || addingLink}
     <div class="session-links">
