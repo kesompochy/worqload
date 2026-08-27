@@ -4,7 +4,7 @@ import { mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { appendEvent, readEvents } from "../event-log";
 import { exitWithUsage } from "./cli-helpers";
-import { buildProtocolPrefix, RESUME_KICKOFF } from "../session-bootstrap";
+import { buildProtocolPrefix, FORK_KICKOFF, RESUME_KICKOFF } from "../session-bootstrap";
 import { agentEndpointPath, loadSessionMeta, saveSessionMeta } from "../session";
 import { claudePipeDriver, type SessionDriver, type SessionDriverFactory } from "../session-driver";
 import { codexPipeDriver } from "../session-driver-codex";
@@ -57,6 +57,13 @@ export interface HostOptions {
   // RESUME_KICKOFF as the first message instead of the protocol bootstrap.
   // spawnCommand is expected to already carry `--continue`.
   resume?: boolean;
+  // Fork mode: resume the source session's conversation history but send
+  // protocolPrefix + FORK_KICKOFF + prompt as the first message. The
+  // spawnCommand carries `--resume <sourceSessionId> --fork-session`.
+  fork?: {
+    sourceSessionId: string;
+    sourceWorktreePath: string;
+  };
   // JSONL file to append structured diagnostic entries to (wake forwarding,
   // claude.stdin write outcomes, etc). Falls back to process.stderr when unset
   // so tests don't litter the filesystem.
@@ -296,20 +303,29 @@ export async function runHost(opts: HostOptions): Promise<number> {
     return 1;
   }
 
+  const isFork = opts.fork !== undefined;
   await writeEvent({
-    kind: opts.resume ? "session_resumed" : "session_started",
-    payload: { prompt: meta.prompt },
+    kind: opts.resume ? "session_resumed" : isFork ? "session_forked" : "session_started",
+    payload: { prompt: meta.prompt, ...(isFork && { forkedFrom: opts.fork!.sourceSessionId }) },
   });
 
   // First message. On a fresh start the agent learns the protocol from
   // the protocol prefix and the task from meta.prompt. On resume the prior
   // conversation is restored by `claude --continue`, so we only nudge it back
   // into the loop (any new instruction was queued to the feedback inbox).
-  const firstMessage = opts.resume ? RESUME_KICKOFF : (await buildProtocolPrefix(meta.baseBranch, undefined, undefined, {
-    sessionId: opts.sessionId,
-    serverUrl: opts.agentEndpoint,
-  })) + meta.prompt;
-  log("bootstrap_send", { textLen: firstMessage.length, resume: opts.resume === true });
+  // On fork the conversation is restored via `--resume <id> --fork-session`,
+  // and we re-establish the protocol prefix for the new worktree context
+  // before delivering the new task.
+  const sessionInfo = { sessionId: opts.sessionId, serverUrl: opts.agentEndpoint };
+  let firstMessage: string;
+  if (opts.resume) {
+    firstMessage = RESUME_KICKOFF;
+  } else if (isFork) {
+    firstMessage = FORK_KICKOFF + (await buildProtocolPrefix(meta.baseBranch, undefined, undefined, sessionInfo)) + meta.prompt;
+  } else {
+    firstMessage = (await buildProtocolPrefix(meta.baseBranch, undefined, undefined, sessionInfo)) + meta.prompt;
+  }
+  log("bootstrap_send", { textLen: firstMessage.length, resume: opts.resume === true, fork: isFork });
   await driver.sendUserMessage(firstMessage, "bootstrap");
 
   const exitCode = await driver.exited;
@@ -367,11 +383,18 @@ export function parseHostArgs(args: string[]): HostOptions | null {
   const agentName = takeFlag(head, "--agent");
   const driverName = takeFlag(head, "--driver");
   const resume = head.includes("--resume");
+  const forkSourceSessionId = takeFlag(head, "--fork");
+  const forkSourceWorktreePath = forkSourceSessionId !== undefined
+    ? head[head.indexOf("--fork") + 2]
+    : undefined;
   if (!sessionId || !sessionsDir || !socketPath || !agentEndpoint || spawnCommand.length === 0) {
     return null;
   }
   const driver = driverName
     ? resolveDriverFactory(agentName ?? "claude", driverName)
+    : undefined;
+  const fork = forkSourceSessionId && forkSourceWorktreePath
+    ? { sourceSessionId: forkSourceSessionId, sourceWorktreePath: forkSourceWorktreePath }
     : undefined;
   return {
     sessionId,
@@ -380,6 +403,7 @@ export function parseHostArgs(args: string[]): HostOptions | null {
     agentEndpoint,
     spawnCommand,
     ...(resume && { resume }),
+    ...(fork !== undefined && { fork }),
     ...(logFile !== undefined && { logFile }),
     ...(driver !== undefined && { driver }),
   };

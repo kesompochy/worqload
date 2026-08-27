@@ -1,0 +1,4 @@
+[forked] This session has been forked from a prior session. Your conversation history has been carried over, but you are now in a new worktree on a new branch. Your new CWD and branch are already set — the worqload protocol prefix that follows re-establishes the session contract. Treat the conversation history as context, and focus on the new task below.
+
+---
+

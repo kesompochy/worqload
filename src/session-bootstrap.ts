@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import protocolPrefixTemplate from "./prompts/protocol-prefix.txt" with { type: "text" };
 import resumeKickoff from "./prompts/resume-kickoff.txt" with { type: "text" };
+import forkKickoff from "./prompts/fork-kickoff.txt" with { type: "text" };
 import turnWithoutReportNudge from "./prompts/turn-without-report-nudge.txt" with { type: "text" };
 import { defaultConfigPath, loadProtocolPrefix } from "./textlint";
 
@@ -26,6 +27,8 @@ export async function buildProtocolPrefix(
 // restored by `claude --continue`, so this only needs to nudge the agent back
 // into the loop and point it at any new instructions the human left.
 export const RESUME_KICKOFF = resumeKickoff;
+
+export const FORK_KICKOFF = forkKickoff;
 
 // Sent to the agent when a turn ends without a Report or Escalation. The human
 // reads the session through those two channels, so a silent turn-end leaves
