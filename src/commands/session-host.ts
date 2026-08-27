@@ -316,13 +316,14 @@ export async function runHost(opts: HostOptions): Promise<number> {
   // On fork the conversation is restored via `--resume <id> --fork-session`,
   // and we re-establish the protocol prefix for the new worktree context
   // before delivering the new task.
+  const sessionInfo = { sessionId: opts.sessionId, serverUrl: opts.agentEndpoint };
   let firstMessage: string;
   if (opts.resume) {
     firstMessage = RESUME_KICKOFF;
   } else if (isFork) {
-    firstMessage = FORK_KICKOFF + (await buildProtocolPrefix(meta.baseBranch)) + meta.prompt;
+    firstMessage = FORK_KICKOFF + (await buildProtocolPrefix(meta.baseBranch, undefined, undefined, sessionInfo)) + meta.prompt;
   } else {
-    firstMessage = (await buildProtocolPrefix(meta.baseBranch)) + meta.prompt;
+    firstMessage = (await buildProtocolPrefix(meta.baseBranch, undefined, undefined, sessionInfo)) + meta.prompt;
   }
   log("bootstrap_send", { textLen: firstMessage.length, resume: opts.resume === true, fork: isFork });
   await driver.sendUserMessage(firstMessage, "bootstrap");
