@@ -91,7 +91,7 @@ function fail(message: string): ActionResult {
 // the case where the agent edited but forgot to commit. The `.worqload-reports`
 // symlink worqload injects at the worktree root is excluded: it isn't project
 // content, so a repo that hasn't gitignored it still gets a clean check.
-async function isWorktreeDirty(cwd: string): Promise<boolean> {
+export async function isWorktreeDirty(cwd: string): Promise<boolean> {
   const proc = Bun.spawn(["git", "status", "--porcelain", "--", ".", ...WORQLOAD_ENTRY_EXCLUDES], {
     cwd,
     stdout: "pipe",

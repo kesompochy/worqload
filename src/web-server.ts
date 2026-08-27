@@ -31,7 +31,7 @@ import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumb
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
-import { isSessionPreviewAlive, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
+import { isSessionPreviewAlive, isWorktreeDirty, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { isAgentWorkEvent } from "../web/events-view.js";
@@ -183,6 +183,7 @@ export interface HostLaunchRequest {
   agentName: AgentName;
   driverName: DriverName;
   resume: boolean;
+  fork?: { sourceSessionId: string; sourceWorktreePath: string };
   onEvent: (event: Event) => void;
   onDisconnect: () => void;
 }
@@ -713,7 +714,7 @@ async function transitionStatus(
 // session). The host — not serve — writes the session_started / session_resumed
 // event and sends the agent its first message.
 function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher {
-  return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, agentName, driverName, resume, onEvent, onDisconnect }) => {
+  return async ({ meta, sessionsDir, agentEndpoint, spawnCommand, agentName, driverName, resume, fork, onEvent, onDisconnect }) => {
     const socketPath = hostSocketPathFor(meta.id);
     const logFile = hostLogPath(sessionsDir, meta.id);
     // The hello handshake asks the host to replay events with seq > sinceSeq.
@@ -735,6 +736,7 @@ function makeSpawnHostLauncher(config: { hostCommand: string[] }): HostLauncher 
       ...(agentName !== "claude" ? { agentName } : {}),
       ...(driverName !== "pipe" ? { driverName } : {}),
       ...(resume && { resume: true }),
+      ...(fork && { fork }),
     });
     const client = await connectToHost({ socketPath, sinceSeq: lastSeq, onEvent, onDisconnect });
     await client.replayCompleted.catch(() => {});
@@ -937,7 +939,7 @@ async function terminateTrackedHost(ctx: ServerContext, sessionId: string): Prom
 async function spawnAndAttachHost(
   ctx: ServerContext,
   meta: SessionMeta,
-  opts: { resume?: boolean } = {},
+  opts: { resume?: boolean; fork?: { sourceSessionId: string; sourceWorktreePath: string } } = {},
 ): Promise<HostClient> {
   return withHostSpawnLock(ctx, meta.id, async () => {
     // A host may already be attached — a racing resume trigger reached here
@@ -953,9 +955,14 @@ async function spawnAndAttachHost(
     const agentName = meta.agentName ?? ctx.agentName;
     const driverName = meta.driverName ?? ctx.driverName;
     const spawnCommand = ctx.spawnCommandForAgent(agentName, meta.model);
-    const effectiveSpawnCommand = opts.resume && agentName === "claude"
-      ? [...spawnCommand, "--continue"]
-      : spawnCommand;
+    let effectiveSpawnCommand: string[];
+    if (opts.resume && agentName === "claude") {
+      effectiveSpawnCommand = [...spawnCommand, "--continue"];
+    } else if (opts.fork && agentName === "claude") {
+      effectiveSpawnCommand = [...spawnCommand, "--resume", opts.fork.sourceSessionId, "--fork-session"];
+    } else {
+      effectiveSpawnCommand = spawnCommand;
+    }
     const { client, hostProc } = await ctx.hostLauncher({
       meta,
       sessionsDir: ctx.sessionsDir,
@@ -964,6 +971,7 @@ async function spawnAndAttachHost(
       agentName,
       driverName,
       resume: opts.resume ?? false,
+      ...(opts.fork && { fork: opts.fork }),
       onEvent: (event) => broadcastEvent(ctx, meta.id, event),
       onDisconnect: () => {
         if (attachment && ctx.clients.get(meta.id) === attachment) {
@@ -1437,6 +1445,7 @@ interface PostSessionsBody {
   agentName?: AgentName;
   model?: string;
   startPaused?: boolean;
+  forkFrom?: string;
 }
 
 function isAgentName(value: unknown): value is AgentName {
@@ -1452,12 +1461,41 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     return json({ error: "agentName must be 'claude', 'codex', or 'cursor'" }, 400);
   }
 
-  const agentName = body.agentName ?? ctx.agentName;
-  const model = agentName === "claude" ? body.model : undefined;
-  const { baseBranch, startPoint } = body.baseBranch?.trim()
-    ? await resolveExplicitBaseBranch(body.baseBranch.trim(), ctx)
-    : await resolveDefaultBaseBranch(ctx);
-  const baseCommit = await ctx.worktreeOps.resolveBaseCommit(startPoint, ctx.repoDir);
+  // --- Fork mode: resolve base from source session ---
+  let sourceMeta: SessionMeta | null = null;
+  let forkInfo: { sourceSessionId: string; sourceWorktreePath: string } | undefined;
+  if (body.forkFrom) {
+    sourceMeta = await loadSessionMeta(body.forkFrom, ctx.sessionsDir);
+    if (!sourceMeta) {
+      return json({ error: `source session not found: ${body.forkFrom}` }, 400);
+    }
+    if (await isWorktreeDirty(sourceMeta.worktreePath)) {
+      return json({ error: "source session has uncommitted changes; commit them before forking" }, 400);
+    }
+    forkInfo = { sourceSessionId: body.forkFrom, sourceWorktreePath: sourceMeta.worktreePath };
+  }
+
+  const agentName = body.agentName ?? (sourceMeta?.agentName ?? ctx.agentName);
+  const model = agentName === "claude" ? (body.model ?? sourceMeta?.model) : undefined;
+
+  let baseBranch: string;
+  let startPoint: string;
+  let baseCommit: string;
+  if (sourceMeta) {
+    baseBranch = sourceMeta.baseBranch;
+    const sourceHead = await ctx.worktreeOps.gitHeadSha(sourceMeta.worktreePath);
+    if (!sourceHead) {
+      return json({ error: "could not resolve source session HEAD" }, 400);
+    }
+    startPoint = sourceHead;
+    baseCommit = sourceMeta.baseCommit;
+  } else if (body.baseBranch?.trim()) {
+    ({ baseBranch, startPoint } = await resolveExplicitBaseBranch(body.baseBranch.trim(), ctx));
+    baseCommit = await ctx.worktreeOps.resolveBaseCommit(startPoint, ctx.repoDir);
+  } else {
+    ({ baseBranch, startPoint } = await resolveDefaultBaseBranch(ctx));
+    baseCommit = await ctx.worktreeOps.resolveBaseCommit(startPoint, ctx.repoDir);
+  }
 
   // worktreePath and branchName are populated after the id is assigned below
   // (we need the id to compute the worktree dir and the shortId fallback).
@@ -1500,17 +1538,57 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     return json({ error: message }, 400);
   }
 
-  const meta: SessionMeta = { ...tentative, worktreePath, branchName: actualBranchName };
+  const meta: SessionMeta = {
+    ...tentative,
+    worktreePath,
+    branchName: actualBranchName,
+    ...(sourceMeta && {
+      forkedFrom: {
+        sessionId: sourceMeta.id,
+        commitSha: startPoint,
+      },
+      // Carry the source's agent-side session ID so codex/cursor drivers
+      // resume the same thread in the forked session.
+      ...(sourceMeta.agentSessionId !== undefined && { agentSessionId: sourceMeta.agentSessionId }),
+    }),
+  };
   await saveSessionMeta(meta, ctx.sessionsDir);
+
+  // For Claude forks, copy the source session's transcript JSONL to the new
+  // worktree's project directory so `--resume <id> --fork-session` can find it.
+  if (forkInfo && (agentName === "claude")) {
+    await copyClaudeTranscript(forkInfo.sourceSessionId, forkInfo.sourceWorktreePath, worktreePath);
+  }
 
   void runSessionCreateHooks(ctx.configPath, ctx.repoDir, worktreePath).catch(() => {});
 
   if (!startPaused) {
-    await spawnAndAttachHost(ctx, meta);
+    await spawnAndAttachHost(ctx, meta, forkInfo ? { fork: forkInfo } : {});
   }
 
   const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
   return json({ meta: stored ?? meta }, 201);
+}
+
+async function copyClaudeTranscript(
+  sourceSessionId: string,
+  sourceWorktreePath: string,
+  destWorktreePath: string,
+): Promise<void> {
+  const { encodeCwdForClaudeProjects } = await import("./session-driver-tmux");
+  const { homedir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { copyFile, mkdir: mkdirFs } = await import("node:fs/promises");
+  const projectsRoot = join(homedir(), ".claude", "projects");
+  const srcDir = join(projectsRoot, encodeCwdForClaudeProjects(sourceWorktreePath));
+  const srcFile = join(srcDir, `${sourceSessionId}.jsonl`);
+  const destDir = join(projectsRoot, encodeCwdForClaudeProjects(destWorktreePath));
+  try {
+    await mkdirFs(destDir, { recursive: true });
+    await copyFile(srcFile, join(destDir, `${sourceSessionId}.jsonl`));
+  } catch {
+    // Transcript copy is best-effort: the agent starts fresh if it fails.
+  }
 }
 
 async function resolveDefaultBaseBranch(ctx: ServerContext): Promise<{ baseBranch: string; startPoint: string }> {
