@@ -65,6 +65,23 @@ function handleRequest(req: Request, ctx: ArchiveServerContext): Response {
   return json({ error: "not found" }, 404);
 }
 
+const PORT_FALLBACK_ATTEMPTS = 50;
+
+function listenWithFallback(requestedPort: number, listen: (port: number) => Server): Server {
+  if (requestedPort === 0) return listen(0);
+  let port = requestedPort;
+  for (let attempt = 0; attempt < PORT_FALLBACK_ATTEMPTS; attempt++) {
+    try {
+      return listen(port);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EADDRINUSE") throw err;
+      port++;
+    }
+  }
+  throw new Error(`no free port found in range ${requestedPort}-${requestedPort + PORT_FALLBACK_ATTEMPTS - 1}`);
+}
+
 export interface StartArchiveServerOptions {
   port?: number;
   archiveDbPath?: string;
@@ -81,13 +98,13 @@ export async function startArchiveServer(opts: StartArchiveServerOptions = {}): 
 
   const ctx: ArchiveServerContext = { db, staticDir };
 
-  const server = Bun.serve({
+  const server = listenWithFallback(opts.port ?? 3457, port => Bun.serve({
     hostname: "127.0.0.1",
-    port: opts.port ?? 3457,
+    port,
     fetch(req) {
       return handleRequest(req, ctx);
     },
-  });
+  }));
 
   function shutdown() {
     try { db.close(); } catch { /* best-effort */ }
