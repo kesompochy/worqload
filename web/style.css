@@ -151,7 +151,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .detail-original-prompt { color: var(--text-dim); font-size: 12px; padding: .5rem 1.1rem; border-bottom: 1px solid var(--border); }
 .prompt-toggle { display: flex; align-items: center; gap: .25rem; width: auto; padding: 0; background: transparent; border: 0; color: var(--text-dim); font: inherit; font-weight: 600; opacity: .7; cursor: pointer; text-align: left; }
 .prompt-caret { display: inline-block; width: 1ch; }
-.prompt-body { white-space: pre-wrap; word-break: break-word; margin-top: .25rem; }
+.prompt-body { position: relative; white-space: pre-wrap; word-break: break-word; margin-top: .25rem; padding-right: 1.5rem; }
 .session-links { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding: .5rem 1.1rem; border-bottom: 1px solid var(--border); font-size: 12px; }
 .session-links-empty { padding: .35rem 1.1rem; }
 .session-link-chip { display: inline-flex; align-items: center; padding: .25rem .6rem; border-radius: 4px; background: var(--bg-hover); color: var(--accent); text-decoration: none; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
@@ -272,7 +272,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .copy-path-btn { background: transparent; border: 0; color: var(--text-dim); cursor: pointer; padding: 0 .25rem; font-size: 12px; line-height: 1; opacity: 0; transition: opacity .12s ease, color .08s ease; }
 .diff-file-header:hover .copy-path-btn, .file-content-header:hover .copy-path-btn { opacity: .6; }
 .detail-meta .copy-path-btn { opacity: .6; padding: .15rem .4rem; font-size: 13px; }
-.detail-original-prompt .copy-path-btn { opacity: .6; padding: .15rem .4rem; font-size: 13px; }
+.prompt-copy-btn { position: absolute; top: 0; right: 0; opacity: .6; padding: .15rem .4rem; font-size: 13px; }
 .copy-path-btn:hover { opacity: 1; color: var(--accent); }
 .diff-summary { margin-left: auto; font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace; }
 .diff-summary .add-count { color: var(--running); margin-right: .35rem; }
