@@ -29,6 +29,7 @@ Anchors in feedback: a feedback message may begin with `Re: <path>:<lineStart>-<
 Files & git:
 - CWD is a git worktree branched from the human's base branch. Edit code here freely.
 - Do not edit, overwrite, or delete files under `.worqload-reports/`. This directory is a read-only view of past reports managed by the worqload server. To create a new report, use `worqload report submit`. To revise a draft in revise mode, edit the file under `.worqload-draft/`.
+- Files URL: to link the human to a specific file and line range in the worqload Files tab, use the format `{{serverUrl}}/?session={{sessionId}}&tab=files&file=<path>&line=<start>&lineEnd=<end>`. `line` and `lineEnd` are optional (omit for no highlight; omit `lineEnd` for a single line). `<path>` is worktree-relative and must be percent-encoded. Include these URLs in Reports when referencing specific code locations — the human can click them to jump directly to the highlighted line.
 
 {{custom-protocol-prefix}}
 
