@@ -95,3 +95,10 @@ test("unknown API path returns 404", async () => {
   const res = await fetch(`${baseUrl}/api/nonexistent`);
   expect(res.status).toBe(404);
 });
+
+test("GET / serves index.html", async () => {
+  const res = await fetch(`${baseUrl}/`);
+  expect(res.status).toBe(200);
+  const text = await res.text();
+  expect(text).toContain("<html");
+});

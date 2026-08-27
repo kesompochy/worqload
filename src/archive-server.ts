@@ -4,6 +4,26 @@ import { join, resolve } from "node:path";
 import { openArchiveDb, defaultArchiveDbPath, listAllSessions, listAllReports, listAllFeedback, listReports, listFeedback } from "./archive-store";
 import type { Database } from "bun:sqlite";
 
+const REPO_ROOT = join(import.meta.dir, "..");
+const ARCHIVE_DIST_DIR = join(REPO_ROOT, "web", "archive", "dist");
+const ARCHIVE_DIST_INDEX = join(ARCHIVE_DIST_DIR, "index.html");
+
+export function archiveFrontendBuilt(): boolean {
+  return existsSync(ARCHIVE_DIST_INDEX);
+}
+
+let inFlightBuild: Promise<void> | null = null;
+
+export function buildArchiveFrontend(): Promise<void> {
+  if (!inFlightBuild) {
+    inFlightBuild = (async () => {
+      const { build } = await import("vite");
+      await build({ configFile: join(REPO_ROOT, "vite.archive.config.ts"), logLevel: "warn" });
+    })();
+  }
+  return inFlightBuild;
+}
+
 export interface ArchiveServerContext {
   db: Database;
   staticDir: string;
@@ -52,14 +72,22 @@ function handleRequest(req: Request, ctx: ArchiveServerContext): Response {
     }
   }
 
-  const filePath = path === "/" ? "index.html" : path.slice(1);
-  const fullPath = join(ctx.staticDir, filePath);
-  if (existsSync(fullPath)) {
-    return new Response(Bun.file(fullPath));
-  }
-  if (!path.startsWith("/api/") && !path.includes(".")) {
+  if (path === "/") {
     const indexPath = join(ctx.staticDir, "index.html");
-    if (existsSync(indexPath)) return new Response(Bun.file(indexPath));
+    if (existsSync(indexPath)) {
+      return new Response(Bun.file(indexPath), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+  }
+
+  const assetMatch = path.match(/^\/assets\/([A-Za-z0-9._-]+)$/);
+  if (assetMatch) {
+    const filename = assetMatch[1];
+    const file = Bun.file(join(ctx.staticDir, "assets", filename));
+    if (existsSync(join(ctx.staticDir, "assets", filename))) {
+      return new Response(file);
+    }
   }
 
   return json({ error: "not found" }, 404);
@@ -94,7 +122,8 @@ export async function startArchiveServer(opts: StartArchiveServerOptions = {}): 
 }> {
   const dbPath = opts.archiveDbPath ?? defaultArchiveDbPath();
   const db = openArchiveDb(dbPath);
-  const staticDir = resolve(join(import.meta.dirname, "..", "web", "archive", "dist"));
+  if (!archiveFrontendBuilt()) await buildArchiveFrontend();
+  const staticDir = ARCHIVE_DIST_DIR;
 
   const ctx: ArchiveServerContext = { db, staticDir };
 
