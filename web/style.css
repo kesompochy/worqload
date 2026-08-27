@@ -152,6 +152,22 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .prompt-toggle { display: flex; align-items: center; gap: .25rem; width: auto; padding: 0; background: transparent; border: 0; color: var(--text-dim); font: inherit; font-weight: 600; opacity: .7; cursor: pointer; text-align: left; }
 .prompt-caret { display: inline-block; width: 1ch; }
 .prompt-body { white-space: pre-wrap; word-break: break-word; margin-top: .25rem; }
+.session-links { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; padding: .35rem 1.1rem; border-bottom: 1px solid var(--border); font-size: 12px; }
+.session-links-empty { padding: .2rem 1.1rem; }
+.session-link-chip { display: inline-flex; align-items: center; padding: .15rem .5rem; border-radius: 4px; background: var(--bg-hover); color: var(--accent); text-decoration: none; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.session-link-chip:hover { background: var(--accent); color: var(--bg); }
+.link-add-btn { background: transparent; border: 1px dashed var(--border); border-radius: 4px; color: var(--text-dim); cursor: pointer; padding: .1rem .4rem; font-size: 12px; line-height: 1.2; }
+.link-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+.link-add-form { display: inline-flex; align-items: center; gap: .25rem; }
+.link-add-input { width: 180px; padding: .15rem .4rem; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
+.link-add-label { width: 80px; }
+.link-add-ok, .link-add-cancel { background: transparent; border: 0; cursor: pointer; color: var(--text-dim); font-size: 13px; padding: .1rem .3rem; }
+.link-add-ok:hover { color: var(--accent); }
+.link-add-cancel:hover { color: var(--danger, #e55); }
+.session-link-group { display: inline-flex; align-items: center; position: relative; }
+.link-remove-btn { background: transparent; border: 0; cursor: pointer; color: var(--text-dim); font-size: 11px; padding: 0 .2rem; opacity: 0; transition: opacity .12s ease; }
+.session-link-group:hover .link-remove-btn { opacity: .6; }
+.link-remove-btn:hover { opacity: 1; color: var(--danger, #e55); }
 /* A session UI control, sat in `.header-actions` alongside Preview / Stop
    preview — not metadata. Sized to match the .btn-action buttons it lines up
    with; inline-flex + nowrap keeps the checkbox glued to its label. */

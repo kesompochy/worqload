@@ -16,6 +16,7 @@
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
   import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel, toggleEventsTab } from "../handlers.js";
+  import { addLink, removeLink } from "../api.js";
   import ActionBar from "./ActionBar.svelte";
 
   const allTabs = [
@@ -58,6 +59,43 @@
 
   let promptCollapsed = $state(true);
   $effect(() => { appState.selected; promptCollapsed = true; });
+
+  const sessionLinks = $derived.by(() => {
+    const manual = appState.detail?.meta?.links ?? [];
+    const pr = appState.prLink?.url ? [{ url: appState.prLink.url, label: "PR" }] : [];
+    const prUrls = new Set(pr.map(l => l.url));
+    return [...pr, ...manual.filter(l => !prUrls.has(l.url))];
+  });
+
+  let addingLink = $state(false);
+  let newLinkUrl = $state("");
+  let newLinkLabel = $state("");
+
+  function linkDisplayLabel(link) {
+    if (link.label) return link.label;
+    try { return new URL(link.url).hostname; } catch { return link.url; }
+  }
+
+  async function onAddLink() {
+    if (!newLinkUrl.trim() || !appState.selected) return;
+    try {
+      await addLink(appState.selected, newLinkUrl.trim(), newLinkLabel.trim() || undefined);
+      newLinkUrl = "";
+      newLinkLabel = "";
+      addingLink = false;
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+
+  async function onRemoveLink(url) {
+    if (!appState.selected) return;
+    try {
+      await removeLink(appState.selected, url);
+    } catch (e) {
+      toast(e.message);
+    }
+  }
 </script>
 
 {#if appState.selected && appState.detail}
@@ -79,9 +117,6 @@
           {:else}
             <button class="btn-action" class:open={appState.openActionId === a.id} disabled={a.id === "create-pr" && prUrl !== null} title={a.id === "create-pr" && prUrl !== null ? "このブランチには既に PR があります" : (a.description || "")} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
           {/if}
-          {#if a.id === "create-pr" && prUrl}
-            <a class="pr-link-chip" href={prUrl} target="_blank" rel="noopener" title="このブランチの PR を開く">PR</a>
-          {/if}
         {/each}
         <span class="action-group-sep" aria-hidden="true"></span>
       {/if}
@@ -95,6 +130,32 @@
     <button type="button" class="copy-path-btn" title="initial promptをコピー" onclick={() => navigator.clipboard.writeText(m.prompt).then(() => toast("prompt copied")).catch(() => toast("copy failed"))}>⧉</button>
     {#if !promptCollapsed}<div class="prompt-body">{m.prompt}</div>{/if}
   </div>
+  {#if sessionLinks.length > 0 || addingLink}
+    <div class="session-links">
+      {#each sessionLinks as link (link.url)}
+        <span class="session-link-group">
+          <a class="session-link-chip" href={link.url} target="_blank" rel="noopener">{linkDisplayLabel(link)}</a>
+          {#if (appState.detail?.meta?.links ?? []).some(l => l.url === link.url)}
+            <button class="link-remove-btn" title="リンクを削除" onclick={() => onRemoveLink(link.url)}>×</button>
+          {/if}
+        </span>
+      {/each}
+      {#if addingLink}
+        <span class="link-add-form">
+          <input class="link-add-input" type="text" placeholder="URL" bind:value={newLinkUrl} onkeydown={(e) => { if (e.key === "Enter") onAddLink(); if (e.key === "Escape") { addingLink = false; } }} />
+          <input class="link-add-input link-add-label" type="text" placeholder="label" bind:value={newLinkLabel} onkeydown={(e) => { if (e.key === "Enter") onAddLink(); if (e.key === "Escape") { addingLink = false; } }} />
+          <button class="link-add-ok" onclick={onAddLink}>+</button>
+          <button class="link-add-cancel" onclick={() => { addingLink = false; }}>×</button>
+        </span>
+      {:else}
+        <button class="link-add-btn" title="リンクを追加" onclick={() => { addingLink = true; }}>+</button>
+      {/if}
+    </div>
+  {:else}
+    <div class="session-links session-links-empty">
+      <button class="link-add-btn" title="リンクを追加" onclick={() => { addingLink = true; }}>+</button>
+    </div>
+  {/if}
   <ActionBar />
   <div class="detail-meta">
     {#if m.agentName}agent: <code>{m.agentName}</code> · {/if}{#if m.agentName === "claude" || (!m.agentName)}model: <select class="model-switch-select" value={m.model || ""} onchange={(e) => onSwitchModel(m.id, e.target.value)}><option value="">(default)</option><optgroup label="Alias"><option value="sonnet">sonnet</option><option value="opus">opus</option><option value="haiku">haiku</option><option value="fable">fable</option></optgroup><optgroup label="Sonnet"><option value="claude-sonnet-5">claude-sonnet-5</option><option value="claude-sonnet-4-6">claude-sonnet-4-6</option><option value="claude-sonnet-4-6[1m]">claude-sonnet-4-6[1m]</option><option value="claude-sonnet-4-5">claude-sonnet-4-5</option></optgroup><optgroup label="Opus"><option value="claude-opus-4-8">claude-opus-4-8</option><option value="claude-opus-4-7">claude-opus-4-7</option><option value="claude-opus-4-7[1m]">claude-opus-4-7[1m]</option><option value="claude-opus-4-6">claude-opus-4-6</option><option value="claude-opus-4-6[1m]">claude-opus-4-6[1m]</option><option value="claude-opus-4-5">claude-opus-4-5</option></optgroup><optgroup label="Haiku"><option value="claude-haiku-4-5">claude-haiku-4-5</option></optgroup><optgroup label="Fable / Mythos"><option value="claude-fable-5">claude-fable-5</option><option value="claude-mythos-5">claude-mythos-5</option></optgroup></select>{:else if m.model}model: <code>{m.model}</code>{/if}
