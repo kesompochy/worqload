@@ -1547,9 +1547,8 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
         sessionId: sourceMeta.id,
         commitSha: startPoint,
       },
-      // Carry the source's agent-side session ID so codex/cursor drivers
-      // resume the same thread in the forked session.
       ...(sourceMeta.agentSessionId !== undefined && { agentSessionId: sourceMeta.agentSessionId }),
+      ...(sourceMeta.links && sourceMeta.links.length > 0 && { links: [...sourceMeta.links] }),
     }),
   };
   await saveSessionMeta(meta, ctx.sessionsDir);
