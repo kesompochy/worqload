@@ -77,9 +77,6 @@ export async function submitEscalation(
 }
 
 export interface CommandApprovalResult extends SubmitResult {
-  decision?: "approve" | "reject";
-  feedbackContent?: string;
-  timedOut?: boolean;
 }
 
 export async function requestCommandApproval(
@@ -87,7 +84,6 @@ export async function requestCommandApproval(
   sessionId: string,
   command: string,
   reason: string,
-  sync = false,
   timeoutSeconds?: number,
 ): Promise<CommandApprovalResult> {
   const timeoutMs = typeof timeoutSeconds === "number" && timeoutSeconds > 0
@@ -95,7 +91,7 @@ export async function requestCommandApproval(
     : undefined;
   return postJson<CommandApprovalResult>(
     `${endpoint}/internal/sessions/${sessionId}/command-approvals`,
-    { command, ...(reason ? { reason } : {}), ...(sync ? { sync: true } : {}), ...(timeoutMs ? { timeoutMs } : {}) },
+    { command, ...(reason ? { reason } : {}), ...(timeoutMs ? { timeoutMs } : {}) },
   );
 }
 
