@@ -192,6 +192,30 @@ export function prefetchPrLinks() {
   for (const s of state.sessions) void loadPrLink(s.id);
 }
 
+export async function addLink(sessionId, url, label) {
+  const body = { url };
+  if (label) body.label = label;
+  const res = await api("POST", `/sessions/${sessionId}/links`, body);
+  if (state.detail && state.selected === sessionId) {
+    state.detail = { ...state.detail, meta: res.meta };
+  }
+  return res;
+}
+
+export async function removeLink(sessionId, url) {
+  const res = await fetch(`/sessions/${sessionId}/links`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) throw new Error(`DELETE /sessions/${sessionId}/links → ${res.status}`);
+  const data = await res.json();
+  if (state.detail && state.selected === sessionId) {
+    state.detail = { ...state.detail, meta: data.meta };
+  }
+  return data;
+}
+
 // One-stop loader for whichever Structure-tab snapshots the current mode
 // needs: After + Before for that mode. Before always fires alongside After —
 // the Split toggle is visibility-only, so the Before payload is ready by the
