@@ -152,6 +152,107 @@ test("listReports filters by session_id", async () => {
   }
 });
 
+test("listAllReports returns reports across sessions ordered by created_at desc", async () => {
+  const { openArchiveDb, insertReport, listAllReports } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    const base = {
+      repo: "github.com/foo/bar",
+      slug: "x",
+      body: "b",
+      replyTo: null,
+      anchorPath: null,
+      anchorLineStart: null,
+      anchorLineEnd: null,
+    };
+    insertReport(db, { ...base, sessionId: "s1", filename: "001-x.md", createdAt: "2026-08-24T01:00:00Z" });
+    insertReport(db, { ...base, sessionId: "s2", filename: "001-x.md", createdAt: "2026-08-24T02:00:00Z" });
+    insertReport(db, { ...base, sessionId: "s1", filename: "002-y.md", createdAt: "2026-08-24T03:00:00Z" });
+    const rows = listAllReports(db);
+    expect(rows).toHaveLength(3);
+    expect(rows[0].filename).toBe("002-y.md");
+    expect(rows[1].sessionId).toBe("s2");
+    expect(rows[2].createdAt).toBe("2026-08-24T01:00:00Z");
+  } finally {
+    db.close();
+  }
+});
+
+test("listAllReports filters by repo", async () => {
+  const { openArchiveDb, insertReport, listAllReports } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    const base = {
+      slug: "x",
+      body: "b",
+      replyTo: null,
+      anchorPath: null,
+      anchorLineStart: null,
+      anchorLineEnd: null,
+      createdAt: "2026-08-24T00:00:00Z",
+    };
+    insertReport(db, { ...base, repo: "github.com/foo/bar", sessionId: "s1", filename: "001-x.md" });
+    insertReport(db, { ...base, repo: "github.com/baz/qux", sessionId: "s2", filename: "001-x.md" });
+    const rows = listAllReports(db, { repo: "github.com/foo/bar" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sessionId).toBe("s1");
+  } finally {
+    db.close();
+  }
+});
+
+test("listAllFeedback returns feedback across sessions ordered by created_at desc", async () => {
+  const { openArchiveDb, insertFeedback, listAllFeedback } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    const base = {
+      repo: "github.com/foo/bar",
+      body: "fb",
+      anchorPath: null,
+      anchorLineStart: null,
+      anchorLineEnd: null,
+    };
+    insertFeedback(db, { ...base, sessionId: "s1", filename: "001-fb.md", createdAt: "2026-08-24T01:00:00Z" });
+    insertFeedback(db, { ...base, sessionId: "s2", filename: "001-fb.md", createdAt: "2026-08-24T02:00:00Z" });
+    const rows = listAllFeedback(db);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].sessionId).toBe("s2");
+  } finally {
+    db.close();
+  }
+});
+
+test("listAllSessions returns distinct session_ids with latest created_at", async () => {
+  const { openArchiveDb, insertReport, insertFeedback, listAllSessions } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    insertReport(db, {
+      repo: "github.com/foo/bar", sessionId: "s1", filename: "001-x.md",
+      slug: "x", body: "b", replyTo: null,
+      anchorPath: null, anchorLineStart: null, anchorLineEnd: null,
+      createdAt: "2026-08-24T01:00:00Z",
+    });
+    insertReport(db, {
+      repo: "github.com/foo/bar", sessionId: "s1", filename: "002-y.md",
+      slug: "y", body: "b", replyTo: null,
+      anchorPath: null, anchorLineStart: null, anchorLineEnd: null,
+      createdAt: "2026-08-24T03:00:00Z",
+    });
+    insertFeedback(db, {
+      repo: "github.com/foo/bar", sessionId: "s2", filename: "001-fb.md",
+      body: "fb", anchorPath: null, anchorLineStart: null, anchorLineEnd: null,
+      createdAt: "2026-08-24T02:00:00Z",
+    });
+    const sessions = listAllSessions(db);
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0].sessionId).toBe("s1");
+    expect(sessions[0].latestAt).toBe("2026-08-24T03:00:00Z");
+    expect(sessions[1].sessionId).toBe("s2");
+  } finally {
+    db.close();
+  }
+});
+
 test("openArchiveDb creates parent directories", async () => {
   const { openArchiveDb } = await loadModule();
   const nested = join(dir, "a", "b", "archive.db");

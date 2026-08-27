@@ -7,6 +7,7 @@ import { escalate } from "./commands/escalate";
 import { feedback } from "./commands/feedback";
 import { sessionHost } from "./commands/session-host";
 import { archiveBackfill } from "./commands/archive-backfill";
+import { archiveUi } from "./commands/archive-ui";
 
 type Handler = (args: string[]) => Promise<void>;
 
@@ -14,6 +15,7 @@ const commands: Record<string, Handler> = {
   serve, preview, init, report, escalate, feedback,
   "session-host": sessionHost,
   "archive-backfill": archiveBackfill,
+  "archive-ui": archiveUi,
 };
 
 const [command, ...args] = process.argv.slice(2);
@@ -59,5 +61,8 @@ Agent-side (called by claude inside a session):
                                          its stdout/stderr. Pauses your turn like an escalation.
   worqload feedback fetch                Drain pending feedback inbox
   worqload feedback fetch <filename>     Fetch a specific feedback message by filename
-  worqload feedback list                 List all feedback (inbox + read) with previews`);
+  worqload feedback list                 List all feedback (inbox + read) with previews
+
+  worqload archive-ui [port] [--no-open] Browse archived reports and feedback in a browser
+                                         (reads ~/.local/share/worqload/archive.db; default port 3457)`);
 }
