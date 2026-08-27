@@ -211,6 +211,13 @@ export async function onDetailBodyClick(e) {
     navigator.clipboard.writeText(path).then(() => toast("path copied")).catch(() => toast("copy failed"));
     return;
   }
+  const copyFilesUrlBtn = e.target.closest("[data-copy-files-url]");
+  if (copyFilesUrlBtn) {
+    e.stopPropagation();
+    const url = window.location.href;
+    navigator.clipboard.writeText(url).then(() => toast("URL copied")).catch(() => toast("copy failed"));
+    return;
+  }
   // The markdown-rendered fenced-code wrapper's copy button (renderMarkdown wraps
   // `<pre><code>` in `.md-code-block`). The raw code is read from the inner
   // `<code>` element's textContent — escapeHtml affects the source string, not
@@ -346,7 +353,15 @@ export async function onDetailBodyClick(e) {
   }
   const fileOpen = e.target.closest("[data-file-open]");
   if (fileOpen) {
-    selectFile(fileOpen.getAttribute("data-file-open"));
+    const path = fileOpen.getAttribute("data-file-open");
+    selectFile(path);
+    state.anchor = null;
+    pushUrlState({
+      sessionId: state.selected, tab: state.activeTab, focusStack: state.structureFocusStack,
+      structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+      structureMode: state.structureMode,
+      filePath: path, fileLine: null, fileLineEnd: null,
+    });
     return;
   }
   const structureOpen = e.target.closest("[data-structure-open]");
@@ -516,6 +531,12 @@ export async function revealFileLocation(path, line) {
   if (path !== state.selectedFilePath) await selectFile(path);
   state.anchor = { path, lineStart: line, lineEnd: line };
   state.pendingScrollTo = { anchor: { path, lineStart: line, lineEnd: line } };
+  replaceUrlState({
+    sessionId: state.selected, tab: "files", focusStack: state.structureFocusStack,
+    structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+    structureMode: state.structureMode,
+    filePath: path, fileLine: line, fileLineEnd: line,
+  });
 }
 
 export async function onReportMark(filename, read) {
@@ -625,6 +646,14 @@ export function onLineClick(e) {
   } else {
     state.anchor = { path, lineStart, lineEnd };
   }
+  if (state.activeTab === "files") {
+    replaceUrlState({
+      sessionId: state.selected, tab: state.activeTab, focusStack: state.structureFocusStack,
+      structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+      structureMode: state.structureMode,
+      filePath: state.selectedFilePath, fileLine: state.anchor.lineStart, fileLineEnd: state.anchor.lineEnd,
+    });
+  }
 }
 
 export function onTextSelectionAnchor(e) {
@@ -723,10 +752,14 @@ export async function setStructureMode(mode) {
 export async function switchTab(tab, { historyAction = "push" } = {}) {
   if (tab === state.activeTab) return;
   state.activeTab = tab;
+  const fileUrlFields = tab === "files"
+    ? { filePath: state.selectedFilePath, fileLine: state.anchor?.lineStart ?? null, fileLineEnd: state.anchor?.lineEnd ?? null }
+    : { filePath: null, fileLine: null, fileLineEnd: null };
   syncHistory(historyAction, {
     sessionId: state.selected, tab, focusStack: state.structureFocusStack,
     structureAnchor: state.structureAnchor, structureHops: state.structureHops,
     structureMode: state.structureMode,
+    ...fileUrlFields,
   });
   if (tab === "diff") await refreshDiff();
   if (tab === "files") await ensureFilesLoaded();
@@ -878,7 +911,7 @@ async function reloadActiveStructure() {
 // only need to bring the in-memory state in line with it. Selection and tab
 // switches go through their public handlers with historyAction "none" so they
 // don't push another entry onto an already-fired navigation.
-export async function applyUrlState({ sessionId, tab, focusStack, structureAnchor, structureHops, structureMode }) {
+export async function applyUrlState({ sessionId, tab, focusStack, structureAnchor, structureHops, structureMode, filePath, fileLine, fileLineEnd }) {
   if (sessionId && sessionId !== state.selected) {
     await selectSession(sessionId, { historyAction: "none" });
   }
@@ -902,6 +935,15 @@ export async function applyUrlState({ sessionId, tab, focusStack, structureAncho
     state.callGraphLoaded = false;
     state.callGraphBeforeLoaded = false;
     await reloadActiveStructure();
+  }
+  if (targetTab === "files" && filePath) {
+    if (filePath !== state.selectedFilePath) await selectFile(filePath);
+    if (fileLine != null) {
+      state.anchor = { path: filePath, lineStart: fileLine, lineEnd: fileLineEnd ?? fileLine };
+      state.pendingScrollTo = { anchor: { path: filePath, lineStart: fileLine, lineEnd: fileLineEnd ?? fileLine } };
+    } else {
+      state.anchor = null;
+    }
   }
 }
 
