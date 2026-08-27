@@ -16,6 +16,7 @@
     onArchive,
     onUnarchive,
     onResume,
+    onFork,
     onRenameStart,
     onRenameCommit,
     onRenameCancel,
@@ -241,7 +242,7 @@
             {/if}
           </div>
         {/if}
-        <div class="meta">{#if session.agentName}{session.agentName}{#if session.model} <span class="model-name">({session.model})</span>{/if} · {/if}{session.baseBranch} · {formatRelative(session.createdAt)}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}{#if eventCountLevel(session.agentEventCount)}<span class="session-event-count session-event-count-{eventCountLevel(session.agentEventCount)}">{session.agentEventCount}</span>{/if}</div>
+        <div class="meta">{#if session.agentName}{session.agentName}{#if session.model} <span class="model-name">({session.model})</span>{/if} · {/if}{session.baseBranch} · {formatRelative(session.createdAt)}{#if session.forkedFrom} · <button type="button" class="forked-from-link" onclick={(e) => { e.stopPropagation(); selectSession(session.forkedFrom.sessionId); }}>forked</button>{/if}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}{#if eventCountLevel(session.agentEventCount)}<span class="session-event-count session-event-count-{eventCountLevel(session.agentEventCount)}">{session.agentEventCount}</span>{/if}</div>
         <div class="session-card-actions">
           {#if archivedView}
             <button class="btn-card-unarchive" onclick={(e) => { e.stopPropagation(); onUnarchive(session.id); }}>Unarchive</button>
@@ -254,6 +255,7 @@
               <button class="btn-card-stop" onclick={(e) => { e.stopPropagation(); onStop(session.id); }}>Stop</button>
               <button class="btn-card-stop-ack" title="Mark every report read, then stop the session" onclick={(e) => { e.stopPropagation(); onStopAndMarkRead(session.id); }}>Stop &amp; ack all</button>
             {/if}
+            <button class="btn-card-fork" onclick={(e) => { e.stopPropagation(); onFork(session); }}>Fork</button>
             <button class="btn-card-archive" disabled={!terminal} onclick={(e) => { e.stopPropagation(); onArchive(session.id); }}>Archive</button>
           {/if}
         </div>

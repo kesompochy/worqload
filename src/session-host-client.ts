@@ -36,6 +36,12 @@ export interface SpawnHostOptions {
   // its default (the pipe driver speaking stream-json to `claude -p`).
   agentName?: "claude" | "codex" | "cursor";
   driverName?: "pipe" | "tmux";
+  // Fork mode: resume the source session's conversation but send a fresh
+  // protocol prefix + new prompt instead of RESUME_KICKOFF.
+  fork?: {
+    sourceSessionId: string;
+    sourceWorktreePath: string;
+  };
 }
 
 export function buildHostArgv(opts: SpawnHostOptions): string[] {
@@ -49,6 +55,7 @@ export function buildHostArgv(opts: SpawnHostOptions): string[] {
     "--agent-endpoint",
     opts.agentEndpoint,
     ...(opts.resume ? ["--resume"] : []),
+    ...(opts.fork ? ["--fork", opts.fork.sourceSessionId, opts.fork.sourceWorktreePath] : []),
     ...(opts.logFile !== undefined ? ["--log-file", opts.logFile] : []),
     ...(opts.agentName !== undefined ? ["--agent", opts.agentName] : []),
     ...(opts.driverName !== undefined ? ["--driver", opts.driverName] : []),
