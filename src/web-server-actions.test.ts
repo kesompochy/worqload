@@ -58,6 +58,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
     // missing path means no textlint rules unless a test injects its own.
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
+    archiveDbPath: null,
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -73,6 +74,7 @@ async function bootServerRealGit(repoDir: string) {
     repoDir,
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -441,6 +443,7 @@ test("startServer reconnects to a still-running host across a serve restart", as
     spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => null,
     hostCommand: HOST_COMMAND,
+    archiveDbPath: null,
   });
   const baseUrl1 = `http://127.0.0.1:${first.server.port}`;
   const created = await postJson(baseUrl1, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
@@ -456,6 +459,7 @@ test("startServer reconnects to a still-running host across a serve restart", as
     spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => null,
     hostCommand: HOST_COMMAND,
+    archiveDbPath: null,
   });
   trackCleanup(() => second.shutdown({ killHosts: true }));
   const baseUrl2 = `http://127.0.0.1:${second.server.port}`;
@@ -493,6 +497,7 @@ test("startServer marks a session crashed when its host is dead on boot", async 
     spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => null,
     hostCommand: HOST_COMMAND,
+    archiveDbPath: null,
   });
   const baseUrl1 = `http://127.0.0.1:${first.server.port}`;
   const created = await postJson(baseUrl1, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
@@ -508,6 +513,7 @@ test("startServer marks a session crashed when its host is dead on boot", async 
     spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => null,
     hostCommand: HOST_COMMAND,
+    archiveDbPath: null,
   });
   trackCleanup(() => second.shutdown({ killHosts: true }));
   const baseUrl2 = `http://127.0.0.1:${second.server.port}`;
@@ -625,6 +631,7 @@ test("a stopped host's late socket teardown does not evict the resumed attachmen
     branchNameGenerator: async () => null,
     hostLauncher: captureLauncher,
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -724,6 +731,7 @@ test("racing respawns of a clientless session leave exactly one host", async () 
     branchNameGenerator: async () => null,
     hostLauncher: launcher,
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -785,6 +793,7 @@ test("POST /sessions/:id/resume launches a fresh (non-resume) host for a startPa
     hostLauncher: trackingLauncher,
     worktreeOps: fakeWorktreeOps(),
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;

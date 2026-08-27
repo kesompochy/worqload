@@ -58,6 +58,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
     // missing path means no textlint rules unless a test injects its own.
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
+    archiveDbPath: null,
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -73,6 +74,7 @@ async function bootServerRealGit(repoDir: string) {
     repoDir,
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -108,6 +110,7 @@ test("POST /feedback respawns the host when the session is running but the clien
     branchNameGenerator: async () => null,
     hostLauncher: countingLauncher,
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -147,6 +150,7 @@ test("wake watchdog auto-resumes when no claude_* event arrives within the thres
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     wakeWatchdogMs: 60,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -182,6 +186,7 @@ test("wake watchdog stays quiet when the agent actually fetched the feedback", a
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     wakeWatchdogMs: 100,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -221,6 +226,7 @@ test("wake watchdog auto-resumes when claude is active but the feedback inbox wa
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     wakeWatchdogMs: 60,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -261,6 +267,7 @@ test("a second wake does not postpone the watchdog while earlier feedback is sti
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     wakeWatchdogMs: 300,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -298,6 +305,7 @@ test("a wake after the inbox was drained re-arms a fresh watchdog", async () => 
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     wakeWatchdogMs: 150,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -334,6 +342,7 @@ test("a stale watchdog from a replaced attachment is a no-op", async () => {
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     wakeWatchdogMs: 80,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -374,6 +383,7 @@ test("wake watchdog disabled with wakeWatchdogMs=0 leaves a silent session alone
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     wakeWatchdogMs: 0,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;

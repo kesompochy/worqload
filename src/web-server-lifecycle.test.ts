@@ -58,6 +58,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
     // missing path means no textlint rules unless a test injects its own.
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
+    archiveDbPath: null,
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -73,6 +74,7 @@ async function bootServerRealGit(repoDir: string) {
     repoDir,
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -473,6 +475,7 @@ test("GET /sessions/:id/structure returns the changeset's import-dependency neig
         return cannedDiff;
       },
     },
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -523,6 +526,7 @@ test("GET /sessions/:id/structure?anchorPath=… re-seeds the graph from the giv
         return cannedDiff;
       },
     },
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -570,6 +574,7 @@ test("GET /sessions/:id/structure with an anchor still tints diff-changed files 
         return cannedDiff;
       },
     },
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -624,6 +629,7 @@ test("GET /sessions/:id/structure?side=before draws the graph from the diff base
         return content === undefined ? { kind: "not-found" } : { kind: "text", content };
       },
     },
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
