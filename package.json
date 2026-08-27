@@ -12,6 +12,8 @@
     "preview": "vite build --config ./vite.config.ts && bun src/cli.ts preview",
     "web:build": "vite build --config ./vite.config.ts",
     "web:watch": "vite build --config ./vite.config.ts --watch",
+    "archive:build": "vite build --config ./vite.archive.config.ts",
+    "archive:watch": "vite build --config ./vite.archive.config.ts --watch",
     "build": "bun build --compile src/cli.ts --outfile dist/worqload",
     "test": "bun run test:small && bun run test:medium",
     "test:small": "cat test-small.txt | xargs bun test",
