@@ -516,6 +516,29 @@ test("a report resets the nudge budget for later report-less turns", async () =>
   expect(host.sends.length).toBe(2);
 });
 
+test("report-less turns are not nudged while escalations are pending", async () => {
+  const repoDir = makeTmpDir("repo");
+  const host = capturingHostLauncher();
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: host.launcher, maxAutoNudges: 2 });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  // Submit an escalation, then end a turn without a report — no nudge expected.
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "question", content: "what do?" });
+  host.endTurn();
+  expect(host.sends.length).toBe(0);
+
+  // Resolve the escalation, then end a turn without a report — nudge expected.
+  const asking = await fetch(`${baseUrl}/sessions/${sid}/asking`).then(r => r.json());
+  await postJson(baseUrl, `/sessions/${sid}/escalations/${asking.asking[0].filename}/resolve`, {
+    content: "do this",
+  });
+  const sendsBeforeNudge = host.sends.length;
+  host.endTurn();
+  expect(host.sends.length).toBe(sendsBeforeNudge + 1);
+});
+
 test("maxAutoNudges=0 disables the report-less nudge entirely", async () => {
   const repoDir = makeTmpDir("repo");
   const host = capturingHostLauncher();
