@@ -40,17 +40,17 @@ afterEach(() => {
 
 test("readUrlState reads session, tab, and focus stack from the query string", () => {
   installWindow("?session=abc&tab=diff&focus=src%2Fa.ts&focus=src%2Fb.ts");
-  expect(readUrlState()).toEqual({ sessionId: "abc", tab: "diff", focusStack: ["src/a.ts", "src/b.ts"], structureAnchor: null, structureHops: null, structureMode: null });
+  expect(readUrlState()).toEqual({ sessionId: "abc", tab: "diff", focusStack: ["src/a.ts", "src/b.ts"], structureAnchor: null, structureHops: null, structureMode: null, filePath: null, fileLine: null, fileLineEnd: null });
 });
 
 test("readUrlState ignores an unknown tab name", () => {
   installWindow("?session=abc&tab=garbage");
-  expect(readUrlState()).toEqual({ sessionId: "abc", tab: null, focusStack: [], structureAnchor: null, structureHops: null, structureMode: null });
+  expect(readUrlState()).toEqual({ sessionId: "abc", tab: null, focusStack: [], structureAnchor: null, structureHops: null, structureMode: null, filePath: null, fileLine: null, fileLineEnd: null });
 });
 
 test("readUrlState returns empty values when no params are present", () => {
   installWindow("");
-  expect(readUrlState()).toEqual({ sessionId: null, tab: null, focusStack: [], structureAnchor: null, structureHops: null, structureMode: null });
+  expect(readUrlState()).toEqual({ sessionId: null, tab: null, focusStack: [], structureAnchor: null, structureHops: null, structureMode: null, filePath: null, fileLine: null, fileLineEnd: null });
 });
 
 test("readUrlState reads the Structure tab's anchor file and hops from the URL", () => {
@@ -62,6 +62,9 @@ test("readUrlState reads the Structure tab's anchor file and hops from the URL",
     structureAnchor: { kind: "file", path: "web/app.js" },
     structureHops: 3,
     structureMode: null,
+    filePath: null,
+    fileLine: null,
+    fileLineEnd: null,
   });
 });
 
@@ -74,6 +77,9 @@ test("readUrlState reads a symbol anchor (anchorLine) and the function mode", ()
     structureAnchor: { kind: "symbol", path: "src/foo.ts", line: 42 },
     structureHops: null,
     structureMode: "function",
+    filePath: null,
+    fileLine: null,
+    fileLineEnd: null,
   });
 });
 
@@ -161,4 +167,85 @@ test("pushUrlState collapses to replaceState when the URL is unchanged", () => {
 test("replaceUrlState is a no-op when window/history is unavailable", () => {
   (globalThis as unknown as { window: unknown }).window = undefined;
   expect(() => replaceUrlState({ sessionId: "abc", tab: "diff", focusStack: [] })).not.toThrow();
+});
+
+// --- Files tab URL params ---------------------------------------------------
+
+test("readUrlState reads file, line, and lineEnd from the query string", () => {
+  installWindow("?session=abc&tab=files&file=src%2Fcli.ts&line=10&lineEnd=15");
+  const s = readUrlState();
+  expect(s.filePath).toBe("src/cli.ts");
+  expect(s.fileLine).toBe(10);
+  expect(s.fileLineEnd).toBe(15);
+});
+
+test("readUrlState reads file without line params", () => {
+  installWindow("?session=abc&tab=files&file=src%2Fcli.ts");
+  const s = readUrlState();
+  expect(s.filePath).toBe("src/cli.ts");
+  expect(s.fileLine).toBeNull();
+  expect(s.fileLineEnd).toBeNull();
+});
+
+test("readUrlState returns null filePath when no file param is present", () => {
+  installWindow("?session=abc&tab=files");
+  const s = readUrlState();
+  expect(s.filePath).toBeNull();
+  expect(s.fileLine).toBeNull();
+  expect(s.fileLineEnd).toBeNull();
+});
+
+test("readUrlState treats line without lineEnd as a single-line highlight", () => {
+  installWindow("?session=abc&tab=files&file=a.ts&line=42");
+  const s = readUrlState();
+  expect(s.fileLine).toBe(42);
+  expect(s.fileLineEnd).toBeNull();
+});
+
+test("pushUrlState writes file, line, and lineEnd for the Files tab", () => {
+  installWindow("?session=abc");
+  pushUrlState({
+    sessionId: "abc",
+    tab: "files",
+    focusStack: [],
+    filePath: "src/cli.ts",
+    fileLine: 10,
+    fileLineEnd: 15,
+  });
+  expect(lastPushedUrl).toBe("/?session=abc&tab=files&file=src%2Fcli.ts&line=10&lineEnd=15");
+});
+
+test("pushUrlState writes file without line params when no highlight", () => {
+  installWindow("?session=abc");
+  pushUrlState({
+    sessionId: "abc",
+    tab: "files",
+    focusStack: [],
+    filePath: "src/cli.ts",
+  });
+  expect(lastPushedUrl).toBe("/?session=abc&tab=files&file=src%2Fcli.ts");
+});
+
+test("pushUrlState omits lineEnd when it equals line (single-line)", () => {
+  installWindow("?session=abc");
+  pushUrlState({
+    sessionId: "abc",
+    tab: "files",
+    focusStack: [],
+    filePath: "src/cli.ts",
+    fileLine: 42,
+    fileLineEnd: 42,
+  });
+  expect(lastPushedUrl).toBe("/?session=abc&tab=files&file=src%2Fcli.ts&line=42");
+});
+
+test("pushUrlState clears file/line params when filePath is null", () => {
+  installWindow("?session=abc&tab=files&file=old.ts&line=1");
+  pushUrlState({
+    sessionId: "abc",
+    tab: "diff",
+    focusStack: [],
+    filePath: null,
+  });
+  expect(lastPushedUrl).toBe("/?session=abc&tab=diff");
 });

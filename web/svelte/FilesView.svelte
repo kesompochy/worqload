@@ -146,6 +146,7 @@
         {:else}
           <span>{fileContentPath}</span>
           <button type="button" class="copy-path-btn" data-copy-path={fileContentPath} title="ファイル名をコピー">⧉</button>
+          <button type="button" class="copy-path-btn" data-copy-files-url title="この画面の URL をコピー">📋</button>
           <button type="button" class="copy-path-btn" data-permalink-path={fileContentPath} title="GitHub permalink をコピー">🔗</button>
           <button type="button" class="copy-path-btn" data-structure-anchor={fileContentPath} title="このファイルを起点に Structure を描画">⌘</button>
           {#if editable && !appState.fileEditing}

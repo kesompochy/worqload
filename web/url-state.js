@@ -30,6 +30,11 @@ export function readUrlState() {
     if (Number.isFinite(anchorLine)) structureAnchor = { kind: "symbol", path: anchorPath, line: anchorLine };
     else structureAnchor = { kind: "file", path: anchorPath };
   }
+  const filePath = params.get("file") || null;
+  const lineRaw = params.get("line");
+  const lineEndRaw = params.get("lineEnd");
+  const fileLine = lineRaw == null ? null : Number(lineRaw);
+  const fileLineEnd = lineEndRaw == null ? null : Number(lineEndRaw);
   return {
     sessionId: sessionId || null,
     tab: tab && VALID_TABS.has(tab) ? tab : null,
@@ -37,10 +42,13 @@ export function readUrlState() {
     structureAnchor,
     structureHops: Number.isFinite(hopsNum) ? hopsNum : null,
     structureMode: mode === "function" ? "function" : null,
+    filePath,
+    fileLine: Number.isFinite(fileLine) ? fileLine : null,
+    fileLineEnd: Number.isFinite(fileLineEnd) ? fileLineEnd : null,
   };
 }
 
-function buildUrl({ sessionId, tab, focusStack, structureAnchor, structureHops, structureMode }) {
+function buildUrl({ sessionId, tab, focusStack, structureAnchor, structureHops, structureMode, filePath, fileLine, fileLineEnd }) {
   // Seed from the live query string so unrelated params (e.g. `?theme=dark`
   // that some other layer set) survive across syncs. Only the keys we own —
   // session, tab, focus, anchor, anchorLine, hops, mode — get rewritten.
@@ -73,6 +81,24 @@ function buildUrl({ sessionId, tab, focusStack, structureAnchor, structureHops, 
   }
   if (structureMode === "function") params.set("mode", "function");
   else params.delete("mode");
+  if (filePath) {
+    params.set("file", filePath);
+    if (typeof fileLine === "number" && Number.isFinite(fileLine)) {
+      params.set("line", String(fileLine));
+      if (typeof fileLineEnd === "number" && Number.isFinite(fileLineEnd) && fileLineEnd !== fileLine) {
+        params.set("lineEnd", String(fileLineEnd));
+      } else {
+        params.delete("lineEnd");
+      }
+    } else {
+      params.delete("line");
+      params.delete("lineEnd");
+    }
+  } else {
+    params.delete("file");
+    params.delete("line");
+    params.delete("lineEnd");
+  }
   const queryString = params.toString();
   return `${window.location.pathname}${queryString ? `?${queryString}` : ""}${window.location.hash || ""}`;
 }
