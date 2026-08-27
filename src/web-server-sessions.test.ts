@@ -58,6 +58,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
     // missing path means no textlint rules unless a test injects its own.
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
+    archiveDbPath: null,
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -73,6 +74,7 @@ async function bootServerRealGit(repoDir: string) {
     repoDir,
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -97,6 +99,7 @@ test("startServer auto-shifts to a free port when the requested port is in use",
     spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => null,
     hostCommand: HOST_COMMAND,
+    archiveDbPath: null,
   });
   trackCleanup(() => first.shutdown({ killHosts: true }));
 
@@ -108,6 +111,7 @@ test("startServer auto-shifts to a free port when the requested port is in use",
     spawnCommand: ["bun", MOCK, "hang"],
     branchNameGenerator: async () => null,
     hostCommand: HOST_COMMAND,
+    archiveDbPath: null,
   });
   trackCleanup(() => second.shutdown({ killHosts: true }));
 
@@ -177,6 +181,7 @@ test("POST /sessions uses generated branch name when no explicit one is given", 
     branchNameGenerator: async () => "auto-name",
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -216,6 +221,7 @@ test("POST /sessions with startPaused creates a stopped session without spawning
     hostLauncher: trackingLauncher,
     worktreeOps: fakeWorktreeOps(),
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -944,6 +950,7 @@ test("POST /feedback (multipart) rejects an attachment exceeding the size cap", 
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     attachmentMaxBytes: 16,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -970,6 +977,7 @@ test("POST /feedback (multipart) rejects more attachments than the per-request c
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     attachmentMaxCount: 2,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;

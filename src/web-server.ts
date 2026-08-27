@@ -306,7 +306,7 @@ export interface StartServerOptions {
   // `~/.config/worqload/config.yaml`; tests point it at a temp file to inject
   // settings. A missing file means no rules and the default feedback wording.
   configPath?: string;
-  archiveDbPath?: string;
+  archiveDbPath?: string | null;
 }
 
 export interface ShutdownOptions {
@@ -1017,10 +1017,12 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   const prLinkResolver = makeCachedPrLinkResolver(opts.prLinkResolver ?? ghPrLinkResolver);
 
   let archiveDb: Database | null = null;
-  try {
-    archiveDb = openArchiveDb(opts.archiveDbPath ?? defaultArchiveDbPath());
-  } catch {
-    // archive DB is best-effort; failure should not block the server
+  if (opts.archiveDbPath !== null) {
+    try {
+      archiveDb = openArchiveDb(opts.archiveDbPath ?? defaultArchiveDbPath());
+    } catch {
+      // archive DB is best-effort; failure should not block the server
+    }
   }
   const repoIdentifier = (await worktreeOps.gitRemoteUrl(repoDir).catch(() => null)) ?? repoDir;
 
