@@ -58,6 +58,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
     // missing path means no textlint rules unless a test injects its own.
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
+    archiveDbPath: null,
     ...extra,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -73,6 +74,7 @@ async function bootServerRealGit(repoDir: string) {
     repoDir,
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   return { ...started, baseUrl: `http://127.0.0.1:${started.server.port}` };
@@ -107,6 +109,7 @@ test("POST /sessions/:id/resume sends a wake after fresh-starting a startPaused 
     hostLauncher: trackingLauncher,
     worktreeOps: fakeWorktreeOps(),
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;
@@ -164,6 +167,7 @@ test("resume does not re-broadcast the persisted event log over the WebSocket", 
     branchNameGenerator: async () => null,
     hostCommand: HOST_COMMAND,
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const baseUrl = `http://127.0.0.1:${started.server.port}`;

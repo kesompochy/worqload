@@ -71,6 +71,7 @@ test("POST /sessions persists model for claude and passes it to the spawn comman
     branchNameGenerator: async () => null,
     hostLauncher,
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -102,6 +103,7 @@ test("POST /sessions omits model from spawn command when not specified", async (
     branchNameGenerator: async () => null,
     hostLauncher,
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -126,6 +128,7 @@ test("startServer with agentName=codex defaults spawnCommand to the codex prefix
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   expect(started.ctx.spawnCommand[0]).toBe("codex");
@@ -148,6 +151,7 @@ test("POST /sessions persists the selected agentName and passes its runtime to t
     branchNameGenerator: async () => null,
     hostLauncher,
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -175,6 +179,7 @@ test("POST /sessions defaults agentName to the server agent", async () => {
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -198,6 +203,7 @@ test("startServer with agentName=cursor defaults spawnCommand to the cursor agen
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     reportRewriter: async (raw) => raw,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   expect(started.ctx.spawnCommand[0]).toBe("agent");
@@ -221,6 +227,7 @@ test("POST /sessions persists cursor agentName and passes driver cursor to the h
     hostLauncher,
     worktreeOps: fakeWorktreeOps(),
     reportRewriter: async (raw) => raw,
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -246,6 +253,7 @@ test("POST /sessions rejects unknown agentName", async () => {
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -272,6 +280,7 @@ test("POST /sessions/:id/model updates meta and respawns the host with the new m
     branchNameGenerator: async () => null,
     hostLauncher,
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -311,6 +320,7 @@ test("POST /sessions/:id/model rejects non-claude agents", async () => {
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
@@ -338,6 +348,7 @@ test("POST /sessions/:id/model rejects missing model field", async () => {
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
 
