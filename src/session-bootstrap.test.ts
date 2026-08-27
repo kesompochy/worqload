@@ -21,7 +21,10 @@ describe("buildProtocolPrefix", () => {
   });
 
   test("leaves no unfilled placeholders when config is absent", async () => {
-    expect(await buildProtocolPrefix("main", undefined, NO_CONFIG)).not.toContain("{{");
+    expect(await buildProtocolPrefix("main", undefined, NO_CONFIG, {
+      sessionId: "test-id",
+      serverUrl: "http://localhost:3000",
+    })).not.toContain("{{");
   });
 
   test("injects protocolPrefix from config into the template", async () => {
@@ -40,6 +43,17 @@ describe("buildProtocolPrefix", () => {
     const prefix = await buildProtocolPrefix("release-2026", installedScriptPath, configPath);
     expect(prefix).toContain("release-2026");
     expect(prefix).not.toContain("{{baseBranch}}");
+  });
+
+  test("substitutes {{sessionId}} and {{serverUrl}} into the template", async () => {
+    const prefix = await buildProtocolPrefix("main", installedScriptPath, NO_CONFIG, {
+      sessionId: "abc-123",
+      serverUrl: "http://127.0.0.1:3456",
+    });
+    expect(prefix).toContain("abc-123");
+    expect(prefix).toContain("http://127.0.0.1:3456");
+    expect(prefix).not.toContain("{{sessionId}}");
+    expect(prefix).not.toContain("{{serverUrl}}");
   });
 
   test("custom-protocol-prefix is empty when config has no protocolPrefix key", async () => {

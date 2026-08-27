@@ -10,12 +10,15 @@ export async function buildProtocolPrefix(
   baseBranch: string,
   wqIssueCommentPath: string = defaultWqIssueCommentPath,
   configPath: string = defaultConfigPath(),
+  session?: { sessionId: string; serverUrl: string },
 ): Promise<string> {
   const customPrefix = (await loadProtocolPrefix(configPath)) ?? "";
   return protocolPrefixTemplate
     .replaceAll("{{custom-protocol-prefix}}", customPrefix)
     .replaceAll("{{baseBranch}}", baseBranch)
-    .replaceAll("{{wqIssueComment}}", wqIssueCommentPath);
+    .replaceAll("{{wqIssueComment}}", wqIssueCommentPath)
+    .replaceAll("{{sessionId}}", session?.sessionId ?? "")
+    .replaceAll("{{serverUrl}}", session?.serverUrl ?? "");
 }
 
 // Sent as the first user message when a host is (re)spawned in resume mode.
