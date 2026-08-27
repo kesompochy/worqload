@@ -237,6 +237,10 @@ export interface ServerContext {
   // began. Set when one is appended, consumed (and reset) at the turn-end
   // `result` event to decide whether that turn earned a nudge.
   reportedThisTurn: Map<string, boolean>;
+  // Per session: number of unresolved escalations. Incremented on
+  // escalation_requested, decremented on escalation_resolved. When positive,
+  // the auto-nudge is suppressed because the agent is blocked on the human.
+  pendingEscalations: Map<string, number>;
   // Per session: consecutive auto-nudges sent without an intervening Report or
   // Escalation. Compared against maxAutoNudges; reset to 0 by a real one.
   autoNudgeCount: Map<string, number>;
@@ -639,15 +643,30 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
 // report_submitted) before claude emits the turn's result line.
 function trackAutoNudge(ctx: ServerContext, sessionId: string, event: Event): void {
   if (ctx.maxAutoNudges <= 0) return;
-  if (event.kind === "report_submitted" || event.kind === "escalation_requested") {
+  if (event.kind === "report_submitted") {
     ctx.reportedThisTurn.set(sessionId, true);
     ctx.autoNudgeCount.set(sessionId, 0);
+    return;
+  }
+  if (event.kind === "escalation_requested") {
+    ctx.reportedThisTurn.set(sessionId, true);
+    ctx.autoNudgeCount.set(sessionId, 0);
+    ctx.pendingEscalations.set(sessionId, (ctx.pendingEscalations.get(sessionId) ?? 0) + 1);
+    return;
+  }
+  if (event.kind === "escalation_resolved") {
+    const count = ctx.pendingEscalations.get(sessionId) ?? 0;
+    ctx.pendingEscalations.set(sessionId, Math.max(0, count - 1));
     return;
   }
   if (event.kind !== "turn_completed") return;
   const reported = ctx.reportedThisTurn.get(sessionId) ?? false;
   ctx.reportedThisTurn.set(sessionId, false);
   if (reported) return;
+  if ((ctx.pendingEscalations.get(sessionId) ?? 0) > 0) {
+    appendHostLog(ctx, sessionId, "auto_nudge_skipped_pending_escalation", {});
+    return;
+  }
   const sent = ctx.autoNudgeCount.get(sessionId) ?? 0;
   if (sent >= ctx.maxAutoNudges) {
     appendHostLog(ctx, sessionId, "auto_nudge_capped", { sent });
@@ -1131,6 +1150,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
     wakeWatchdogMs: opts.wakeWatchdogMs ?? DEFAULT_WAKE_WATCHDOG_MS,
     maxAutoNudges: opts.maxAutoNudges ?? DEFAULT_MAX_AUTO_NUDGES,
     reportedThisTurn: new Map(),
+    pendingEscalations: new Map(),
     autoNudgeCount: new Map(),
     attachmentMaxBytes: opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
     attachmentMaxCount: opts.attachmentMaxCount ?? DEFAULT_ATTACHMENT_MAX_COUNT,
@@ -1638,6 +1658,7 @@ async function purgeSession(ctx: ServerContext, meta: SessionMeta): Promise<void
   ctx.lastFeedbackFetchAt.delete(meta.id);
   ctx.reportedThisTurn.delete(meta.id);
   ctx.autoNudgeCount.delete(meta.id);
+  ctx.pendingEscalations.delete(meta.id);
   try {
     await ctx.worktreeOps.removeWorktree(meta.worktreePath, meta.branchName, ctx.repoDir);
   } catch {
