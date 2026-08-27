@@ -7,6 +7,7 @@ import { mount } from "svelte";
 import { state } from "./state.svelte.js";
 import { toggleSidebar, SIDEBAR_HIDDEN_KEY, EVENTS_TAB_HIDDEN_KEY } from "./handlers.js";
 import NewSessionModal from "./svelte/NewSessionModal.svelte";
+import ForkSessionModal from "./svelte/ForkSessionModal.svelte";
 import FileSearchModal from "./svelte/FileSearchModal.svelte";
 import CodeNavPopover from "./svelte/CodeNavPopover.svelte";
 import AnchoredFeedbackOverlay from "./svelte/AnchoredFeedbackOverlay.svelte";
@@ -19,6 +20,9 @@ import Composer from "./svelte/Composer.svelte";
 
 const newSessionModal = mount(NewSessionModal, { target: document.body });
 document.getElementById("btnNew")?.addEventListener("click", () => newSessionModal.open());
+
+const forkSessionModal = mount(ForkSessionModal, { target: document.body });
+(window as any).__worqloadForkModal = forkSessionModal;
 
 // Restore the sidebar visibility from the persisted preference, then keep the
 // .layout class in sync with state.sidebarHidden. The state itself lives in
