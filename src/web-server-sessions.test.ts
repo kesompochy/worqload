@@ -989,6 +989,83 @@ test("POST /feedback (multipart) rejects more attachments than the per-request c
   expect((await res.json()).error).toMatch(/too many/i);
 });
 
+// -------- links --------
+
+test("POST /sessions/:id/links adds a link to the session meta", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/links`, { url: "https://example.com", label: "Example" });
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.meta.links).toEqual([{ url: "https://example.com", label: "Example" }]);
+
+  const meta = await loadSessionMeta(sid, join(repoDir, ".worqload/sessions"));
+  expect(meta!.links).toEqual([{ url: "https://example.com", label: "Example" }]);
+});
+
+test("POST /sessions/:id/links rejects a duplicate URL", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/links`, { url: "https://example.com" });
+  const dup = await postJson(baseUrl, `/sessions/${sid}/links`, { url: "https://example.com" });
+  expect(dup.status).toBe(409);
+});
+
+test("POST /sessions/:id/links omits label when not provided", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/links`, { url: "https://example.com" });
+  const body = await res.json();
+  expect(body.meta.links).toEqual([{ url: "https://example.com" }]);
+});
+
+test("DELETE /sessions/:id/links removes a link by URL", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/links`, { url: "https://a.com" });
+  await postJson(baseUrl, `/sessions/${sid}/links`, { url: "https://b.com" });
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/links`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "https://a.com" }),
+  });
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.meta.links).toEqual([{ url: "https://b.com" }]);
+});
+
+test("DELETE /sessions/:id/links 404s for an unknown URL", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then(r => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/links`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "https://nope.com" }),
+  });
+  expect(res.status).toBe(404);
+});
+
 test("POST /feedback appends a wake_sent entry to host.log", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

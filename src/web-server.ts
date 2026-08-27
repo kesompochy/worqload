@@ -1223,6 +1223,8 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/model", postModel),
   defineRoute("POST", "/sessions/:id/revise-mode", postReviseMode),
+  defineRoute("POST", "/sessions/:id/links", postLink),
+  defineRoute("DELETE", "/sessions/:id/links", deleteLink),
   defineRoute("POST", "/sessions/:id/feedback/batch", postFeedbackBatch),
   defineRoute("POST", "/sessions/:id/feedback", postFeedback),
   defineRoute("GET",  "/sessions/:id/feedback", getFeedbackHistory),
@@ -1729,6 +1731,49 @@ async function postReviseMode(req: Request, ctx: ServerContext, params: Record<s
     }
     const { revisionPending: _reset, ...rest } = meta;
     const updated: SessionMeta = { ...rest, reviseModeEnabled: body.enabled };
+    await saveSessionMeta(updated, ctx.sessionsDir);
+    return json({ meta: updated });
+  });
+}
+
+interface LinkBody {
+  url?: unknown;
+  label?: unknown;
+}
+
+async function postLink(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json().catch(() => ({}))) as LinkBody;
+    if (typeof body.url !== "string" || body.url.trim() === "") {
+      return json({ error: "url must be a non-empty string" }, 400);
+    }
+    const url = body.url.trim();
+    const label = typeof body.label === "string" && body.label.trim() !== "" ? body.label.trim() : undefined;
+    const existing = meta.links ?? [];
+    if (existing.some(l => l.url === url)) {
+      return json({ error: "duplicate link" }, 409);
+    }
+    const entry: { url: string; label?: string } = { url };
+    if (label) entry.label = label;
+    const updated: SessionMeta = { ...meta, links: [...existing, entry] };
+    await saveSessionMeta(updated, ctx.sessionsDir);
+    return json({ meta: updated });
+  });
+}
+
+async function deleteLink(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json().catch(() => ({}))) as { url?: unknown };
+    if (typeof body.url !== "string" || body.url.trim() === "") {
+      return json({ error: "url must be a non-empty string" }, 400);
+    }
+    const url = body.url.trim();
+    const existing = meta.links ?? [];
+    const filtered = existing.filter(l => l.url !== url);
+    if (filtered.length === existing.length) {
+      return json({ error: "link not found" }, 404);
+    }
+    const updated: SessionMeta = filtered.length > 0 ? { ...meta, links: filtered } : { ...meta, links: undefined };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
   });

@@ -47,6 +47,7 @@ export interface SessionMeta {
   // (re-sent via `agent --resume <id>`). Claude resumes via its own
   // `--continue` flag and does not set this field.
   agentSessionId?: string;
+  links?: Array<{ url: string; label?: string }>;
 }
 
 // `reviseModeEnabled` is opt-in: only an explicit `true` (the human toggled
