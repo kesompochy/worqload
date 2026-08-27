@@ -48,6 +48,7 @@ export interface SessionMeta {
   // `--continue` flag and does not set this field.
   agentSessionId?: string;
   links?: Array<{ url: string; label?: string }>;
+  forkedFrom?: { sessionId: string; commitSha: string };
 }
 
 // `reviseModeEnabled` is opt-in: only an explicit `true` (the human toggled

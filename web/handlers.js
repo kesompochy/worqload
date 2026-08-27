@@ -1567,6 +1567,10 @@ export function onAnchoredFeedback() {
   return onFeedback("anchoredFeedbackInput");
 }
 
+export function onFork(session) {
+  window.__worqloadForkModal?.open(session);
+}
+
 export async function onStop(id = state.selected) {
   if (!id) return;
   try {
