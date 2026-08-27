@@ -38,18 +38,13 @@ describe("validateReportBody", () => {
     expect(result).not.toBeNull();
   });
 
-  test("accepts short CJK text", () => {
-    expect(validateReportBody("調査開始")).toBeNull();
+  test("rejects short text regardless of script", () => {
+    expect(validateReportBody("調査開始")).not.toBeNull();
+    expect(validateReportBody("hello world")).not.toBeNull();
   });
 
-  test("rejects short ASCII without CJK", () => {
-    const result = validateReportBody("hello world");
-    expect(result).not.toBeNull();
-  });
-
-  test("returns a human-readable error string on rejection", () => {
+  test("rejection message mentions --raw", () => {
     const result = validateReportBody("--- plan report ---");
-    expect(typeof result).toBe("string");
-    expect(result!.length).toBeGreaterThan(0);
+    expect(result).toContain("--raw");
   });
 });

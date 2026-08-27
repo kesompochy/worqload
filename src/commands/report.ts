@@ -6,21 +6,20 @@ import { basename } from "node:path";
 import { submitReport } from "../agent-client";
 import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, collectFlag, exitWithUsage } from "./cli-helpers";
 
-const CJK_RANGE = /[　-鿿＀-￯]/;
 const SEPARATOR_LINE = /^[\s\-=*#]*$/;
 const KEBAB_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const MIN_LENGTH = 20;
 
 export function validateReportBody(body: string): string | null {
   const trimmed = body.trim();
-  if (CJK_RANGE.test(trimmed)) return null;
   if (trimmed.split("\n").every((line) => SEPARATOR_LINE.test(line))) {
-    return "report body contains only separator characters — write the actual content";
+    return "report body contains only separator characters — write the actual content (pass --raw to force)";
   }
   if (KEBAB_SLUG.test(trimmed)) {
-    return "report body looks like a slug, not prose — write the actual content";
+    return "report body looks like a slug, not prose — write the actual content (pass --raw to force)";
   }
-  if (trimmed.length < 30) {
-    return "report body is too short — write the actual content";
+  if (trimmed.length < MIN_LENGTH) {
+    return "report body is too short — write the actual content (pass --raw to force)";
   }
   return null;
 }
