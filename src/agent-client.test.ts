@@ -130,146 +130,79 @@ test("requestCommandApproval files a command-approval escalation", async () => {
   expect(asking.asking[0].command).toBe("npm publish");
 });
 
-test("sync requestCommandApproval blocks until resolved and returns the result", async () => {
+test("requestCommandApproval returns immediately and result arrives in feedback after resolve", async () => {
   const { endpoint, sessionId } = await bootAndCreateSession();
 
-  const syncPromise = requestCommandApproval(endpoint, sessionId, "echo sync-test", "verify sync", true);
+  const result = await requestCommandApproval(endpoint, sessionId, "echo async-test", "verify async");
+  expect(result.filename).toBe("001-command-approval.md");
 
-  let askingFilename: string;
-  while (true) {
-    const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
-    if (asking.asking.length > 0) {
-      askingFilename = asking.asking[0].filename;
-      break;
-    }
-    await Bun.sleep(5);
-  }
-
-  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${askingFilename}/resolve`, {
+  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${result.filename}/resolve`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ decision: "approve" }),
   });
 
-  const result = await syncPromise;
-  expect(result.decision).toBe("approve");
-  expect(result.feedbackContent).toContain("echo sync-test");
-  expect(result.feedbackContent).toContain("sync-test");
-
   const feedback = await fetchFeedback(endpoint, sessionId);
-  expect(feedback.messages).toEqual([]);
+  expect(feedback.messages).toHaveLength(1);
+  expect(feedback.messages[0].content).toContain("echo async-test");
+  expect(feedback.messages[0].content).toContain("async-test");
 });
 
-test("sync requestCommandApproval returns rejection", async () => {
+test("requestCommandApproval rejection arrives in feedback", async () => {
   const { endpoint, sessionId } = await bootAndCreateSession();
 
-  const syncPromise = requestCommandApproval(endpoint, sessionId, "rm -rf /", "cleanup", true);
+  const result = await requestCommandApproval(endpoint, sessionId, "rm -rf /", "cleanup");
 
-  let askingFilename: string;
-  while (true) {
-    const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
-    if (asking.asking.length > 0) {
-      askingFilename = asking.asking[0].filename;
-      break;
-    }
-    await Bun.sleep(5);
-  }
-
-  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${askingFilename}/resolve`, {
+  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${result.filename}/resolve`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ decision: "reject", content: "too dangerous" }),
   });
 
-  const result = await syncPromise;
-  expect(result.decision).toBe("reject");
-  expect(result.feedbackContent).toContain("rejected");
-  expect(result.feedbackContent).toContain("too dangerous");
+  const feedback = await fetchFeedback(endpoint, sessionId);
+  expect(feedback.messages).toHaveLength(1);
+  expect(feedback.messages[0].content).toContain("rejected");
+  expect(feedback.messages[0].content).toContain("too dangerous");
 });
 
-test("duplicate sync requestCommandApproval for the same command reuses the existing escalation", async () => {
+test("duplicate requestCommandApproval for the same command reuses the existing escalation", async () => {
   const { endpoint, sessionId } = await bootAndCreateSession();
 
-  const firstPromise = requestCommandApproval(endpoint, sessionId, "npm publish", "first attempt", true);
+  const first = await requestCommandApproval(endpoint, sessionId, "npm publish", "first attempt");
+  expect(first.filename).toBe("001-command-approval.md");
 
-  while (true) {
-    const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
-    if (asking.asking.length > 0) break;
-    await Bun.sleep(5);
-  }
-
-  const secondPromise = requestCommandApproval(endpoint, sessionId, "npm publish", "retry attempt", true);
-  await Bun.sleep(50);
+  const second = await requestCommandApproval(endpoint, sessionId, "npm publish", "retry attempt");
+  expect(second.filename).toBe("001-command-approval.md");
+  expect((second as any).deduplicated).toBe(true);
 
   const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
   expect(asking.asking).toHaveLength(1);
-  expect(asking.asking[0].command).toBe("npm publish");
-
-  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${asking.asking[0].filename}/resolve`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ decision: "approve" }),
-  });
-
-  const [first, second] = await Promise.all([firstPromise, secondPromise]);
-  expect(first.decision).toBe("approve");
-  expect(second.decision).toBe("approve");
 });
 
 test("duplicate command escalation with different commands creates separate entries", async () => {
   const { endpoint, sessionId } = await bootAndCreateSession();
 
-  const p1 = requestCommandApproval(endpoint, sessionId, "npm publish", "release", true).catch(() => {});
-  while (true) {
-    const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
-    if (asking.asking.length > 0) break;
-    await Bun.sleep(5);
-  }
-
-  const p2 = requestCommandApproval(endpoint, sessionId, "npm test", "verify", true).catch(() => {});
-  while (true) {
-    const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
-    if (asking.asking.length > 1) break;
-    await Bun.sleep(5);
-  }
+  await requestCommandApproval(endpoint, sessionId, "npm publish", "release");
+  await requestCommandApproval(endpoint, sessionId, "npm test", "verify");
 
   const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
   expect(asking.asking).toHaveLength(2);
-  // Resolve both so cleanup doesn't leave dangling promises
-  for (const a of asking.asking) {
-    await fetch(`${endpoint}/sessions/${sessionId}/escalations/${a.filename}/resolve`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ decision: "reject", content: "test cleanup" }),
-    });
-  }
-  await Promise.all([p1, p2]);
 });
 
 test("requestCommandApproval with custom timeout kills the command after the specified duration", async () => {
   const { endpoint, sessionId } = await bootAndCreateSession();
 
-  const syncPromise = requestCommandApproval(endpoint, sessionId, "sleep 999", "long job", true, 1);
+  const result = await requestCommandApproval(endpoint, sessionId, "sleep 999", "long job", 1);
 
-  let askingFilename: string;
-  while (true) {
-    const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
-    if (asking.asking.length > 0) {
-      askingFilename = asking.asking[0].filename;
-      break;
-    }
-    await Bun.sleep(5);
-  }
-
-  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${askingFilename}/resolve`, {
+  await fetch(`${endpoint}/sessions/${sessionId}/escalations/${result.filename}/resolve`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ decision: "approve" }),
   });
 
-  const result = await syncPromise;
-  expect(result.decision).toBe("approve");
-  expect(result.timedOut).toBe(true);
+  const feedback = await fetchFeedback(endpoint, sessionId);
+  expect(feedback.messages).toHaveLength(1);
+  expect(feedback.messages[0].content).toContain("timed out");
 }, 10_000);
 
 test("fetchFeedback returns and drains the inbox", async () => {
