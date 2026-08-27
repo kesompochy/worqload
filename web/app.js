@@ -5,7 +5,7 @@
 import { $ } from "./dom.js";
 import { state } from "./state.svelte.js";
 import { startClock } from "./clock.svelte.js";
-import { fetchMeta, fetchSessions, fetchArchivedSessions } from "./api.js";
+import { fetchMeta, fetchSessions, fetchArchivedSessions, selectFile } from "./api.js";
 import { selectSession, switchTab, applyUrlState } from "./handlers.js";
 import { syncNotifyButton, onNotifyClick } from "./notify.js";
 import { readUrlState } from "./url-state.js";
@@ -40,6 +40,13 @@ if (idMatchesUrl) {
   state.structureAnchor = urlState.structureAnchor;
   state.structureHops = urlState.structureHops;
   if (urlState.structureMode === "function") state.structureMode = "function";
+  if (urlState.filePath && urlState.tab === "files") {
+    await selectFile(urlState.filePath);
+    if (urlState.fileLine != null) {
+      state.anchor = { path: urlState.filePath, lineStart: urlState.fileLine, lineEnd: urlState.fileLineEnd ?? urlState.fileLine };
+      state.pendingScrollTo = { anchor: state.anchor };
+    }
+  }
 }
 
 // Browser Back / Forward: walk the URL stack and bring the in-memory view in
