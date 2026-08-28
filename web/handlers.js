@@ -115,11 +115,11 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
 }
 
 export async function onDetailBodyClick(e) {
-  // A link inside report markdown carries target="_blank"; let the browser
-  // open it natively. Intercepting the click would fall through to onLineClick,
-  // which re-renders the pane and detaches the <a> before navigation, so the
-  // new tab never opens.
-  if (e.target.closest("a")) return;
+  const link = e.target.closest("a");
+  if (link) {
+    const handled = handleFilesUrlClick(link, e);
+    if (!handled) return;
+  }
   // A feedback anchor chip: jump to the diff/file/report line it points at.
   // Sits before the data-feedback-toggle branch because the chip lives inside
   // the feedback header (which carries that attribute).
@@ -1896,5 +1896,44 @@ export async function runDirectAction(actionId) {
   if (state.actionRunInFlight) return;
   const action = state.actions.find(a => a.id === actionId);
   if (action) await runAction(action, {});
+}
+
+// Intercept clicks on same-origin worqload Files URLs in rendered markdown and
+// navigate in-app instead of opening a new tab. Returns true when the click was
+// handled (so the caller should NOT fall through to the default <a> pass-through).
+function handleFilesUrlClick(linkEl, event) {
+  const href = linkEl.getAttribute("href");
+  if (!href) return false;
+  let url;
+  try { url = new URL(href, window.location.origin); } catch { return false; }
+  if (url.origin !== window.location.origin) return false;
+  const params = url.searchParams;
+  if (params.get("tab") !== "files" || !params.get("file")) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  const sessionId = params.get("session");
+  const filePath = params.get("file");
+  const line = params.get("line") ? Number(params.get("line")) : null;
+  const lineEnd = params.get("lineEnd") ? Number(params.get("lineEnd")) : line;
+  void navigateToFilesUrl(sessionId, filePath, line, lineEnd);
+  return true;
+}
+
+async function navigateToFilesUrl(sessionId, filePath, line, lineEnd) {
+  if (sessionId && sessionId !== state.selected) {
+    await selectSession(sessionId);
+  }
+  if (state.activeTab !== "files") await switchTab("files");
+  await selectFile(filePath);
+  if (line != null && Number.isFinite(line)) {
+    state.anchor = { path: filePath, lineStart: line, lineEnd: lineEnd ?? line };
+    state.pendingScrollTo = { anchor: state.anchor };
+  }
+  replaceUrlState({
+    sessionId: state.selected, tab: "files", focusStack: state.structureFocusStack,
+    structureAnchor: state.structureAnchor, structureHops: state.structureHops,
+    structureMode: state.structureMode,
+    filePath, fileLine: line, fileLineEnd: lineEnd,
+  });
 }
 
