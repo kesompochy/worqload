@@ -7,6 +7,7 @@ import { escalate } from "./commands/escalate";
 import { feedback } from "./commands/feedback";
 import { sessionHost } from "./commands/session-host";
 import { archiveBackfill } from "./commands/archive-backfill";
+import { archiveBackup } from "./commands/archive-backup";
 import { archiveUi } from "./commands/archive-ui";
 
 type Handler = (args: string[]) => Promise<void>;
@@ -15,6 +16,7 @@ const commands: Record<string, Handler> = {
   serve, preview, init, report, escalate, feedback,
   "session-host": sessionHost,
   "archive-backfill": archiveBackfill,
+  "archive-backup": archiveBackup,
   "archive-ui": archiveUi,
 };
 
@@ -63,6 +65,9 @@ Agent-side (called by claude inside a session):
   worqload feedback fetch <filename>     Fetch a specific feedback message by filename
   worqload feedback list                 List all feedback (inbox + read) with previews
 
+  worqload archive-backup <dest>         Create a consistent backup of the archive database
+                                         (VACUUM INTO snapshot). dest can be a local path or an
+                                         rclone remote (e.g. gdrive:worqload/archive.db).
   worqload archive-ui [port] [--no-open] Browse archived reports and feedback in a browser
                                          (reads ~/.local/share/worqload/archive.db; default port 3457)`);
 }
