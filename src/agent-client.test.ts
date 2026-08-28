@@ -142,10 +142,13 @@ test("requestCommandApproval returns immediately and result arrives in feedback 
     body: JSON.stringify({ decision: "approve" }),
   });
 
-  const feedback = await fetchFeedback(endpoint, sessionId);
-  expect(feedback.messages).toHaveLength(1);
-  expect(feedback.messages[0].content).toContain("echo async-test");
-  expect(feedback.messages[0].content).toContain("async-test");
+  const inbox = await fetchFeedback(endpoint, sessionId);
+  expect(inbox.messages).toHaveLength(0);
+  const history = await fetch(`${endpoint}/internal/sessions/${sessionId}/feedback/history`).then(r => r.json());
+  const msg = history.messages.find((m: { content: string }) => m.content.includes("echo async-test"));
+  expect(msg).toBeDefined();
+  expect(msg.content).toContain("async-test");
+  expect(msg.status).toBe("read");
 });
 
 test("requestCommandApproval rejection arrives in feedback", async () => {
@@ -159,10 +162,13 @@ test("requestCommandApproval rejection arrives in feedback", async () => {
     body: JSON.stringify({ decision: "reject", content: "too dangerous" }),
   });
 
-  const feedback = await fetchFeedback(endpoint, sessionId);
-  expect(feedback.messages).toHaveLength(1);
-  expect(feedback.messages[0].content).toContain("rejected");
-  expect(feedback.messages[0].content).toContain("too dangerous");
+  const inbox = await fetchFeedback(endpoint, sessionId);
+  expect(inbox.messages).toHaveLength(0);
+  const history = await fetch(`${endpoint}/internal/sessions/${sessionId}/feedback/history`).then(r => r.json());
+  const msg = history.messages.find((m: { content: string }) => m.content.includes("rejected"));
+  expect(msg).toBeDefined();
+  expect(msg.content).toContain("too dangerous");
+  expect(msg.status).toBe("read");
 });
 
 test("duplicate requestCommandApproval for the same command reuses the existing escalation", async () => {
@@ -200,9 +206,12 @@ test("requestCommandApproval with custom timeout kills the command after the spe
     body: JSON.stringify({ decision: "approve" }),
   });
 
-  const feedback = await fetchFeedback(endpoint, sessionId);
-  expect(feedback.messages).toHaveLength(1);
-  expect(feedback.messages[0].content).toContain("timed out");
+  const inbox = await fetchFeedback(endpoint, sessionId);
+  expect(inbox.messages).toHaveLength(0);
+  const history = await fetch(`${endpoint}/internal/sessions/${sessionId}/feedback/history`).then(r => r.json());
+  const msg = history.messages.find((m: { content: string }) => m.content.includes("timed out"));
+  expect(msg).toBeDefined();
+  expect(msg.status).toBe("read");
 }, 10_000);
 
 test("fetchFeedback returns and drains the inbox", async () => {

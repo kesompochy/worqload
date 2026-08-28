@@ -33,7 +33,7 @@ Files & git:
 
 {{custom-protocol-prefix}}
 
-Your task follows. Begin by submitting a brief plan report, then start work.
+Your task follows. Read it, then start work. Submit a plan report once you know your approach.
 
 ---
 

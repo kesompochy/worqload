@@ -1547,9 +1547,8 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
         sessionId: sourceMeta.id,
         commitSha: startPoint,
       },
-      // Carry the source's agent-side session ID so codex/cursor drivers
-      // resume the same thread in the forked session.
       ...(sourceMeta.agentSessionId !== undefined && { agentSessionId: sourceMeta.agentSessionId }),
+      ...(sourceMeta.links && sourceMeta.links.length > 0 && { links: [...sourceMeta.links] }),
     }),
   };
   await saveSessionMeta(meta, ctx.sessionsDir);
@@ -3015,10 +3014,13 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       resolvedPayload = { filename: params.filename };
     }
 
+    const att = ctx.clients.get(meta.id);
     const inbox = feedbackInboxDirFor(ctx, meta.id);
-    const writeOpts: WriteNumberedFileOptions = { archiveDirs: [feedbackReadDirFor(ctx, meta.id)] };
+    const readDir = feedbackReadDirFor(ctx, meta.id);
+    const targetDir = att ? readDir : inbox;
+    const writeOpts: WriteNumberedFileOptions = { archiveDirs: att ? [] : [readDir] };
     if (attachments.length > 0) writeOpts.attachments = attachments;
-    const file = await writeNumberedFile(inbox, slug, feedbackContent, writeOpts);
+    const file = await writeNumberedFile(targetDir, slug, feedbackContent, writeOpts);
     await appendAndBroadcast(ctx, meta.id, {
       kind: "escalation_resolved",
       payload: { ...resolvedPayload, answerFilename: file.filename },
@@ -3034,8 +3036,6 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
     if (remaining.length === 0 && meta.status === "waiting_human") {
       updatedMeta = await transitionStatus(ctx, meta, "running");
     }
-
-    const att = ctx.clients.get(meta.id);
     appendHostLog(ctx, meta.id, "wake_sent", {
       filename: file.filename,
       seq: file.seq,
