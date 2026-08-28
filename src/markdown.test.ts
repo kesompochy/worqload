@@ -244,6 +244,18 @@ test("extractHeadings returns an empty array when there are no headings", () => 
   expect(extractHeadings("just a paragraph\n\n- a list item\n")).toEqual([]);
 });
 
+test("link URL with query-string ampersands is not double-encoded in the href", () => {
+  const html = renderMarkdown("[file](http://localhost/?session=abc&tab=files&file=a.ts)");
+  expect(html).toContain(`href="http://localhost/?session=abc&amp;tab=files&amp;file=a.ts"`);
+  expect(html).not.toContain("&amp;amp;");
+});
+
+test("bare URL with query-string ampersands is not double-encoded in the href", () => {
+  const html = renderMarkdown("http://localhost/?session=abc&tab=files&file=a.ts");
+  expect(html).toContain(`href="http://localhost/?session=abc&amp;tab=files&amp;file=a.ts"`);
+  expect(html).not.toContain("&amp;amp;");
+});
+
 test("inline code inside a link text is rendered", () => {
   const html = renderMarkdown(
     "[`proxy.ts` L4-19](https://example.com/proxy.ts#L4-L19)",
