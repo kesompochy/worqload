@@ -382,11 +382,13 @@ function renderInline(text) {
 
   // Links: [text](url "title"). escapeHtml above leaves '"' untouched, so the
   // title delimiter is still a literal double quote at this point.
+  // The URL capture already went through escapeHtml (which turned & into &amp;);
+  // unescapeHtml reverses that so escapeAttr produces a single-encoded href.
   s = s.replace(
     /\[([^\]]+)\]\(([^\s)]+)(?:\s+"([^"]*)")?\)/g,
     (_, body, url, title) => {
       const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
-      return stash(`<a href="${escapeAttr(url)}"${titleAttr} rel="noreferrer" target="_blank">${unstash(body)}</a>`);
+      return stash(`<a href="${escapeAttr(unescapeHtml(url))}"${titleAttr} rel="noreferrer" target="_blank">${unstash(body)}</a>`);
     },
   );
 
@@ -421,7 +423,7 @@ function autolinkBareUrls(s, stash) {
       url = url.slice(0, -1);
     }
     if (url.length === 0) return match;
-    return stash(`<a href="${escapeAttr(url)}" rel="noreferrer" target="_blank">${url}</a>`) + trailing;
+    return stash(`<a href="${escapeAttr(unescapeHtml(url))}" rel="noreferrer" target="_blank">${url}</a>`) + trailing;
   });
 }
 
@@ -459,6 +461,13 @@ function escapeHtml(s) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function unescapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 function escapeAttr(s) {

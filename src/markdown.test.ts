@@ -244,6 +244,18 @@ test("extractHeadings returns an empty array when there are no headings", () => 
   expect(extractHeadings("just a paragraph\n\n- a list item\n")).toEqual([]);
 });
 
+test("link URL with query-string ampersands is not double-encoded in the href", () => {
+  const html = renderMarkdown("[file](http://localhost/?session=abc&tab=files&file=a.ts)");
+  expect(html).toContain(`href="http://localhost/?session=abc&amp;tab=files&amp;file=a.ts"`);
+  expect(html).not.toContain("&amp;amp;");
+});
+
+test("bare URL with query-string ampersands is not double-encoded in the href", () => {
+  const html = renderMarkdown("http://localhost/?session=abc&tab=files&file=a.ts");
+  expect(html).toContain(`href="http://localhost/?session=abc&amp;tab=files&amp;file=a.ts"`);
+  expect(html).not.toContain("&amp;amp;");
+});
+
 test("bare URL followed by Japanese text excludes the Japanese text", () => {
   const html = renderMarkdown(
     "ドキュメント（https://docs.example.com/flags）は重要です",
@@ -277,7 +289,7 @@ test("bare URL with balanced parens in path is preserved", () => {
 
 test("bare URL with percent-encoded chars is preserved", () => {
   const html = renderMarkdown("see https://example.com/path%20with%20spaces end");
-  expect(html).toContain(`href="https://example.com/path%20with%20spaces"`);
+  expect(html).toContain(`href="https://example.com/path%20with%20spaces"`)
 });
 
 test("inline code inside a link text is rendered", () => {
