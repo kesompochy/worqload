@@ -43,7 +43,7 @@ if (idMatchesUrl) {
   if (urlState.filePath && urlState.tab === "files") {
     await selectFile(urlState.filePath);
     if (urlState.fileLine != null) {
-      state.anchor = { path: urlState.filePath, lineStart: urlState.fileLine, lineEnd: urlState.fileLineEnd ?? urlState.fileLine };
+      state.anchor = { path: urlState.filePath, lineStart: urlState.fileLine, lineEnd: urlState.fileLineEnd ?? urlState.fileLine, viewOnly: true };
       state.pendingScrollTo = { anchor: state.anchor };
     }
   }

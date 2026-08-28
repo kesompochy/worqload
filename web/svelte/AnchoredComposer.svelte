@@ -183,7 +183,7 @@
   });
 </script>
 
-{#if appState.anchor}
+{#if appState.anchor && !appState.anchor.viewOnly}
   <form
     class="anchored-composer"
     style={style}
