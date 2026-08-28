@@ -134,11 +134,14 @@ test("escalation resolve moves asking file, writes feedback, returns to running"
   expect(askingTop.filter((f) => f.endsWith(".md"))).toEqual([]);
   expect(readdirSync(join(ctx.sessionsDir, sid, "asking", "resolved"))).toEqual(["001-lib.md"]);
 
-  // feedback inbox has the answer
+  // feedback is written as read (already delivered via client.send)
   const inboxRes = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
-  expect(inboxRes.messages).toHaveLength(1);
-  expect(inboxRes.messages[0].content).toContain("X or Y?");
-  expect(inboxRes.messages[0].content).toContain("go with X");
+  expect(inboxRes.messages).toHaveLength(0);
+  const history = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback/history`).then((r) => r.json());
+  const msg = history.messages.find((m: { content: string }) => m.content.includes("go with X"));
+  expect(msg).toBeDefined();
+  expect(msg.content).toContain("X or Y?");
+  expect(msg.status).toBe("read");
 });
 
 test("escalation resolve returns 404 for missing file", async () => {

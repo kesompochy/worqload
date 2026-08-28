@@ -117,11 +117,15 @@ test("command approval: approve runs the command in the worktree and feeds back 
   const detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
   expect(detail.meta.status).toBe("running");
 
-  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
-  expect(inbox.messages).toHaveLength(1);
-  expect(inbox.messages[0].content).toContain("approved this command");
-  expect(inbox.messages[0].content).toContain("approved-ok");
-  expect(inbox.messages[0].content).toContain("Exit code");
+  const history = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback/history`).then((r) => r.json());
+  const msg = history.messages.find((m: { content: string }) => m.content.includes("approved this command"));
+  expect(msg).toBeDefined();
+  expect(msg.content).toContain("approved-ok");
+  expect(msg.content).toContain("Exit code");
+  expect(msg.status).toBe("read");
+
+  const inboxDrain = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
+  expect(inboxDrain.messages).toHaveLength(0);
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
   const resolvedEvent = events.find((e) => e.kind === "escalation_resolved");
@@ -147,10 +151,11 @@ test("command approval: approve with a human note relays that note in the feedba
   }).then((r) => r.json());
   expect(resolved.ok).toBe(true);
 
-  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
-  expect(inbox.messages).toHaveLength(1);
-  expect(inbox.messages[0].content).toContain("approved this command");
-  expect(inbox.messages[0].content).toContain(note);
+  const history = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback/history`).then((r) => r.json());
+  const msg = history.messages.find((m: { content: string }) => m.content.includes("approved this command"));
+  expect(msg).toBeDefined();
+  expect(msg.content).toContain(note);
+  expect(msg.status).toBe("read");
 
   const events = await readEvents(sid, 1, ctx.sessionsDir);
   const resolvedEvent = events.find((e) => e.kind === "escalation_resolved");
@@ -178,9 +183,11 @@ test("command approval: reject does not run the command and feeds back the rejec
   expect(resolved.ok).toBe(true);
   expect(existsSync(marker)).toBe(false);
 
-  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
-  expect(inbox.messages[0].content).toContain("rejected this command");
-  expect(inbox.messages[0].content).toContain("we never touch that path");
+  const history = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback/history`).then((r) => r.json());
+  const msg = history.messages.find((m: { content: string }) => m.content.includes("rejected this command"));
+  expect(msg).toBeDefined();
+  expect(msg.content).toContain("we never touch that path");
+  expect(msg.status).toBe("read");
 });
 
 test("command approval: approve preserves the agent's stated reason in the result feedback", async () => {
@@ -195,8 +202,10 @@ test("command approval: approve preserves the agent's stated reason in the resul
 
   await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, { decision: "approve" });
 
-  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
-  expect(inbox.messages[0].content).toContain(reason);
+  const history = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback/history`).then((r) => r.json());
+  const msg = history.messages.find((m: { content: string }) => m.content.includes(reason));
+  expect(msg).toBeDefined();
+  expect(msg.status).toBe("read");
 });
 
 test("command approval: reject preserves the agent's stated reason in the result feedback", async () => {
@@ -214,8 +223,10 @@ test("command approval: reject preserves the agent's stated reason in the result
     content: "we publish from CI, not locally",
   });
 
-  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
-  expect(inbox.messages[0].content).toContain(reason);
+  const history = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback/history`).then((r) => r.json());
+  const msg = history.messages.find((m: { content: string }) => m.content.includes(reason));
+  expect(msg).toBeDefined();
+  expect(msg.status).toBe("read");
 });
 
 test("command approval: resolve without a decision is rejected", async () => {
