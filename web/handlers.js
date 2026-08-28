@@ -939,7 +939,7 @@ export async function applyUrlState({ sessionId, tab, focusStack, structureAncho
   if (targetTab === "files" && filePath) {
     if (filePath !== state.selectedFilePath) await selectFile(filePath);
     if (fileLine != null) {
-      state.anchor = { path: filePath, lineStart: fileLine, lineEnd: fileLineEnd ?? fileLine };
+      state.anchor = { path: filePath, lineStart: fileLine, lineEnd: fileLineEnd ?? fileLine, viewOnly: true };
       state.pendingScrollTo = { anchor: { path: filePath, lineStart: fileLine, lineEnd: fileLineEnd ?? fileLine } };
     } else {
       state.anchor = null;
@@ -1926,7 +1926,7 @@ async function navigateToFilesUrl(sessionId, filePath, line, lineEnd) {
   if (state.activeTab !== "files") await switchTab("files");
   await selectFile(filePath);
   if (line != null && Number.isFinite(line)) {
-    state.anchor = { path: filePath, lineStart: line, lineEnd: lineEnd ?? line };
+    state.anchor = { path: filePath, lineStart: line, lineEnd: lineEnd ?? line, viewOnly: true };
     state.pendingScrollTo = { anchor: state.anchor };
   }
   replaceUrlState({
