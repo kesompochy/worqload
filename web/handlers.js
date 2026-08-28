@@ -1898,17 +1898,17 @@ export async function runDirectAction(actionId) {
   if (action) await runAction(action, {});
 }
 
-// Intercept clicks on same-origin worqload Files URLs in rendered markdown and
-// navigate in-app instead of opening a new tab. Returns true when the click was
-// handled (so the caller should NOT fall through to the default <a> pass-through).
+// Intercept clicks on worqload Files URLs in rendered markdown and navigate
+// in-app instead of opening a new tab. Detected by the query-param signature
+// (session + tab=files + file) rather than origin, because the agent's
+// {{serverUrl}} (127.0.0.1) may differ from the browser's hostname (localhost).
 function handleFilesUrlClick(linkEl, event) {
   const href = linkEl.getAttribute("href");
   if (!href) return false;
   let url;
   try { url = new URL(href, window.location.origin); } catch { return false; }
-  if (url.origin !== window.location.origin) return false;
   const params = url.searchParams;
-  if (params.get("tab") !== "files" || !params.get("file")) return false;
+  if (!params.get("session") || params.get("tab") !== "files" || !params.get("file")) return false;
   event.preventDefault();
   event.stopPropagation();
   const sessionId = params.get("session");
