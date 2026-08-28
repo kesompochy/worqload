@@ -1,10 +1,28 @@
 // agent-side CLI:
-// `worqload report submit --slug <slug> [--re <feedback-filename>] [--image <path>]...`
+// `worqload report submit --slug <slug> [--re <feedback-filename>] [--image <path>]... [--raw]`
 // (body via stdin)
 
 import { basename } from "node:path";
 import { submitReport } from "../agent-client";
 import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, collectFlag, exitWithUsage } from "./cli-helpers";
+
+const SEPARATOR_LINE = /^[\s\-=*#]*$/;
+const KEBAB_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const MIN_LENGTH = 20;
+
+export function validateReportBody(body: string): string | null {
+  const trimmed = body.trim();
+  if (trimmed.split("\n").every((line) => SEPARATOR_LINE.test(line))) {
+    return "report body contains only separator characters — write the actual content (pass --raw to force)";
+  }
+  if (KEBAB_SLUG.test(trimmed)) {
+    return "report body looks like a slug, not prose — write the actual content (pass --raw to force)";
+  }
+  if (trimmed.length < MIN_LENGTH) {
+    return "report body is too short — write the actual content (pass --raw to force)";
+  }
+  return null;
+}
 
 // Reads each --image path off disk into a File the report POST can upload.
 // Bun.file derives the MIME type from the extension; the server has the
@@ -25,16 +43,24 @@ async function loadImages(paths: string[]): Promise<File[]> {
 
 export async function report(args: string[]): Promise<void> {
   if (args[0] !== "submit") {
-    exitWithUsage("worqload report submit --slug <slug> [--re <feedback-filename>] [--image <path>]...  (body via stdin)");
+    exitWithUsage("worqload report submit --slug <slug> [--re <feedback-filename>] [--image <path>]... [--raw]  (body via stdin)");
   }
   const rest = args.slice(1);
   const slug = requireFlag(rest, "--slug");
   const replyTo = optionalFlag(rest, "--re");
+  const raw = rest.includes("--raw");
   const images = await loadImages(collectFlag(rest, "--image"));
   const content = await readAllStdin();
   if (content.trim() === "") {
     console.error("report body must be provided on stdin");
     process.exit(2);
+  }
+  if (!raw) {
+    const rejection = validateReportBody(content);
+    if (rejection) {
+      console.error(rejection);
+      process.exit(2);
+    }
   }
   const sessionId = requireEnv("WORQLOAD_SESSION_ID");
   const endpoint = resolveAgentEndpoint();

@@ -256,6 +256,42 @@ test("bare URL with query-string ampersands is not double-encoded in the href", 
   expect(html).not.toContain("&amp;amp;");
 });
 
+test("bare URL followed by Japanese text excludes the Japanese text", () => {
+  const html = renderMarkdown(
+    "ドキュメント（https://docs.example.com/flags）は重要です",
+  );
+  expect(html).toContain(`href="https://docs.example.com/flags"`);
+  expect(html).toContain(`>https://docs.example.com/flags</a>`);
+  expect(html).not.toContain(`flags）は`);
+});
+
+test("bare URL followed by CJK without parens excludes CJK", () => {
+  const html = renderMarkdown("see https://example.com/pathを参照");
+  expect(html).toContain(`href="https://example.com/path"`);
+  expect(html).toContain(`>https://example.com/path</a>`);
+  expect(html).not.toContain(`pathを`);
+});
+
+test("bare URL in ASCII parens followed by Japanese peels the paren", () => {
+  const html = renderMarkdown("(https://example.com/path)を参照");
+  expect(html).toContain(`href="https://example.com/path"`);
+  expect(html).toContain(`>https://example.com/path</a>`);
+});
+
+test("bare URL with balanced parens in path is preserved", () => {
+  const html = renderMarkdown(
+    "see https://en.wikipedia.org/wiki/Tokyo_(disambiguation) for details",
+  );
+  expect(html).toContain(
+    `href="https://en.wikipedia.org/wiki/Tokyo_(disambiguation)"`,
+  );
+});
+
+test("bare URL with percent-encoded chars is preserved", () => {
+  const html = renderMarkdown("see https://example.com/path%20with%20spaces end");
+  expect(html).toContain(`href="https://example.com/path%20with%20spaces"`)
+});
+
 test("inline code inside a link text is rendered", () => {
   const html = renderMarkdown(
     "[`proxy.ts` L4-19](https://example.com/proxy.ts#L4-L19)",

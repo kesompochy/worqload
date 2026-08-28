@@ -410,7 +410,7 @@ function renderInline(text) {
 // than part of the address are peeled off and left outside the anchor; a
 // closing paren is kept only when the URL itself opened one.
 function autolinkBareUrls(s, stash) {
-  const urlRe = new RegExp(`https?://[^\\s${CODE_SENTINEL}]+`, "g");
+  const urlRe = new RegExp(`https?://[A-Za-z0-9._~:/?#\\[\\]@!$&'()*+,;=%-]+`, "g");
   return s.replace(urlRe, match => {
     let url = match;
     let trailing = "";
