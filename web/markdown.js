@@ -8,6 +8,7 @@
 //   - Ordered lists (1.  2.  ...)
 //   - GFM tables (| a | b | + a |---|---| delimiter row, with :--: alignment)
 //   - Horizontal rules (---, ***, ___)
+//   - Footnote definitions ([^id]: ...)
 //   - Paragraphs
 //
 // Supported inline syntax:
@@ -15,6 +16,7 @@
 //   - Inline code (`code`)
 //   - Links ([text](url))
 //   - Bare http(s) URLs (auto-linked)
+//   - Footnote references ([^id])
 //
 // Each block-level element emits source-line metadata so the worqload UI can
 // anchor feedback at the original markdown line, even though the rendering
@@ -32,14 +34,28 @@ const CODE_SENTINEL = "";
 
 export function renderMarkdown(source, options = {}) {
   const blocks = parseBlocks(source);
+  const footnoteDefs = new Map();
+  for (const b of blocks) {
+    if (b.kind === "footnote-def") footnoteDefs.set(b.id, b);
+  }
+  const footnoteOrder = [];
+  const footnoteNumberById = new Map();
   const ctx = {
     anchorPath: options.anchorPath ?? null,
     currentAnchor: options.anchor ?? null,
-    // [{ lineStart, lineEnd, filename }] — sent feedback anchored into this
-    // source; blocks overlapping a range get a data-feedback-preview attr.
     feedbackAnchors: options.feedbackAnchors ?? [],
+    footnoteDefs,
+    footnoteOrder,
+    footnoteNumberById,
   };
-  return blocks.map(b => renderBlock(b, ctx)).join("");
+  const body = blocks.map(b => renderBlock(b, ctx)).join("");
+  if (footnoteOrder.length === 0) return body;
+  const items = footnoteOrder.map(id => {
+    const num = footnoteNumberById.get(id);
+    const def = footnoteDefs.get(id);
+    return `<li id="fn-${num}">${renderInline(def.content, ctx)} <a href="#fnref-${num}">↩</a></li>`;
+  });
+  return body + `<section class="md-footnotes"><ol>${items.join("")}</ol></section>`;
 }
 
 // The ATX headings of `source`, in document order, for building a table of
@@ -82,6 +98,7 @@ function parseBlocks(source) {
     if (isFenceLine(line)) { i = consumeFencedCode(lines, i, blocks); continue; }
     if (isHeadingLine(line)) { i = consumeHeading(lines, i, blocks); continue; }
     if (isHrLine(line)) { i = consumeHr(lines, i, blocks); continue; }
+    if (isFootnoteDef(line)) { i = consumeFootnoteDef(lines, i, blocks); continue; }
     if (isBlockquoteLine(line)) { i = consumeBlockquote(lines, i, blocks); continue; }
     if (isUnorderedListItem(line)) { i = consumeUnorderedList(lines, i, blocks); continue; }
     if (isOrderedListItem(line)) { i = consumeOrderedList(lines, i, blocks); continue; }
@@ -102,6 +119,7 @@ function isHrLine(line) {
 function isBlockquoteLine(line) { return /^>\s?/.test(line); }
 function isUnorderedListItem(line) { return /^[-*+]\s+/.test(line); }
 function isOrderedListItem(line) { return /^\d+\.\s+/.test(line); }
+function isFootnoteDef(line) { return /^\[\^[^\]]+\]:\s/.test(line); }
 function isListContinuation(line) { return /^\s{2,}\S/.test(line); }
 
 // A GFM table starts where a header row (which must contain at least one pipe,
@@ -179,6 +197,18 @@ function consumeBlockquote(lines, start, out) {
     endLine: i,
   });
   return i;
+}
+
+function consumeFootnoteDef(lines, start, out) {
+  const m = lines[start].match(/^\[\^([^\]]+)\]:\s+(.*)/);
+  out.push({
+    kind: "footnote-def",
+    id: m[1],
+    content: m[2],
+    startLine: start + 1,
+    endLine: start + 1,
+  });
+  return start + 1;
 }
 
 function consumeUnorderedList(lines, start, out) {
@@ -274,6 +304,7 @@ function paragraphEnds(lines, i) {
       || isFenceLine(line)
       || isHeadingLine(line)
       || isHrLine(line)
+      || isFootnoteDef(line)
       || isBlockquoteLine(line)
       || isUnorderedListItem(line)
       || isOrderedListItem(line)
@@ -291,19 +322,20 @@ function renderBlock(block, ctx) {
     case "blockquote": return renderBlockquote(block, ctx);
     case "ul":         return renderList("ul", block, ctx);
     case "ol":         return renderList("ol", block, ctx);
-    case "table":      return renderTable(block, ctx);
-    default:           return "";
+    case "table":        return renderTable(block, ctx);
+    case "footnote-def": return "";
+    default:             return "";
   }
 }
 
 function renderHeading(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
-  return `<h${block.level}${attrs}>${renderInline(block.content)}</h${block.level}>`;
+  return `<h${block.level}${attrs}>${renderInline(block.content, ctx)}</h${block.level}>`;
 }
 
 function renderParagraph(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
-  return `<p${attrs}>${renderInline(block.content)}</p>`;
+  return `<p${attrs}>${renderInline(block.content, ctx)}</p>`;
 }
 
 function renderCode(block, ctx) {
@@ -329,13 +361,13 @@ function renderBlockquote(block, ctx) {
   const attrs = anchorAttrs(block.startLine, block.endLine, ctx);
   // We do not recurse into the quote body; rendering it as a single paragraph
   // keeps the renderer simple and covers the typical agent-report use.
-  return `<blockquote${attrs}><p>${renderInline(block.content)}</p></blockquote>`;
+  return `<blockquote${attrs}><p>${renderInline(block.content, ctx)}</p></blockquote>`;
 }
 
 function renderList(tag, block, ctx) {
   const items = block.items.map(item => {
     const attrs = anchorAttrs(item.startLine, item.endLine, ctx);
-    return `<li${attrs}>${renderInline(item.content)}</li>`;
+    return `<li${attrs}>${renderInline(item.content, ctx)}</li>`;
   }).join("");
   return `<${tag}>${items}</${tag}>`;
 }
@@ -344,7 +376,7 @@ function renderTable(block, ctx) {
   const cell = (tag, content, columnIndex) => {
     const align = block.aligns[columnIndex];
     const style = align ? ` style="text-align:${align};"` : "";
-    return `<${tag}${style}>${renderInline(content)}</${tag}>`;
+    return `<${tag}${style}>${renderInline(content, ctx)}</${tag}>`;
   };
   const columnCount = block.headerCells.length;
   const headerAttrs = anchorAttrs(block.headerStartLine, block.headerEndLine, ctx);
@@ -362,7 +394,7 @@ function renderTable(block, ctx) {
 
 // ---------- inline rendering ----------
 
-function renderInline(text) {
+function renderInline(text, ctx) {
   // Spans stashed behind a sentinel so later inline rules can't reprocess their
   // bodies: inline code, and the anchors produced for both markdown links and
   // bare-URL autolinks (so an autolinked URL is never re-scanned by another
@@ -379,6 +411,18 @@ function renderInline(text) {
   let s = text.replace(/`+([^`]+?)`+/g, (_, code) => stash(`<code>${escapeHtml(code)}</code>`));
 
   s = escapeHtml(s);
+
+  if (ctx && ctx.footnoteDefs) {
+    s = s.replace(/\[\^([^\]]+)\]/g, (match, id) => {
+      if (!ctx.footnoteDefs.has(id)) return match;
+      if (!ctx.footnoteNumberById.has(id)) {
+        ctx.footnoteOrder.push(id);
+        ctx.footnoteNumberById.set(id, ctx.footnoteOrder.length);
+      }
+      const num = ctx.footnoteNumberById.get(id);
+      return stash(`<sup><a href="#fn-${num}" id="fnref-${num}">${num}</a></sup>`);
+    });
+  }
 
   // Links: [text](url "title"). escapeHtml above leaves '"' untouched, so the
   // title delimiter is still a literal double quote at this point.
