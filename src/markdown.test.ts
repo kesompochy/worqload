@@ -300,3 +300,48 @@ test("inline code inside a link text is rendered", () => {
   expect(html).toContain("L4-19</a>");
   expect(html).toContain(`href="https://example.com/proxy.ts#L4-L19"`);
 });
+
+// ---------- footnotes ----------
+
+test("footnote reference renders as a superscript link", () => {
+  const html = renderMarkdown("some text[^1]\n\n[^1]: explanation\n");
+  expect(html).toContain(`<sup><a href="#fn-1" id="fnref-1">1</a></sup>`);
+});
+
+test("footnote definitions render as an ordered list at the end", () => {
+  const html = renderMarkdown("text[^1]\n\n[^1]: the note\n");
+  expect(html).toContain(`<section class="md-footnotes">`);
+  expect(html).toContain(`<li id="fn-1">`);
+  expect(html).toContain("the note");
+  expect(html).toContain(`<a href="#fnref-1">`);
+});
+
+test("footnotes are numbered in reference order, not definition order", () => {
+  const html = renderMarkdown("a[^b] then a[^a]\n\n[^a]: alpha\n[^b]: beta\n");
+  expect(html).toContain(`<sup><a href="#fn-1" id="fnref-1">1</a></sup>`);
+  expect(html).toContain(`<sup><a href="#fn-2" id="fnref-2">2</a></sup>`);
+  expect(html).toMatch(/<li id="fn-1">.*beta/s);
+  expect(html).toMatch(/<li id="fn-2">.*alpha/s);
+});
+
+test("footnote definition lines are not rendered as paragraphs", () => {
+  const html = renderMarkdown("text[^1]\n\n[^1]: note\n");
+  expect(html).not.toMatch(/<p[^>]*>\[/);
+});
+
+test("unreferenced footnote definitions are not rendered", () => {
+  const html = renderMarkdown("no refs here\n\n[^1]: orphan\n");
+  expect(html).not.toContain("md-footnotes");
+  expect(html).not.toContain("orphan");
+});
+
+test("footnote reference without a definition renders as plain text", () => {
+  const html = renderMarkdown("text[^missing]\n");
+  expect(html).toContain("[^missing]");
+  expect(html).not.toContain("<sup>");
+});
+
+test("footnote definition body receives inline rendering", () => {
+  const html = renderMarkdown("text[^1]\n\n[^1]: **bold** note\n");
+  expect(html).toContain("<strong>bold</strong>");
+});
