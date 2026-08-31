@@ -117,6 +117,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
 export async function onDetailBodyClick(e) {
   const link = e.target.closest("a");
   if (link) {
+    if (handleFootnoteClick(link, e)) return;
     const handled = handleFilesUrlClick(link, e);
     if (!handled) return;
   }
@@ -1902,6 +1903,28 @@ export async function runDirectAction(actionId) {
 // in-app instead of opening a new tab. Detected by the query-param signature
 // (session + tab=files + file) rather than origin, because the agent's
 // {{serverUrl}} (127.0.0.1) may differ from the browser's hostname (localhost).
+function handleFootnoteClick(linkEl, event) {
+  const href = linkEl.getAttribute("href");
+  if (!href || !href.startsWith("#fn")) return false;
+  const id = href.slice(1);
+  const container = linkEl.closest(".detail-body");
+  if (!container) return false;
+  const target = container.querySelector(`#${CSS.escape(id)}`);
+  if (!target) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.classList.add("anchor-flash");
+  const clear = (e) => {
+    if (e && e.animationName !== "anchor-flash") return;
+    target.removeEventListener("animationend", clear);
+    target.classList.remove("anchor-flash");
+  };
+  target.addEventListener("animationend", clear);
+  setTimeout(clear, 2000);
+  return true;
+}
+
 function handleFilesUrlClick(linkEl, event) {
   const href = linkEl.getAttribute("href");
   if (!href) return false;
