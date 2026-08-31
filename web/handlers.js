@@ -1909,10 +1909,11 @@ function handleFootnoteClick(linkEl, event) {
   const id = href.slice(1);
   const container = linkEl.closest(".detail-body");
   if (!container) return false;
-  const target = container.querySelector(`#${CSS.escape(id)}`);
-  if (!target) return false;
+  const raw = container.querySelector(`#${CSS.escape(id)}`);
+  if (!raw) return false;
   event.preventDefault();
   event.stopPropagation();
+  const target = raw.closest("p, li, blockquote, h1, h2, h3, h4, h5, h6, tr") ?? raw;
   target.scrollIntoView({ block: "center", behavior: "smooth" });
   target.classList.add("anchor-flash");
   const clear = (e) => {
