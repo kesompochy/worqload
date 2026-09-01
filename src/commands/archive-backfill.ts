@@ -1,7 +1,8 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { openArchiveDb, insertReport, insertFeedback, defaultArchiveDbPath } from "../archive-store";
+import { openArchiveDb, insertReport, insertFeedback, upsertSession, defaultArchiveDbPath } from "../archive-store";
 import { listAllFiles } from "../file-store";
+import { loadSessionMeta } from "../session";
 import { realWorktreeOps } from "../worktree";
 
 export async function archiveBackfill(args: string[]): Promise<void> {
@@ -28,6 +29,16 @@ export async function archiveBackfill(args: string[]): Promise<void> {
       const sessionPath = join(sessionsDir, sessionId);
       const s = await stat(sessionPath).catch(() => null);
       if (!s?.isDirectory()) continue;
+
+      const meta = await loadSessionMeta(sessionId, sessionsDir);
+      if (meta) {
+        upsertSession(db, {
+          sessionId,
+          repo: repoIdentifier,
+          initialPrompt: meta.prompt,
+          createdAt: meta.createdAt,
+        });
+      }
 
       const reportsDir = join(sessionPath, "reports");
       const reports = await listAllFiles(reportsDir);
