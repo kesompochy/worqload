@@ -253,6 +253,79 @@ test("listAllSessions returns distinct session_ids with latest created_at", asyn
   }
 });
 
+test("upsertSession stores initial prompt and is retrievable via listAllSessions", async () => {
+  const { openArchiveDb, insertReport, upsertSession, listAllSessions } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    insertReport(db, {
+      repo: "github.com/foo/bar", sessionId: "s1", filename: "001-x.md",
+      slug: "x", body: "b", replyTo: null,
+      anchorPath: null, anchorLineStart: null, anchorLineEnd: null,
+      createdAt: "2026-08-24T01:00:00Z",
+    });
+    upsertSession(db, {
+      sessionId: "s1",
+      repo: "github.com/foo/bar",
+      initialPrompt: "Fix the login bug in the auth module",
+      createdAt: "2026-08-24T00:00:00Z",
+    });
+    const sessions = listAllSessions(db);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].initialPrompt).toBe("Fix the login bug in the auth module");
+  } finally {
+    db.close();
+  }
+});
+
+test("upsertSession is idempotent — second call does not overwrite", async () => {
+  const { openArchiveDb, upsertSession } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    upsertSession(db, {
+      sessionId: "s1", repo: "github.com/foo/bar",
+      initialPrompt: "original prompt", createdAt: "2026-08-24T00:00:00Z",
+    });
+    upsertSession(db, {
+      sessionId: "s1", repo: "github.com/foo/bar",
+      initialPrompt: "different prompt", createdAt: "2026-08-25T00:00:00Z",
+    });
+    const row = db.query("SELECT initial_prompt FROM sessions WHERE session_id = 's1'").get() as { initial_prompt: string };
+    expect(row.initial_prompt).toBe("original prompt");
+  } finally {
+    db.close();
+  }
+});
+
+test("listAllSessions returns null initialPrompt when no session row exists", async () => {
+  const { openArchiveDb, insertReport, listAllSessions } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    insertReport(db, {
+      repo: "github.com/foo/bar", sessionId: "s1", filename: "001-x.md",
+      slug: "x", body: "b", replyTo: null,
+      anchorPath: null, anchorLineStart: null, anchorLineEnd: null,
+      createdAt: "2026-08-24T01:00:00Z",
+    });
+    const sessions = listAllSessions(db);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].initialPrompt).toBeNull();
+  } finally {
+    db.close();
+  }
+});
+
+test("openArchiveDb creates sessions table", async () => {
+  const { openArchiveDb } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[];
+    const names = tables.map(t => t.name);
+    expect(names).toContain("sessions");
+  } finally {
+    db.close();
+  }
+});
+
 test("openArchiveDb creates parent directories", async () => {
   const { openArchiveDb } = await loadModule();
   const nested = join(dir, "a", "b", "archive.db");

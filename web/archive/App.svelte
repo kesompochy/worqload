@@ -65,6 +65,9 @@
             onclick={() => selectSession(s.sessionId)}
           >
             <div class="session-id">{s.sessionId.slice(0, 8)}</div>
+            {#if s.initialPrompt}
+              <div class="session-prompt">{s.initialPrompt.slice(0, 80)}</div>
+            {/if}
             <div class="session-meta">
               <span class="repo">{repoShort(s.repo)}</span>
               <span class="counts">{s.reportCount}R / {s.feedbackCount}F</span>
@@ -143,6 +146,14 @@
   .session-card:hover { background: var(--panel); }
   .session-card.active { background: var(--panel-2); border-left: 3px solid var(--accent); padding-left: calc(.75rem - 3px); }
   .session-id { font-weight: 600; font-size: 13px; }
+  .session-prompt {
+    font-size: 12px;
+    color: var(--text-secondary, #aaa);
+    margin-top: .15rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .session-meta { font-size: 12px; color: var(--text-dim); margin-top: .15rem; display: flex; gap: .6rem; }
   .session-time { font-size: 11px; color: var(--text-dim); margin-top: .1rem; }
   .empty { padding: 1.5rem; color: var(--text-dim); text-align: center; }
