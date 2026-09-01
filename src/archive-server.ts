@@ -1,7 +1,7 @@
 import type { Server } from "bun";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { openArchiveDb, defaultArchiveDbPath, listAllSessions, listAllReports, listAllFeedback, listReports, listFeedback } from "./archive-store";
+import { openArchiveDb, defaultArchiveDbPath, listAllSessions, listAllReports, listAllFeedback, listReports, listFeedback, searchReports, searchFeedback } from "./archive-store";
 import type { Database } from "bun:sqlite";
 
 const REPO_ROOT = join(import.meta.dir, "..");
@@ -84,6 +84,14 @@ function handleRequest(req: Request, ctx: ArchiveServerContext): Response {
       const repo = url.searchParams.get("repo") ?? undefined;
       const feedback = listAllFeedback(ctx.db, repo ? { repo } : undefined);
       return json({ feedback });
+    }
+
+    if (path === "/api/search") {
+      const q = url.searchParams.get("q");
+      if (!q) return json({ error: "q parameter is required" }, 400);
+      const reports = searchReports(ctx.db, q);
+      const feedback = searchFeedback(ctx.db, q);
+      return json({ reports, feedback });
     }
   }
 
