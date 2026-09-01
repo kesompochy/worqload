@@ -4,6 +4,10 @@
   let reports = $state([]);
   let feedback = $state([]);
   let loading = $state(true);
+  let searchQuery = $state("");
+  let searchResults = $state(null);
+  let searching = $state(false);
+  let searchTimer = null;
 
   async function fetchSessions() {
     loading = true;
@@ -18,6 +22,8 @@
   }
 
   async function selectSession(sessionId) {
+    searchResults = null;
+    searchQuery = "";
     selectedSessionId = sessionId;
     const [rRes, fRes] = await Promise.all([
       fetch(`/api/sessions/${encodeURIComponent(sessionId)}/reports`),
@@ -25,6 +31,38 @@
     ]);
     reports = (await rRes.json()).reports;
     feedback = (await fRes.json()).feedback;
+  }
+
+  async function doSearch(q) {
+    if (!q.trim()) {
+      searchResults = null;
+      return;
+    }
+    searching = true;
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q.trim())}`);
+      const data = await res.json();
+      searchResults = data;
+    } catch {
+      searchResults = { reports: [], feedback: [] };
+    }
+    searching = false;
+  }
+
+  function onSearchInput(e) {
+    const q = e.target.value;
+    searchQuery = q;
+    if (searchTimer) clearTimeout(searchTimer);
+    if (!q.trim()) {
+      searchResults = null;
+      return;
+    }
+    searchTimer = setTimeout(() => doSearch(q), 300);
+  }
+
+  function clearSearch() {
+    searchQuery = "";
+    searchResults = null;
   }
 
   function formatTime(iso) {
@@ -43,6 +81,13 @@
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   );
 
+  let searchTimeline = $derived(
+    searchResults
+      ? [...searchResults.reports.map(r => ({ ...r, kind: "report" })), ...searchResults.feedback.map(f => ({ ...f, kind: "feedback" }))]
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      : []
+  );
+
   $effect(() => { fetchSessions(); });
 </script>
 
@@ -51,6 +96,18 @@
     <div class="sidebar-header">
       <div class="app-name">worqload</div>
       <h1>archive</h1>
+      <div class="search-box">
+        <input
+          type="text"
+          placeholder="検索…"
+          value={searchQuery}
+          oninput={onSearchInput}
+          class="search-input"
+        />
+        {#if searchQuery}
+          <button class="search-clear" onclick={clearSearch}>&times;</button>
+        {/if}
+      </div>
     </div>
     <div class="session-list">
       {#if loading}
@@ -79,7 +136,31 @@
     </div>
   </aside>
   <main class="detail">
-    {#if !selectedSessionId}
+    {#if searchResults}
+      {#if searching}
+        <div class="empty-detail">検索中…</div>
+      {:else if searchTimeline.length === 0}
+        <div class="empty-detail">「{searchQuery}」に一致する結果なし</div>
+      {:else}
+        <div class="search-result-count">{searchTimeline.length}件の結果</div>
+        <div class="timeline">
+          {#each searchTimeline as item}
+            <div class="timeline-item" class:is-feedback={item.kind === "feedback"}>
+              <div class="timeline-header">
+                <span class="timeline-kind">{item.kind === "report" ? "Report" : "Feedback"}</span>
+                {#if item.slug}<span class="timeline-slug">{item.slug}</span>{/if}
+                <button class="timeline-session" onclick={() => selectSession(item.sessionId)}>
+                  {item.sessionId.slice(0, 8)}
+                </button>
+                <span class="timeline-time">{formatTime(item.createdAt)}</span>
+                <span class="timeline-file">{item.filename}</span>
+              </div>
+              <pre class="timeline-body">{item.body}</pre>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {:else if !selectedSessionId}
       <div class="empty-detail">セッションを選択してください</div>
     {:else if timeline.length === 0}
       <div class="empty-detail">データなし</div>
@@ -188,4 +269,44 @@
   .timeline-time { color: var(--text-dim); margin-left: auto; }
   .timeline-file { color: var(--text-dim); }
   .timeline-body { padding: .75rem; line-height: 1.5; }
+  .search-box {
+    position: relative;
+    margin-top: .5rem;
+  }
+  .search-input {
+    width: 100%;
+    padding: .4rem .6rem;
+    padding-right: 1.8rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+    outline: none;
+  }
+  .search-input:focus { border-color: var(--accent); }
+  .search-clear {
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    padding: .15rem .4rem;
+    font-size: 16px;
+    color: var(--text-dim);
+    cursor: pointer;
+    line-height: 1;
+  }
+  .search-clear:hover { color: var(--text); background: none; }
+  .search-result-count {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: .5rem;
+  }
+  .timeline-session {
+    font-size: 11px;
+    padding: .1rem .4rem;
+    border-radius: 3px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
 </style>

@@ -91,6 +91,39 @@ test("GET /api/feedback returns all feedback", async () => {
   expect(feedback).toHaveLength(1);
 });
 
+test("GET /api/search returns matching reports and feedback", async () => {
+  const res = await fetch(`${baseUrl}/api/search?q=Plan`);
+  expect(res.status).toBe(200);
+  const data = await res.json();
+  expect(data.reports).toHaveLength(1);
+  expect(data.reports[0].body).toContain("Plan");
+  expect(data.feedback).toHaveLength(0);
+});
+
+test("GET /api/search matches feedback body", async () => {
+  const res = await fetch(`${baseUrl}/api/search?q=bug`);
+  const data = await res.json();
+  expect(data.reports).toHaveLength(0);
+  expect(data.feedback).toHaveLength(1);
+  expect(data.feedback[0].body).toContain("bug");
+});
+
+test("GET /api/search is case-insensitive", async () => {
+  const res = await fetch(`${baseUrl}/api/search?q=plan`);
+  const data = await res.json();
+  expect(data.reports).toHaveLength(1);
+});
+
+test("GET /api/search with empty q returns 400", async () => {
+  const res = await fetch(`${baseUrl}/api/search?q=`);
+  expect(res.status).toBe(400);
+});
+
+test("GET /api/search without q returns 400", async () => {
+  const res = await fetch(`${baseUrl}/api/search`);
+  expect(res.status).toBe(400);
+});
+
 test("unknown API path returns 404", async () => {
   const res = await fetch(`${baseUrl}/api/nonexistent`);
   expect(res.status).toBe(404);

@@ -238,6 +238,40 @@ interface FeedbackQueryRow {
   created_at: string;
 }
 
+export function searchReports(db: Database, query: string): ReportRow[] {
+  const rows = db.query(
+    "SELECT * FROM reports WHERE body LIKE $pattern ORDER BY created_at DESC"
+  ).all({ $pattern: `%${query}%` }) as ReportQueryRow[];
+  return rows.map(r => ({
+    repo: r.repo,
+    sessionId: r.session_id,
+    filename: r.filename,
+    slug: r.slug,
+    body: r.body,
+    replyTo: r.reply_to,
+    anchorPath: r.anchor_path,
+    anchorLineStart: r.anchor_line_start,
+    anchorLineEnd: r.anchor_line_end,
+    createdAt: r.created_at,
+  }));
+}
+
+export function searchFeedback(db: Database, query: string): FeedbackRow[] {
+  const rows = db.query(
+    "SELECT * FROM feedback WHERE body LIKE $pattern ORDER BY created_at DESC"
+  ).all({ $pattern: `%${query}%` }) as FeedbackQueryRow[];
+  return rows.map(r => ({
+    repo: r.repo,
+    sessionId: r.session_id,
+    filename: r.filename,
+    body: r.body,
+    anchorPath: r.anchor_path,
+    anchorLineStart: r.anchor_line_start,
+    anchorLineEnd: r.anchor_line_end,
+    createdAt: r.created_at,
+  }));
+}
+
 export function listReports(db: Database, sessionId: string): ReportRow[] {
   const rows = db.query("SELECT * FROM reports WHERE session_id = $sessionId ORDER BY filename").all({
     $sessionId: sessionId,
