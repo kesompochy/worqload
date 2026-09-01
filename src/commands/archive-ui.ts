@@ -4,8 +4,9 @@ export async function archiveUi(args: string[]): Promise<void> {
   const portArg = args.find(a => /^\d+$/.test(a));
   const port = portArg ? Number(portArg) : undefined;
   const noOpen = args.includes("--no-open");
+  const watch = args.includes("--watch");
 
-  const { server } = await startArchiveServer({ port });
+  const { server } = await startArchiveServer({ port, watch });
   const url = `http://127.0.0.1:${server.port}`;
   console.log(`archive-ui listening on ${url}`);
 
