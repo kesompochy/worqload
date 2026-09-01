@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { buildWebFrontend, webFrontendBuilt } from "../web-build";
 import { startServer } from "../web-server";
+import { defaultArchiveDbPath } from "../archive-store";
 import { openInBrowser } from "./serve";
 
 // preview.ts lives at <repoRoot>/src/commands/preview.ts.
@@ -156,7 +157,7 @@ export async function preview(args: string[]): Promise<void> {
 
   const requestedPort = explicitPort ?? 3456;
   const hostCommand = previewHostCommand(process.execPath, repoRoot);
-  const { ctx } = await startServer({ port: requestedPort, repoDir, hostCommand });
+  const { ctx } = await startServer({ port: requestedPort, repoDir, hostCommand, archiveDbPath: defaultArchiveDbPath() });
   if (ctx.port !== requestedPort) {
     console.log(`port ${requestedPort} was in use; using ${ctx.port} instead`);
   }
