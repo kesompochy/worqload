@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS feedback (
   created_at TEXT NOT NULL,
   UNIQUE(session_id, filename)
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id TEXT PRIMARY KEY,
+  repo TEXT NOT NULL,
+  initial_prompt TEXT,
+  created_at TEXT NOT NULL
+);
 `;
 
 export function openArchiveDb(path: string): Database {
@@ -108,12 +115,32 @@ export function insertFeedback(db: Database, row: FeedbackRow): void {
   });
 }
 
+export interface SessionRow {
+  sessionId: string;
+  repo: string;
+  initialPrompt: string | null;
+  createdAt: string;
+}
+
+export function upsertSession(db: Database, row: SessionRow): void {
+  db.query(`
+    INSERT OR IGNORE INTO sessions (session_id, repo, initial_prompt, created_at)
+    VALUES ($sessionId, $repo, $initialPrompt, $createdAt)
+  `).run({
+    $sessionId: row.sessionId,
+    $repo: row.repo,
+    $initialPrompt: row.initialPrompt,
+    $createdAt: row.createdAt,
+  });
+}
+
 export interface SessionSummary {
   sessionId: string;
   repo: string;
   latestAt: string;
   reportCount: number;
   feedbackCount: number;
+  initialPrompt: string | null;
 }
 
 export function listAllReports(db: Database, filter?: { repo?: string }): ReportRow[] {
@@ -155,20 +182,25 @@ export function listAllFeedback(db: Database, filter?: { repo?: string }): Feedb
 export function listAllSessions(db: Database, filter?: { repo?: string }): SessionSummary[] {
   const where = filter?.repo ? "WHERE repo = $repo" : "";
   const rows = db.query(`
-    SELECT session_id, repo, MAX(latest) AS latest_at, SUM(rc) AS report_count, SUM(fc) AS feedback_count
+    SELECT agg.session_id, agg.repo, agg.latest_at, agg.report_count, agg.feedback_count, s.initial_prompt
     FROM (
-      SELECT session_id, repo, created_at AS latest, 1 AS rc, 0 AS fc FROM reports ${where}
-      UNION ALL
-      SELECT session_id, repo, created_at AS latest, 0 AS rc, 1 AS fc FROM feedback ${where}
-    )
-    GROUP BY session_id
-    ORDER BY latest_at DESC
+      SELECT session_id, repo, MAX(latest) AS latest_at, SUM(rc) AS report_count, SUM(fc) AS feedback_count
+      FROM (
+        SELECT session_id, repo, created_at AS latest, 1 AS rc, 0 AS fc FROM reports ${where}
+        UNION ALL
+        SELECT session_id, repo, created_at AS latest, 0 AS rc, 1 AS fc FROM feedback ${where}
+      )
+      GROUP BY session_id
+    ) agg
+    LEFT JOIN sessions s ON s.session_id = agg.session_id
+    ORDER BY agg.latest_at DESC
   `).all(filter?.repo ? { $repo: filter.repo } : {}) as {
     session_id: string;
     repo: string;
     latest_at: string;
     report_count: number;
     feedback_count: number;
+    initial_prompt: string | null;
   }[];
   return rows.map(r => ({
     sessionId: r.session_id,
@@ -176,6 +208,7 @@ export function listAllSessions(db: Database, filter?: { repo?: string }): Sessi
     latestAt: r.latest_at,
     reportCount: r.report_count,
     feedbackCount: r.feedback_count,
+    initialPrompt: r.initial_prompt,
   }));
 }
 
