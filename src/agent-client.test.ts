@@ -19,6 +19,7 @@ async function bootAndCreateSession(
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
   const endpoint = `http://127.0.0.1:${started.server.port}`;
