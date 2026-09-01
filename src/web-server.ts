@@ -41,7 +41,7 @@ import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedback
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
-import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, defaultArchiveDbPath } from "./archive-store";
+import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession, defaultArchiveDbPath } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
@@ -2806,6 +2806,12 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     const file = await writeNumberedFile(inbox, slug, body.content, writeOpts);
     if (ctx.archiveDb) {
       try {
+        archiveUpsertSession(ctx.archiveDb, {
+          sessionId: meta.id,
+          repo: ctx.repoIdentifier,
+          initialPrompt: meta.prompt,
+          createdAt: meta.createdAt,
+        });
         archiveInsertFeedback(ctx.archiveDb, {
           repo: ctx.repoIdentifier,
           sessionId: meta.id,
@@ -2875,6 +2881,12 @@ async function postFeedbackBatch(req: Request, ctx: ServerContext, params: Recor
       const file = await writeNumberedFile(inbox, slug, item.content, writeOpts);
       if (ctx.archiveDb) {
         try {
+          archiveUpsertSession(ctx.archiveDb, {
+            sessionId: meta.id,
+            repo: ctx.repoIdentifier,
+            initialPrompt: meta.prompt,
+            createdAt: meta.createdAt,
+          });
           archiveInsertFeedback(ctx.archiveDb, {
             repo: ctx.repoIdentifier,
             sessionId: meta.id,
@@ -3180,6 +3192,12 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
     const file = await writeNumberedFile(dir, body.slug, body.content, writeOpts);
     if (ctx.archiveDb) {
       try {
+        archiveUpsertSession(ctx.archiveDb, {
+          sessionId: meta.id,
+          repo: ctx.repoIdentifier,
+          initialPrompt: meta.prompt,
+          createdAt: meta.createdAt,
+        });
         archiveInsertReport(ctx.archiveDb, {
           repo: ctx.repoIdentifier,
           sessionId: meta.id,
