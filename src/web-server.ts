@@ -41,7 +41,7 @@ import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedback
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
-import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession, defaultArchiveDbPath } from "./archive-store";
+import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 
@@ -311,7 +311,7 @@ export interface StartServerOptions {
   // `~/.config/worqload/config.yaml`; tests point it at a temp file to inject
   // settings. A missing file means no rules and the default feedback wording.
   configPath?: string;
-  archiveDbPath?: string | null;
+  archiveDbPath: string | null;
 }
 
 export interface ShutdownOptions {
@@ -1013,7 +1013,7 @@ async function reconnectToHost(ctx: ServerContext, meta: SessionMeta): Promise<H
   }
 }
 
-export async function startServer(opts: StartServerOptions = {}): Promise<StartedServer> {
+export async function startServer(opts: StartServerOptions): Promise<StartedServer> {
   const repoDir = resolve(opts.repoDir ?? process.cwd());
   const worqloadDir = join(repoDir, ".worqload");
   const sessionsDir = join(worqloadDir, "sessions");
@@ -1046,7 +1046,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Starte
   let archiveDb: Database | null = null;
   if (opts.archiveDbPath !== null) {
     try {
-      archiveDb = openArchiveDb(opts.archiveDbPath ?? defaultArchiveDbPath());
+      archiveDb = openArchiveDb(opts.archiveDbPath);
     } catch {
       // archive DB is best-effort; failure should not block the server
     }
