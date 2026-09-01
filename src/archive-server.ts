@@ -24,6 +24,21 @@ export function buildArchiveFrontend(): Promise<void> {
   return inFlightBuild;
 }
 
+export async function watchArchiveFrontend(): Promise<void> {
+  const { build } = await import("vite");
+  const watcher = await build({
+    configFile: join(REPO_ROOT, "vite.archive.config.ts"),
+    logLevel: "warn",
+    build: { watch: {} },
+  });
+  await new Promise<void>((resolve) => {
+    if (!("on" in watcher)) { resolve(); return; }
+    watcher.on("event", (e: { code: string }) => {
+      if (e.code === "BUNDLE_END") resolve();
+    });
+  });
+}
+
 export interface ArchiveServerContext {
   db: Database;
   staticDir: string;
@@ -113,6 +128,7 @@ function listenWithFallback(requestedPort: number, listen: (port: number) => Ser
 export interface StartArchiveServerOptions {
   port?: number;
   archiveDbPath?: string;
+  watch?: boolean;
 }
 
 export async function startArchiveServer(opts: StartArchiveServerOptions = {}): Promise<{
@@ -122,7 +138,11 @@ export async function startArchiveServer(opts: StartArchiveServerOptions = {}): 
 }> {
   const dbPath = opts.archiveDbPath ?? defaultArchiveDbPath();
   const db = openArchiveDb(dbPath);
-  if (!archiveFrontendBuilt()) await buildArchiveFrontend();
+  if (opts.watch) {
+    await watchArchiveFrontend();
+  } else if (!archiveFrontendBuilt()) {
+    await buildArchiveFrontend();
+  }
   const staticDir = ARCHIVE_DIST_DIR;
 
   const ctx: ArchiveServerContext = { db, staticDir };
