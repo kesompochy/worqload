@@ -33,7 +33,7 @@ import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
 import { isSessionPreviewAlive, isWorktreeDirty, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
-import { defaultBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
+import { defaultBranchNameGenerator, makeBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import type { IpadicFeatures, Tokenizer } from "kuromoji";
@@ -312,6 +312,9 @@ export interface StartServerOptions {
   // settings. A missing file means no rules and the default feedback wording.
   configPath?: string;
   archiveDbPath: string | null;
+  // Model to use for short-lived utility calls (branch naming, link labelling).
+  // Passed through to `claude -p --model <value>`. Unset means claude's default.
+  utilityModel?: string;
 }
 
 export interface ShutdownOptions {
@@ -1025,7 +1028,8 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
   const spawnCommandForAgent: (name: AgentName, model?: string) => string[] = overriddenSpawnCommand !== undefined
     ? () => overriddenSpawnCommand
     : (name, model) => buildDefaultSpawnCommand(name, driverName, model);
-  const branchNameGenerator = opts.branchNameGenerator ?? defaultBranchNameGenerator;
+  const branchNameGenerator = opts.branchNameGenerator
+    ?? (opts.utilityModel ? makeBranchNameGenerator({ model: opts.utilityModel }) : defaultBranchNameGenerator);
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand });
   const overriddenReportRewriter = opts.reportRewriter;

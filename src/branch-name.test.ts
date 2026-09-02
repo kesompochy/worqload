@@ -92,7 +92,7 @@ describe("makeBranchNameGenerator with WORQLOAD_DRIVER=tmux", () => {
       bootstrapFileDir: bootstrapDir,
     };
 
-    const name = await withDriverTmux(() => makeBranchNameGenerator(tmuxDeps)("build a thing"));
+    const name = await withDriverTmux(() => makeBranchNameGenerator({ tmuxDeps })("build a thing"));
 
     expect(newSessionSeen).toBe(true);
     expect(name).toBe("tmux-named");
@@ -109,7 +109,7 @@ describe("makeBranchNameGenerator with WORQLOAD_DRIVER=tmux", () => {
       bootstrapFileDir: mkdtempSync(join(tmpdir(), "wq-bn-tmux-bs-")),
     };
 
-    const name = await withDriverTmux(() => makeBranchNameGenerator(tmuxDeps)("build a thing"));
+    const name = await withDriverTmux(() => makeBranchNameGenerator({ tmuxDeps })("build a thing"));
 
     expect(name).toBeNull();
   });
