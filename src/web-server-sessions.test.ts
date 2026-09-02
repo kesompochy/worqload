@@ -1074,6 +1074,64 @@ test("DELETE /sessions/:id/links 404s for an unknown URL", async () => {
   expect(res.status).toBe(404);
 });
 
+// -------- auto link extraction --------
+
+test("session creation auto-extracts URLs from prompt and labels them", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir, {
+    linkLabelGenerator: async (url) => {
+      if (url.includes("issues")) return "issue";
+      return null;
+    },
+  });
+
+  const prompt = "Fix https://github.com/o/r/issues/42 and see https://example.com for context";
+  const created = await postJson(baseUrl, "/sessions", { prompt, baseBranch: TEST_BASE });
+  const sid = (await created.json()).meta.id;
+
+  // backfillPromptLinks is fire-and-forget; give it a moment to settle
+  await Bun.sleep(200);
+
+  const meta = await loadSessionMeta(sid, join(repoDir, ".worqload/sessions"));
+  expect(meta!.links).toEqual([
+    { url: "https://github.com/o/r/issues/42", label: "issue" },
+    { url: "https://example.com" },
+  ]);
+});
+
+test("session creation does not add links when prompt has no URLs", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir, {
+    linkLabelGenerator: async () => "label",
+  });
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "no urls here", baseBranch: TEST_BASE });
+  const sid = (await created.json()).meta.id;
+
+  await Bun.sleep(100);
+
+  const meta = await loadSessionMeta(sid, join(repoDir, ".worqload/sessions"));
+  expect(meta!.links).toBeUndefined();
+});
+
+test("auto link extraction does not duplicate URLs that the label generator fails on", async () => {
+  const repoDir = makeTmpDir("repo");
+  let callCount = 0;
+  const { baseUrl } = await bootServer(repoDir, {
+    linkLabelGenerator: async () => { callCount++; return null; },
+  });
+
+  const prompt = "See https://example.com/a and https://example.com/a again";
+  const created = await postJson(baseUrl, "/sessions", { prompt, baseBranch: TEST_BASE });
+  const sid = (await created.json()).meta.id;
+
+  await Bun.sleep(200);
+
+  const meta = await loadSessionMeta(sid, join(repoDir, ".worqload/sessions"));
+  expect(meta!.links).toEqual([{ url: "https://example.com/a" }]);
+  expect(callCount).toBe(1);
+});
+
 test("POST /feedback appends a wake_sent entry to host.log", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

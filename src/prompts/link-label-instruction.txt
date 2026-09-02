@@ -1,0 +1,1 @@
+Classify this URL with a single short label (1-2 lowercase words, e.g. "issue", "pr", "docs", "slack", "design"). Output ONLY the label on a single line. No explanation, no quotes.
