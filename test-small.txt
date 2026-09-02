@@ -39,4 +39,5 @@ src/structure-view.test.ts
 src/syntax-highlight.test.ts
 src/textlint.small.test.ts
 src/url-state.test.ts
+src/utility-model.test.ts
 src/utils/json-store.test.ts

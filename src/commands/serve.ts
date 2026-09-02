@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { watchWebFrontend } from "../web-build";
 import { startServer } from "../web-server";
 import { defaultArchiveDbPath } from "../archive-store";
+import { resolveUtilityModel } from "../utility-model";
 
 // Set on the re-spawned child so it knows the outer `worqload serve --watch`
 // already wrapped it in `bun --watch` and it should boot normally instead of
@@ -194,6 +195,7 @@ export async function serve(args: string[]): Promise<void> {
     hostCommand,
     ...(driverName && { driverName }),
     ...(agentName && { agentName }),
+    utilityModel: resolveUtilityModel(),
     archiveDbPath: defaultArchiveDbPath(),
   });
   if (requestedPort !== 0 && ctx.port !== requestedPort) {
