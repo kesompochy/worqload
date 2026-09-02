@@ -34,6 +34,8 @@ import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
 import { isSessionPreviewAlive, isWorktreeDirty, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, makeBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
+import { extractUrls } from "./link-extraction";
+import { defaultLinkLabelGenerator, makeLinkLabelGenerator, type LinkLabelGenerator } from "./link-label";
 import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import type { IpadicFeatures, Tokenizer } from "kuromoji";
@@ -270,6 +272,7 @@ export interface ServerContext {
   textlintTokenizer?: Tokenizer<IpadicFeatures> | null;
   archiveDb: Database | null;
   repoIdentifier: string;
+  linkLabelGenerator: LinkLabelGenerator;
 }
 
 export interface StartServerOptions {
@@ -315,6 +318,7 @@ export interface StartServerOptions {
   // Model to use for short-lived utility calls (branch naming, link labelling).
   // Passed through to `claude -p --model <value>`. Unset means claude's default.
   utilityModel?: string;
+  linkLabelGenerator?: LinkLabelGenerator;
 }
 
 export interface ShutdownOptions {
@@ -1046,6 +1050,8 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
   // in tests) so the sidebar's background prefetch doesn't respawn `gh` per
   // session per poll and an opened session shows its link without a beat.
   const prLinkResolver = makeCachedPrLinkResolver(opts.prLinkResolver ?? ghPrLinkResolver);
+  const linkLabelGenerator = opts.linkLabelGenerator
+    ?? (opts.utilityModel ? makeLinkLabelGenerator({ model: opts.utilityModel }) : defaultLinkLabelGenerator);
 
   let archiveDb: Database | null = null;
   if (opts.archiveDbPath !== null) {
@@ -1171,6 +1177,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     reviseFeedbackGuidance,
     archiveDb,
     repoIdentifier,
+    linkLabelGenerator,
   };
 
   await reconcileNonTerminalSessions(ctx);
@@ -1564,6 +1571,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   }
 
   void runSessionCreateHooks(ctx.configPath, ctx.repoDir, worktreePath).catch(() => {});
+  void backfillPromptLinks(ctx, meta).catch(() => {});
 
   if (!startPaused) {
     await spawnAndAttachHost(ctx, meta, forkInfo ? { fork: forkInfo } : {});
@@ -1571,6 +1579,33 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
   return json({ meta: stored ?? meta }, 201);
+}
+
+async function backfillPromptLinks(ctx: ServerContext, meta: SessionMeta): Promise<void> {
+  const urls = extractUrls(meta.prompt);
+  if (urls.length === 0) return;
+  const existingUrls = new Set((meta.links ?? []).map(l => l.url));
+  const newUrls = urls.filter(u => !existingUrls.has(u));
+  if (newUrls.length === 0) return;
+
+  const entries = await Promise.all(
+    newUrls.map(async (url): Promise<{ url: string; label?: string }> => {
+      const label = await ctx.linkLabelGenerator(url, meta.prompt).catch(() => null);
+      return label ? { url, label } : { url };
+    }),
+  );
+
+  const current = await loadSessionMeta(meta.id, ctx.sessionsDir);
+  if (!current) return;
+  const merged = [...(current.links ?? [])];
+  const mergedUrls = new Set(merged.map(l => l.url));
+  for (const entry of entries) {
+    if (!mergedUrls.has(entry.url)) {
+      merged.push(entry);
+      mergedUrls.add(entry.url);
+    }
+  }
+  await saveSessionMeta({ ...current, links: merged }, ctx.sessionsDir);
 }
 
 async function copyClaudeTranscript(
