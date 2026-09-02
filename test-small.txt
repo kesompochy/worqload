@@ -22,6 +22,8 @@ src/files-view.test.ts
 src/handlers.small.test.ts
 src/hooks.small.test.ts
 src/import-graph.test.ts
+src/link-extraction.test.ts
+src/link-label.test.ts
 src/lsp-client.small.test.ts
 src/markdown.test.ts
 src/notifications.test.ts
