@@ -189,14 +189,13 @@ export async function serve(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const utilityModel = resolveUtilityModel();
   const { ctx } = await startServer({
     port: requestedPort,
     spawnCommand,
     hostCommand,
     ...(driverName && { driverName }),
     ...(agentName && { agentName }),
-    ...(utilityModel && { utilityModel }),
+    utilityModel: resolveUtilityModel(),
     archiveDbPath: defaultArchiveDbPath(),
   });
   if (requestedPort !== 0 && ctx.port !== requestedPort) {
