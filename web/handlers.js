@@ -624,6 +624,26 @@ export function expandDiffGap(path, from, to, dir) {
   state.diffExpansions = next;
 }
 
+function lineBodyText(lineEl) {
+  const body = lineEl.querySelector(".body");
+  return body ? body.textContent : "";
+}
+
+function collectRangeQuote(path, lineStart, lineEnd) {
+  const rows = document.querySelectorAll(
+    `[data-anchor-path="${CSS.escape(path)}"][data-anchor-line]`,
+  );
+  const lines = [];
+  for (const el of rows) {
+    const start = Number(el.getAttribute("data-anchor-line"));
+    const endAttr = el.getAttribute("data-anchor-line-end");
+    const end = endAttr !== null ? Number(endAttr) : start;
+    if (start > lineEnd || end < lineStart) continue;
+    lines.push(lineBodyText(el));
+  }
+  return lines.join("\n");
+}
+
 export function onLineClick(e) {
   // A drag to select text ends with a click event too. Treating it as a line
   // anchor would re-render the pane and discard the selection before the user
@@ -639,13 +659,16 @@ export function onLineClick(e) {
   const lineEnd = lineEndAttr !== null ? Number(lineEndAttr) : lineStart;
   if (!path || !Number.isFinite(lineStart) || !Number.isFinite(lineEnd)) return;
   if (e.shiftKey && state.anchor && state.anchor.path === path) {
+    const newStart = Math.min(state.anchor.lineStart, lineStart);
+    const newEnd = Math.max(state.anchor.lineEnd, lineEnd);
     state.anchor = {
       path,
-      lineStart: Math.min(state.anchor.lineStart, lineStart),
-      lineEnd: Math.max(state.anchor.lineEnd, lineEnd),
+      lineStart: newStart,
+      lineEnd: newEnd,
+      quote: collectRangeQuote(path, newStart, newEnd),
     };
   } else {
-    state.anchor = { path, lineStart, lineEnd };
+    state.anchor = { path, lineStart, lineEnd, quote: lineBodyText(target) };
   }
   if (state.activeTab === "files") {
     replaceUrlState({
