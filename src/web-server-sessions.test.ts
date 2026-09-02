@@ -1086,14 +1086,10 @@ test("session creation auto-extracts URLs from prompt and labels them", async ()
   });
 
   const prompt = "Fix https://github.com/o/r/issues/42 and see https://example.com for context";
-  const created = await postJson(baseUrl, "/sessions", { prompt, baseBranch: TEST_BASE });
-  const sid = (await created.json()).meta.id;
+  const res = await postJson(baseUrl, "/sessions", { prompt, baseBranch: TEST_BASE });
+  const body = await res.json();
 
-  // backfillPromptLinks is fire-and-forget; give it a moment to settle
-  await Bun.sleep(200);
-
-  const meta = await loadSessionMeta(sid, join(repoDir, ".worqload/sessions"));
-  expect(meta!.links).toEqual([
+  expect(body.meta.links).toEqual([
     { url: "https://github.com/o/r/issues/42", label: "issue" },
     { url: "https://example.com" },
   ]);
@@ -1105,16 +1101,13 @@ test("session creation does not add links when prompt has no URLs", async () => 
     linkLabelGenerator: async () => "label",
   });
 
-  const created = await postJson(baseUrl, "/sessions", { prompt: "no urls here", baseBranch: TEST_BASE });
-  const sid = (await created.json()).meta.id;
+  const res = await postJson(baseUrl, "/sessions", { prompt: "no urls here", baseBranch: TEST_BASE });
+  const body = await res.json();
 
-  await Bun.sleep(100);
-
-  const meta = await loadSessionMeta(sid, join(repoDir, ".worqload/sessions"));
-  expect(meta!.links).toBeUndefined();
+  expect(body.meta.links).toBeUndefined();
 });
 
-test("auto link extraction does not duplicate URLs that the label generator fails on", async () => {
+test("auto link extraction deduplicates URLs from prompt", async () => {
   const repoDir = makeTmpDir("repo");
   let callCount = 0;
   const { baseUrl } = await bootServer(repoDir, {
@@ -1122,13 +1115,10 @@ test("auto link extraction does not duplicate URLs that the label generator fail
   });
 
   const prompt = "See https://example.com/a and https://example.com/a again";
-  const created = await postJson(baseUrl, "/sessions", { prompt, baseBranch: TEST_BASE });
-  const sid = (await created.json()).meta.id;
+  const res = await postJson(baseUrl, "/sessions", { prompt, baseBranch: TEST_BASE });
+  const body = await res.json();
 
-  await Bun.sleep(200);
-
-  const meta = await loadSessionMeta(sid, join(repoDir, ".worqload/sessions"));
-  expect(meta!.links).toEqual([{ url: "https://example.com/a" }]);
+  expect(body.meta.links).toEqual([{ url: "https://example.com/a" }]);
   expect(callCount).toBe(1);
 });
 
