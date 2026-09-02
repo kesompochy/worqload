@@ -1523,12 +1523,15 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     startPaused,
   });
 
-  const branchName = await resolveBranchName({
-    explicit: body.branchName,
-    prompt: body.prompt,
-    fallback: tentative.id.slice(0, 8),
-    generator: ctx.branchNameGenerator,
-  });
+  const [branchName, promptLinks] = await Promise.all([
+    resolveBranchName({
+      explicit: body.branchName,
+      prompt: body.prompt,
+      fallback: tentative.id.slice(0, 8),
+      generator: ctx.branchNameGenerator,
+    }),
+    resolvePromptLinks(ctx, body.prompt),
+  ]);
   if (branchName === null) {
     return json({ error: "branchName is not a valid git ref" }, 400);
   }
@@ -1549,6 +1552,10 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     return json({ error: message }, 400);
   }
 
+  const forkLinks = sourceMeta?.links && sourceMeta.links.length > 0 ? [...sourceMeta.links] : [];
+  const forkLinkUrls = new Set(forkLinks.map(l => l.url));
+  const allLinks = [...forkLinks, ...promptLinks.filter(l => !forkLinkUrls.has(l.url))];
+
   const meta: SessionMeta = {
     ...tentative,
     worktreePath,
@@ -1559,8 +1566,8 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
         commitSha: startPoint,
       },
       ...(sourceMeta.agentSessionId !== undefined && { agentSessionId: sourceMeta.agentSessionId }),
-      ...(sourceMeta.links && sourceMeta.links.length > 0 && { links: [...sourceMeta.links] }),
     }),
+    ...(allLinks.length > 0 && { links: allLinks }),
   };
   await saveSessionMeta(meta, ctx.sessionsDir);
 
@@ -1571,7 +1578,6 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   }
 
   void runSessionCreateHooks(ctx.configPath, ctx.repoDir, worktreePath).catch(() => {});
-  void backfillPromptLinks(ctx, meta).catch(() => {});
 
   if (!startPaused) {
     await spawnAndAttachHost(ctx, meta, forkInfo ? { fork: forkInfo } : {});
@@ -1581,33 +1587,19 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   return json({ meta: stored ?? meta }, 201);
 }
 
-async function backfillPromptLinks(ctx: ServerContext, meta: SessionMeta): Promise<void> {
-  const urls = extractUrls(meta.prompt);
-  if (urls.length === 0) return;
-  const existingUrls = new Set((meta.links ?? []).map(l => l.url));
-  const newUrls = urls.filter(u => !existingUrls.has(u));
-  if (newUrls.length === 0) return;
-
+async function resolvePromptLinks(
+  ctx: ServerContext,
+  prompt: string,
+): Promise<Array<{ url: string; label?: string }>> {
+  const urls = extractUrls(prompt);
+  if (urls.length === 0) return [];
   const entries = await Promise.all(
-    newUrls.map(async (url): Promise<{ url: string; label?: string }> => {
-      const label = await ctx.linkLabelGenerator(url, meta.prompt).catch(() => null);
+    urls.map(async (url): Promise<{ url: string; label?: string }> => {
+      const label = await ctx.linkLabelGenerator(url, prompt).catch(() => null);
       return label ? { url, label } : { url };
     }),
   );
-
-  const current = await loadSessionMeta(meta.id, ctx.sessionsDir);
-  if (!current) return;
-  const merged = [...(current.links ?? [])];
-  const mergedUrls = new Set(merged.map(l => l.url));
-  for (const entry of entries) {
-    if (!mergedUrls.has(entry.url)) {
-      merged.push(entry);
-      mergedUrls.add(entry.url);
-    }
-  }
-  await saveSessionMeta({ ...current, links: merged }, ctx.sessionsDir);
-  const event = await appendEvent(ctx.sessionsDir, meta.id, "links_updated", { urls: merged.map(l => l.url) });
-  broadcastEvent(ctx, meta.id, event);
+  return entries;
 }
 
 async function copyClaudeTranscript(

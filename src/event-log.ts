@@ -30,8 +30,7 @@ export type EventKind =
   | "session_crashed"
   // Marker the wake watchdog emits before auto-resuming a session whose host
   // never echoed our wake. The host then writes its usual session_resumed.
-  | "session_auto_resumed"
-  | "links_updated";
+  | "session_auto_resumed";
 
 export interface Event {
   seq: number;
