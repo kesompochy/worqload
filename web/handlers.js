@@ -626,7 +626,7 @@ export function expandDiffGap(path, from, to, dir) {
 
 function lineBodyText(lineEl) {
   const body = lineEl.querySelector(".body");
-  return body ? body.textContent : "";
+  return (body ?? lineEl).textContent ?? "";
 }
 
 function collectRangeQuote(path, lineStart, lineEnd) {
