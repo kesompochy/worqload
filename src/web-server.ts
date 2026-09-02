@@ -1606,6 +1606,8 @@ async function backfillPromptLinks(ctx: ServerContext, meta: SessionMeta): Promi
     }
   }
   await saveSessionMeta({ ...current, links: merged }, ctx.sessionsDir);
+  const event = await appendEvent(ctx.sessionsDir, meta.id, "links_updated", { urls: merged.map(l => l.url) });
+  broadcastEvent(ctx, meta.id, event);
 }
 
 async function copyClaudeTranscript(
