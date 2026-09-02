@@ -591,7 +591,8 @@ export function openWs(id) {
     if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread" || ev.kind === "report_deleted"
         || ev.kind === "feedback_received" || ev.kind === "feedback_fetched" || ev.kind === "feedback_deleted"
         || ev.kind === "escalation_requested" || ev.kind === "escalation_resolved"
-        || ev.kind === "session_stopped" || ev.kind === "session_crashed" || ev.kind === "session_resumed") {
+        || ev.kind === "session_stopped" || ev.kind === "session_crashed" || ev.kind === "session_resumed"
+        || ev.kind === "links_updated") {
       await refreshDetail();
       if (notify.active()) {
         const n = notificationForEvent(ev, { session: state.detail?.meta, reports: state.reports, asking: state.asking });
