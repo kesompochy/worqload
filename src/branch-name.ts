@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import CLAUDE_INSTRUCTION from "./prompts/branch-name-instruction.txt" with { type: "text" };
 import { defaultTmuxDeps, tmuxOneShotText, type TmuxDriverDeps } from "./session-driver-tmux";
+import { resolveUtilityModel } from "./utility-model";
 
 const MAX_LEN = 60;
 
@@ -51,10 +52,12 @@ export function resolveBranchNameClaudeBin(env: Record<string, string | undefine
   return "claude";
 }
 
-async function pipeBranchName(fullPrompt: string): Promise<string | null> {
+async function pipeBranchName(fullPrompt: string, model?: string): Promise<string | null> {
+  const cmd = [resolveBranchNameClaudeBin(), "-p", fullPrompt];
+  if (model) cmd.push("--model", model);
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
   try {
-    proc = Bun.spawn([resolveBranchNameClaudeBin(), "-p", fullPrompt], { stdout: "pipe", stderr: "pipe" });
+    proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
   } catch {
     return null;
   }
@@ -81,6 +84,11 @@ async function tmuxBranchName(fullPrompt: string, tmuxDeps: TmuxDriverDeps): Pro
   return text === null ? null : sanitizeBranchName(text);
 }
 
+export interface BranchNameGeneratorOptions {
+  tmuxDeps?: TmuxDriverDeps;
+  model?: string;
+}
+
 // Asks Claude for a short branch name. Returns null on any failure (claude not
 // on PATH, non-zero exit, unparseable output, tmux teardown timeout) so the
 // caller can fall back to <shortId>.
@@ -89,14 +97,17 @@ async function tmuxBranchName(fullPrompt: string, tmuxDeps: TmuxDriverDeps): Pro
 // route serve uses for sessions to avoid the `claude -p` Agent SDK credit
 // pool; otherwise the pipe path runs `claude -p` directly. tmuxDeps is
 // injectable for tests; production uses defaultTmuxDeps.
-export function makeBranchNameGenerator(tmuxDeps: TmuxDriverDeps = defaultTmuxDeps): BranchNameGenerator {
+export function makeBranchNameGenerator(opts: BranchNameGeneratorOptions = {}): BranchNameGenerator {
+  const { tmuxDeps = defaultTmuxDeps, model } = opts;
   return async (prompt) => {
     const fullPrompt = `${CLAUDE_INSTRUCTION}\n\nTask: ${prompt}`;
     if ((process.env.WORQLOAD_DRIVER ?? "").trim() === "tmux") {
       return tmuxBranchName(fullPrompt, tmuxDeps);
     }
-    return pipeBranchName(fullPrompt);
+    return pipeBranchName(fullPrompt, model);
   };
 }
 
-export const defaultBranchNameGenerator: BranchNameGenerator = makeBranchNameGenerator();
+export const defaultBranchNameGenerator: BranchNameGenerator = makeBranchNameGenerator({
+  model: resolveUtilityModel(),
+});
