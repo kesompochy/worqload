@@ -31,7 +31,7 @@ import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumb
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
-import { isSessionPreviewAlive, isWorktreeDirty, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
+import { isSessionPreviewAlive, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, makeBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { extractUrls } from "./link-extraction";
@@ -1479,9 +1479,6 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     sourceMeta = await loadSessionMeta(body.forkFrom, ctx.sessionsDir);
     if (!sourceMeta) {
       return json({ error: `source session not found: ${body.forkFrom}` }, 400);
-    }
-    if (await isWorktreeDirty(sourceMeta.worktreePath)) {
-      return json({ error: "source session has uncommitted changes; commit them before forking" }, 400);
     }
     forkInfo = { sourceSessionId: body.forkFrom, sourceWorktreePath: sourceMeta.worktreePath };
   }
