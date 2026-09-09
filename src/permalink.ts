@@ -53,6 +53,43 @@ export function parseGitRemoteUrl(remoteUrl: string): ParsedRemoteRepo | null {
   return { webBaseUrl: `https://${host}/${path}` };
 }
 
+export interface InsteadOfEntry {
+  rewritten: string;
+  canonical: string;
+}
+
+// Given a remote URL and a list of insteadOf entries, reverses the longest
+// matching rewrite so the URL uses the canonical (browser-reachable) hostname.
+// Some repos store the rewritten URL (e.g. `github-emu`) in .git/config
+// because the clone tool resolved insteadOf before persisting. This function
+// undoes that.
+export function reverseInsteadOf(url: string, entries: InsteadOfEntry[]): string {
+  let best: InsteadOfEntry | null = null;
+  for (const e of entries) {
+    if (url.startsWith(e.rewritten) && (!best || e.rewritten.length > best.rewritten.length)) {
+      best = e;
+    }
+  }
+  return best ? best.canonical + url.slice(best.rewritten.length) : url;
+}
+
+// Parses the output of `git config --get-regexp url\..*\.insteadof` into
+// structured entries.
+export function parseInsteadOfConfig(raw: string): InsteadOfEntry[] {
+  const entries: InsteadOfEntry[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
+    const spaceIdx = line.indexOf(" ");
+    if (spaceIdx < 0) continue;
+    const key = line.slice(0, spaceIdx);
+    const canonical = line.slice(spaceIdx + 1);
+    const match = key.match(/^url\.(.+)\.insteadof$/);
+    if (!match) continue;
+    entries.push({ rewritten: match[1], canonical });
+  }
+  return entries;
+}
+
 function encodePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }

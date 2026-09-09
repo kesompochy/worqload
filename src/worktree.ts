@@ -1,6 +1,7 @@
 import { dirname, extname, join, resolve, sep } from "path";
 import { existsSync, symlinkSync, unlinkSync, realpathSync, statSync } from "fs";
 import { mkdir, rm, rename } from "node:fs/promises";
+import { parseInsteadOfConfig, reverseInsteadOf } from "./permalink";
 
 function cleanGitEnv(): Record<string, string | undefined> {
   return { ...process.env, GIT_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_WORK_TREE: undefined };
@@ -185,19 +186,30 @@ export async function resolveLatestBase(
 }
 
 // The configured URL of `origin`, or the first remote if there's no `origin`,
-// or null if the worktree has no remotes. Used only to build "open this on
-// GitHub" permalinks — no fetch, just a config read.
+// or null if the worktree has no remotes. Used to build "open this on GitHub"
+// permalinks and as a stable repo identifier in the archive DB.
 //
-// Uses `git config` instead of `git remote get-url` so that `url.<base>.insteadOf`
-// rewrites (e.g. SSH Host aliases like `github-emu`) are NOT applied — the
-// permalink needs the real hostname the browser can reach.
+// Reads `git config remote.<name>.url` (the raw stored value, not the
+// transport-rewritten one from `git remote get-url`). When the stored URL
+// itself was persisted with a rewritten hostname (e.g. a clone tool that
+// resolved insteadOf before writing .git/config), the function reverses
+// matching `url.<base>.insteadOf` entries to recover the canonical,
+// browser-reachable hostname.
 export async function gitRemoteUrl(worktreePath: string): Promise<string | null> {
-  const url = await gitOutput(worktreePath, ["config", "remote.origin.url"]);
-  if (url !== null) return url;
-  const remotes = await gitOutput(worktreePath, ["remote"]);
-  const first = remotes?.split("\n").map(r => r.trim()).find(r => r !== "");
-  if (!first) return null;
-  return gitOutput(worktreePath, ["config", `remote.${first}.url`]);
+  let url = await gitOutput(worktreePath, ["config", "remote.origin.url"]);
+  if (url === null) {
+    const remotes = await gitOutput(worktreePath, ["remote"]);
+    const first = remotes?.split("\n").map(r => r.trim()).find(r => r !== "");
+    if (!first) return null;
+    url = await gitOutput(worktreePath, ["config", `remote.${first}.url`]);
+  }
+  if (url === null) return null;
+
+  const raw = await gitOutput(worktreePath, ["config", "--get-regexp", "url\\..*\\.insteadof"]);
+  if (raw) {
+    url = reverseInsteadOf(url, parseInsteadOfConfig(raw));
+  }
+  return url;
 }
 
 export async function gitHeadSha(worktreePath: string): Promise<string | null> {
