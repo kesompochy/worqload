@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
+import { parseGitRemoteUrl, buildBlobPermalink, reverseInsteadOf, parseInsteadOfConfig } from "./permalink";
 
 test("parseGitRemoteUrl reads the scp-like form git uses for SSH remotes", () => {
   expect(parseGitRemoteUrl("git@github.com:owner/repo.git")).toEqual({ webBaseUrl: "https://github.com/owner/repo" });
@@ -49,4 +49,53 @@ test("buildBlobPermalink adds #L for a single line and #L-L for a range", () => 
 test("buildBlobPermalink percent-encodes path segments but keeps the slashes", () => {
   expect(buildBlobPermalink({ webBaseUrl: "https://github.com/owner/repo", ref: "abc123", path: "dir with space/a+b.ts" }))
     .toBe("https://github.com/owner/repo/blob/abc123/dir%20with%20space/a%2Bb.ts");
+});
+
+test("reverseInsteadOf replaces a rewritten prefix with the canonical one", () => {
+  const entries = [
+    { rewritten: "ssh://git@github-alias/example-org/", canonical: "ssh://git@github.com/example-org/" },
+    { rewritten: "git@github-alias:example-org/", canonical: "git@github.com:example-org/" },
+  ];
+  expect(reverseInsteadOf("ssh://git@github-alias/example-org/repo.git", entries))
+    .toBe("ssh://git@github.com/example-org/repo.git");
+  expect(reverseInsteadOf("git@github-alias:example-org/repo.git", entries))
+    .toBe("git@github.com:example-org/repo.git");
+});
+
+test("reverseInsteadOf returns the URL unchanged when no entry matches", () => {
+  const entries = [
+    { rewritten: "ssh://git@github-alias/example-org/", canonical: "ssh://git@github.com/example-org/" },
+  ];
+  expect(reverseInsteadOf("git@github.com:owner/repo.git", entries))
+    .toBe("git@github.com:owner/repo.git");
+});
+
+test("reverseInsteadOf picks the longest matching rewritten prefix", () => {
+  const entries = [
+    { rewritten: "ssh://git@alias/", canonical: "ssh://git@host/" },
+    { rewritten: "ssh://git@alias/org/", canonical: "ssh://git@host/org/" },
+  ];
+  expect(reverseInsteadOf("ssh://git@alias/org/repo.git", entries))
+    .toBe("ssh://git@host/org/repo.git");
+});
+
+test("reverseInsteadOf handles empty entries list", () => {
+  expect(reverseInsteadOf("git@github.com:o/r.git", [])).toBe("git@github.com:o/r.git");
+});
+
+test("parseInsteadOfConfig extracts entries from git config --get-regexp output", () => {
+  const raw = [
+    "url.ssh://git@github-alias/example-org/.insteadof ssh://git@github.com/example-org/",
+    "url.git@github-alias:example-org/.insteadof git@github.com:example-org/",
+  ].join("\n");
+  expect(parseInsteadOfConfig(raw)).toEqual([
+    { rewritten: "ssh://git@github-alias/example-org/", canonical: "ssh://git@github.com/example-org/" },
+    { rewritten: "git@github-alias:example-org/", canonical: "git@github.com:example-org/" },
+  ]);
+});
+
+test("parseInsteadOfConfig skips blank lines and malformed entries", () => {
+  expect(parseInsteadOfConfig("")).toEqual([]);
+  expect(parseInsteadOfConfig("not-a-valid-line")).toEqual([]);
+  expect(parseInsteadOfConfig("some.key value")).toEqual([]);
 });
