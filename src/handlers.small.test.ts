@@ -707,6 +707,34 @@ test("switchTab writes the new tab into the URL (default tab is omitted)", async
   }
 });
 
+test("switchTab preserves the selected file path in the URL when leaving the Files tab", async () => {
+  const win = installUrlWindow("?session=session-c&tab=files&file=src%2Fcli.ts");
+  state.selected = "session-c";
+  state.activeTab = "files";
+  state.selectedFilePath = "src/cli.ts";
+  try {
+    await switchTab("diff");
+    expect(win.lastUrl).toBe("/?session=session-c&tab=diff&file=src%2Fcli.ts");
+    await switchTab("files");
+    expect(win.lastUrl).toBe("/?session=session-c&tab=files&file=src%2Fcli.ts");
+  } finally {
+    uninstallUrlWindow();
+  }
+});
+
+test("switchTab drops the file param from the URL when no file is selected", async () => {
+  const win = installUrlWindow("?session=session-c");
+  state.selected = "session-c";
+  state.activeTab = "files";
+  state.selectedFilePath = null;
+  try {
+    await switchTab("diff");
+    expect(win.lastUrl).toBe("/?session=session-c&tab=diff");
+  } finally {
+    uninstallUrlWindow();
+  }
+});
+
 test("pushStructureFocus drills the focus stack and appends a focus query param per level", async () => {
   const win = installUrlWindow("?session=session-c&tab=structure");
   state.selected = "session-c";

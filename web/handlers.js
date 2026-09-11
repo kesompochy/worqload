@@ -778,7 +778,7 @@ export async function switchTab(tab, { historyAction = "push" } = {}) {
   state.activeTab = tab;
   const fileUrlFields = tab === "files"
     ? { filePath: state.selectedFilePath, fileLine: state.anchor?.lineStart ?? null, fileLineEnd: state.anchor?.lineEnd ?? null }
-    : { filePath: null, fileLine: null, fileLineEnd: null };
+    : { filePath: state.selectedFilePath ?? null, fileLine: null, fileLineEnd: null };
   syncHistory(historyAction, {
     sessionId: state.selected, tab, focusStack: state.structureFocusStack,
     structureAnchor: state.structureAnchor, structureHops: state.structureHops,
