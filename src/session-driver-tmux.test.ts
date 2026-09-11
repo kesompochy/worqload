@@ -6,6 +6,7 @@ import type {
   SessionDriverLaunchOptions,
 } from "./session-driver";
 import {
+  detectWorkspaceTrustPrompt,
   encodeCwdForClaudeProjects,
   harvestAskRules,
   makeTmuxClaudeDriverFactory,
@@ -30,6 +31,8 @@ interface FakeTmuxState {
   hasSessionReplies: number[];
   // True after kill-session has been received.
   killed: boolean;
+  // Content returned by capturePane. When set, capturePane returns this string.
+  paneContent: string;
 }
 
 function makeFakeTmuxDeps(transcriptDir: string, bootstrapDir = makeTmpDir("tmux-driver-bootstrap")): { deps: TmuxDriverDeps; state: FakeTmuxState } {
@@ -37,6 +40,7 @@ function makeFakeTmuxDeps(transcriptDir: string, bootstrapDir = makeTmpDir("tmux
     calls: [],
     hasSessionReplies: [],
     killed: false,
+    paneContent: "",
   };
   const tmuxRun = async (args: string[], opts?: { stdin?: string }): Promise<TmuxRunResult> => {
     state.calls.push({ args: [...args], stdin: opts?.stdin });
@@ -55,6 +59,7 @@ function makeFakeTmuxDeps(transcriptDir: string, bootstrapDir = makeTmpDir("tmux
   return {
     deps: {
       tmuxRun,
+      capturePane: async () => state.paneContent,
       resolveTranscriptDir: () => transcriptDir,
       // Hermetic by default: no settings files, so tests never read the real
       // ~/.claude/settings.json. Tests exercising the ask-rule injection set
@@ -639,6 +644,7 @@ test("tmuxOneShotText spawns claude with the prompt, returns the first assistant
       }
       return { exitCode: 0, stdout: "", stderr: "" };
     },
+    capturePane: async () => "",
     resolveTranscriptDir: () => transcriptDir,
     resolveSettingsFiles: () => [],
     pollIntervalMs: 10,
@@ -704,6 +710,7 @@ test("tmuxOneShotText returns null when tmux new-session fails", async () => {
       if (args[0] === "new-session") return { exitCode: 1, stdout: "", stderr: "boom" };
       return { exitCode: 0, stdout: "", stderr: "" };
     },
+    capturePane: async () => "",
     resolveTranscriptDir: () => transcriptDir,
     resolveSettingsFiles: () => [],
     pollIntervalMs: 10,
@@ -717,4 +724,64 @@ test("tmuxOneShotText returns null when tmux new-session fails", async () => {
   );
 
   expect(text).toBeNull();
+});
+
+test("detectWorkspaceTrustPrompt returns true when the trust dialog text is present", () => {
+  const pane = `────────────────────────────────────────────
+ Accessing workspace:
+
+ /Users/me/project/.worktrees/abc123
+
+ Quick safety check: Is this a project you created or one you trust?
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel`;
+  expect(detectWorkspaceTrustPrompt(pane)).toBe(true);
+});
+
+test("detectWorkspaceTrustPrompt returns false for normal claude output", () => {
+  expect(detectWorkspaceTrustPrompt("Claude is working...")).toBe(false);
+  expect(detectWorkspaceTrustPrompt("")).toBe(false);
+});
+
+test("workspace trust prompt causes immediate exit with workspace_trust_required event instead of waiting for timeout", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  const { deps, state } = makeFakeTmuxDeps(transcriptDir);
+  deps.transcriptWaitTimeoutMs = 5_000;
+
+  state.paneContent = `────────────────────────────────────────────
+ Accessing workspace:
+
+ /some/path
+
+ Quick safety check
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm`;
+
+  const events: SessionDriverEvent[] = [];
+  const logEntries: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+  const launch = await buildLaunchOptions(cwd, events);
+  launch.log = (event, fields) => { logEntries.push({ event, fields }); };
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const driver = await factory(launch);
+  await driver.sendUserMessage("hi", "bootstrap");
+
+  const t0 = Date.now();
+  const code = await driver.exited;
+  const elapsed = Date.now() - t0;
+
+  expect(code).toBe(1);
+  expect(elapsed).toBeLessThan(3000);
+  expect(logEntries.some((e) => e.event === "workspace_trust_required")).toBe(true);
+  expect(events.some((e) =>
+    e.kind === "claude_system" &&
+    (e.payload as { type?: string }).type === "workspace_trust_required",
+  )).toBe(true);
 });
