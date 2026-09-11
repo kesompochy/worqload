@@ -88,6 +88,7 @@ afterEach(() => {
     feedbackPinAt: null, pendingAttachments: [], askingAttachments: new Map(),
     feedbackQueue: [],
     eventsTabHidden: true,
+    fileTabCache: new Map(),
   });
   createObjectURLCount = 0;
   revokedObjectURLs.length = 0;
@@ -583,6 +584,25 @@ test("clicking a file row in the Diff tree un-collapses the diff-file and queues
   // `instant: true` makes DetailBody scroll with behavior: "auto" instead of
   // "smooth" — a deliberate file pick doesn't need the orienting animation.
   expect(state.pendingScrollTo).toEqual({ article: { attr: "data-diff-path", value: "src/foo.ts" }, instant: true });
+});
+
+test("selectSession saves and restores the Files tab state per session", async () => {
+  state.selected = "session-a";
+  state.selectedFilePath = "src/a.ts";
+  state.fileTreeCollapsed = new Set(["src"]);
+
+  await selectSession("session-b");
+
+  expect(state.selectedFilePath).toBeNull();
+  expect(state.fileTreeCollapsed.size).toBe(0);
+
+  state.selectedFilePath = "web/app.js";
+  state.fileTreeCollapsed = new Set(["web"]);
+
+  await selectSession("session-a");
+
+  expect(state.selectedFilePath).toBe("src/a.ts");
+  expect([...state.fileTreeCollapsed]).toEqual(["src"]);
 });
 
 test("selectSession resets the Diff tab's directory collapse state", async () => {
