@@ -96,6 +96,12 @@ export function describeEvent(event) {
     }
 
     case "claude_system": {
+      if (payload?.type === "workspace_trust_required") {
+        return {
+          summary: "⚠ workspace trust required — open the tmux session and approve",
+          sections: [payloadSection(payload)],
+        };
+      }
       const text = typeof payload?.text === "string" ? payload.text : "";
       return { summary: oneLine(text) || "system", sections: [payloadSection(payload?.wire ?? payload)] };
     }

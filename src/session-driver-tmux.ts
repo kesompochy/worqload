@@ -63,6 +63,10 @@ export interface TmuxDriverDeps {
   // Runs a tmux command. The default invokes the system `tmux` binary via
   // Bun.spawn; tests inject a fake.
   tmuxRun: (args: string[], opts?: { stdin?: string }) => Promise<TmuxRunResult>;
+  // Captures the visible content of a tmux pane. Separate from tmuxRun because
+  // `capture-pane -p` needs stdout piped (safe — it's a short-lived client
+  // command, unlike `new-session` whose daemon inherits and holds the FD).
+  capturePane: (sessionName: string) => Promise<string>;
   // Where to look for claude's JSONL transcripts for a given cwd.
   resolveTranscriptDir: (cwd: string) => string;
   // The settings.json scopes (user, project, local) to harvest `permissions.ask`
@@ -101,6 +105,15 @@ export const defaultTmuxDeps: TmuxDriverDeps = {
     const code = await proc.exited;
     return { exitCode: code ?? 0, stdout: "", stderr: "" };
   },
+  async capturePane(sessionName) {
+    const proc = Bun.spawn(["tmux", "capture-pane", "-p", "-t", sessionName], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const text = await new Response(proc.stdout).text();
+    await proc.exited;
+    return text;
+  },
   resolveTranscriptDir(cwd) {
     return join(homedir(), ".claude", "projects", encodeCwdForClaudeProjects(cwd));
   },
@@ -118,6 +131,13 @@ export const defaultTmuxDeps: TmuxDriverDeps = {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// Claude Code's workspace trust dialog renders "Yes, I trust this folder" as
+// one of the selectable options. If the tmux pane contains this text, claude
+// is blocked waiting for a human to confirm trust.
+export function detectWorkspaceTrustPrompt(paneText: string): boolean {
+  return paneText.includes("Yes, I trust this folder");
 }
 
 // Collect the `permissions.ask` patterns from the given settings files (user,
@@ -272,6 +292,25 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
           attachedContent = await readFile(transcriptPath, { encoding: "utf8" });
           break;
         } catch {
+          // While waiting for the transcript, check if claude is stuck on the
+          // workspace trust dialog — report it immediately instead of timing
+          // out after 30s.
+          if (spawned) {
+            try {
+              const pane = await deps.capturePane(sessionName);
+              if (detectWorkspaceTrustPrompt(pane)) {
+                opts.log("workspace_trust_required", { sessionName });
+                await opts.onEvent({
+                  kind: "claude_system",
+                  payload: { type: "workspace_trust_required", sessionName },
+                });
+                resolveExit(1);
+                return;
+              }
+            } catch {
+              // capturePane can fail if the session is gone; ignore
+            }
+          }
           await sleep(deps.pollIntervalMs);
         }
       }
