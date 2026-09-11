@@ -45,6 +45,11 @@ function syncHistory(action, urlState) {
 
 export async function selectSession(id, { historyAction = "push" } = {}) {
   if (state.ws) { state.ws.close(); state.ws = null; }
+  if (state.selected && (state.selectedFilePath || state.fileTreeCollapsed.size)) {
+    const next = new Map(state.fileTabCache);
+    next.set(state.selected, { selectedFilePath: state.selectedFilePath, fileTreeCollapsed: new Set(state.fileTreeCollapsed) });
+    state.fileTabCache = next;
+  }
   state.selected = id;
   syncHistory(historyAction, { sessionId: id, tab: state.activeTab, focusStack: [] });
   state.renamingSessionId = null;
@@ -70,8 +75,9 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   state.tabScroll = new Map();
   state.files = [];
   state.filesLoaded = false;
-  state.fileTreeCollapsed = new Set();
-  state.selectedFilePath = null;
+  const cached = state.fileTabCache.get(id);
+  state.fileTreeCollapsed = cached?.fileTreeCollapsed ? new Set(cached.fileTreeCollapsed) : new Set();
+  state.selectedFilePath = cached?.selectedFilePath ?? null;
   state.fileContent = null;
   state.fileEditing = false;
   state.fileEditDraft = "";
