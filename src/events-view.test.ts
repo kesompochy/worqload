@@ -199,3 +199,13 @@ test("describeEvent shows the command in a command-approval request summary", ()
   });
   expect(d.summary).toBe("🙋 approval: $ docker system prune -af");
 });
+
+test("describeEvent renders workspace_trust_required claude_system event with actionable summary", () => {
+  const d = describeEvent({
+    seq: 23,
+    kind: "claude_system",
+    timestamp: "",
+    payload: { type: "workspace_trust_required", sessionName: "worqload-abc12345" },
+  });
+  expect(d.summary).toBe("⚠ workspace trust required — open the tmux session and approve");
+});
