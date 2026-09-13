@@ -159,6 +159,13 @@ export async function onDetailBodyClick(e) {
     const to = markBtn.getAttribute("data-report-mark-to");
     return onReportMark(filename, to === "read");
   }
+  const pinBtn = e.target.closest("[data-report-pin]");
+  if (pinBtn) {
+    e.stopPropagation();
+    const filename = pinBtn.getAttribute("data-report-pin");
+    const pinTo = pinBtn.getAttribute("data-report-pin-to");
+    return onReportPin(filename, pinTo === "pin");
+  }
   const deleteBtn = e.target.closest("[data-report-delete]");
   if (deleteBtn) {
     e.stopPropagation();
@@ -555,6 +562,20 @@ export async function onReportMark(filename, read) {
     // detail pane — refresh it too so it tracks the mark without waiting for
     // the report_read websocket round-trip (or the 30s poll).
     await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
+export async function onReportPin(filename, pinned) {
+  if (!state.selected) return;
+  const verb = pinned ? "pin" : "unpin";
+  try {
+    await api("POST", `/sessions/${state.selected}/reports/${encodeURIComponent(filename)}/${verb}`, {});
+    const nextToggle = new Map(state.reportToggle);
+    nextToggle.delete(filename);
+    state.reportToggle = nextToggle;
+    await refreshDetail();
   } catch (e) {
     toast(`failed: ${e.message}`);
   }

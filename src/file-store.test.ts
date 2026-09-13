@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { join } from "path";
 import { existsSync } from "fs";
-import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumberedFile, metaFilenameFor, attachmentsDirNameFor, readReadState, setReadState, markAllRead } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumberedFile, metaFilenameFor, attachmentsDirNameFor, readReadState, setReadState, markAllRead, readPinState, setPinState } from "./file-store";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -309,4 +309,37 @@ test("deleteNumberedFile tolerates a file without sidecar, attachments, or read-
   await deleteNumberedFile(dir, filename);
 
   expect(existsSync(join(dir, filename))).toBe(false);
+});
+
+test("readPinState returns empty when no state file exists", async () => {
+  const dir = makeTmpDir("file-store");
+  const set = await readPinState(dir);
+  expect(set.size).toBe(0);
+});
+
+test("setPinState true then read returns the filename in the set", async () => {
+  const dir = makeTmpDir("file-store");
+  await writeNumberedFile(dir, "first", "body");
+  await setPinState(dir, "001-first.md", true);
+  const set = await readPinState(dir);
+  expect(set.has("001-first.md")).toBe(true);
+});
+
+test("setPinState false removes a previously-pinned filename and deletes the file when empty", async () => {
+  const dir = makeTmpDir("file-store");
+  await setPinState(dir, "001-foo.md", true);
+  await setPinState(dir, "001-foo.md", false);
+  const set = await readPinState(dir);
+  expect(set.has("001-foo.md")).toBe(false);
+  expect(existsSync(join(dir, ".pin-state.json"))).toBe(false);
+});
+
+test("deleteNumberedFile also clears pin state", async () => {
+  const dir = makeTmpDir("file-store");
+  const { filename } = await writeNumberedFile(dir, "msg", "body");
+  await setPinState(dir, filename, true);
+
+  await deleteNumberedFile(dir, filename);
+
+  expect((await readPinState(dir)).has(filename)).toBe(false);
 });

@@ -117,6 +117,10 @@ export function describeEvent(event) {
     }
     case "report_unread":
       return { summary: `↺ unread ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
+    case "report_pinned":
+      return { summary: `📌 pinned ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
+    case "report_unpinned":
+      return { summary: `📌 unpinned ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
     case "escalation_requested":
       if (isNonEmptyString(payload?.command)) {
         return { summary: `🙋 approval: $ ${firstLine(payload.command)}`, sections: [payloadSection(payload)] };
