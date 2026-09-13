@@ -27,7 +27,7 @@ import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageSe
 import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { ghPrLinkResolver, makeCachedPrLinkResolver, type PrLinkResolver } from "./pr-link";
-import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumberedFile, readReadState, setReadState, markAllRead, attachmentsDirNameFor } from "./file-store";
+import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumberedFile, readReadState, setReadState, markAllRead, readPinState, setPinState, attachmentsDirNameFor } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
@@ -1265,6 +1265,8 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/reports/read-all", postReportsReadAll),
   defineRoute("POST", "/sessions/:id/reports/:filename/read", postReportRead),
   defineRoute("POST", "/sessions/:id/reports/:filename/unread", postReportUnread),
+  defineRoute("POST", "/sessions/:id/reports/:filename/pin", postReportPin),
+  defineRoute("POST", "/sessions/:id/reports/:filename/unpin", postReportUnpin),
   defineRoute("DELETE", "/sessions/:id/reports/:filename", deleteReport),
   defineRoute("GET",  "/sessions/:id/asking", getAsking),
   defineRoute("GET",  "/sessions/:id/diff", getDiff),
@@ -2053,9 +2055,10 @@ async function getSessionDetail(_req: Request, ctx: ServerContext, params: Recor
 async function getReports(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const dir = reportsDirFor(ctx, meta.id);
-    const [reports, readSet, events] = await Promise.all([
+    const [reports, readSet, pinSet, events] = await Promise.all([
       listAllFiles(dir),
       readReadState(dir),
+      readPinState(dir),
       readEvents(meta.id, 1, ctx.sessionsDir),
     ]);
     // The report_submitted event is when the report reached the human — the
@@ -2073,6 +2076,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
         filename: r.filename,
         content: r.content,
         read: readSet.has(r.filename),
+        pinned: pinSet.has(r.filename),
         replyTo: r.meta?.replyTo,
         attachments: r.attachments,
         submittedAt: submittedAt.get(r.filename),
@@ -2124,6 +2128,33 @@ async function postReportsReadAll(
 
 async function postReportUnread(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return setReportReadFlag(ctx, params, false);
+}
+
+async function setReportPinFlag(
+  ctx: ServerContext,
+  params: Record<string, string>,
+  pinned: boolean,
+): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const dir = reportsDirFor(ctx, meta.id);
+    const filename = decodeURIComponent(params.filename);
+    const target = Bun.file(join(dir, filename));
+    if (!(await target.exists())) return json({ error: "report not found" }, 404);
+    await setPinState(dir, filename, pinned);
+    await appendAndBroadcast(ctx, meta.id, {
+      kind: pinned ? "report_pinned" : "report_unpinned",
+      payload: { filename },
+    });
+    return json({ ok: true, filename, pinned });
+  });
+}
+
+async function postReportPin(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return setReportPinFlag(ctx, params, true);
+}
+
+async function postReportUnpin(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return setReportPinFlag(ctx, params, false);
 }
 
 // Permanently discards a report and everything written alongside it (sidecar,
