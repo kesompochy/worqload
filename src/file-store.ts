@@ -4,6 +4,7 @@ import { join, dirname } from "node:path";
 import { withLock } from "./lock";
 
 const READ_STATE_BASENAME = ".read-state.json";
+const PIN_STATE_BASENAME = ".pin-state.json";
 
 const SLUG_RE = /[^a-zA-Z0-9_-]+/g;
 const TRIM_RE = /^-+|-+$/g;
@@ -222,6 +223,9 @@ export async function deleteNumberedFile(dir: string, filename: string): Promise
   if ((await readReadState(dir)).has(filename)) {
     await setReadState(dir, filename, false);
   }
+  if ((await readPinState(dir)).has(filename)) {
+    await setPinState(dir, filename, false);
+  }
 }
 
 function readStatePath(dir: string): string {
@@ -268,5 +272,39 @@ export async function markAllRead(dir: string): Promise<string[]> {
     for (const name of newlyRead) current.add(name);
     await Bun.write(path, JSON.stringify({ read: [...current].sort() }, null, 2));
     return newlyRead;
+  });
+}
+
+function pinStatePath(dir: string): string {
+  return join(dir, PIN_STATE_BASENAME);
+}
+
+export async function readPinState(dir: string): Promise<Set<string>> {
+  const file = Bun.file(pinStatePath(dir));
+  if (!(await file.exists())) return new Set();
+  try {
+    const data = await file.json() as { pinned?: string[] };
+    return new Set(data.pinned ?? []);
+  } catch {
+    return new Set();
+  }
+}
+
+export async function setPinState(
+  dir: string,
+  filename: string,
+  pinned: boolean,
+): Promise<void> {
+  const path = pinStatePath(dir);
+  await mkdir(dir, { recursive: true });
+  await withLock(path, async () => {
+    const current = await readPinState(dir);
+    if (pinned) current.add(filename);
+    else current.delete(filename);
+    if (current.size === 0) {
+      await rm(path, { force: true });
+    } else {
+      await Bun.write(path, JSON.stringify({ pinned: [...current].sort() }, null, 2));
+    }
   });
 }

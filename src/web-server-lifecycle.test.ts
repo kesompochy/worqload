@@ -312,6 +312,71 @@ test("POST /sessions/:id/reports/:filename/read returns 404 for missing report",
   expect(res.status).toBe(404);
 });
 
+test("POST /sessions/:id/reports/:filename/pin marks a report as pinned", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
+
+  const pinned = await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/pin`, {}).then((r) => r.json());
+  expect(pinned.ok).toBe(true);
+  expect(pinned.pinned).toBe(true);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
+  expect(res.reports[0].pinned).toBe(true);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.some((e) => e.kind === "report_pinned")).toBe(true);
+});
+
+test("POST /sessions/:id/reports/:filename/unpin reverts pin state", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/pin`, {});
+  const unpinned = await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/unpin`, {}).then((r) => r.json());
+  expect(unpinned.pinned).toBe(false);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
+  expect(res.reports[0].pinned).toBe(false);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.some((e) => e.kind === "report_unpinned")).toBe(true);
+});
+
+test("POST /sessions/:id/reports/:filename/pin returns 404 for missing report", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/reports/nope.md/pin`, {});
+  expect(res.status).toBe(404);
+});
+
+test("pinned flag does not affect unreadReportCount", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "the plan" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/read`, {});
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-plan.md/pin`, {});
+
+  const sessions = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
+  expect(sessions.sessions.find((s: { id: string }) => s.id === sid).unreadReportCount).toBe(0);
+});
+
 test("POST /internal/reports (multipart) stores attachments in a sibling .attachments dir", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

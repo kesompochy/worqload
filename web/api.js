@@ -589,6 +589,7 @@ export function openWs(id) {
     }
     // For "interesting" events refresh the relevant slice.
     if (ev.kind === "report_submitted" || ev.kind === "report_read" || ev.kind === "report_unread" || ev.kind === "report_deleted"
+        || ev.kind === "report_pinned" || ev.kind === "report_unpinned"
         || ev.kind === "feedback_received" || ev.kind === "feedback_fetched" || ev.kind === "feedback_deleted"
         || ev.kind === "escalation_requested" || ev.kind === "escalation_resolved"
         || ev.kind === "session_stopped" || ev.kind === "session_crashed" || ev.kind === "session_resumed") {

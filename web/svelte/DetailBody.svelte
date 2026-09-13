@@ -47,6 +47,8 @@
 
   // Reports are stored oldest-first; the pane shows newest-first.
   const reportsNewestFirst = $derived([...appState.reports].reverse());
+  const pinnedReports = $derived(reportsNewestFirst.filter(r => r.pinned));
+  const unpinnedReports = $derived(reportsNewestFirst.filter(r => !r.pinned));
 
   // A streamed event prepends an Events row, the Reports list prepends a
   // freshly arrived report above whatever the user is reading, and expanding a
@@ -289,14 +291,13 @@
             </div>
           {/each}
         </nav>
-        <div class="reports-column">
-          {#each reportsNewestFirst as r (r.filename)}
+        {#snippet reportCard(r)}
             {@const expanded = isReportExpanded(r)}
             {@const viewRaw = isReportViewRaw(r)}
             {@const markTo = r.read ? "unread" : "read"}
             {@const reportAnchorPath = `./.worqload-reports/${r.filename}`}
             {@const reportFeedbackAnchors = feedbackAnchorsForPath(reportAnchorPath).map(f => ({ lineStart: f.anchor.lineStart, lineEnd: f.anchor.lineEnd, filename: f.filename }))}
-            <article class="report" class:unread={!r.read} class:collapsed={!expanded} data-report-filename={r.filename}>
+            <article class="report" class:unread={!r.read} class:pinned={r.pinned} class:collapsed={!expanded} data-report-filename={r.filename}>
               <div class="report-header" data-report-toggle={r.filename}>
                 <span class="report-chevron">▾</span>
                 <span class="report-filename">{r.filename}</span>
@@ -307,6 +308,7 @@
                   <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
                 {/if}
                 <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
+                <button class="report-pin" type="button" class:pinned={r.pinned} data-report-pin={r.filename} data-report-pin-to={r.pinned ? "unpin" : "pin"} title={r.pinned ? "ピンを外す" : "ピン留めする"} aria-label={r.pinned ? "ピンを外す" : "ピン留めする"}>📌</button>
                 <button class="report-view-toggle" type="button" data-report-view-toggle={r.filename} title={viewRaw ? "レンダリング表示に切り替え" : "ソーステキスト表示に切り替え"} aria-label={viewRaw ? "レンダリング表示" : "ソーステキスト表示"}>{viewRaw ? "Rich" : "Source"}</button>
                 <button class="report-delete" type="button" data-report-delete={r.filename} title="このレポートを削除する" aria-label="レポートを削除">✕</button>
               </div>
@@ -328,6 +330,18 @@
                 {/if}
               </div>
             </article>
+        {/snippet}
+        <div class="reports-column">
+          {#if pinnedReports.length > 0}
+            <div class="pinned-section">
+              <div class="pinned-section-label">Pinned</div>
+              {#each pinnedReports as r (r.filename)}
+                {@render reportCard(r)}
+              {/each}
+            </div>
+          {/if}
+          {#each unpinnedReports as r (r.filename)}
+            {@render reportCard(r)}
           {/each}
         </div>
       </div>

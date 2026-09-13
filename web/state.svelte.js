@@ -157,6 +157,7 @@ export function isReportExpanded(report) {
   if (state.reportToggle.has(report.filename)) {
     return state.reportToggle.get(report.filename);
   }
+  if (report.pinned) return true;
   return !report.read;
 }
 
