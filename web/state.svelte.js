@@ -92,6 +92,9 @@ export const state = $state({
   // Populated by fetchMeta; empty until then.
   feedbackTemplates: [],
   feedbackTemplatePrefix: "",
+  // Per-session Files-tab state cache: id → { selectedFilePath, fileTreeCollapsed }.
+  // Saved on session switch, restored when revisiting a session.
+  fileTabCache: new Map(),
 });
 
 export const TEMPLATES_STORAGE_KEY = "worqload:feedback-templates-checked";
