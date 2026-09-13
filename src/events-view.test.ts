@@ -22,6 +22,8 @@ test("isAgentWorkEvent: reports, feedback, escalations and actions are not work"
     "report_submitted",
     "report_read",
     "report_unread",
+    "report_pinned",
+    "report_unpinned",
     "escalation_requested",
     "escalation_resolved",
     "feedback_received",
@@ -130,6 +132,8 @@ test("describeEvent gives file events a friendly summary", () => {
     "✓ read 2 reports",
   );
   expect(describeEvent({ kind: "report_read", payload: { filenames: ["001-x.md"] } }).summary).toBe("✓ read 1 report");
+  expect(describeEvent({ kind: "report_pinned", payload: { filename: "001-x.md" } }).summary).toBe("📌 pinned 001-x.md");
+  expect(describeEvent({ kind: "report_unpinned", payload: { filename: "001-x.md" } }).summary).toBe("📌 unpinned 001-x.md");
 });
 
 test("describeEvent summarises an action_invoked run and exposes its output", () => {
