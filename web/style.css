@@ -282,6 +282,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .detail-meta .copy-path-btn { opacity: .6; padding: .15rem .4rem; font-size: 13px; }
 .prompt-copy-btn { opacity: .6; padding: .15rem .4rem; font-size: 13px; }
 .copy-path-btn:hover { opacity: 1; color: var(--accent); }
+.copy-path-btn.is-active { opacity: .8; color: var(--accent); }
+.file-content-body.md { padding: 1rem 1.5rem; overflow-y: auto; }
 .diff-summary { margin-left: auto; font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace; }
 .diff-summary .add-count { color: var(--running); margin-right: .35rem; }
 .diff-summary .remove-count { color: var(--crashed); }
