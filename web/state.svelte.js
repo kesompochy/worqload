@@ -39,6 +39,7 @@ export const state = $state({
   fileNewPath: "",       // Files tab: the new-file input's bound path while fileCreating; POSTed to create the file
   fileRenaming: false,   // Files tab: whether the open file's header path is shown as a rename input
   fileRenamePath: "",    // Files tab: the rename input's bound path while fileRenaming; POSTed to rename the file
+  fileMdRendered: false, // Files tab: render .md files as formatted HTML instead of source lines
   codeNav: null,         // Files-tab code navigation popover: { symbol, path, rect:{top,bottom,left}, definitions:[{path,line,column?,text?}]|null, definitionsStatus:"loading"|"done", references:[{path,line,column?,text?}]|null, referencesStatus:"loading"|"done" } | null
   structure: null,       // Structure tab (file mode): { graph:{nodes:[path],edges:[{from,to,symbols}]}, cycles:[[path,...]], changedFiles:[path] } | { loading:true } | { error:string } | null
   structureLoaded: false,

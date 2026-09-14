@@ -17,6 +17,7 @@
   import { state as appState, isAnchored, feedbacksAnchoredAt } from "../state.svelte.js";
   import { flattenFileTree } from "../files-view.js";
   import { highlightCode, languageForPath } from "../syntax-highlight.js";
+  import { renderMarkdown } from "../markdown.js";
   import { formatBytes } from "../dom.js";
   import { createFile, renameFile } from "../api.js";
 
@@ -75,6 +76,13 @@
   });
   // The editor only opens for files the read-only view can fully show as text
   // (not loading / error / binary / too-large).
+  const isMarkdown = $derived(/\.(?:md|markdown)$/i.test(fileContentPath));
+  const renderedMd = $derived.by(() => {
+    if (!isMarkdown || !appState.fileMdRendered) return null;
+    const fc = appState.fileContent;
+    if (!fc || fc.loading || fc.error || fc.binary || fc.tooLarge || fc.image) return null;
+    return renderMarkdown(fc.content ?? "");
+  });
   const editable = $derived(fileLines !== null);
   // Rename / delete apply to any readable file (binary and too-large included),
   // so they gate on the file being loaded rather than on `editable`.
@@ -149,6 +157,9 @@
           <button type="button" class="copy-path-btn" data-copy-files-url title="この画面の URL をコピー">📋</button>
           <button type="button" class="copy-path-btn" data-permalink-path={fileContentPath} title="GitHub permalink をコピー">🔗</button>
           <button type="button" class="copy-path-btn" data-structure-anchor={fileContentPath} title="このファイルを起点に Structure を描画">⌘</button>
+          {#if isMarkdown && editable && !appState.fileEditing}
+            <button type="button" class="copy-path-btn" class:is-active={appState.fileMdRendered} onclick={() => (appState.fileMdRendered = !appState.fileMdRendered)} title="Markdown をレンダリング表示">Md</button>
+          {/if}
           {#if editable && !appState.fileEditing}
             <button type="button" class="copy-path-btn" data-file-edit title="このファイルを編集">✎</button>
           {/if}
@@ -177,6 +188,8 @@
         </div>
       {:else if appState.fileEditing}
         <textarea class="file-editor" spellcheck="false" bind:value={appState.fileEditDraft}></textarea>
+      {:else if renderedMd !== null}
+        <div class="file-content-body md">{@html renderedMd}</div>
       {:else}
         <div class="file-content-body">
           {#each fileLines as line (line.no)}
