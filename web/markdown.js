@@ -40,6 +40,7 @@ export function renderMarkdown(source, options = {}) {
   }
   const footnoteOrder = [];
   const footnoteNumberById = new Map();
+  const fnPrefix = options.footnotePrefix ? `${options.footnotePrefix}-` : "";
   const ctx = {
     anchorPath: options.anchorPath ?? null,
     currentAnchor: options.anchor ?? null,
@@ -47,13 +48,14 @@ export function renderMarkdown(source, options = {}) {
     footnoteDefs,
     footnoteOrder,
     footnoteNumberById,
+    fnPrefix,
   };
   const body = blocks.map(b => renderBlock(b, ctx)).join("");
   if (footnoteOrder.length === 0) return body;
   const items = footnoteOrder.map(id => {
     const num = footnoteNumberById.get(id);
     const def = footnoteDefs.get(id);
-    return `<li id="fn-${num}">${renderInline(def.content, ctx)} <a href="#fnref-${num}">↩</a></li>`;
+    return `<li id="${ctx.fnPrefix}fn-${num}">${renderInline(def.content, ctx)} <a href="#${ctx.fnPrefix}fnref-${num}">↩</a></li>`;
   });
   return body + `<section class="md-footnotes"><ol>${items.join("")}</ol></section>`;
 }
@@ -420,7 +422,7 @@ function renderInline(text, ctx) {
         ctx.footnoteNumberById.set(id, ctx.footnoteOrder.length);
       }
       const num = ctx.footnoteNumberById.get(id);
-      return stash(`<sup><a href="#fn-${num}" id="fnref-${num}">${num}</a></sup>`);
+      return stash(`<sup><a href="#${ctx.fnPrefix}fn-${num}" id="${ctx.fnPrefix}fnref-${num}">${num}</a></sup>`);
     });
   }
 

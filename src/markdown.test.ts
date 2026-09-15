@@ -345,3 +345,19 @@ test("footnote definition body receives inline rendering", () => {
   const html = renderMarkdown("text[^1]\n\n[^1]: **bold** note\n");
   expect(html).toContain("<strong>bold</strong>");
 });
+
+test("footnotePrefix scopes footnote IDs to avoid cross-report collisions", () => {
+  const html = renderMarkdown("text[^1]\n\n[^1]: note\n", { footnotePrefix: "report-001" });
+  expect(html).toContain(`id="report-001-fnref-1"`);
+  expect(html).toContain(`href="#report-001-fn-1"`);
+  expect(html).toContain(`id="report-001-fn-1"`);
+  expect(html).toContain(`href="#report-001-fnref-1"`);
+});
+
+test("footnote IDs have no prefix when footnotePrefix is omitted", () => {
+  const html = renderMarkdown("text[^1]\n\n[^1]: note\n");
+  expect(html).toContain(`id="fnref-1"`);
+  expect(html).toContain(`href="#fn-1"`);
+  expect(html).toContain(`id="fn-1"`);
+  expect(html).toContain(`href="#fnref-1"`);
+});
