@@ -63,6 +63,7 @@ async function pipeBranchName(fullPrompt: string, model?: string): Promise<strin
   } catch {
     return null;
   }
+  const stderrPromise = new Response(proc.stderr).text();
   const result = await Promise.race([
     Promise.all([new Response(proc.stdout).text(), proc.exited]),
     new Promise<null>((resolve) => setTimeout(() => {
@@ -70,9 +71,17 @@ async function pipeBranchName(fullPrompt: string, model?: string): Promise<strin
       resolve(null);
     }, PIPE_TIMEOUT_MS)),
   ]);
-  if (result === null) return null;
+  if (result === null) {
+    const stderr = await stderrPromise.catch(() => "");
+    console.log(`[branch-name] timed out after ${PIPE_TIMEOUT_MS}ms stderr=${stderr.slice(0, 200)}`);
+    return null;
+  }
   const [out, code] = result;
-  if (code !== 0) return null;
+  if (code !== 0) {
+    const stderr = await stderrPromise.catch(() => "");
+    console.log(`[branch-name] exit=${code} stderr=${stderr.slice(0, 200)}`);
+    return null;
+  }
   return sanitizeBranchName(out);
 }
 
