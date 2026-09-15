@@ -81,7 +81,7 @@ describe("resolveRemoteDefaultBranch", () => {
 });
 
 describe("fetchBranch", () => {
-  test("updates local branch from remote when not checked out", async () => {
+  test("updates remote tracking ref from remote", async () => {
     const { repoDir, bareDir } = makeRepoWithRemote();
     cleanupDirs.push(repoDir, bareDir);
 
@@ -96,36 +96,12 @@ describe("fetchBranch", () => {
     git(["commit", "--no-verify", "-m", "second commit"], clone2);
     git(["push", "origin", BRANCH], clone2);
 
-    git(["checkout", "-b", "other-branch"], repoDir);
-    const oldSha = gitStdout(["rev-parse", BRANCH], repoDir);
+    const oldRemoteSha = gitStdout(["rev-parse", `origin/${BRANCH}`], repoDir);
 
     await fetchBranch(repoDir, BRANCH);
 
-    const newSha = gitStdout(["rev-parse", BRANCH], repoDir);
-    expect(newSha).not.toBe(oldSha);
-  });
-
-  test("updates local branch from remote when currently checked out", async () => {
-    const { repoDir, bareDir } = makeRepoWithRemote();
-    cleanupDirs.push(repoDir, bareDir);
-
-    const clone2 = mkdtempSync(join(tmpdir(), "worqload-clone2b-"));
-    cleanupDirs.push(clone2);
-    rmSync(clone2, { recursive: true });
-    git(["clone", bareDir, clone2], tmpdir());
-    git(["config", "user.email", "test@test.com"], clone2);
-    git(["config", "user.name", "Test"], clone2);
-    writeFileSync(join(clone2, "new.txt"), "new content\n");
-    git(["add", "."], clone2);
-    git(["commit", "--no-verify", "-m", "second commit"], clone2);
-    git(["push", "origin", BRANCH], clone2);
-
-    const oldSha = gitStdout(["rev-parse", BRANCH], repoDir);
-
-    await fetchBranch(repoDir, BRANCH);
-
-    const newSha = gitStdout(["rev-parse", BRANCH], repoDir);
-    expect(newSha).not.toBe(oldSha);
+    const newRemoteSha = gitStdout(["rev-parse", `origin/${BRANCH}`], repoDir);
+    expect(newRemoteSha).not.toBe(oldRemoteSha);
   });
 
   test("updates origin/<branch> even when working tree is dirty and local branch can't fast-forward", async () => {

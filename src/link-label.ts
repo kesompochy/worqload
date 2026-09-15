@@ -12,6 +12,8 @@ export function sanitizeLinkLabel(raw: string): string | null {
   return trimmed;
 }
 
+const LABEL_TIMEOUT_MS = 30_000;
+
 export function makeLinkLabelGenerator(opts: { model?: string } = {}): LinkLabelGenerator {
   const model = opts.model;
   return async (url, promptContext) => {
@@ -24,7 +26,15 @@ export function makeLinkLabelGenerator(opts: { model?: string } = {}): LinkLabel
     } catch {
       return null;
     }
-    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    const result = await Promise.race([
+      Promise.all([new Response(proc.stdout).text(), proc.exited]),
+      new Promise<null>((resolve) => setTimeout(() => {
+        proc.kill();
+        resolve(null);
+      }, LABEL_TIMEOUT_MS)),
+    ]);
+    if (result === null) return null;
+    const [out, code] = result;
     if (code !== 0) return null;
     return sanitizeLinkLabel(out);
   };
