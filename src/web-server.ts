@@ -1488,6 +1488,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   const agentName = body.agentName ?? (sourceMeta?.agentName ?? ctx.agentName);
   const model = agentName === "claude" ? (body.model ?? sourceMeta?.model) : undefined;
 
+  const t0 = Date.now();
   let baseBranch: string;
   let startPoint: string;
   let baseCommit: string;
@@ -1506,6 +1507,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     ({ baseBranch, startPoint } = await resolveDefaultBaseBranch(ctx));
     baseCommit = await ctx.worktreeOps.resolveBaseCommit(startPoint, ctx.repoDir);
   }
+  const tFetch = Date.now();
 
   // worktreePath and branchName are populated after the id is assigned below
   // (we need the id to compute the worktree dir and the shortId fallback).
@@ -1531,6 +1533,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     }),
     resolvePromptLinks(ctx, body.prompt),
   ]);
+  const tNames = Date.now();
   if (branchName === null) {
     return json({ error: "branchName is not a valid git ref" }, 400);
   }
@@ -1550,6 +1553,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
     const message = err instanceof Error ? err.message : String(err);
     return json({ error: message }, 400);
   }
+  const tWorktree = Date.now();
 
   const forkLinks = sourceMeta?.links && sourceMeta.links.length > 0 ? [...sourceMeta.links] : [];
   const forkLinkUrls = new Set(forkLinks.map(l => l.url));
@@ -1580,6 +1584,11 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   if (!startPaused) {
     await spawnAndAttachHost(ctx, meta, forkInfo ? { fork: forkInfo } : {});
+  }
+  const tDone = Date.now();
+  const total = tDone - t0;
+  if (total > 10_000) {
+    console.log(`[session-create] ${tentative.id.slice(0, 8)} total=${total}ms fetch=${tFetch - t0}ms names=${tNames - tFetch}ms worktree=${tWorktree - tNames}ms host=${tDone - tWorktree}ms`);
   }
 
   const stored = await loadSessionMeta(meta.id, ctx.sessionsDir);
