@@ -1955,7 +1955,7 @@ export async function runDirectAction(actionId) {
 // {{serverUrl}} (127.0.0.1) may differ from the browser's hostname (localhost).
 function handleFootnoteClick(linkEl, event) {
   const href = linkEl.getAttribute("href");
-  if (!href || !href.startsWith("#fn")) return false;
+  if (!href || !(/^#(?:.*-)?fn(?:ref)?-\d+$/.test(href))) return false;
   const id = href.slice(1);
   const container = linkEl.closest(".detail-body");
   if (!container) return false;
