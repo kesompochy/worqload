@@ -52,6 +52,8 @@ export function resolveBranchNameClaudeBin(env: Record<string, string | undefine
   return "claude";
 }
 
+const PIPE_TIMEOUT_MS = 30_000;
+
 async function pipeBranchName(fullPrompt: string, model?: string): Promise<string | null> {
   const cmd = [resolveBranchNameClaudeBin(), "-p", fullPrompt];
   if (model) cmd.push("--model", model);
@@ -61,7 +63,15 @@ async function pipeBranchName(fullPrompt: string, model?: string): Promise<strin
   } catch {
     return null;
   }
-  const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  const result = await Promise.race([
+    Promise.all([new Response(proc.stdout).text(), proc.exited]),
+    new Promise<null>((resolve) => setTimeout(() => {
+      proc.kill();
+      resolve(null);
+    }, PIPE_TIMEOUT_MS)),
+  ]);
+  if (result === null) return null;
+  const [out, code] = result;
   if (code !== 0) return null;
   return sanitizeBranchName(out);
 }

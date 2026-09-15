@@ -252,28 +252,15 @@ export async function resolveRemoteDefaultBranch(repoDir: string): Promise<strin
 }
 
 // Fetch a single branch from origin so `origin/<branch>` reflects the remote
-// tip. Always runs `git fetch origin <branch>` first (updates the remote
-// tracking ref regardless of working-tree state). Then tries to advance the
-// local ref too: `git pull --ff-only` when the branch is checked out, `git
-// fetch origin <branch>:<branch>` otherwise. The local-ref update is
-// best-effort — it silently fails when the working tree is dirty or the
-// local branch has diverged.
+// tip. Callers use `resolveLatestBase` which reads `origin/<branch>` directly,
+// so only the remote tracking ref needs updating — a second network roundtrip
+// to advance the local ref is unnecessary and costly on high-latency remotes.
 export async function fetchBranch(repoDir: string, branch: string): Promise<void> {
   const fetch = Bun.spawn(
     ["git", "fetch", "origin", branch],
     { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
   );
   await fetch.exited;
-
-  const head = await currentBranch(repoDir);
-  const localArgs = head === branch
-    ? ["pull", "--ff-only", "origin", branch]
-    : ["fetch", "origin", `${branch}:${branch}`];
-  const local = Bun.spawn(
-    ["git", ...localArgs],
-    { stdout: "pipe", stderr: "pipe", cwd: repoDir, env: cleanGitEnv() },
-  );
-  await local.exited;
 }
 
 // worqload injects two entries at the worktree root: the `.worqload-reports`
