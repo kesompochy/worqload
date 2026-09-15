@@ -316,7 +316,7 @@
                 {#if viewRaw}
                   <pre class="report-source">{r.content}</pre>
                 {:else}
-                  <div class="md">{@html renderMarkdown(r.content, { anchorPath: reportAnchorPath, anchor: appState.anchor, feedbackAnchors: reportFeedbackAnchors })}</div>
+                  <div class="md">{@html renderMarkdown(r.content, { anchorPath: reportAnchorPath, anchor: appState.anchor, feedbackAnchors: reportFeedbackAnchors, footnotePrefix: r.filename })}</div>
                 {/if}
                 {#if r.attachments && r.attachments.length > 0}
                   <div class="attachment-strip">
