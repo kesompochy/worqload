@@ -26,6 +26,7 @@ export function makeLinkLabelGenerator(opts: { model?: string } = {}): LinkLabel
     } catch {
       return null;
     }
+    const stderrPromise = new Response(proc.stderr).text();
     const result = await Promise.race([
       Promise.all([new Response(proc.stdout).text(), proc.exited]),
       new Promise<null>((resolve) => setTimeout(() => {
@@ -33,9 +34,17 @@ export function makeLinkLabelGenerator(opts: { model?: string } = {}): LinkLabel
         resolve(null);
       }, LABEL_TIMEOUT_MS)),
     ]);
-    if (result === null) return null;
+    if (result === null) {
+      const stderr = await stderrPromise.catch(() => "");
+      console.log(`[link-label] timed out after ${LABEL_TIMEOUT_MS}ms url=${url} stderr=${stderr.slice(0, 200)}`);
+      return null;
+    }
     const [out, code] = result;
-    if (code !== 0) return null;
+    if (code !== 0) {
+      const stderr = await stderrPromise.catch(() => "");
+      console.log(`[link-label] exit=${code} url=${url} stderr=${stderr.slice(0, 200)}`);
+      return null;
+    }
     return sanitizeLinkLabel(out);
   };
 }
