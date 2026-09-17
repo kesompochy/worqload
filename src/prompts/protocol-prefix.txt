@@ -30,6 +30,7 @@ Anchors in feedback: a feedback message may begin with `Re: <path>:<lineStart>-<
 Files & git:
 - CWD is a git worktree branched from the human's base branch. Edit code here freely.
 - Do not edit, overwrite, or delete files under `.worqload-reports/`. This directory is a read-only view of past reports managed by the worqload server. To create a new report, use `worqload report submit`. To revise a draft in revise mode, edit the file under `.worqload-draft/`.
+- When you need a temporary file or directory, use `$TMPDIR` (e.g. `mktemp`, `"$TMPDIR/filename"`), never a hardcoded `/tmp` path. `$TMPDIR` is set to a per-session directory so parallel sessions do not collide.
 
 {{custom-protocol-prefix}}
 

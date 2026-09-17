@@ -1,7 +1,8 @@
 import type { Socket } from "bun";
 import { appendFileSync } from "node:fs";
 import { mkdir, unlink } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { appendEvent, readEvents } from "../event-log";
 import { exitWithUsage } from "./cli-helpers";
 import { buildProtocolPrefix, FORK_KICKOFF, RESUME_KICKOFF } from "../session-bootstrap";
@@ -141,6 +142,8 @@ export async function runHost(opts: HostOptions): Promise<number> {
   claudeEnv.WORQLOAD_SESSION_ID = opts.sessionId;
   claudeEnv.WORQLOAD_ENDPOINT = opts.agentEndpoint;
   claudeEnv.WORQLOAD_ENDPOINT_FILE = agentEndpointPath(opts.sessionsDir, opts.sessionId);
+  claudeEnv.TMPDIR = join(tmpdir(), "worqload", opts.sessionId);
+  await mkdir(claudeEnv.TMPDIR, { recursive: true });
 
   const sendToActive = (msg: HostToServeMessage): void => {
     if (!activeClient) return;

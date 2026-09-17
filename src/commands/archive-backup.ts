@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { defaultArchiveDbPath } from "../archive-store";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { unlinkSync, existsSync } from "node:fs";
+import { unlinkSync, existsSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 export function isRcloneRemote(path: string): boolean {
@@ -34,9 +34,14 @@ export async function archiveBackup(args: string[]): Promise<void> {
   }
 
   const remote = isRcloneRemote(dest);
-  const snapshotPath = remote
-    ? join(tmpdir(), `worqload-backup-${Date.now()}.db`)
-    : dest;
+  let snapshotPath: string;
+  if (remote) {
+    const wqTmpDir = join(tmpdir(), "worqload");
+    mkdirSync(wqTmpDir, { recursive: true });
+    snapshotPath = join(wqTmpDir, `backup-${Date.now()}.db`);
+  } else {
+    snapshotPath = dest;
+  }
 
   try {
     vacuumSnapshot(dbPath, snapshotPath);
