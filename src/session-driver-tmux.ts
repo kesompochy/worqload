@@ -126,7 +126,7 @@ export const defaultTmuxDeps: TmuxDriverDeps = {
   },
   pollIntervalMs: 250,
   transcriptWaitTimeoutMs: 30_000,
-  bootstrapFileDir: tmpdir(),
+  bootstrapFileDir: join(tmpdir(), "worqload"),
 };
 
 function sleep(ms: number): Promise<void> {
@@ -378,6 +378,7 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
     let bootstrapFile: string | null = null;
     const spawnTmux = async (bootstrap: string): Promise<void> => {
       await mkdir(transcriptDir, { recursive: true });
+      await mkdir(deps.bootstrapFileDir, { recursive: true });
       bootstrapFile = join(deps.bootstrapFileDir, `worqload-bootstrap-${sessionId}.txt`);
       await writeFile(bootstrapFile, bootstrap);
 
@@ -544,6 +545,7 @@ export async function tmuxOneShotText(
   const bootstrapFile = join(deps.bootstrapFileDir, `worqload-oneshot-${opts.sessionId}.txt`);
 
   await mkdir(transcriptDir, { recursive: true });
+  await mkdir(deps.bootstrapFileDir, { recursive: true });
   await writeFile(bootstrapFile, opts.prompt);
 
   const cleanup = async (): Promise<void> => {

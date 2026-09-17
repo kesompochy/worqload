@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { watchWebFrontend } from "../web-build";
@@ -131,8 +131,10 @@ export async function serve(args: string[]): Promise<void> {
   if (plan) {
     // PID-scoped so a sentinel left behind by a crashed outer never blocks a
     // future watch session.
-    const openSentinel = noOpen ? null : join(tmpdir(), `worqload-watch-${process.pid}.open`);
-    const portSentinelPath = join(tmpdir(), `worqload-watch-${process.pid}.port`);
+    const wqTmpDir = join(tmpdir(), "worqload");
+    mkdirSync(wqTmpDir, { recursive: true });
+    const openSentinel = noOpen ? null : join(wqTmpDir, `watch-${process.pid}.open`);
+    const portSentinelPath = join(wqTmpDir, `watch-${process.pid}.port`);
     // Rebuild web/dist/ on frontend changes. This watcher lives in the outer
     // process, which stays up across the inner server's `bun --watch` reloads
     // (those only react to the server's TS import graph, not web/). The browser
