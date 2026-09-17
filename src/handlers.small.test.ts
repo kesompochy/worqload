@@ -246,16 +246,22 @@ test("clicking a report header toggles its expansion with a fresh Map (so Svelte
   expect(isReportExpanded(state.reports[0])).toBe(false);
 });
 
-test("isReportExpanded returns true for a pinned+read report with no explicit toggle", () => {
+test("pinned+read report defaults to collapsed (same as a regular read report)", () => {
   state.reports = [{ filename: "001-plan.md", content: "x", read: true, pinned: true }];
+  state.reportToggle = new Map();
+  expect(isReportExpanded(state.reports[0])).toBe(false);
+});
+
+test("pinned+unread report defaults to expanded", () => {
+  state.reports = [{ filename: "001-plan.md", content: "x", read: false, pinned: true }];
   state.reportToggle = new Map();
   expect(isReportExpanded(state.reports[0])).toBe(true);
 });
 
 test("explicit toggle overrides pinned default", () => {
   state.reports = [{ filename: "001-plan.md", content: "x", read: true, pinned: true }];
-  state.reportToggle = new Map([["001-plan.md", false]]);
-  expect(isReportExpanded(state.reports[0])).toBe(false);
+  state.reportToggle = new Map([["001-plan.md", true]]);
+  expect(isReportExpanded(state.reports[0])).toBe(true);
 });
 
 function identTokenClick(symbol: string, path: string, line: number, container = ".file-content-body") {
