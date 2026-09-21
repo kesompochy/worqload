@@ -71,6 +71,18 @@ test("ordered list renders as ol with anchored items", () => {
   expect(html).toMatch(/<li [^>]*data-anchor-line="2"[^>]*>second<\/li>/);
 });
 
+test("ordered list items separated by blank line become independent lists", () => {
+  const html = renderMarkdown("1. first\n\n2. second\n");
+  expect(html).toMatch(/<ol><li[^>]*>first<\/li><\/ol>/);
+  expect(html).toMatch(/<ol start="2"><li[^>]*>second<\/li><\/ol>/);
+});
+
+test("ordered list starting at 1 omits the start attribute", () => {
+  const html = renderMarkdown("1. only\n");
+  expect(html).toMatch(/<ol><li/);
+  expect(html).not.toContain('start=');
+});
+
 test("blockquote wraps body", () => {
   const html = renderMarkdown("> hello\n> world\n");
   expect(html).toContain("<blockquote");

@@ -218,10 +218,11 @@ function consumeUnorderedList(lines, start, out) {
 }
 
 function consumeOrderedList(lines, start, out) {
-  return consumeList(lines, start, out, "ol", /^\d+\.\s+/);
+  const startNum = parseInt(lines[start].match(/^(\d+)\./)[1], 10);
+  return consumeList(lines, start, out, "ol", /^\d+\.\s+/, startNum);
 }
 
-function consumeList(lines, start, out, kind, markerRe) {
+function consumeList(lines, start, out, kind, markerRe, startNum) {
   const startLine = start + 1;
   const items = [];
   let i = start;
@@ -235,7 +236,9 @@ function consumeList(lines, start, out, kind, markerRe) {
     }
     items.push({ content, startLine: itemStartLine, endLine: i });
   }
-  out.push({ kind, items, startLine, endLine: i });
+  const block = { kind, items, startLine, endLine: i };
+  if (startNum !== undefined) block.startNum = startNum;
+  out.push(block);
   return i;
 }
 
@@ -371,7 +374,8 @@ function renderList(tag, block, ctx) {
     const attrs = anchorAttrs(item.startLine, item.endLine, ctx);
     return `<li${attrs}>${renderInline(item.content, ctx)}</li>`;
   }).join("");
-  return `<${tag}>${items}</${tag}>`;
+  const startAttr = tag === "ol" && block.startNum > 1 ? ` start="${block.startNum}"` : "";
+  return `<${tag}${startAttr}>${items}</${tag}>`;
 }
 
 function renderTable(block, ctx) {
