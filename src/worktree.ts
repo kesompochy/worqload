@@ -1,4 +1,4 @@
-import { dirname, extname, join, resolve, sep } from "path";
+import { basename, dirname, extname, join, resolve, sep } from "path";
 import { existsSync, symlinkSync, unlinkSync, realpathSync, statSync } from "fs";
 import { mkdir, rm, rename } from "node:fs/promises";
 import { parseInsteadOfConfig, reverseInsteadOf } from "./permalink";
@@ -69,6 +69,23 @@ export async function createSessionWorktree(params: {
   return { worktreePath, branchName };
 }
 
+// Where removeWorktree parks a worktree before deleting its contents. A sibling
+// of the worktree itself so the move is a same-volume rename — a rename across
+// volumes fails with EXDEV and would fall back to a copy.
+function worktreeTrashDir(worktreesDir: string): string {
+  return join(worktreesDir, ".trash");
+}
+
+// Deletes whatever removeWorktree's background deletion left behind, e.g.
+// when the server stopped midway through a large node_modules.
+export async function emptyWorktreeTrash(worktreesDir: string): Promise<void> {
+  await rm(worktreeTrashDir(worktreesDir), { recursive: true, force: true });
+}
+
+// Deleting a worktree's files takes tens of seconds when it holds a
+// node_modules (~80k files), so the directory is first renamed into the trash,
+// which frees the path and lets `git worktree remove` just drop the
+// registration. The actual file deletion runs in the background.
 export async function removeWorktree(
   worktreePath: string,
   branchName?: string,
@@ -78,6 +95,18 @@ export async function removeWorktree(
 
   const symlinkPath = join(worktreePath, ".worqload-reports");
   try { unlinkSync(symlinkPath); } catch { /* already gone */ }
+
+  // A linked worktree has a `.git` *file*; anything else (the main checkout, a
+  // stray directory) is left for `git worktree remove` to refuse.
+  if (statSync(join(worktreePath, ".git"), { throwIfNoEntry: false })?.isFile()) {
+    const trashDir = worktreeTrashDir(dirname(worktreePath));
+    const trashPath = join(trashDir, `${basename(worktreePath)}-${Date.now()}`);
+    await mkdir(trashDir, { recursive: true });
+    await rename(worktreePath, trashPath);
+    rm(trashPath, { recursive: true, force: true }).catch(() => {
+      /* emptyWorktreeTrash retries on the next server start */
+    });
+  }
 
   const removeProc = Bun.spawn(
     ["git", "worktree", "remove", "--force", worktreePath],

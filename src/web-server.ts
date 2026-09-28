@@ -22,7 +22,7 @@ import {
 import { makeClaudeReportRewriter, makeCodexReportRewriter, makeCursorReportRewriter, type ReportRewriter } from "./report-rewriter";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
-import { realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
+import { emptyWorktreeTrash, realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
 import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageServers } from "./language-servers";
 import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
@@ -1181,6 +1181,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
   };
 
   await reconcileNonTerminalSessions(ctx);
+  emptyWorktreeTrash(worktreesDir).catch(() => { /* retried on the next start */ });
 
   async function shutdown(opts: ShutdownOptions = {}): Promise<void> {
     for (const att of ctx.clients.values()) {
