@@ -118,6 +118,8 @@
               <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
             </optgroup>
             <optgroup label="Opus">
+              <option value="claude-opus-5-5">claude-opus-5-5</option>
+              <option value="claude-opus-5">claude-opus-5</option>
               <option value="claude-opus-4-8">claude-opus-4-8</option>
               <option value="claude-opus-4-7">claude-opus-4-7</option>
               <option value="claude-opus-4-7[1m]">claude-opus-4-7[1m]</option>
@@ -129,7 +131,9 @@
               <option value="claude-haiku-4-5">claude-haiku-4-5</option>
             </optgroup>
             <optgroup label="Fable / Mythos">
+              <option value="claude-fable-5-1">claude-fable-5-1</option>
               <option value="claude-fable-5">claude-fable-5</option>
+              <option value="claude-mythos-5-1">claude-mythos-5-1</option>
               <option value="claude-mythos-5">claude-mythos-5</option>
             </optgroup>
           </select>
