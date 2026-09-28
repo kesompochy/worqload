@@ -1,11 +1,12 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
+import { basename, join, resolve } from "path";
 import { mkdirSync, existsSync, readlinkSync, lstatSync, writeFileSync, readFileSync, symlinkSync } from "fs";
 import { makeRepoFromTemplate } from "./test-helpers";
 import {
   createSessionWorktree,
   removeWorktree,
+  emptyWorktreeTrash,
   resolveBaseCommit,
   resolveLatestBase,
   currentBranch,
@@ -216,6 +217,41 @@ describe("removeWorktree", () => {
     expect(existsSync(worktreePath)).toBe(false);
     const result = git(["branch", "--list", branchName], repoDir);
     expect(new TextDecoder().decode(result.stdout).trim()).toBe("");
+    const list = new TextDecoder().decode(git(["worktree", "list", "--porcelain"], repoDir).stdout);
+    expect(list).not.toContain(basename(worktreePath));
+  });
+
+  test("leaves a directory that is not a linked worktree in place", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const plainDir = join(repoDir, ".worktrees", "not-a-worktree");
+    mkdirSync(plainDir, { recursive: true });
+    writeFileSync(join(plainDir, "keep.txt"), "x");
+
+    await removeWorktree(plainDir, undefined, repoDir);
+
+    expect(existsSync(join(plainDir, "keep.txt"))).toBe(true);
+  });
+});
+
+describe("emptyWorktreeTrash", () => {
+  test("deletes everything left under <worktreesDir>/.trash", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+    const worktreesDir = join(repoDir, ".worktrees");
+    mkdirSync(join(worktreesDir, ".trash", "abc-1", "node_modules"), { recursive: true });
+    writeFileSync(join(worktreesDir, ".trash", "abc-1", "node_modules", "x.js"), "x");
+
+    await emptyWorktreeTrash(worktreesDir);
+
+    expect(existsSync(join(worktreesDir, ".trash", "abc-1"))).toBe(false);
+  });
+
+  test("is a no-op when there is no trash", async () => {
+    const repoDir = createTempGitRepo();
+    cleanupDirs.push(repoDir);
+
+    await emptyWorktreeTrash(join(repoDir, ".worktrees"));
   });
 });
 
