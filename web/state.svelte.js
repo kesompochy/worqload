@@ -93,6 +93,9 @@ export const state = $state({
   // Populated by fetchMeta; empty until then.
   feedbackTemplates: [],
   feedbackTemplatePrefix: "",
+  // Name of the kb-repomap KB this repo offers to new claude sessions, or null
+  // when it offers none. Populated by fetchMeta.
+  kb: null,
   // Per-session Files-tab state cache: id → { selectedFilePath, fileTreeCollapsed }.
   // Saved on session switch, restored when revisiting a session.
   fileTabCache: new Map(),

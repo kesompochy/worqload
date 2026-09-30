@@ -1,3 +1,4 @@
+import type { KbLaunch } from "./kb";
 import { loadJsonFile, saveJsonFile } from "./utils/json-store";
 
 export type SessionStatus = "running" | "waiting_human" | "stopped" | "crashed";
@@ -18,6 +19,9 @@ export interface SessionMeta {
   agentName?: AgentName;
   driverName?: DriverName;
   model?: string;
+  // Set when the session launches through kb-repomap with this KB. Kept on the
+  // meta so resumes reattach the same KB even if the config changes later.
+  kb?: KbLaunch;
   hostPid?: number;
   hostSocketPath?: string;
   status: SessionStatus;

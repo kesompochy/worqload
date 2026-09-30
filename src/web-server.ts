@@ -43,7 +43,7 @@ import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedback
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
-import { loadKbBindings, matchingKbBinding, wrapClaudeCommandWithKb } from "./kb";
+import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClaudeCommandWithKb } from "./kb";
 import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
@@ -944,18 +944,13 @@ async function terminateTrackedHost(ctx: ServerContext, sessionId: string): Prom
   if (ctx.clients.get(sessionId) === att) ctx.clients.delete(sessionId);
 }
 
-// Only the claude pipe driver launches through kb: the tmux driver pins the
-// transcript with `--session-id`, which `kb NAME claude` refuses because kb
-// mints the session id itself. A config that fails to parse launches plain
-// claude rather than failing the spawn.
-async function withRepoKb(ctx: ServerContext, claudeCommand: string[]): Promise<string[]> {
-  try {
-    const binding = matchingKbBinding(await loadKbBindings(ctx.configPath), ctx.repoDir);
-    return binding ? wrapClaudeCommandWithKb(claudeCommand, binding) : claudeCommand;
-  } catch (err) {
-    console.error(`[kb] config load failed, launching without KB: ${err instanceof Error ? err.message : String(err)}`);
-    return claudeCommand;
-  }
+// The KB this repo offers to new sessions, from the config's `kb` entry. Only
+// the claude pipe driver can start a session through kb: the tmux driver pins
+// the transcript with `--session-id`, which `kb NAME claude` refuses because kb
+// mints the session id itself.
+async function offeredKbBinding(ctx: ServerContext): Promise<KbBinding | undefined> {
+  if (ctx.driverName !== "pipe") return undefined;
+  return matchingKbBinding(await loadKbBindings(ctx.configPath), ctx.repoDir);
 }
 
 async function spawnAndAttachHost(
@@ -976,8 +971,8 @@ async function spawnAndAttachHost(
     let attachment: SessionAttachment | undefined;
     const agentName = meta.agentName ?? ctx.agentName;
     const driverName = meta.driverName ?? ctx.driverName;
-    const spawnCommand = agentName === "claude" && driverName === "pipe"
-      ? await withRepoKb(ctx, ctx.spawnCommandForAgent(agentName, meta.model))
+    const spawnCommand = agentName === "claude" && meta.kb
+      ? wrapClaudeCommandWithKb(ctx.spawnCommandForAgent(agentName, meta.model), meta.kb)
       : ctx.spawnCommandForAgent(agentName, meta.model);
     let effectiveSpawnCommand: string[];
     if (opts.resume && agentName === "claude") {
@@ -1372,7 +1367,13 @@ async function getFavicon(_req: Request, ctx: ServerContext): Promise<Response> 
 
 async function getMeta(_req: Request, ctx: ServerContext): Promise<Response> {
   const feedbackTemplates = await currentFeedbackTemplates(ctx);
-  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName, feedbackTemplates, feedbackTemplatePrefix: FEEDBACK_TEMPLATE_PREFIX });
+  let kb: string | null = null;
+  try {
+    kb = (await offeredKbBinding(ctx))?.name ?? null;
+  } catch (err) {
+    console.error(`[kb] config load failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return json({ repoDir: ctx.repoDir, repoName: basename(ctx.repoDir), driverName: ctx.driverName, kb, feedbackTemplates, feedbackTemplatePrefix: FEEDBACK_TEMPLATE_PREFIX });
 }
 
 // Vite emits content-hashed bundles under web/dist/assets/. Serving any basename
@@ -1477,6 +1478,7 @@ interface PostSessionsBody {
   model?: string;
   startPaused?: boolean;
   forkFrom?: string;
+  kb?: boolean;
 }
 
 function isAgentName(value: unknown): value is AgentName {
@@ -1505,6 +1507,21 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   const agentName = body.agentName ?? (sourceMeta?.agentName ?? ctx.agentName);
   const model = agentName === "claude" ? (body.model ?? sourceMeta?.model) : undefined;
+
+  let kbBinding: KbBinding | undefined;
+  if (body.kb === true) {
+    if (agentName !== "claude") {
+      return json({ error: "kb is only supported for the claude agent" }, 400);
+    }
+    try {
+      kbBinding = await offeredKbBinding(ctx);
+    } catch (err) {
+      return json({ error: `kb config load failed: ${err instanceof Error ? err.message : String(err)}` }, 400);
+    }
+    if (!kbBinding) {
+      return json({ error: "this repo offers no kb (no matching `kb` config entry, or the driver is not pipe)" }, 400);
+    }
+  }
 
   const t0 = Date.now();
   let baseBranch: string;
@@ -1589,6 +1606,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
       ...(sourceMeta.agentSessionId !== undefined && { agentSessionId: sourceMeta.agentSessionId }),
     }),
     ...(allLinks.length > 0 && { links: allLinks }),
+    ...(kbBinding && { kb: kbLaunchOf(kbBinding) }),
   };
   await saveSessionMeta(meta, ctx.sessionsDir);
 

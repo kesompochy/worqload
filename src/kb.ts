@@ -1,15 +1,18 @@
 import { normalizeDir } from "./hooks";
 
-// A repository whose claude sessions launch through kb-repomap's
-// `kb NAME [--file F] [--store S] [--remote] claude ...`, so the session starts
-// with that repository's decrypted KB. Repositories without an entry launch
-// plain `claude`.
-export interface KbBinding {
-  directory: string;
+// Which kb-repomap KB a session launches with, as the arguments to
+// `kb NAME [--file F] [--store S] [--remote] claude ...`.
+export interface KbLaunch {
   name: string;
   file?: string;
   store?: string;
   remote?: boolean;
+}
+
+// The KB a repository offers to its sessions. Whether a session actually uses
+// it is chosen per session at creation.
+export interface KbBinding extends KbLaunch {
+  directory: string;
 }
 
 export function parseKbBindings(yamlText: string): KbBinding[] {
@@ -65,13 +68,17 @@ export function matchingKbBinding(bindings: KbBinding[], repoDir: string): KbBin
 
 // `claudeCommand` starts with the `claude` binary; kb execs `claude` itself
 // and forwards everything after it.
-export function wrapClaudeCommandWithKb(claudeCommand: string[], binding: KbBinding): string[] {
+export function wrapClaudeCommandWithKb(claudeCommand: string[], kb: KbLaunch): string[] {
   return [
     "kb",
-    binding.name,
-    ...(binding.file ? ["--file", binding.file] : []),
-    ...(binding.store ? ["--store", binding.store] : []),
-    ...(binding.remote ? ["--remote"] : []),
+    kb.name,
+    ...(kb.file ? ["--file", kb.file] : []),
+    ...(kb.store ? ["--store", kb.store] : []),
+    ...(kb.remote ? ["--remote"] : []),
     ...claudeCommand,
   ];
+}
+
+export function kbLaunchOf({ directory: _directory, ...launch }: KbBinding): KbLaunch {
+  return launch;
 }

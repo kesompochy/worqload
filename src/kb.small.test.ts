@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { matchingKbBinding, parseKbBindings, wrapClaudeCommandWithKb } from "./kb";
+import { kbLaunchOf, matchingKbBinding, parseKbBindings, wrapClaudeCommandWithKb } from "./kb";
 
 test("parseKbBindings returns [] when the key is absent", () => {
   expect(parseKbBindings("textlint: []")).toEqual([]);
@@ -57,8 +57,12 @@ test("matchingKbBinding returns undefined when no entry matches the repo", () =>
 });
 
 test("wrapClaudeCommandWithKb puts `kb <name> [options]` in front of the claude argv", () => {
-  expect(wrapClaudeCommandWithKb(["claude", "--dangerously-skip-permissions"], { directory: "/p", name: "app" }))
+  expect(wrapClaudeCommandWithKb(["claude", "--dangerously-skip-permissions"], { name: "app" }))
     .toEqual(["kb", "app", "claude", "--dangerously-skip-permissions"]);
-  expect(wrapClaudeCommandWithKb(["claude", "-p"], { directory: "/p", name: "app", file: "v1", store: "research", remote: true }))
+  expect(wrapClaudeCommandWithKb(["claude", "-p"], { name: "app", file: "v1", store: "research", remote: true }))
     .toEqual(["kb", "app", "--file", "v1", "--store", "research", "--remote", "claude", "-p"]);
+});
+
+test("kbLaunchOf drops the repository directory and keeps the kb arguments", () => {
+  expect(kbLaunchOf({ directory: "/p", name: "app", file: "v1" })).toEqual({ name: "app", file: "v1" });
 });
