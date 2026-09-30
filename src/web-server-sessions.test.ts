@@ -1144,3 +1144,43 @@ test("POST /feedback appends a wake_sent entry to host.log", async () => {
   expect(wake?.hasClient).toBe(true);
   expect(wake?.status).toBe("running");
 });
+
+async function spawnCommandForNewSession(repoDir: string, extra: Partial<Parameters<typeof startServer>[0]>): Promise<string[]> {
+  const spawnCommands: string[][] = [];
+  const capturingLauncher: HostLauncher = async (req) => {
+    spawnCommands.push(req.spawnCommand);
+    return inProcessHostLauncher()(req);
+  };
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher: capturingLauncher, ...extra });
+  const res = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE });
+  expect(res.status).toBe(201);
+  expect(spawnCommands).toHaveLength(1);
+  return spawnCommands[0] as string[];
+}
+
+function writeKbConfig(repoDir: string, entry: string): string {
+  const configPath = join(makeTmpDir("worqload-config"), "config.yaml");
+  writeFileSync(configPath, `kb:\n  - directory: ${repoDir}\n    name: app\n${entry}`);
+  return configPath;
+}
+
+test("a claude pipe session in a repo with a kb entry launches through `kb <name> claude`", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeKbConfig(repoDir, "    file: v1\n");
+  const spawnCommand = await spawnCommandForNewSession(repoDir, { configPath });
+  expect(spawnCommand.slice(0, 5)).toEqual(["kb", "app", "--file", "v1", "claude"]);
+});
+
+test("a claude session in a repo without a kb entry launches plain claude", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeKbConfig(makeTmpDir("other-repo"), "");
+  const spawnCommand = await spawnCommandForNewSession(repoDir, { configPath });
+  expect(spawnCommand[0]).toBe("claude");
+});
+
+test("the tmux driver ignores the kb entry, since kb rejects the --session-id it passes", async () => {
+  const repoDir = makeTmpDir("repo");
+  const configPath = writeKbConfig(repoDir, "");
+  const spawnCommand = await spawnCommandForNewSession(repoDir, { configPath, driverName: "tmux" });
+  expect(spawnCommand[0]).toBe("claude");
+});

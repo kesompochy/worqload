@@ -43,6 +43,7 @@ import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedback
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
+import { loadKbBindings, matchingKbBinding, wrapClaudeCommandWithKb } from "./kb";
 import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
@@ -943,6 +944,20 @@ async function terminateTrackedHost(ctx: ServerContext, sessionId: string): Prom
   if (ctx.clients.get(sessionId) === att) ctx.clients.delete(sessionId);
 }
 
+// Only the claude pipe driver launches through kb: the tmux driver pins the
+// transcript with `--session-id`, which `kb NAME claude` refuses because kb
+// mints the session id itself. A config that fails to parse launches plain
+// claude rather than failing the spawn.
+async function withRepoKb(ctx: ServerContext, claudeCommand: string[]): Promise<string[]> {
+  try {
+    const binding = matchingKbBinding(await loadKbBindings(ctx.configPath), ctx.repoDir);
+    return binding ? wrapClaudeCommandWithKb(claudeCommand, binding) : claudeCommand;
+  } catch (err) {
+    console.error(`[kb] config load failed, launching without KB: ${err instanceof Error ? err.message : String(err)}`);
+    return claudeCommand;
+  }
+}
+
 async function spawnAndAttachHost(
   ctx: ServerContext,
   meta: SessionMeta,
@@ -961,7 +976,9 @@ async function spawnAndAttachHost(
     let attachment: SessionAttachment | undefined;
     const agentName = meta.agentName ?? ctx.agentName;
     const driverName = meta.driverName ?? ctx.driverName;
-    const spawnCommand = ctx.spawnCommandForAgent(agentName, meta.model);
+    const spawnCommand = agentName === "claude" && driverName === "pipe"
+      ? await withRepoKb(ctx, ctx.spawnCommandForAgent(agentName, meta.model))
+      : ctx.spawnCommandForAgent(agentName, meta.model);
     let effectiveSpawnCommand: string[];
     if (opts.resume && agentName === "claude") {
       effectiveSpawnCommand = [...spawnCommand, "--continue"];

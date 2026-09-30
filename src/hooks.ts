@@ -57,7 +57,7 @@ function expandTilde(path: string): string {
   return path;
 }
 
-function normalizeDir(path: string): string {
+export function normalizeDir(path: string): string {
   const expanded = expandTilde(path);
   const resolved = resolve(expanded);
   return resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
