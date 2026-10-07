@@ -1144,3 +1144,65 @@ test("POST /feedback appends a wake_sent entry to host.log", async () => {
   expect(wake?.hasClient).toBe(true);
   expect(wake?.status).toBe("running");
 });
+
+async function bootKbServer(repoDir: string, configPath: string, extra: Partial<Parameters<typeof startServer>[0]> = {}) {
+  const spawnCommands: string[][] = [];
+  const capturingLauncher: HostLauncher = async (req) => {
+    spawnCommands.push(req.spawnCommand);
+    return inProcessHostLauncher()(req);
+  };
+  const booted = await bootServer(repoDir, { configPath, hostLauncher: capturingLauncher, ...extra });
+  return { ...booted, spawnCommands };
+}
+
+function writeKbConfig(repoDir: string, entry: string): string {
+  const configPath = join(makeTmpDir("worqload-config"), "config.yaml");
+  writeFileSync(configPath, `kb:\n  - directory: ${repoDir}\n    name: app\n${entry}`);
+  return configPath;
+}
+
+test("GET /meta offers the repo's KB name only when the repo has a kb entry and the driver can launch kb", async () => {
+  const repoDir = makeTmpDir("repo");
+  const withEntry = await bootKbServer(repoDir, writeKbConfig(repoDir, ""));
+  expect((await fetch(`${withEntry.baseUrl}/meta`).then((r) => r.json())).kb).toBe("app");
+
+  const otherRepo = makeTmpDir("repo");
+  const withoutEntry = await bootKbServer(otherRepo, writeKbConfig(makeTmpDir("other-repo"), ""));
+  expect((await fetch(`${withoutEntry.baseUrl}/meta`).then((r) => r.json())).kb).toBeNull();
+
+  const tmuxRepo = makeTmpDir("repo");
+  const tmux = await bootKbServer(tmuxRepo, writeKbConfig(tmuxRepo, ""), { driverName: "tmux" });
+  expect((await fetch(`${tmux.baseUrl}/meta`).then((r) => r.json())).kb).toBeNull();
+});
+
+test("a claude session created with kb records the KB and launches through `kb <name> [options] claude`", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, spawnCommands } = await bootKbServer(repoDir, writeKbConfig(repoDir, "    file: v1\n"));
+  const res = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE, kb: true });
+  expect(res.status).toBe(201);
+  expect((await res.json()).meta.kb).toEqual({ name: "app", file: "v1" });
+  expect(spawnCommands[0]?.slice(0, 5)).toEqual(["kb", "app", "--file", "v1", "claude"]);
+});
+
+test("a claude session created without kb launches plain claude even when the repo has a kb entry", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, spawnCommands } = await bootKbServer(repoDir, writeKbConfig(repoDir, ""));
+  const res = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE });
+  expect(res.status).toBe(201);
+  expect((await res.json()).meta.kb).toBeUndefined();
+  expect(spawnCommands[0]?.[0]).toBe("claude");
+});
+
+test("POST /sessions rejects kb when the repo has no kb entry, the agent is not claude, or the driver is tmux", async () => {
+  const noEntryRepo = makeTmpDir("repo");
+  const noEntry = await bootKbServer(noEntryRepo, writeKbConfig(makeTmpDir("other-repo"), ""));
+  expect((await postJson(noEntry.baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE, kb: true })).status).toBe(400);
+
+  const codexRepo = makeTmpDir("repo");
+  const codex = await bootKbServer(codexRepo, writeKbConfig(codexRepo, ""));
+  expect((await postJson(codex.baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE, agentName: "codex", kb: true })).status).toBe(400);
+
+  const tmuxRepo = makeTmpDir("repo");
+  const tmux = await bootKbServer(tmuxRepo, writeKbConfig(tmuxRepo, ""), { driverName: "tmux" });
+  expect((await postJson(tmux.baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE, kb: true })).status).toBe(400);
+});

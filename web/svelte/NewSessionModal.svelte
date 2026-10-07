@@ -6,6 +6,7 @@
   import { api, fetchSessions } from "../api.js";
   import { selectSession } from "../handlers.js";
   import { toast } from "../dom.js";
+  import { state as appState } from "../state.svelte.js";
 
   let visible = $state(false);
   let prompt = $state("");
@@ -14,6 +15,7 @@
   let baseBranch = $state("");
   let branchName = $state("");
   let startPaused = $state(false);
+  let useKb = $state(false);
   let submitting = $state(false);
   let errorMessage = $state("");
 
@@ -24,6 +26,7 @@
     baseBranch = "";
     branchName = "";
     startPaused = false;
+    useKb = appState.kb !== null;
     submitting = false;
     errorMessage = "";
     visible = true;
@@ -56,6 +59,7 @@
       if (trimmedBase) body.baseBranch = trimmedBase;
       if (trimmedBranchName) body.branchName = trimmedBranchName;
       if (startPaused) body.startPaused = true;
+      if (agentName === "claude" && appState.kb && useKb) body.kb = true;
       const { meta } = await api("POST", "/sessions", body);
       visible = false;
       await fetchSessions();
@@ -100,6 +104,14 @@
           <option value="cursor">Cursor</option>
         </select>
       </div>
+      {#if agentName === "claude" && appState.kb}
+        <div class="row" style="margin-top:.7rem">
+          <label style="color:var(--text-dim); font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer">
+            <input type="checkbox" bind:checked={useKb} />
+            KB: <code>{appState.kb}</code>
+          </label>
+        </div>
+      {/if}
       {#if agentName === "claude"}
         <div class="row" style="margin-top:.7rem">
           <label for="new-session-model" style="color:var(--text-dim); font-size:12px">Model</label>
