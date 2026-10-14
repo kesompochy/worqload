@@ -13,6 +13,7 @@ import CodeNavPopover from "./svelte/CodeNavPopover.svelte";
 import AnchoredFeedbackOverlay from "./svelte/AnchoredFeedbackOverlay.svelte";
 import AnchoredComposer from "./svelte/AnchoredComposer.svelte";
 import FileNameSearchModal from "./svelte/FileNameSearchModal.svelte";
+import ImageLightbox from "./svelte/ImageLightbox.svelte";
 import SessionList from "./svelte/SessionList.svelte";
 import DetailHeader from "./svelte/DetailHeader.svelte";
 import DetailBody from "./svelte/DetailBody.svelte";
@@ -76,6 +77,8 @@ mount(AnchoredFeedbackOverlay, { target: document.body });
 // state.anchor is set, so the human doesn't have to track the cursor down to
 // the bottom-fixed composer. The bottom composer stays in place.
 mount(AnchoredComposer, { target: document.body });
+
+mount(ImageLightbox, { target: document.body });
 
 const sessionListTarget = document.getElementById("sessionList");
 if (sessionListTarget) mount(SessionList, { target: sessionListTarget });
