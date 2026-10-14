@@ -67,6 +67,10 @@ export interface NumberedFileMeta {
   // disk (so its number and `.worqload-reports/<filename>` path stay valid for
   // the agent rewriting it) but is left out of the human's report list.
   rejection?: { reason?: string; rejectedAt: string };
+  // For a feedback message: the report the human rejected with it. The body
+  // holds only the human's reason; the rewrite instruction is wrapped around it
+  // when the agent fetches the message.
+  rejectedReport?: string;
 }
 
 export function metaFilenameFor(mdFilename: string): string {

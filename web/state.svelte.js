@@ -65,6 +65,7 @@ export const state = $state({
   structureHops: null,         // Structure tab: neighbourhood radius override (integer 0–4) | null = server default (2). The toolbar exposes a small selector once the user wants something other than the default.
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   reportViewRaw: new Map(),   // filename -> true: show raw markdown source instead of rendered HTML
+  reportRejecting: null,      // { filename, reason } | null: the report whose inline reject form is open, with the form's bound reason text
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked
   actions: [],           // [{ id, label, description?, confirmMessage?, direct?, params? }]

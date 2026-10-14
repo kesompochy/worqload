@@ -417,6 +417,22 @@ test("rejecting a report queues feedback naming the report and the human's reaso
   expect(inbox.messages[0].content).not.toContain("{{");
 });
 
+test("the reject reason appears in the human's feedback history as a feedback on the rejected report", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "half", content: "half-written report" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-half.md/reject`, { reason: "結論が書かれていない" });
+
+  const history = await fetch(`${baseUrl}/sessions/${sid}/feedback`).then((r) => r.json());
+  expect(history.messages).toHaveLength(1);
+  expect(history.messages[0].content).toBe("結論が書かれていない");
+  expect(history.messages[0].rejectedReport).toBe("001-half.md");
+});
+
 test("rejecting a report without a reason still queues feedback", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

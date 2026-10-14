@@ -28,7 +28,7 @@ import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { ghPrLinkResolver, makeCachedPrLinkResolver, type PrLinkResolver } from "./pr-link";
 import { writeNumberedFile, listAllFiles, readNumberedFile, mergeNumberedFileMeta, moveFile, moveNumberedFile, deleteNumberedFile, readReadState, setReadState, markAllRead, readPinState, setPinState, attachmentsDirNameFor } from "./file-store";
-import type { WriteNumberedFileOptions } from "./file-store";
+import type { NumberedFile, NumberedFileMeta, WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
 import { isSessionPreviewAlive, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
@@ -504,23 +504,25 @@ async function bounceReportForRevision(
   reason: string,
 ): Promise<Response> {
   await Bun.write(join(meta.worktreePath, REVISION_DRAFT_RELPATH), body.content);
-  await queueServerFeedback(ctx, meta, "revision-requested", feedbackContent, reason);
+  await queueFeedbackAndWake(ctx, meta, "revision-requested", feedbackContent, reason);
   return json({ revisionRequested: true });
 }
 
-// Queues a server-authored message into the feedback inbox and wakes the
-// session to drain it, respawning the host when the session is live but has
-// no attachment (the wake would otherwise be dropped).
-async function queueServerFeedback(
+// Queues a message into the feedback inbox and wakes the session to drain it,
+// respawning the host when the session is live but has no attachment (the wake
+// would otherwise be dropped).
+async function queueFeedbackAndWake(
   ctx: ServerContext,
   meta: SessionMeta,
   slug: string,
   feedbackContent: string,
   reason: string,
-): Promise<void> {
+  fileMeta?: NumberedFileMeta,
+): Promise<NumberedFile> {
   const inbox = feedbackInboxDirFor(ctx, meta.id);
   const file = await writeNumberedFile(inbox, slug, feedbackContent, {
     archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
+    meta: fileMeta,
   });
   await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
   const att = ctx.clients.get(meta.id);
@@ -537,10 +539,13 @@ async function queueServerFeedback(
   } else if (!isTerminal(meta.status)) {
     await respawnMissingClient(ctx, meta, reason);
   }
+  return file;
 }
 
-// Delivered when the human rejects a report. The reason slot collapses to
-// nothing when the human gave none.
+// What the agent reads for a reject feedback. The stored feedback body is the
+// human's reason alone (so the Feedbacks tab shows what the human wrote); the
+// rewrite instruction is wrapped around it at fetch time. The reason slot
+// collapses to nothing when the human gave none.
 function buildReportRejectedFeedback(filename: string, reason: string | undefined): string {
   return reportRejectedScaffold
     .replaceAll("{{reason}}", reason ? `\n\n## Reason given by the human\n\n${reason}` : "")
@@ -2022,8 +2027,8 @@ async function getFeedbackHistory(_req: Request, ctx: ServerContext, params: Rec
     const inbox = await listAllFiles(feedbackInboxDirFor(ctx, meta.id));
     const read = await listAllFiles(feedbackReadDirFor(ctx, meta.id));
     const all = [
-      ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const, anchor: f.meta?.anchor, attachments: f.attachments })),
-      ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const, anchor: f.meta?.anchor, attachments: f.attachments })),
+      ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const, anchor: f.meta?.anchor, rejectedReport: f.meta?.rejectedReport, attachments: f.attachments })),
+      ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const, anchor: f.meta?.anchor, rejectedReport: f.meta?.rejectedReport, attachments: f.attachments })),
     ];
     all.sort((a, b) => b.filename.localeCompare(a.filename));
     return json({ messages: all });
@@ -2193,7 +2198,27 @@ async function postReportReject(req: Request, ctx: ServerContext, params: Record
     if (reason) rejection.reason = reason;
     await mergeNumberedFileMeta(dir, filename, { rejection });
     await appendAndBroadcast(ctx, meta.id, { kind: "report_rejected", payload: { filename } });
-    await queueServerFeedback(ctx, meta, "report-rejected", buildReportRejectedFeedback(filename, reason), "report_rejected");
+    const feedback = await queueFeedbackAndWake(ctx, meta, "report-rejected", reason ?? "", "report_rejected", { rejectedReport: filename });
+    if (ctx.archiveDb && reason) {
+      try {
+        archiveUpsertSession(ctx.archiveDb, {
+          sessionId: meta.id,
+          repo: ctx.repoIdentifier,
+          initialPrompt: meta.prompt,
+          createdAt: meta.createdAt,
+        });
+        archiveInsertFeedback(ctx.archiveDb, {
+          repo: ctx.repoIdentifier,
+          sessionId: meta.id,
+          filename: feedback.filename,
+          body: reason,
+          anchorPath: null,
+          anchorLineStart: null,
+          anchorLineEnd: null,
+          createdAt: new Date().toISOString(),
+        });
+      } catch { /* archive is best-effort */ }
+    }
     return json({ ok: true, filename });
   });
 }
@@ -3479,8 +3504,11 @@ function formatAttachmentsSection(absolutePaths: string[]): string {
   return `## Attachments\n\n${lead}\n\n${lines}`;
 }
 
-function formatFeedbackMessageForAgent(m: { content: string; filename: string; meta?: { anchor?: { path: string; lineStart: number; lineEnd: number; quote?: string } }; attachments?: string[] }, attachmentsBaseDir: string, skills?: SkillButton[]): { filename: string; content: string } {
+function formatFeedbackMessageForAgent(m: { content: string; filename: string; meta?: NumberedFileMeta; attachments?: string[] }, attachmentsBaseDir: string, skills?: SkillButton[]): { filename: string; content: string } {
   let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
+  if (m.meta?.rejectedReport) {
+    content = buildReportRejectedFeedback(m.meta.rejectedReport, m.content.trim() || undefined);
+  }
   if (skills && skills.length > 0) {
     content = expandSkillReferences(content, skills);
   }
