@@ -253,6 +253,9 @@
               {#if f.anchor}
                 <button class="report-anchor-chip" type="button" title="Re: {anchorLabel(f.anchor)} — クリックでアンカー先へ" data-goto-anchor-path={f.anchor.path} data-goto-anchor-line={f.anchor.lineStart} data-goto-anchor-line-end={f.anchor.lineEnd}>↳ {anchorLabel(f.anchor)}</button>
               {/if}
+              {#if f.rejectedReport}
+                <span class="report-anchor-chip" title="このフィードバックで {f.rejectedReport} をrejectした">↩ rejected {f.rejectedReport}</span>
+              {/if}
               {#each replies as rep (rep.filename)}
                 <button class="report-anchor-chip" type="button" title="addressed by {rep.filename} — クリックでレポートへ" data-goto-report={rep.filename}>↳ {rep.filename}</button>
               {/each}
@@ -263,7 +266,11 @@
               {#if f.anchor?.quote}
                 <blockquote class="anchor-quote">{f.anchor.quote}</blockquote>
               {/if}
-              <div class="md">{@html highlightSkillRefs(renderMarkdown(f.content))}</div>
+              {#if f.rejectedReport && f.content.trim() === ""}
+                <div class="feedback-empty-reason">（理由なし）</div>
+              {:else}
+                <div class="md">{@html highlightSkillRefs(renderMarkdown(f.content))}</div>
+              {/if}
               {#if f.attachments && f.attachments.length > 0}
                 <div class="attachment-strip">
                   {#each f.attachments as name (name)}
