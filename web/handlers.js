@@ -172,6 +172,11 @@ export async function onDetailBodyClick(e) {
     const pinTo = pinBtn.getAttribute("data-report-pin-to");
     return onReportPin(filename, pinTo === "pin");
   }
+  const rejectBtn = e.target.closest("[data-report-reject]");
+  if (rejectBtn) {
+    e.stopPropagation();
+    return onReportReject(rejectBtn.getAttribute("data-report-reject"));
+  }
   const deleteBtn = e.target.closest("[data-report-delete]");
   if (deleteBtn) {
     e.stopPropagation();
@@ -595,6 +600,25 @@ export async function onReportDelete(filename) {
   if (!confirm(`レポート「${filename}」を削除します。元に戻せません。よろしいですか？`)) return;
   try {
     await api("DELETE", `/sessions/${state.selected}/reports/${encodeURIComponent(filename)}`);
+    const nextToggle = new Map(state.reportToggle);
+    nextToggle.delete(filename);
+    state.reportToggle = nextToggle;
+    await refreshDetail();
+    await fetchSessions();
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
+// Sends a half-finished report back to the agent for a rewrite. The server
+// hides it from the list and queues the rewrite instruction; the reason the
+// human types (optional) rides along. Cancelling the prompt aborts.
+export async function onReportReject(filename) {
+  if (!state.selected) return;
+  const reason = window.prompt(`レポート「${filename}」をrejectして書き直させます。理由（任意）:`, "");
+  if (reason === null) return;
+  try {
+    await api("POST", `/sessions/${state.selected}/reports/${encodeURIComponent(filename)}/reject`, { reason });
     const nextToggle = new Map(state.reportToggle);
     nextToggle.delete(filename);
     state.reportToggle = nextToggle;
