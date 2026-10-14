@@ -347,7 +347,7 @@
                   <div class="row">
                     <span class="spacer"></span>
                     <button type="button" data-report-reject-cancel>キャンセル</button>
-                    <button type="button" class="report-reject-confirm" data-report-reject-confirm>reject して書き直させる</button>
+                    <button type="button" class="report-reject-confirm" data-report-reject-confirm>reject</button>
                   </div>
                 </div>
               {/if}
