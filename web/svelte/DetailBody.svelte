@@ -20,7 +20,7 @@
   import FilesView from "./FilesView.svelte";
   import StructureView from "./StructureView.svelte";
   import EventsView from "./EventsView.svelte";
-  import { onDetailBodyClick, onTextSelectionAnchor, onResolve, onAskingPaste, onAskingDrop, removeAskingAttachment, onDetailBodyPointerOver, onDetailBodyPointerOut } from "../handlers.js";
+  import { onDetailBodyClick, onTextSelectionAnchor, onResolve, onReportReject, onAskingPaste, onAskingDrop, removeAskingAttachment, onDetailBodyPointerOver, onDetailBodyPointerOut } from "../handlers.js";
 
   // Tracked across the answer textarea's keydowns so a confirming Enter mid-IME
   // composition doesn't also submit (same guard as Composer.svelte).
@@ -34,6 +34,19 @@
     if (!article) return;
     onResolve(article.getAttribute("data-asking"), article, article.querySelector(".ask-resolve"));
   }
+
+  function onRejectReasonKeydown(event) {
+    if (composing || event.isComposing || event.keyCode === 229) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      appState.reportRejecting = null;
+    } else if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void onReportReject();
+    }
+  }
+
+  function focusOnShow(node) { node.focus(); }
 
   const skillNames = $derived(
     new Set(appState.actions.filter(a => a.group === "skill").map(a => a.label)),
@@ -313,6 +326,24 @@
                 <button class="report-reject" type="button" data-report-reject={r.filename} title="このレポートをrejectして書き直させる" aria-label="レポートをreject">reject</button>
                 <button class="report-delete" type="button" data-report-delete={r.filename} title="このレポートを削除する" aria-label="レポートを削除">✕</button>
               </div>
+              {#if appState.reportRejecting?.filename === r.filename}
+                <div class="report-reject-form">
+                  <textarea
+                    rows="2"
+                    placeholder="reject 理由（任意）— エージェントへのフィードバックとして届く。Enter で reject / Shift+Enter で改行 / Esc でキャンセル"
+                    bind:value={appState.reportRejecting.reason}
+                    use:focusOnShow
+                    oncompositionstart={() => (composing = true)}
+                    oncompositionend={() => (composing = false)}
+                    onkeydown={onRejectReasonKeydown}
+                  ></textarea>
+                  <div class="row">
+                    <span class="spacer"></span>
+                    <button type="button" data-report-reject-cancel>キャンセル</button>
+                    <button type="button" class="report-reject-confirm" data-report-reject-confirm>reject して書き直させる</button>
+                  </div>
+                </div>
+              {/if}
               <div class="report-body">
                 {#if viewRaw}
                   <pre class="report-source">{r.content}</pre>

@@ -85,6 +85,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   state.fileNewPath = "";
   state.fileRenaming = false;
   state.fileRenamePath = "";
+  state.reportRejecting = null;
   state.codeNav = null;
   state.actions = [];
   state.structure = null;
@@ -175,7 +176,15 @@ export async function onDetailBodyClick(e) {
   const rejectBtn = e.target.closest("[data-report-reject]");
   if (rejectBtn) {
     e.stopPropagation();
-    return onReportReject(rejectBtn.getAttribute("data-report-reject"));
+    state.reportRejecting = { filename: rejectBtn.getAttribute("data-report-reject"), reason: "" };
+    return;
+  }
+  if (e.target.closest("[data-report-reject-confirm]")) {
+    return onReportReject();
+  }
+  if (e.target.closest("[data-report-reject-cancel]")) {
+    state.reportRejecting = null;
+    return;
   }
   const deleteBtn = e.target.closest("[data-report-delete]");
   if (deleteBtn) {
@@ -610,15 +619,15 @@ export async function onReportDelete(filename) {
   }
 }
 
-// Sends a half-finished report back to the agent for a rewrite. The server
-// hides it from the list and queues the rewrite instruction; the reason the
-// human types (optional) rides along. Cancelling the prompt aborts.
-export async function onReportReject(filename) {
-  if (!state.selected) return;
-  const reason = window.prompt(`レポート「${filename}」をrejectして書き直させます。理由（任意）:`, "");
-  if (reason === null) return;
+// Sends the report whose inline reject form is open back to the agent for a
+// rewrite. The server hides it from the list and queues the rewrite
+// instruction, carrying the reason typed into the form (optional).
+export async function onReportReject() {
+  if (!state.selected || !state.reportRejecting) return;
+  const { filename, reason } = state.reportRejecting;
   try {
     await api("POST", `/sessions/${state.selected}/reports/${encodeURIComponent(filename)}/reject`, { reason });
+    state.reportRejecting = null;
     const nextToggle = new Map(state.reportToggle);
     nextToggle.delete(filename);
     state.reportToggle = nextToggle;

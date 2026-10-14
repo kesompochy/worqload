@@ -87,6 +87,7 @@ afterEach(() => {
     actionResults: new Map(), renamingSessionId: null, pendingScrollTo: null,
     feedbackPinAt: null, pendingAttachments: [], askingAttachments: new Map(),
     feedbackQueue: [],
+    reportRejecting: null,
     eventsTabHidden: true,
     fileTabCache: new Map(),
   });
@@ -947,32 +948,45 @@ test("onDeleteArchived bails when the human cancels the confirm dialog", async (
   expect(fetchArchivedSessionsCalls).toBe(0);
 });
 
-test("onReportReject posts the reason the human typed into the prompt", async () => {
+function attrClickWithValue(attr: string, value: string) {
+  const el = { getAttribute: (name: string) => (name === attr ? value : null) };
+  return { target: { closest: (sel: string) => (sel === `[${attr}]` ? el : null) }, stopPropagation: () => {} };
+}
+
+test("the report reject button opens the inline reason form for that report", () => {
   state.selected = "s1";
-  apiCalls.length = 0;
 
-  const savedWindow = globalThis.window;
-  (globalThis as unknown as { window: unknown }).window = { prompt: () => "結論がない" };
-  try {
-    await onReportReject("002-half.md");
-  } finally {
-    (globalThis as unknown as { window: unknown }).window = savedWindow;
-  }
+  onDetailBodyClick(attrClickWithValue("data-report-reject", "002-half.md"));
 
-  expect(apiCalls).toEqual([{ method: "POST", path: "/sessions/s1/reports/002-half.md/reject", body: { reason: "結論がない" } }]);
+  expect(state.reportRejecting).toEqual({ filename: "002-half.md", reason: "" });
+  expect(apiCalls).toEqual([]);
 });
 
-test("onReportReject bails when the human cancels the prompt", async () => {
+test("the inline reject form's cancel button closes it without rejecting", () => {
   state.selected = "s1";
-  apiCalls.length = 0;
+  state.reportRejecting = { filename: "002-half.md", reason: "draft" };
 
-  const savedWindow = globalThis.window;
-  (globalThis as unknown as { window: unknown }).window = { prompt: () => null };
-  try {
-    await onReportReject("002-half.md");
-  } finally {
-    (globalThis as unknown as { window: unknown }).window = savedWindow;
-  }
+  onDetailBodyClick(attrClick("data-report-reject-cancel"));
+
+  expect(state.reportRejecting).toBeNull();
+  expect(apiCalls).toEqual([]);
+});
+
+test("onReportReject posts the reason typed into the inline form and closes it", async () => {
+  state.selected = "s1";
+  state.reportRejecting = { filename: "002-half.md", reason: "結論がない" };
+
+  await onReportReject();
+
+  expect(apiCalls).toEqual([{ method: "POST", path: "/sessions/s1/reports/002-half.md/reject", body: { reason: "結論がない" } }]);
+  expect(state.reportRejecting).toBeNull();
+});
+
+test("onReportReject does nothing when no reject form is open", async () => {
+  state.selected = "s1";
+  state.reportRejecting = null;
+
+  await onReportReject();
 
   expect(apiCalls).toEqual([]);
 });
