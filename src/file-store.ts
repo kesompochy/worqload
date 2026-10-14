@@ -63,6 +63,10 @@ export interface NumberedFileMeta {
   anchor?: { path: string; lineStart: number; lineEnd: number; quote?: string };
   // For a report: the filename of the feedback message it answers.
   replyTo?: string;
+  // For a report: set when the human rejected it. A rejected report stays on
+  // disk (so its number and `.worqload-reports/<filename>` path stay valid for
+  // the agent rewriting it) but is left out of the human's report list.
+  rejection?: { reason?: string; rejectedAt: string };
 }
 
 export function metaFilenameFor(mdFilename: string): string {
@@ -165,6 +169,25 @@ async function listAttachments(dir: string, mdFilename: string): Promise<string[
   return entries.sort();
 }
 
+// Shallow-merges `patch` into a numbered file's `.meta.json` sidecar, creating
+// the sidecar when the file had none.
+export async function mergeNumberedFileMeta(dir: string, filename: string, patch: NumberedFileMeta): Promise<void> {
+  const current = (await readMetaSidecar(dir, filename)) ?? {};
+  await Bun.write(join(dir, metaFilenameFor(filename)), JSON.stringify({ ...current, ...patch }, null, 2));
+}
+
+export async function readNumberedFile(dir: string, filename: string): Promise<ReadFile | undefined> {
+  const path = join(dir, filename);
+  const file = Bun.file(path);
+  if (!(await file.exists())) return undefined;
+  const entry: ReadFile = { filename, content: await file.text(), path };
+  const meta = await readMetaSidecar(dir, filename);
+  const attachments = await listAttachments(dir, filename);
+  if (meta) entry.meta = meta;
+  if (attachments) entry.attachments = attachments;
+  return entry;
+}
+
 export async function listAllFiles(dir: string): Promise<ReadFile[]> {
   let entries: string[];
   try {
@@ -176,14 +199,8 @@ export async function listAllFiles(dir: string): Promise<ReadFile[]> {
   const files = entries.filter(e => e.endsWith(".md")).sort();
   const result: ReadFile[] = [];
   for (const filename of files) {
-    const path = join(dir, filename);
-    const content = await Bun.file(path).text();
-    const meta = await readMetaSidecar(dir, filename);
-    const attachments = await listAttachments(dir, filename);
-    const entry: ReadFile = { filename, content, path };
-    if (meta) entry.meta = meta;
-    if (attachments) entry.attachments = attachments;
-    result.push(entry);
+    const entry = await readNumberedFile(dir, filename);
+    if (entry) result.push(entry);
   }
   return result;
 }
