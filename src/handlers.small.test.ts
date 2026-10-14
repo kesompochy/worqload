@@ -61,7 +61,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, toggleEventsTab, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onResume, onStopAndResume, onToggleReviseMode, onResolve, onResolveCommand } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, toggleEventsTab, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onReportReject, onResume, onStopAndResume, onToggleReviseMode, onResolve, onResolveCommand } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 
@@ -945,6 +945,36 @@ test("onDeleteArchived bails when the human cancels the confirm dialog", async (
 
   expect(apiCalls).toEqual([]);
   expect(fetchArchivedSessionsCalls).toBe(0);
+});
+
+test("onReportReject posts the reason the human typed into the prompt", async () => {
+  state.selected = "s1";
+  apiCalls.length = 0;
+
+  const savedWindow = globalThis.window;
+  (globalThis as unknown as { window: unknown }).window = { prompt: () => "結論がない" };
+  try {
+    await onReportReject("002-half.md");
+  } finally {
+    (globalThis as unknown as { window: unknown }).window = savedWindow;
+  }
+
+  expect(apiCalls).toEqual([{ method: "POST", path: "/sessions/s1/reports/002-half.md/reject", body: { reason: "結論がない" } }]);
+});
+
+test("onReportReject bails when the human cancels the prompt", async () => {
+  state.selected = "s1";
+  apiCalls.length = 0;
+
+  const savedWindow = globalThis.window;
+  (globalThis as unknown as { window: unknown }).window = { prompt: () => null };
+  try {
+    await onReportReject("002-half.md");
+  } finally {
+    (globalThis as unknown as { window: unknown }).window = savedWindow;
+  }
+
+  expect(apiCalls).toEqual([]);
 });
 
 test("onToggleArchivedSelection toggles ids on a fresh Set so Svelte re-renders", () => {

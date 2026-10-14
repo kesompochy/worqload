@@ -27,7 +27,7 @@ import { collectCallGraph, findDefinition, findReferences, shutdownAllLanguageSe
 import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "./structure-view";
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { ghPrLinkResolver, makeCachedPrLinkResolver, type PrLinkResolver } from "./pr-link";
-import { writeNumberedFile, listAllFiles, moveFile, moveNumberedFile, deleteNumberedFile, readReadState, setReadState, markAllRead, readPinState, setPinState, attachmentsDirNameFor } from "./file-store";
+import { writeNumberedFile, listAllFiles, readNumberedFile, mergeNumberedFileMeta, moveFile, moveNumberedFile, deleteNumberedFile, readReadState, setReadState, markAllRead, readPinState, setPinState, attachmentsDirNameFor } from "./file-store";
 import type { WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
@@ -47,6 +47,7 @@ import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClau
 import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
+import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -503,8 +504,22 @@ async function bounceReportForRevision(
   reason: string,
 ): Promise<Response> {
   await Bun.write(join(meta.worktreePath, REVISION_DRAFT_RELPATH), body.content);
+  await queueServerFeedback(ctx, meta, "revision-requested", feedbackContent, reason);
+  return json({ revisionRequested: true });
+}
+
+// Queues a server-authored message into the feedback inbox and wakes the
+// session to drain it, respawning the host when the session is live but has
+// no attachment (the wake would otherwise be dropped).
+async function queueServerFeedback(
+  ctx: ServerContext,
+  meta: SessionMeta,
+  slug: string,
+  feedbackContent: string,
+  reason: string,
+): Promise<void> {
   const inbox = feedbackInboxDirFor(ctx, meta.id);
-  const file = await writeNumberedFile(inbox, "revision-requested", feedbackContent, {
+  const file = await writeNumberedFile(inbox, slug, feedbackContent, {
     archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
   });
   await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
@@ -522,7 +537,15 @@ async function bounceReportForRevision(
   } else if (!isTerminal(meta.status)) {
     await respawnMissingClient(ctx, meta, reason);
   }
-  return json({ revisionRequested: true });
+}
+
+// Delivered when the human rejects a report. The reason slot collapses to
+// nothing when the human gave none.
+function buildReportRejectedFeedback(filename: string, reason: string | undefined): string {
+  return reportRejectedScaffold
+    .replaceAll("{{reason}}", reason ? `\n\n## Reason given by the human\n\n${reason}` : "")
+    .replaceAll("{{filename}}", filename)
+    .replaceAll("{{slug}}", filename.replace(/^\d+-/, "").replace(/\.md$/, ""));
 }
 
 // Re-reads the textlint config so edits take effect without a server restart.
@@ -1276,6 +1299,8 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/reports", getReports),
   defineRoute("GET",  "/sessions/:id/reports/:filename/attachments/:name", getReportAttachment),
   defineRoute("POST", "/sessions/:id/reports/read-all", postReportsReadAll),
+  defineRoute("GET",  "/sessions/:id/reports/:filename", getReport),
+  defineRoute("POST", "/sessions/:id/reports/:filename/reject", postReportReject),
   defineRoute("POST", "/sessions/:id/reports/:filename/read", postReportRead),
   defineRoute("POST", "/sessions/:id/reports/:filename/unread", postReportUnread),
   defineRoute("POST", "/sessions/:id/reports/:filename/pin", postReportPin),
@@ -1720,7 +1745,7 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
       readEvents(meta.id, 1, ctx.sessionsDir),
       listAllFiles(askingDirFor(ctx, meta.id)),
     ]);
-    const unreadReportCount = reports.reduce((n, r) => n + (readSet.has(r.filename) ? 0 : 1), 0);
+    const unreadReportCount = reports.reduce((n, r) => n + (r.meta?.rejection || readSet.has(r.filename) ? 0 : 1), 0);
     const unresolvedEscalationCount = asking.length;
     // The sidebar's liveness signal: when the agent last did something — its run
     // or a step within it, not a report/feedback/escalation. Undefined until the
@@ -2117,7 +2142,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
       }
     }
     return json({
-      reports: reports.map(r => ({
+      reports: reports.filter(r => !r.meta?.rejection).map(r => ({
         filename: r.filename,
         content: r.content,
         read: readSet.has(r.filename),
@@ -2127,6 +2152,49 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
         submittedAt: submittedAt.get(r.filename),
       })),
     });
+  });
+}
+
+// Fetches one report by filename, rejected ones included — the only way to
+// read a rejected report's text, since the list leaves them out.
+async function getReport(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    if (!isSafeAttachmentName(filename) || !filename.endsWith(".md")) {
+      return json({ error: "invalid report filename" }, 400);
+    }
+    const report = await readNumberedFile(reportsDirFor(ctx, meta.id), filename);
+    if (!report) return json({ error: "report not found" }, 404);
+    return json({
+      filename: report.filename,
+      content: report.content,
+      replyTo: report.meta?.replyTo,
+      attachments: report.attachments,
+      rejection: report.meta?.rejection,
+    });
+  });
+}
+
+// Hides a report from the human's list and asks the agent to rewrite and
+// resubmit it — for a report submitted half-finished.
+async function postReportReject(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    if (!isSafeAttachmentName(filename) || !filename.endsWith(".md")) {
+      return json({ error: "invalid report filename" }, 400);
+    }
+    const dir = reportsDirFor(ctx, meta.id);
+    const report = await readNumberedFile(dir, filename);
+    if (!report) return json({ error: "report not found" }, 404);
+    if (report.meta?.rejection) return json({ error: "report already rejected" }, 409);
+    const body = (await req.json().catch(() => ({}))) as { reason?: unknown };
+    const reason = typeof body.reason === "string" && body.reason.trim() !== "" ? body.reason.trim() : undefined;
+    const rejection: { reason?: string; rejectedAt: string } = { rejectedAt: new Date().toISOString() };
+    if (reason) rejection.reason = reason;
+    await mergeNumberedFileMeta(dir, filename, { rejection });
+    await appendAndBroadcast(ctx, meta.id, { kind: "report_rejected", payload: { filename } });
+    await queueServerFeedback(ctx, meta, "report-rejected", buildReportRejectedFeedback(filename, reason), "report_rejected");
+    return json({ ok: true, filename });
   });
 }
 

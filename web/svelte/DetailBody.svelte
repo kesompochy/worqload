@@ -310,6 +310,7 @@
                 <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
                 <button class="report-pin" type="button" class:pinned={r.pinned} data-report-pin={r.filename} data-report-pin-to={r.pinned ? "unpin" : "pin"} title={r.pinned ? "ピンを外す" : "ピン留めする"} aria-label={r.pinned ? "ピンを外す" : "ピン留めする"}>📌</button>
                 <button class="report-view-toggle" type="button" data-report-view-toggle={r.filename} title={viewRaw ? "レンダリング表示に切り替え" : "ソーステキスト表示に切り替え"} aria-label={viewRaw ? "レンダリング表示" : "ソーステキスト表示"}>{viewRaw ? "Rich" : "Source"}</button>
+                <button class="report-reject" type="button" data-report-reject={r.filename} title="このレポートをrejectして書き直させる" aria-label="レポートをreject">reject</button>
                 <button class="report-delete" type="button" data-report-delete={r.filename} title="このレポートを削除する" aria-label="レポートを削除">✕</button>
               </div>
               <div class="report-body">

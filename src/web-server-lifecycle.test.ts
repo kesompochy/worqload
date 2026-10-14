@@ -377,6 +377,134 @@ test("pinned flag does not affect unreadReportCount", async () => {
   expect(sessions.sessions.find((s: { id: string }) => s.id === sid).unreadReportCount).toBe(0);
 });
 
+test("POST /sessions/:id/reports/:filename/reject hides the report from the list and the unread count", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "keep", content: "kept report" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "half", content: "half-written report" });
+
+  const rejected = await postJson(baseUrl, `/sessions/${sid}/reports/002-half.md/reject`, { reason: "結論が書かれていない" });
+  expect(rejected.status).toBe(200);
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
+  expect(res.reports.map((r: { filename: string }) => r.filename)).toEqual(["001-keep.md"]);
+
+  const sessions = await fetch(`${baseUrl}/sessions`).then((r) => r.json());
+  expect(sessions.sessions.find((s: { id: string }) => s.id === sid).unreadReportCount).toBe(1);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.find((e) => e.kind === "report_rejected")?.payload).toEqual({ filename: "002-half.md" });
+});
+
+test("rejecting a report queues feedback naming the report and the human's reason", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "half", content: "half-written report" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-half.md/reject`, { reason: "結論が書かれていない" });
+
+  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
+  expect(inbox.messages).toHaveLength(1);
+  expect(inbox.messages[0].content).toContain("001-half.md");
+  expect(inbox.messages[0].content).toContain("結論が書かれていない");
+  expect(inbox.messages[0].content).not.toContain("{{");
+});
+
+test("rejecting a report without a reason still queues feedback", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "half", content: "half-written report" });
+  const rejected = await postJson(baseUrl, `/sessions/${sid}/reports/001-half.md/reject`, {});
+  expect(rejected.status).toBe(200);
+
+  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
+  expect(inbox.messages).toHaveLength(1);
+  expect(inbox.messages[0].content).toContain("001-half.md");
+  expect(inbox.messages[0].content).not.toContain("{{");
+});
+
+test("GET /sessions/:id/reports/:filename returns a rejected report with its reason", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "half", content: "half-written report" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-half.md/reject`, { reason: "結論が書かれていない" });
+
+  const report = await fetch(`${baseUrl}/sessions/${sid}/reports/001-half.md`).then((r) => r.json());
+  expect(report.filename).toBe("001-half.md");
+  expect(report.content).toBe("half-written report");
+  expect(report.rejection.reason).toBe("結論が書かれていない");
+  expect(typeof report.rejection.rejectedAt).toBe("string");
+});
+
+test("GET /sessions/:id/reports/:filename returns 404 for a missing report", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const res = await fetch(`${baseUrl}/sessions/${sid}/reports/001-nope.md`);
+  expect(res.status).toBe(404);
+});
+
+test("POST /sessions/:id/reports/:filename/reject returns 404 for a missing report", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  const res = await postJson(baseUrl, `/sessions/${sid}/reports/001-nope.md/reject`, {});
+  expect(res.status).toBe(404);
+});
+
+test("rejecting an already-rejected report is refused and queues no second feedback", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "half", content: "half-written report" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-half.md/reject`, {});
+  const again = await postJson(baseUrl, `/sessions/${sid}/reports/001-half.md/reject`, {});
+  expect(again.status).toBe(409);
+
+  const inbox = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback`).then((r) => r.json());
+  expect(inbox.messages).toHaveLength(1);
+});
+
+test("a rejected report keeps its replyTo in the sidecar", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/sessions/${sid}/feedback`, { content: "question" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "answer", content: "answer report body", replyTo: "001-feedback.md" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-answer.md/reject`, { reason: "r" });
+
+  const sidecar = JSON.parse(readFileSync(join(ctx.sessionsDir, sid, "reports", "001-answer.meta.json"), "utf8"));
+  expect(sidecar.replyTo).toBe("001-feedback.md");
+  expect(sidecar.rejection.reason).toBe("r");
+});
+
 test("POST /internal/reports (multipart) stores attachments in a sibling .attachments dir", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
