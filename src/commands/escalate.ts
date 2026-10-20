@@ -1,13 +1,15 @@
 // agent-side CLI:
 //   `worqload escalate submit --slug <slug>`        (question body via stdin)
 //   `worqload escalate command --command "<cmd>"`   (reason via stdin, required)
+//   `worqload escalate cancel <filename> [--reason <text>]`
 
-import { submitEscalation, requestCommandApproval } from "../agent-client";
+import { submitEscalation, cancelEscalation, requestCommandApproval } from "../agent-client";
 import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, exitWithUsage } from "./cli-helpers";
 
 const USAGE =
   "worqload escalate submit --slug <slug>          (question body via stdin)\n" +
-  "       worqload escalate command --command <cmd> [--timeout <seconds>]  (reason via stdin, required)";
+  "       worqload escalate command --command <cmd> [--timeout <seconds>]  (reason via stdin, required)\n" +
+  "       worqload escalate cancel <filename> [--reason <text>]";
 
 export async function escalate(args: string[]): Promise<void> {
   switch (args[0]) {
@@ -15,6 +17,8 @@ export async function escalate(args: string[]): Promise<void> {
       return escalateSubmit(args.slice(1));
     case "command":
       return escalateCommand(args.slice(1));
+    case "cancel":
+      return escalateCancel(args.slice(1));
     default:
       exitWithUsage(USAGE);
   }
@@ -65,6 +69,21 @@ async function escalateCommand(args: string[]): Promise<void> {
     console.log(result.filename);
   } catch (err) {
     console.error(`escalate command failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
+async function escalateCancel(args: string[]): Promise<void> {
+  const filename = args[0];
+  if (filename === undefined || filename.startsWith("--")) exitWithUsage(USAGE);
+  const reason = optionalFlag(args, "--reason");
+  const sessionId = requireEnv("WORQLOAD_SESSION_ID");
+  const endpoint = resolveAgentEndpoint();
+  try {
+    await cancelEscalation(endpoint, sessionId, filename, reason);
+    console.log(`cancelled ${filename}`);
+  } catch (err) {
+    console.error(`escalate cancel failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
 }

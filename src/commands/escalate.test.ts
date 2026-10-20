@@ -19,3 +19,17 @@ test("escalate command rejects empty reason", async () => {
   expect(exitCode).toBe(2);
   expect(stderr).toContain("reason must be provided");
 });
+
+test("escalate cancel requires a filename", async () => {
+  const proc = Bun.spawn(["bun", CLI, "escalate", "cancel"], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      WORQLOAD_ENDPOINT: "http://localhost:0",
+      WORQLOAD_SESSION_ID: "test-session",
+    },
+  });
+  const exitCode = await proc.exited;
+  expect(exitCode).toBe(2);
+});

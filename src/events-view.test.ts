@@ -196,6 +196,12 @@ test("describeEvent renders a rejected command-approval resolve", () => {
   expect(d.summary).toBe("🚫 rejected: npm publish");
 });
 
+test("describeEvent renders an escalation the agent cancelled", () => {
+  const payload = { filename: "002-lib.md", cancelled: true };
+  const d = describeEvent({ seq: 21, kind: "escalation_resolved", timestamp: "", payload });
+  expect(d.summary).toBe("⊘ cancelled 002-lib.md");
+});
+
 test("describeEvent shows the command in a command-approval request summary", () => {
   const d = describeEvent({
     seq: 22,
