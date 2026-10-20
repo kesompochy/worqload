@@ -76,6 +76,18 @@ export async function submitEscalation(
   );
 }
 
+export async function cancelEscalation(
+  endpoint: string,
+  sessionId: string,
+  filename: string,
+  reason?: string,
+): Promise<void> {
+  await postJson<unknown>(
+    `${endpoint}/internal/sessions/${sessionId}/escalations/${encodeURIComponent(filename)}/cancel`,
+    reason ? { reason } : {},
+  );
+}
+
 export interface CommandApprovalResult extends SubmitResult {
 }
 

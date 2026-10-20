@@ -53,7 +53,7 @@ import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with
 // without permission prompts regardless of which permission mode the rest of
 // the session uses.
 const WORQLOAD_PROTOCOL_ALLOW =
-  "Bash(worqload report submit:*) Bash(worqload escalate submit:*) Bash(worqload escalate command:*) " +
+  "Bash(worqload report submit:*) Bash(worqload escalate submit:*) Bash(worqload escalate command:*) Bash(worqload escalate cancel:*) " +
   "Bash(worqload feedback fetch) Bash(worqload feedback fetch:*)";
 
 // Tries to bind on the requested port and shifts upward on EADDRINUSE so a
@@ -1332,6 +1332,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
   defineRoute("POST", "/internal/sessions/:id/escalations", postInternalEscalations),
+  defineRoute("POST", "/internal/sessions/:id/escalations/:filename/cancel", postInternalEscalationCancel),
   defineRoute("POST", "/internal/sessions/:id/command-approvals", postInternalCommandApprovals),
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
   defineRoute("GET",  "/internal/sessions/:id/feedback/history", getInternalFeedbackHistory),
@@ -3241,12 +3242,7 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       payload: { filename: file.filename },
     });
 
-    // If no more pending escalations, return to running.
-    const remaining = await listAllFiles(askingDir);
-    let updatedMeta = meta;
-    if (remaining.length === 0 && meta.status === "waiting_human") {
-      updatedMeta = await transitionStatus(ctx, meta, "running");
-    }
+    const updatedMeta = await resumeIfNoEscalationsPending(ctx, meta);
     appendHostLog(ctx, meta.id, "wake_sent", {
       filename: file.filename,
       seq: file.seq,
@@ -3271,6 +3267,14 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       meta: updatedMeta,
     });
   });
+}
+
+async function resumeIfNoEscalationsPending(ctx: ServerContext, meta: SessionMeta): Promise<SessionMeta> {
+  const remaining = await listAllFiles(askingDirFor(ctx, meta.id));
+  if (remaining.length === 0 && meta.status === "waiting_human") {
+    return transitionStatus(ctx, meta, "running");
+  }
+  return meta;
 }
 
 async function getActions(): Promise<Response> {
@@ -3431,6 +3435,37 @@ async function postInternalEscalations(req: Request, ctx: ServerContext, params:
     }
     await appendAndBroadcast(ctx, meta.id, { kind: "escalation_requested", payload: { filename: file.filename } });
     return json({ filename: file.filename, seq: file.seq });
+  });
+}
+
+// The agent withdraws its own unanswered escalation (`worqload escalate cancel`),
+// e.g. after finding the answer itself. Archived like a resolved one, but no
+// feedback is sent back: the agent already knows it cancelled.
+async function postInternalEscalationCancel(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    if (!NUMBERED_FILENAME_RE.test(filename)) {
+      return json({ error: `escalation filename must look like 003-question.md, got: ${filename}` }, 400);
+    }
+    const askingDir = askingDirFor(ctx, meta.id);
+    const askingFilePath = join(askingDir, filename);
+    if (!(await Bun.file(askingFilePath).exists())) {
+      return json({ error: `no pending escalation: ${filename}` }, 404);
+    }
+    const body = (await req.json().catch(() => ({}))) as { reason?: unknown };
+    const reason = typeof body.reason === "string" && body.reason.trim() !== "" ? body.reason.trim() : undefined;
+    const resolvedDir = join(askingDir, "resolved");
+    await moveFile(askingFilePath, join(resolvedDir, filename));
+    const sidecarPath = join(askingDir, commandSidecarFilename(filename));
+    if (await Bun.file(sidecarPath).exists()) {
+      await moveFile(sidecarPath, join(resolvedDir, commandSidecarFilename(filename)));
+    }
+    await appendAndBroadcast(ctx, meta.id, {
+      kind: "escalation_resolved",
+      payload: { filename, cancelled: true, ...(reason ? { reason } : {}) },
+    });
+    const updatedMeta = await resumeIfNoEscalationsPending(ctx, meta);
+    return json({ ok: true, filename, meta: updatedMeta });
   });
 }
 

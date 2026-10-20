@@ -130,6 +130,9 @@ export function describeEvent(event) {
       return { summary: `🙋 ${payload?.filename ?? "needs input"}`, sections: [payloadSection(payload)] };
     case "escalation_resolved":
       if (isNonEmptyString(payload?.decision)) return describeCommandApprovalResolved(payload);
+      if (payload?.cancelled === true) {
+        return { summary: `⊘ cancelled ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
+      }
       return { summary: `✅ resolved ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
     case "feedback_received":
       return { summary: `✉ ${payload?.filename ?? "feedback"}`, sections: [payloadSection(payload)] };

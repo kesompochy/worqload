@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { startServer } from "./web-server";
-import { submitReport, submitEscalation, requestCommandApproval, fetchFeedback, listFeedbackHistory, fetchFeedbackByFilename } from "./agent-client";
+import { submitReport, submitEscalation, cancelEscalation, requestCommandApproval, fetchFeedback, listFeedbackHistory, fetchFeedbackByFilename } from "./agent-client";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -129,6 +129,17 @@ test("requestCommandApproval files a command-approval escalation", async () => {
 
   const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
   expect(asking.asking[0].command).toBe("npm publish");
+});
+
+test("cancelEscalation withdraws a pending escalation", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+
+  const submitted = await submitEscalation(endpoint, sessionId, "lib", "X or Y?");
+  await cancelEscalation(endpoint, sessionId, submitted.filename, "decided on X myself");
+
+  const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
+  expect(asking.asking).toEqual([]);
+  await expect(cancelEscalation(endpoint, sessionId, submitted.filename)).rejects.toThrow("404");
 });
 
 test("requestCommandApproval returns immediately and result arrives in feedback after resolve", async () => {

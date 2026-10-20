@@ -175,6 +175,67 @@ test("escalation resolve keeps waiting_human when other escalations remain", asy
   expect(detail.meta.status).toBe("waiting_human");
 });
 
+test("agent cancel archives the escalation without feedback and returns to running", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "lib", content: "X or Y?" });
+  const res = await postJson(baseUrl, `/internal/sessions/${sid}/escalations/001-lib.md/cancel`, {
+    reason: "found the answer in the docs",
+  });
+  expect(res.status).toBe(200);
+
+  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
+  expect(detail.meta.status).toBe("running");
+  expect(readdirSync(join(ctx.sessionsDir, sid, "asking", "resolved"))).toEqual(["001-lib.md"]);
+
+  const history = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback/history`).then((r) => r.json());
+  expect(history.messages).toHaveLength(0);
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  const resolved = events.find((e) => e.kind === "escalation_resolved");
+  expect(resolved?.payload).toEqual({ filename: "001-lib.md", cancelled: true, reason: "found the answer in the docs" });
+});
+
+test("agent cancel of a command approval archives its sidecar too", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "echo hi", reason: "r" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations/001-command-approval.md/cancel`, {});
+
+  const askingDir = join(ctx.sessionsDir, sid, "asking");
+  expect(readdirSync(askingDir).filter((f) => f !== "resolved")).toEqual([]);
+  expect(readdirSync(join(askingDir, "resolved")).sort()).toEqual([
+    "001-command-approval.command.json",
+    "001-command-approval.md",
+  ]);
+});
+
+test("agent cancel keeps waiting_human when other escalations remain, and 404s on unknown", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "first", content: "A?" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "second", content: "B?" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations/001-first.md/cancel`, {});
+
+  const detail = await fetch(`${baseUrl}/sessions/${sid}`).then((r) => r.json());
+  expect(detail.meta.status).toBe("waiting_human");
+
+  const again = await postJson(baseUrl, `/internal/sessions/${sid}/escalations/001-first.md/cancel`, {});
+  expect(again.status).toBe(404);
+});
+
 test("escalation numbering stays monotonic after a resolve archives the file", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

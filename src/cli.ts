@@ -61,6 +61,8 @@ Agent-side (called by claude inside a session):
                                          Ask the human to approve running a command (optional reason
                                          via stdin); on approval the server runs it and feeds back
                                          its stdout/stderr. Pauses your turn like an escalation.
+  worqload escalate cancel <filename> [--reason <text>]
+                                         Withdraw one of your unanswered escalations
   worqload feedback fetch                Drain pending feedback inbox
   worqload feedback fetch <filename>     Fetch a specific feedback message by filename
   worqload feedback list                 List all feedback (inbox + read) with previews
