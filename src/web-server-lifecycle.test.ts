@@ -582,6 +582,42 @@ test("a rejected report keeps its replyTo in the sidecar", async () => {
   expect(sidecar.rejection.reason).toBe("r");
 });
 
+test("agent cancel of a report keeps it in the list with the reason and leaves its read state as it was", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "wrong", content: "wrong conclusion report" });
+  await postJson(baseUrl, `/sessions/${sid}/reports/001-wrong.md/read`, {});
+  const res = await postJson(baseUrl, `/internal/sessions/${sid}/reports/001-wrong.md/cancel`, { reason: "前提が誤っていた" });
+  expect(res.status).toBe(200);
+
+  const list = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
+  expect(list.reports).toHaveLength(1);
+  expect(list.reports[0].read).toBe(true);
+  expect(list.reports[0].cancellation.reason).toBe("前提が誤っていた");
+  expect(typeof list.reports[0].cancellation.cancelledAt).toBe("string");
+
+  const events = await readEvents(sid, 1, ctx.sessionsDir);
+  expect(events.find((e) => e.kind === "report_cancelled")?.payload).toEqual({ filename: "001-wrong.md", reason: "前提が誤っていた" });
+});
+
+test("agent cancel of a report requires a reason, 404s on unknown, and 409s when already cancelled", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "wrong", content: "wrong conclusion report" });
+  expect((await postJson(baseUrl, `/internal/sessions/${sid}/reports/001-wrong.md/cancel`, { reason: "  " })).status).toBe(400);
+  expect((await postJson(baseUrl, `/internal/sessions/${sid}/reports/002-nope.md/cancel`, { reason: "r" })).status).toBe(404);
+  expect((await postJson(baseUrl, `/internal/sessions/${sid}/reports/001-wrong.md/cancel`, { reason: "r" })).status).toBe(200);
+  expect((await postJson(baseUrl, `/internal/sessions/${sid}/reports/001-wrong.md/cancel`, { reason: "r" })).status).toBe(409);
+});
+
 test("POST /internal/reports (multipart) stores attachments in a sibling .attachments dir", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

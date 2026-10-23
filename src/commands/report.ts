@@ -1,9 +1,10 @@
 // agent-side CLI:
 // `worqload report submit --slug <slug> [--re <feedback-filename>] [--image <path>]... [--raw]`
 // (body via stdin)
+// `worqload report cancel <filename> --reason <text>`
 
 import { basename } from "node:path";
-import { submitReport } from "../agent-client";
+import { submitReport, cancelReport } from "../agent-client";
 import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, collectFlag, exitWithUsage } from "./cli-helpers";
 
 const SEPARATOR_LINE = /^[\s\-=*#]*$/;
@@ -41,11 +42,22 @@ async function loadImages(paths: string[]): Promise<File[]> {
   return images;
 }
 
+const USAGE =
+  "worqload report submit --slug <slug> [--re <feedback-filename>] [--image <path>]... [--raw]  (body via stdin)\n" +
+  "       worqload report cancel <filename> --reason <text>";
+
 export async function report(args: string[]): Promise<void> {
-  if (args[0] !== "submit") {
-    exitWithUsage("worqload report submit --slug <slug> [--re <feedback-filename>] [--image <path>]... [--raw]  (body via stdin)");
+  switch (args[0]) {
+    case "submit":
+      return reportSubmit(args.slice(1));
+    case "cancel":
+      return reportCancel(args.slice(1));
+    default:
+      exitWithUsage(USAGE);
   }
-  const rest = args.slice(1);
+}
+
+async function reportSubmit(rest: string[]): Promise<void> {
   const slug = requireFlag(rest, "--slug");
   const replyTo = optionalFlag(rest, "--re");
   const raw = rest.includes("--raw");
@@ -78,6 +90,21 @@ export async function report(args: string[]): Promise<void> {
     }
   } catch (err) {
     console.error(`report submit failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
+async function reportCancel(args: string[]): Promise<void> {
+  const filename = args[0];
+  if (filename === undefined || filename.startsWith("--")) exitWithUsage(USAGE);
+  const reason = requireFlag(args, "--reason");
+  const sessionId = requireEnv("WORQLOAD_SESSION_ID");
+  const endpoint = resolveAgentEndpoint();
+  try {
+    await cancelReport(endpoint, sessionId, filename, reason);
+    console.log(`cancelled ${filename}`);
+  } catch (err) {
+    console.error(`report cancel failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
 }

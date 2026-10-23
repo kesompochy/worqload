@@ -64,6 +64,18 @@ export async function submitReport(
   return images.length > 0 ? postReportForm<Result>(url, body, images) : postJson<Result>(url, body);
 }
 
+export async function cancelReport(
+  endpoint: string,
+  sessionId: string,
+  filename: string,
+  reason: string,
+): Promise<void> {
+  await postJson<unknown>(
+    `${endpoint}/internal/sessions/${sessionId}/reports/${encodeURIComponent(filename)}/cancel`,
+    { reason },
+  );
+}
+
 export async function submitEscalation(
   endpoint: string,
   sessionId: string,
