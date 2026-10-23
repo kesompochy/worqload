@@ -67,6 +67,9 @@ export interface NumberedFileMeta {
   // disk (so its number and `.worqload-reports/<filename>` path stay valid for
   // the agent rewriting it) but is left out of the human's report list.
   rejection?: { reason?: string; rejectedAt: string };
+  // For a report: set when the agent withdrew it. Unlike a rejection, a
+  // cancelled report stays in the human's list, shown with the reason.
+  cancellation?: { reason: string; cancelledAt: string };
   // For a feedback message: the report the human rejected with it. The body
   // holds only the human's reason; the rewrite instruction is wrapped around it
   // when the agent fetches the message.

@@ -317,7 +317,7 @@
             {@const markTo = r.read ? "unread" : "read"}
             {@const reportAnchorPath = `./.worqload-reports/${r.filename}`}
             {@const reportFeedbackAnchors = feedbackAnchorsForPath(reportAnchorPath).map(f => ({ lineStart: f.anchor.lineStart, lineEnd: f.anchor.lineEnd, filename: f.filename }))}
-            <article class="report" class:unread={!r.read} class:pinned={r.pinned} class:collapsed={!expanded} data-report-filename={r.filename}>
+            <article class="report" class:unread={!r.read} class:pinned={r.pinned} class:cancelled={r.cancellation} class:collapsed={!expanded} data-report-filename={r.filename}>
               <div class="report-header" data-report-toggle={r.filename}>
                 <span class="report-chevron">▾</span>
                 <span class="report-filename">{r.filename}</span>
@@ -327,10 +327,15 @@
                 {#if r.replyTo}
                   <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
                 {/if}
+                {#if r.cancellation}
+                  <span class="report-cancelled-chip" title="エージェントが {new Date(r.cancellation.cancelledAt).toLocaleString()} に取り消した">⊘ 取り消し済み</span>
+                {/if}
                 <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
                 <button class="report-pin" type="button" class:pinned={r.pinned} data-report-pin={r.filename} data-report-pin-to={r.pinned ? "unpin" : "pin"} title={r.pinned ? "ピンを外す" : "ピン留めする"} aria-label={r.pinned ? "ピンを外す" : "ピン留めする"}>📌</button>
                 <button class="report-view-toggle" type="button" data-report-view-toggle={r.filename} title={viewRaw ? "レンダリング表示に切り替え" : "ソーステキスト表示に切り替え"} aria-label={viewRaw ? "レンダリング表示" : "ソーステキスト表示"}>{viewRaw ? "Rich" : "Source"}</button>
+                {#if !r.cancellation}
                 <button class="report-reject" type="button" data-report-reject={r.filename} title="このレポートをrejectして書き直させる" aria-label="レポートをreject">reject</button>
+                {/if}
                 <button class="report-delete" type="button" data-report-delete={r.filename} title="このレポートを削除する" aria-label="レポートを削除">✕</button>
               </div>
               {#if appState.reportRejecting?.filename === r.filename}
@@ -350,6 +355,9 @@
                     <button type="button" class="report-reject-confirm" data-report-reject-confirm>reject</button>
                   </div>
                 </div>
+              {/if}
+              {#if r.cancellation}
+                <div class="report-cancellation"><span class="report-cancellation-label">取り消し理由</span>{r.cancellation.reason}</div>
               {/if}
               <div class="report-body">
                 {#if viewRaw}

@@ -38,3 +38,25 @@ describe("worqload report submit body validation", () => {
     expect(stderr).not.toContain("write the actual content");
   });
 });
+
+describe("worqload report cancel argument validation", () => {
+  function spawnCancel(args: string[]) {
+    return Bun.spawn(["bun", CLI, "report", "cancel", ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        WORQLOAD_ENDPOINT: "http://localhost:0",
+        WORQLOAD_SESSION_ID: "test-session",
+      },
+    });
+  }
+
+  test("requires a filename", async () => {
+    expect(await spawnCancel(["--reason", "r"]).exited).toBe(2);
+  });
+
+  test("requires a reason", async () => {
+    expect(await spawnCancel(["001-x.md"]).exited).toBe(2);
+  });
+});

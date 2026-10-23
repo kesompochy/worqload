@@ -56,6 +56,9 @@ Usage:
 
 Agent-side (called by claude inside a session):
   worqload report submit --slug <slug>   Submit a report (body via stdin)
+  worqload report cancel <filename> --reason <text>
+                                         Withdraw one of your reports; the human sees it marked
+                                         cancelled with the reason
   worqload escalate submit --slug <slug> Submit an escalation (body via stdin)
   worqload escalate command --command <cmd>
                                          Ask the human to approve running a command (optional reason
