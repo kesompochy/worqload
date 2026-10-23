@@ -320,15 +320,12 @@
             <article class="report" class:unread={!r.read} class:pinned={r.pinned} class:cancelled={r.cancellation} class:collapsed={!expanded} data-report-filename={r.filename}>
               <div class="report-header" data-report-toggle={r.filename}>
                 <span class="report-chevron">▾</span>
-                <span class="report-filename">{r.filename}</span>
+                <span class="report-filename">{r.filename}{#if r.cancellation}<span class="report-cancelled-chip" title="エージェントが {new Date(r.cancellation.cancelledAt).toLocaleString()} に取り消した">⊘ 取り消し済み</span>{/if}</span>
                 {#if r.submittedAt}
                   <span class="report-time" title={new Date(r.submittedAt).toLocaleString()}>{formatRelative(r.submittedAt, clock.now)}</span>
                 {/if}
                 {#if r.replyTo}
                   <button class="report-anchor-chip" type="button" title="in reply to {r.replyTo} — クリックでフィードバックへ" data-goto-feedback={r.replyTo}>↳ {r.replyTo}</button>
-                {/if}
-                {#if r.cancellation}
-                  <span class="report-cancelled-chip" title="エージェントが {new Date(r.cancellation.cancelledAt).toLocaleString()} に取り消した">⊘ 取り消し済み</span>
                 {/if}
                 <span class="report-status {r.read ? 'read' : 'unread'}" data-report-mark={r.filename} data-report-mark-to={markTo} title={r.read ? "クリックで未読にする" : "クリックで既読にする"}><span class="report-status-state">{r.read ? "read" : "unread"}</span><span class="report-status-action">{markTo}?</span></span>
                 <button class="report-pin" type="button" class:pinned={r.pinned} data-report-pin={r.filename} data-report-pin-to={r.pinned ? "unpin" : "pin"} title={r.pinned ? "ピンを外す" : "ピン留めする"} aria-label={r.pinned ? "ピンを外す" : "ピン留めする"}>📌</button>
@@ -356,10 +353,10 @@
                   </div>
                 </div>
               {/if}
-              {#if r.cancellation}
-                <div class="report-cancellation"><span class="report-cancellation-label">取り消し理由</span>{r.cancellation.reason}</div>
-              {/if}
               <div class="report-body">
+                {#if r.cancellation}
+                  <div class="report-cancellation"><span class="report-cancellation-label">取り消し理由</span>{r.cancellation.reason}</div>
+                {/if}
                 {#if viewRaw}
                   <pre class="report-source">{r.content}</pre>
                 {:else}
