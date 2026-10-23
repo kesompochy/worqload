@@ -53,7 +53,7 @@ import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with
 // without permission prompts regardless of which permission mode the rest of
 // the session uses.
 const WORQLOAD_PROTOCOL_ALLOW =
-  "Bash(worqload report submit:*) Bash(worqload escalate submit:*) Bash(worqload escalate command:*) Bash(worqload escalate cancel:*) " +
+  "Bash(worqload report submit:*) Bash(worqload report cancel:*) Bash(worqload escalate submit:*) Bash(worqload escalate command:*) Bash(worqload escalate cancel:*) " +
   "Bash(worqload feedback fetch) Bash(worqload feedback fetch:*)";
 
 // Tries to bind on the requested port and shifts upward on EADDRINUSE so a
@@ -1331,6 +1331,7 @@ const ROUTES: Route[] = [
   defineRoute("GET",  "/sessions/:id/actions", getSessionActions),
   defineRoute("POST", "/sessions/:id/actions/:actionId", postSessionAction),
   defineRoute("POST", "/internal/sessions/:id/reports", postInternalReports),
+  defineRoute("POST", "/internal/sessions/:id/reports/:filename/cancel", postInternalReportCancel),
   defineRoute("POST", "/internal/sessions/:id/escalations", postInternalEscalations),
   defineRoute("POST", "/internal/sessions/:id/escalations/:filename/cancel", postInternalEscalationCancel),
   defineRoute("POST", "/internal/sessions/:id/command-approvals", postInternalCommandApprovals),
@@ -2156,6 +2157,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
         replyTo: r.meta?.replyTo,
         attachments: r.attachments,
         submittedAt: submittedAt.get(r.filename),
+        cancellation: r.meta?.cancellation,
       })),
     });
   });
@@ -2220,6 +2222,30 @@ async function postReportReject(req: Request, ctx: ServerContext, params: Record
         });
       } catch { /* archive is best-effort */ }
     }
+    return json({ ok: true, filename });
+  });
+}
+
+// The agent withdraws one of its own reports (`worqload report cancel`), e.g.
+// after finding its conclusion wrong. The report stays in the human's list
+// with the reason and turns unread again, so a human who already read it
+// notices the withdrawal.
+async function postInternalReportCancel(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const filename = decodeURIComponent(params.filename);
+    if (!isSafeAttachmentName(filename) || !filename.endsWith(".md")) {
+      return json({ error: "invalid report filename" }, 400);
+    }
+    const body = (await req.json().catch(() => ({}))) as { reason?: unknown };
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (reason === "") return json({ error: "reason is required" }, 400);
+    const dir = reportsDirFor(ctx, meta.id);
+    const report = await readNumberedFile(dir, filename);
+    if (!report) return json({ error: "report not found" }, 404);
+    if (report.meta?.cancellation) return json({ error: "report already cancelled" }, 409);
+    await mergeNumberedFileMeta(dir, filename, { cancellation: { reason, cancelledAt: new Date().toISOString() } });
+    await setReadState(dir, filename, false);
+    await appendAndBroadcast(ctx, meta.id, { kind: "report_cancelled", payload: { filename, reason } });
     return json({ ok: true, filename });
   });
 }

@@ -23,6 +23,7 @@ export type EventKind =
   | "report_pinned"
   | "report_unpinned"
   | "report_rejected"
+  | "report_cancelled"
   | "escalation_requested"
   | "escalation_resolved"
   | "feedback_received"

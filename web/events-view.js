@@ -123,6 +123,8 @@ export function describeEvent(event) {
       return { summary: `📌 unpinned ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
     case "report_rejected":
       return { summary: `↩ rejected ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
+    case "report_cancelled":
+      return { summary: `⊘ cancelled ${payload?.filename ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
     case "escalation_requested":
       if (isNonEmptyString(payload?.command)) {
         return { summary: `🙋 approval: $ ${firstLine(payload.command)}`, sections: [payloadSection(payload)] };
