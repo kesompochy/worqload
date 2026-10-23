@@ -23,6 +23,7 @@ The frontend is a Vite project under `web/` (plain ES modules + Svelte component
 - TDD: write the test before the implementation.
 - Keep changes small. One task = one commit-sized unit.
 - Reports written by worqload sessions are in Japanese.
+- Do not use the browser's native dialogs (`confirm()`, `alert()`, `prompt()`) in the frontend. Build confirmation and input into the page itself, e.g. the inline confirm button of report reject in `web/svelte/DetailBody.svelte`.
 
 ## Operations
 
