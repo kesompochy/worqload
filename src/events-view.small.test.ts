@@ -58,7 +58,7 @@ test("displayEventKind labels agent events for the configured agent", () => {
 
 // describeEvent reads the normalized domain payload the driver emits (text /
 // tools / results), never a CLI's wire shape. The wire→domain translation is
-// covered in claude-stream.test.ts / codex-stream.test.ts.
+// covered in claude-stream.small.test.ts / codex-stream.small.test.ts.
 test("describeEvent extracts assistant message text and offers it as markdown", () => {
   const payload = { text: "## done\n\nshipped it", thinking: "" };
   const d = describeEvent({ seq: 2, kind: "claude_assistant_message", timestamp: "", payload });
