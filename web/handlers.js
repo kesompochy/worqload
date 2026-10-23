@@ -43,6 +43,36 @@ function syncHistory(action, urlState) {
   else if (action === "replace") replaceUrlState(urlState);
 }
 
+// In-page replacements for the browser's confirm() / prompt(), rendered by
+// ConfirmDialog.svelte from state.dialog. Only one dialog is open at a time;
+// opening another cancels the one still waiting.
+let resolvePendingDialog = null;
+
+function openDialog(dialog) {
+  resolvePendingDialog?.(null);
+  state.dialog = dialog;
+  return new Promise(resolve => { resolvePendingDialog = resolve; });
+}
+
+// Resolves to true when the human confirms, false otherwise.
+export async function requestConfirmation(message, { confirmLabel = "OK" } = {}) {
+  return (await openDialog({ message, confirmLabel, input: null })) === true;
+}
+
+// Resolves to the entered text, or null when the human cancels.
+export async function requestInput(message, defaultValue = "", { confirmLabel = "OK" } = {}) {
+  const answer = await openDialog({ message, confirmLabel, input: defaultValue });
+  return typeof answer === "string" ? answer : null;
+}
+
+// `answer`: true / the entered text to accept, false / null to cancel.
+export function resolveDialog(answer) {
+  const resolve = resolvePendingDialog;
+  resolvePendingDialog = null;
+  state.dialog = null;
+  resolve?.(answer);
+}
+
 export async function selectSession(id, { historyAction = "push" } = {}) {
   if (state.ws) { state.ws.close(); state.ws = null; }
   if (state.selected && (state.selectedFilePath || state.fileTreeCollapsed.size)) {
@@ -427,7 +457,7 @@ export async function onDeleteFile() {
   const path = state.selectedFilePath;
   if (!path) return;
   const message = `${path} を削除します。よろしいですか？`;
-  if (typeof window !== "undefined" && typeof window.confirm === "function" && !window.confirm(message)) return;
+  if (!(await requestConfirmation(message, { confirmLabel: "削除" }))) return;
   await deleteFile(path);
 }
 
@@ -606,7 +636,7 @@ export async function onReportPin(filename, pinned) {
 // refresh here too so the row disappears without waiting for the round trip.
 export async function onReportDelete(filename) {
   if (!state.selected) return;
-  if (!confirm(`レポート「${filename}」を削除します。元に戻せません。よろしいですか？`)) return;
+  if (!(await requestConfirmation(`レポート「${filename}」を削除します。元に戻せません。よろしいですか？`, { confirmLabel: "削除" }))) return;
   try {
     await api("DELETE", `/sessions/${state.selected}/reports/${encodeURIComponent(filename)}`);
     const nextToggle = new Map(state.reportToggle);
@@ -640,7 +670,7 @@ export async function onReportReject() {
 
 export async function onFeedbackDelete(filename) {
   if (!state.selected) return;
-  if (!confirm(`フィードバック「${filename}」を削除します。元に戻せません。よろしいですか？`)) return;
+  if (!(await requestConfirmation(`フィードバック「${filename}」を削除します。元に戻せません。よろしいですか？`, { confirmLabel: "削除" }))) return;
   try {
     await api("DELETE", `/sessions/${state.selected}/feedback/${encodeURIComponent(filename)}`);
     const nextToggle = new Map(state.feedbackToggle);
@@ -1190,7 +1220,7 @@ export async function onDeleteArchived(id = state.selected) {
   const session = state.archivedSessions.find(s => s.id === id) || state.sessions.find(s => s.id === id);
   const label = session?.title || session?.prompt?.slice(0, 40) || id;
   const message = `「${label}」を削除します。\nworktree・作業ブランチ・このセッションの記録 (reports / events / feedback) が消え、復元できません。よろしいですか？`;
-  if (typeof window !== "undefined" && typeof window.confirm === "function" && !window.confirm(message)) return;
+  if (!(await requestConfirmation(message, { confirmLabel: "削除" }))) return;
   try {
     await api("DELETE", `/sessions/${id}`);
     if (state.archivedSelection.has(id)) {
@@ -1216,7 +1246,7 @@ export async function onBulkDeleteArchived() {
   const ids = [...state.archivedSelection];
   if (ids.length === 0) return;
   const message = `${ids.length} 件のアーカイブを削除します。\nworktree・作業ブランチ・記録 (reports / events / feedback) が消え、復元できません。よろしいですか？`;
-  if (typeof window !== "undefined" && typeof window.confirm === "function" && !window.confirm(message)) return;
+  if (!(await requestConfirmation(message, { confirmLabel: "削除" }))) return;
   let succeeded = 0;
   const failed = [];
   for (const id of ids) {
@@ -1243,8 +1273,7 @@ export async function onBulkDeleteArchived() {
 // threshold, hands it to the backend (which removes each matching session's
 // worktree, branch, and records), then reloads the archived feed. No undo.
 export async function onPruneArchivedOlderThan() {
-  if (typeof window === "undefined" || typeof window.prompt !== "function") return;
-  const input = window.prompt("何日より前にアーカイブしたセッションを削除しますか？（日数）", "30");
+  const input = await requestInput("何日より前にアーカイブしたセッションを削除しますか？（日数）", "30");
   if (input === null) return;
   const days = Number(input.trim());
   if (!Number.isFinite(days) || days < 0) {
@@ -1252,7 +1281,7 @@ export async function onPruneArchivedOlderThan() {
     return;
   }
   const message = `${days} 日より前にアーカイブしたセッションをすべて削除します。\nworktree・作業ブランチ・記録 (reports / events / feedback) が消え、復元できません。よろしいですか？`;
-  if (typeof window.confirm === "function" && !window.confirm(message)) return;
+  if (!(await requestConfirmation(message, { confirmLabel: "削除" }))) return;
   try {
     const { count } = await api("POST", "/sessions/archived/prune", { days });
     state.archivedSelection = new Set();
@@ -1281,7 +1310,7 @@ export async function onArchive(id = state.selected) {
       const body = await res.json().catch(() => ({}));
       if (body.error === "preview-running") {
         const where = body.url ? `\n${body.url}` : "";
-        const ok = window.confirm(`このセッションには動作中の Preview があります${where}\nPreview を停止して archive しますか？`);
+        const ok = await requestConfirmation(`このセッションには動作中の Preview があります${where}\nPreview を停止して archive しますか？`, { confirmLabel: "停止して archive" });
         if (!ok) return;
         res = await fetch(`/sessions/${id}/archive?stopPreview=true`, {
           method: "POST",
