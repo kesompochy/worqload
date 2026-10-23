@@ -17,7 +17,7 @@
     "build": "bun build --compile src/cli.ts --outfile dist/worqload",
     "test": "bun run test:small && bun run test:medium",
     "test:small": "cat test-small.txt | xargs bun test",
-    "test:medium": "grep -v web-bundle test-medium.txt | xargs bun test --parallel && bun test src/web-bundle.test.ts",
+    "test:medium": "grep -v web-bundle test-medium.txt | xargs bun scripts/test-files.ts && bun test src/web-bundle.test.ts",
     "lint": "bunx @biomejs/biome lint src/",
     "format": "bunx @biomejs/biome format src/",
     "check": "bunx @biomejs/biome check src/",
