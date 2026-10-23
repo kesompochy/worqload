@@ -582,7 +582,7 @@ test("a rejected report keeps its replyTo in the sidecar", async () => {
   expect(sidecar.rejection.reason).toBe("r");
 });
 
-test("agent cancel of a report keeps it in the list with the reason and marks it unread", async () => {
+test("agent cancel of a report keeps it in the list with the reason and leaves its read state as it was", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
@@ -596,7 +596,7 @@ test("agent cancel of a report keeps it in the list with the reason and marks it
 
   const list = await fetch(`${baseUrl}/sessions/${sid}/reports`).then((r) => r.json());
   expect(list.reports).toHaveLength(1);
-  expect(list.reports[0].read).toBe(false);
+  expect(list.reports[0].read).toBe(true);
   expect(list.reports[0].cancellation.reason).toBe("前提が誤っていた");
   expect(typeof list.reports[0].cancellation.cancelledAt).toBe("string");
 
