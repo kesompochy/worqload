@@ -20,9 +20,9 @@ The frontend is a Vite project under `web/` (plain ES modules + Svelte component
 
 ## Tests
 
-- `bun run test` runs only the files listed in `test-small.txt` and `test-medium.txt`. Add every new test file to one of them; a file in neither list is never run by `bun run test`.
+- The file name decides the suite: `*.small.test.ts` is small, every other `*.test.ts` under `src/` and `web/` is medium.
 - Small: tests with no FS, process, or network dependencies. They all run in a single `bun test` process.
-- Medium: tests that touch the filesystem, real `git`, servers, child processes, or timers. `scripts/test-files.ts` runs each file in its own `bun test` process, several at a time, and kills a file that runs longer than 60s.
+- Medium: the default, for tests that touch the filesystem, real `git`, servers, child processes, or timers. `scripts/test-files.ts` runs each file in its own `bun test` process, several at a time, and kills a file that runs longer than 60s.
 - Run tests when the change calls for it, not after every edit. Running the files that cover the change with `bun test <file>` is usually enough; run `bun run test` when the change can affect other areas.
 
 ## Conventions

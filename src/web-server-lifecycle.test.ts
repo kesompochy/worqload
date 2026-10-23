@@ -1203,7 +1203,7 @@ test("GET /sessions/:id/code-nav/definition reports unavailable for a language w
 });
 
 // How a git remote URL maps to a web URL is `permalink`'s contract — see
-// permalink.test.ts. Here we check the endpoint pulls the remote/HEAD from
+// permalink.small.test.ts. Here we check the endpoint pulls the remote/HEAD from
 // worktreeOps and threads them through, including the branch the link needs.
 test("GET /sessions/:id/permalink returns a blob URL at HEAD for a file and line range", async () => {
   const repoDir = makeTmpDir("repo");
@@ -1237,7 +1237,7 @@ test("GET /sessions/:id/permalink returns null with a reason when the worktree h
 });
 
 // How a branch maps to a PR URL is the PrLinkResolver's contract (see
-// pr-link.test.ts for the gh result mapping). Here we check the endpoint hands
+// pr-link.small.test.ts for the gh result mapping). Here we check the endpoint hands
 // the resolver the session's branch + worktree and passes its result through.
 test("GET /sessions/:id/pr-link returns the resolver's URL for the session branch", async () => {
   const repoDir = makeTmpDir("repo");
