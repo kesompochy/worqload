@@ -18,6 +18,13 @@ worqload serve --watch     # hot-reload run via `bun link` (sessions live in det
 
 The frontend is a Vite project under `web/` (plain ES modules + Svelte components). The server serves `web/dist/`. `worqload serve` builds it on first run if `web/dist/` is missing, but does not rebuild on edit, so run `bun run web:watch` alongside it.
 
+## Tests
+
+- `bun run test` runs only the files listed in `test-small.txt` and `test-medium.txt`. Add every new test file to one of them; a file in neither list is never run by `bun run test`.
+- Small: tests with no FS, process, or network dependencies. They all run in a single `bun test` process.
+- Medium: tests that touch the filesystem, real `git`, servers, child processes, or timers. `scripts/test-files.ts` runs each file in its own `bun test` process, several at a time, and kills a file that runs longer than 60s.
+- Run tests when the change calls for it, not after every edit. Running the files that cover the change with `bun test <file>` is usually enough; run `bun run test` when the change can affect other areas.
+
 ## Conventions
 
 - TDD: write the test before the implementation.
