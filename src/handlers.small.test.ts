@@ -61,8 +61,19 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, toggleEventsTab, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onReportReject, onResume, onStopAndResume, onToggleReviseMode, onResolve, onResolveCommand } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, toggleEventsTab, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onReportReject, onResume, onStopAndResume, onToggleReviseMode, onResolve, onResolveCommand, onPruneArchivedOlderThan, onReportDelete, resolveDialog } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
+
+// Handlers that need the human's go-ahead await the in-page dialog. Wait for it
+// to open (some handlers reach it only after an awaited request), answer it,
+// and hand back what it showed so the test can assert on the wording's inputs.
+async function answerOpenDialog(answer: boolean | string | null) {
+  for (let i = 0; i < 20 && !state.dialog; i++) await new Promise(r => setTimeout(r, 0));
+  const shown = state.dialog;
+  if (!shown) throw new Error("no dialog opened");
+  resolveDialog(answer);
+  return shown;
+}
 
 
 afterEach(() => {
@@ -88,6 +99,7 @@ afterEach(() => {
     feedbackPinAt: null, pendingAttachments: [], askingAttachments: new Map(),
     feedbackQueue: [],
     reportRejecting: null,
+    dialog: null,
     eventsTabHidden: true,
     fileTabCache: new Map(),
   });
@@ -912,17 +924,11 @@ test("onDeleteArchived confirms, calls DELETE /sessions/:id, and reloads the arc
   apiCalls.length = 0;
   fetchArchivedSessionsCalls = 0;
 
-  const savedWindow = globalThis.window;
-  let confirmCalledWith: string | undefined;
-  (globalThis as unknown as { window: unknown }).window = { confirm: (m: string) => { confirmCalledWith = m; return true; } };
+  const pending = onDeleteArchived("arc-1");
+  const shown = await answerOpenDialog(true);
+  await pending;
 
-  try {
-    await onDeleteArchived("arc-1");
-  } finally {
-    (globalThis as unknown as { window: unknown }).window = savedWindow;
-  }
-
-  expect(confirmCalledWith).toContain("old session");
+  expect(shown.message).toContain("old session");
   expect(apiCalls).toEqual([{ method: "DELETE", path: "/sessions/arc-1", body: undefined }]);
   expect(fetchArchivedSessionsCalls).toBe(1);
   // The deleted session was the selected one; selection clears so the detail
@@ -935,14 +941,9 @@ test("onDeleteArchived bails when the human cancels the confirm dialog", async (
   apiCalls.length = 0;
   fetchArchivedSessionsCalls = 0;
 
-  const savedWindow = globalThis.window;
-  (globalThis as unknown as { window: unknown }).window = { confirm: () => false };
-
-  try {
-    await onDeleteArchived("arc-2");
-  } finally {
-    (globalThis as unknown as { window: unknown }).window = savedWindow;
-  }
+  const pending = onDeleteArchived("arc-2");
+  await answerOpenDialog(false);
+  await pending;
 
   expect(apiCalls).toEqual([]);
   expect(fetchArchivedSessionsCalls).toBe(0);
@@ -1034,16 +1035,15 @@ test("onBulkDeleteArchived DELETEs every selected id in turn, reloads the feed, 
   apiCalls.length = 0;
   fetchArchivedSessionsCalls = 0;
 
-  const savedWindow = globalThis.window;
-  (globalThis as unknown as { window: unknown }).window = { confirm: () => true };
   // onBulkDeleteArchived's outcome toast reads through document.querySelector.
   const savedDocument = globalThis.document;
   globalThis.document = { querySelector: () => ({ textContent: "", classList: { add() {}, remove() {} } }) } as unknown as Document;
 
   try {
-    await onBulkDeleteArchived();
+    const pending = onBulkDeleteArchived();
+    await answerOpenDialog(true);
+    await pending;
   } finally {
-    (globalThis as unknown as { window: unknown }).window = savedWindow;
     globalThis.document = savedDocument;
   }
 
@@ -1057,22 +1057,16 @@ test("onBulkDeleteArchived DELETEs every selected id in turn, reloads the feed, 
   expect(state.selected).toBeNull();
 });
 
-test("onBulkDeleteArchived asks confirm once and bails when the human cancels", async () => {
+test("onBulkDeleteArchived asks once and bails when the human cancels", async () => {
   state.archivedSelection = new Set(["arc-1", "arc-2"]);
   apiCalls.length = 0;
   fetchArchivedSessionsCalls = 0;
 
-  const savedWindow = globalThis.window;
-  let confirmCalls = 0;
-  (globalThis as unknown as { window: unknown }).window = { confirm: () => { confirmCalls++; return false; } };
+  const pending = onBulkDeleteArchived();
+  await answerOpenDialog(false);
+  await pending;
 
-  try {
-    await onBulkDeleteArchived();
-  } finally {
-    (globalThis as unknown as { window: unknown }).window = savedWindow;
-  }
-
-  expect(confirmCalls).toBe(1);
+  expect(state.dialog).toBeNull();
   expect(apiCalls.filter(c => c.method === "DELETE")).toEqual([]);
   expect(fetchArchivedSessionsCalls).toBe(0);
   expect(state.archivedSelection.size).toBe(2);
@@ -1118,17 +1112,16 @@ test("onArchive surfaces the running preview, confirms, then retries with stopPr
     { status: 409, body: { error: "preview-running", pid: 4242, url: "http://127.0.0.1:3501" } },
     { status: 200, body: { meta: { id: "sess-1", archivedAt: "now" } } },
   ]);
-  const savedWindow = globalThis.window;
-  let confirmedWith: string | undefined;
-  (globalThis as unknown as { window: unknown }).window = { confirm: (m: string) => { confirmedWith = m; return true; } };
+  let shown;
   try {
-    await onArchive("sess-1");
+    const pending = onArchive("sess-1");
+    shown = await answerOpenDialog(true);
+    await pending;
   } finally {
     restore();
-    (globalThis as unknown as { window: unknown }).window = savedWindow;
   }
-  expect(confirmedWith).toContain("Preview");
-  expect(confirmedWith).toContain("http://127.0.0.1:3501");
+  expect(shown.message).toContain("Preview");
+  expect(shown.message).toContain("http://127.0.0.1:3501");
   expect(urls).toEqual(["/sessions/sess-1/archive", "/sessions/sess-1/archive?stopPreview=true"]);
 });
 
@@ -1138,13 +1131,12 @@ test("onArchive bails without sending a second request when the human cancels th
   const { urls, restore } = installArchiveFetch([
     { status: 409, body: { error: "preview-running", pid: 4242, url: null } },
   ]);
-  const savedWindow = globalThis.window;
-  (globalThis as unknown as { window: unknown }).window = { confirm: () => false };
   try {
-    await onArchive("sess-1");
+    const pending = onArchive("sess-1");
+    await answerOpenDialog(false);
+    await pending;
   } finally {
     restore();
-    (globalThis as unknown as { window: unknown }).window = savedWindow;
   }
   expect(urls).toEqual(["/sessions/sess-1/archive"]);
 });
@@ -1749,19 +1741,14 @@ test("onFeedbackDelete confirms, calls DELETE, cleans toggle, and refreshes deta
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
   let refreshed = false;
 
-  const savedConfirm = globalThis.confirm;
-  (globalThis as unknown as { confirm: unknown }).confirm = () => true;
-
-  try {
-    await withApiMock(async (method, path, body) => {
-      calls.push({ method, path, body });
-      return { ok: true, filename: "003-anchored.md" };
-    }, async () => {
-      await onFeedbackDelete("003-anchored.md");
-    }, { refreshDetail: async () => { refreshed = true; } });
-  } finally {
-    (globalThis as unknown as { confirm: unknown }).confirm = savedConfirm;
-  }
+  await withApiMock(async (method, path, body) => {
+    calls.push({ method, path, body });
+    return { ok: true, filename: "003-anchored.md" };
+  }, async () => {
+    const pending = onFeedbackDelete("003-anchored.md");
+    await answerOpenDialog(true);
+    await pending;
+  }, { refreshDetail: async () => { refreshed = true; } });
 
   expect(calls).toEqual([{ method: "DELETE", path: "/sessions/session-fd/feedback/003-anchored.md", body: undefined }]);
   expect(state.feedbackToggle.has("003-anchored.md")).toBe(false);
@@ -1772,19 +1759,14 @@ test("onFeedbackDelete bails when the human cancels the confirm dialog", async (
   state.selected = "session-fd";
   const calls: Array<{ method: string; path: string }> = [];
 
-  const savedConfirm = globalThis.confirm;
-  (globalThis as unknown as { confirm: unknown }).confirm = () => false;
-
-  try {
-    await withApiMock(async (method, path) => {
-      calls.push({ method, path });
-      return {};
-    }, async () => {
-      await onFeedbackDelete("003-anchored.md");
-    });
-  } finally {
-    (globalThis as unknown as { confirm: unknown }).confirm = savedConfirm;
-  }
+  await withApiMock(async (method, path) => {
+    calls.push({ method, path });
+    return {};
+  }, async () => {
+    const pending = onFeedbackDelete("003-anchored.md");
+    await answerOpenDialog(false);
+    await pending;
+  });
 
   expect(calls).toEqual([]);
 });
@@ -1948,11 +1930,23 @@ test("clicking a symbol token in the Diff body opens the code-nav popover for th
   closeCodeNav();
 });
 
-test("the Files-tab delete button deletes the open file", async () => {
+test("the Files-tab delete button deletes the open file once the human confirms", async () => {
   const before = deleteFileCalls.length;
   state.selectedFilePath = "src/doomed.ts";
-  await onDetailBodyClick(attrClick("data-file-delete"));
+  const pending = onDetailBodyClick(attrClick("data-file-delete"));
+  const shown = await answerOpenDialog(true);
+  await pending;
+  expect(shown.message).toContain("src/doomed.ts");
   expect(deleteFileCalls.slice(before)).toEqual(["src/doomed.ts"]);
+});
+
+test("the Files-tab delete button leaves the file when the human cancels", async () => {
+  const before = deleteFileCalls.length;
+  state.selectedFilePath = "src/kept.ts";
+  const pending = onDetailBodyClick(attrClick("data-file-delete"));
+  await answerOpenDialog(false);
+  await pending;
+  expect(deleteFileCalls.slice(before)).toEqual([]);
 });
 
 test("clicking a feedback anchor chip routes to gotoAnchorTarget", async () => {
@@ -1986,21 +1980,71 @@ test("clicking data-feedback-delete routes to onFeedbackDelete", async () => {
   state.feedbackHistory = [{ filename: "002-feedback.md", content: "x", status: "read" }];
   state.feedbackToggle = new Map();
 
-  const savedConfirm = globalThis.confirm;
-  (globalThis as unknown as { confirm: unknown }).confirm = () => true;
+  await withApiMock(async () => ({ ok: true, filename: "002-feedback.md" }), async () => {
+    const btn = { getAttribute: (a: string) => (a === "data-feedback-delete" ? "002-feedback.md" : null) };
+    const event = {
+      target: { closest: (sel: string) => (sel === "[data-feedback-delete]" ? btn : null) },
+      stopPropagation: () => {},
+    };
+    const pending = onDetailBodyClick(event);
+    const shown = await answerOpenDialog(true);
+    await pending;
+    expect(shown.message).toContain("002-feedback.md");
+  });
+});
+
+test("onReportDelete DELETEs only after the human confirms in the page dialog", async () => {
+  state.selected = "session-rd";
+  apiCalls.length = 0;
+
+  const pending = onReportDelete("004-mistake.md");
+  expect(apiCalls).toEqual([]);
+  const shown = await answerOpenDialog(true);
+  await pending;
+
+  expect(shown.message).toContain("004-mistake.md");
+  expect(apiCalls).toEqual([{ method: "DELETE", path: "/sessions/session-rd/reports/004-mistake.md", body: undefined }]);
+});
+
+test("onReportDelete bails when the human cancels the page dialog", async () => {
+  state.selected = "session-rd";
+  apiCalls.length = 0;
+
+  const pending = onReportDelete("004-mistake.md");
+  await answerOpenDialog(false);
+  await pending;
+
+  expect(apiCalls).toEqual([]);
+});
+
+test("onPruneArchivedOlderThan asks for the day count, confirms, then POSTs it", async () => {
+  apiCalls.length = 0;
+  const savedDocument = globalThis.document;
+  globalThis.document = { querySelector: () => ({ textContent: "", classList: { add() {}, remove() {} } }) } as unknown as Document;
 
   try {
-    await withApiMock(async () => ({ ok: true, filename: "002-feedback.md" }), async () => {
-      const btn = { getAttribute: (a: string) => (a === "data-feedback-delete" ? "002-feedback.md" : null) };
-      const event = {
-        target: { closest: (sel: string) => (sel === "[data-feedback-delete]" ? btn : null) },
-        stopPropagation: () => {},
-      };
-      await onDetailBodyClick(event);
-    });
+    const pending = onPruneArchivedOlderThan();
+    const asked = await answerOpenDialog(" 14 ");
+    expect(asked.input).toBe("30");
+    const confirmed = await answerOpenDialog(true);
+    await pending;
+    expect(confirmed.message).toContain("14");
   } finally {
-    (globalThis as unknown as { confirm: unknown }).confirm = savedConfirm;
+    globalThis.document = savedDocument;
   }
+
+  expect(apiCalls).toEqual([{ method: "POST", path: "/sessions/archived/prune", body: { days: 14 } }]);
+});
+
+test("onPruneArchivedOlderThan bails when the human cancels the day-count dialog", async () => {
+  apiCalls.length = 0;
+
+  const pending = onPruneArchivedOlderThan();
+  await answerOpenDialog(null);
+  await pending;
+
+  expect(state.dialog).toBeNull();
+  expect(apiCalls).toEqual([]);
 });
 
 test("toggleEventsTab flips state.eventsTabHidden and persists to localStorage", () => {

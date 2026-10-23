@@ -66,6 +66,7 @@ export const state = $state({
   reportToggle: new Map(),    // filename -> true(expanded) | false(collapsed): explicit user override
   reportViewRaw: new Map(),   // filename -> true: show raw markdown source instead of rendered HTML
   reportRejecting: null,      // { filename, reason } | null: the report whose inline reject form is open, with the form's bound reason text
+  dialog: null,               // { message, confirmLabel, input } | null: the in-page confirm/input dialog awaiting the human (see requestConfirmation / requestInput in handlers.js). `input` is the bound text for an input dialog, null for a plain confirm.
   feedbackToggle: new Map(),  // feedback filename -> true(expanded) | false(collapsed): explicit user override
   eventToggle: new Map(),     // event seq -> true(expanded): events are collapsed to one line until clicked
   actions: [],           // [{ id, label, description?, confirmMessage?, direct?, params? }]
