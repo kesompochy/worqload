@@ -981,10 +981,19 @@ async function offeredKbBinding(ctx: ServerContext): Promise<KbBinding | undefin
   return matchingKbBinding(await loadKbBindings(ctx.configPath), ctx.repoDir);
 }
 
+// sourceAgentSessionId is the claude conversation id to `--resume`. The tmux
+// driver pins it to the worqload session id, but claude -p (the pipe driver)
+// assigns its own, which the host records as meta.agentSessionId.
+interface ForkSource {
+  sourceSessionId: string;
+  sourceWorktreePath: string;
+  sourceAgentSessionId: string;
+}
+
 async function spawnAndAttachHost(
   ctx: ServerContext,
   meta: SessionMeta,
-  opts: { resume?: boolean; fork?: { sourceSessionId: string; sourceWorktreePath: string } } = {},
+  opts: { resume?: boolean; fork?: ForkSource } = {},
 ): Promise<HostClient> {
   return withHostSpawnLock(ctx, meta.id, async () => {
     // A host may already be attached — a racing resume trigger reached here
@@ -1006,7 +1015,7 @@ async function spawnAndAttachHost(
     if (opts.resume && agentName === "claude") {
       effectiveSpawnCommand = [...spawnCommand, "--continue"];
     } else if (opts.fork && agentName === "claude") {
-      effectiveSpawnCommand = [...spawnCommand, "--resume", opts.fork.sourceSessionId, "--fork-session"];
+      effectiveSpawnCommand = [...spawnCommand, "--resume", opts.fork.sourceAgentSessionId, "--fork-session"];
     } else {
       effectiveSpawnCommand = spawnCommand;
     }
@@ -1018,7 +1027,9 @@ async function spawnAndAttachHost(
       agentName,
       driverName,
       resume: opts.resume ?? false,
-      ...(opts.fork && { fork: opts.fork }),
+      ...(opts.fork && {
+        fork: { sourceSessionId: opts.fork.sourceSessionId, sourceWorktreePath: opts.fork.sourceWorktreePath },
+      }),
       onEvent: (event) => broadcastEvent(ctx, meta.id, event),
       onDisconnect: () => {
         if (attachment && ctx.clients.get(meta.id) === attachment) {
@@ -1528,13 +1539,17 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
 
   // --- Fork mode: resolve base from source session ---
   let sourceMeta: SessionMeta | null = null;
-  let forkInfo: { sourceSessionId: string; sourceWorktreePath: string } | undefined;
+  let forkInfo: ForkSource | undefined;
   if (body.forkFrom) {
     sourceMeta = await loadSessionMeta(body.forkFrom, ctx.sessionsDir);
     if (!sourceMeta) {
       return json({ error: `source session not found: ${body.forkFrom}` }, 400);
     }
-    forkInfo = { sourceSessionId: body.forkFrom, sourceWorktreePath: sourceMeta.worktreePath };
+    forkInfo = {
+      sourceSessionId: body.forkFrom,
+      sourceWorktreePath: sourceMeta.worktreePath,
+      sourceAgentSessionId: sourceMeta.agentSessionId ?? body.forkFrom,
+    };
   }
 
   const agentName = body.agentName ?? (sourceMeta?.agentName ?? ctx.agentName);
@@ -1645,7 +1660,7 @@ async function postSessions(req: Request, ctx: ServerContext): Promise<Response>
   // For Claude forks, copy the source session's transcript JSONL to the new
   // worktree's project directory so `--resume <id> --fork-session` can find it.
   if (forkInfo && (agentName === "claude")) {
-    await copyClaudeTranscript(forkInfo.sourceSessionId, forkInfo.sourceWorktreePath, worktreePath);
+    await copyClaudeTranscript(forkInfo.sourceAgentSessionId, forkInfo.sourceWorktreePath, worktreePath);
   }
 
   void runSessionCreateHooks(ctx.configPath, ctx.repoDir, worktreePath).catch(() => {});
@@ -1679,7 +1694,7 @@ async function resolvePromptLinks(
 }
 
 async function copyClaudeTranscript(
-  sourceSessionId: string,
+  sourceAgentSessionId: string,
   sourceWorktreePath: string,
   destWorktreePath: string,
 ): Promise<void> {
@@ -1689,11 +1704,11 @@ async function copyClaudeTranscript(
   const { copyFile, mkdir: mkdirFs } = await import("node:fs/promises");
   const projectsRoot = join(homedir(), ".claude", "projects");
   const srcDir = join(projectsRoot, encodeCwdForClaudeProjects(sourceWorktreePath));
-  const srcFile = join(srcDir, `${sourceSessionId}.jsonl`);
+  const srcFile = join(srcDir, `${sourceAgentSessionId}.jsonl`);
   const destDir = join(projectsRoot, encodeCwdForClaudeProjects(destWorktreePath));
   try {
     await mkdirFs(destDir, { recursive: true });
-    await copyFile(srcFile, join(destDir, `${sourceSessionId}.jsonl`));
+    await copyFile(srcFile, join(destDir, `${sourceAgentSessionId}.jsonl`));
   } catch {
     // Transcript copy is best-effort: the agent starts fresh if it fails.
   }

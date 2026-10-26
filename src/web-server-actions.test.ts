@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import { appendEvent, readEvents } from "./event-log";
 import { agentEndpointPath, hostLogPath, loadSessionMeta, saveSessionMeta } from "./session";
@@ -811,4 +812,51 @@ test("POST /sessions/:id/resume launches a fresh (non-resume) host for a startPa
   expect(resumed.meta.status).toBe("running");
   expect(launches).toHaveLength(1);
   expect(launches[0].resume).toBe(false);
+});
+
+// Regression: claude -p (the pipe driver) assigns its own conversation id, so
+// a fork resumed with the source's worqload id hit "No conversation found" and
+// crashed. The fork must resume — and copy the transcript of — the claude id
+// recorded on the source meta.
+test("fork of a claude session resumes the source's recorded agentSessionId", async () => {
+  const repoDir = makeTmpDir("repo");
+  const spawnCommands: string[][] = [];
+  const captureLauncher: HostLauncher = async ({ meta, sessionsDir, spawnCommand, onEvent }) => {
+    spawnCommands.push(spawnCommand);
+    const event = await appendEvent(meta.id, { kind: "session_started", payload: { prompt: meta.prompt } }, sessionsDir);
+    onEvent(event);
+    return {
+      client: {
+        async send() {},
+        async kill() {},
+        async close() {},
+        replayCompleted: Promise.resolve({ lastSeq: event.seq }),
+        exited: new Promise<number | null>(() => {}),
+      },
+    };
+  };
+  const { baseUrl, ctx } = await bootServer(repoDir, { hostLauncher: captureLauncher });
+
+  const source = (await postJson(baseUrl, "/sessions", { prompt: "src", baseBranch: TEST_BASE }).then((r) => r.json())).meta;
+  const claudeConversationId = "c6b3a459-40d3-4fad-9f79-0d5b065bef63";
+  const sourceMeta = await loadSessionMeta(source.id, ctx.sessionsDir);
+  await saveSessionMeta({ ...sourceMeta!, agentSessionId: claudeConversationId }, ctx.sessionsDir);
+  // copyClaudeTranscript reads the real ~/.claude/projects (Bun's homedir()
+  // ignores a runtime HOME override), so the per-worktree dirs are removed after.
+  const { encodeCwdForClaudeProjects } = await import("./session-driver-tmux");
+  const claudeProjectDir = (worktreePath: string) =>
+    join(homedir(), ".claude", "projects", encodeCwdForClaudeProjects(worktreePath));
+  const sourceProjectDir = claudeProjectDir(source.worktreePath);
+  mkdirSync(sourceProjectDir, { recursive: true });
+  trackCleanup(() => rmSync(sourceProjectDir, { recursive: true, force: true }));
+  writeFileSync(join(sourceProjectDir, `${claudeConversationId}.jsonl`), "{}\n");
+
+  const forkResponse = await postJson(baseUrl, "/sessions", { prompt: "fork", forkFrom: source.id });
+  expect(forkResponse.status).toBe(201);
+  const forked = (await forkResponse.json()).meta;
+  const forkProjectDir = claudeProjectDir(forked.worktreePath);
+  trackCleanup(() => rmSync(forkProjectDir, { recursive: true, force: true }));
+
+  expect(spawnCommands.at(-1)!.slice(-3)).toEqual(["--resume", claudeConversationId, "--fork-session"]);
+  expect(existsSync(join(forkProjectDir, `${claudeConversationId}.jsonl`))).toBe(true);
 });

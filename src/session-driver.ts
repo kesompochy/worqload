@@ -87,7 +87,9 @@ export interface SessionDriverLaunchOptions {
   // The agent-side session identifier persisted from a prior host (if any).
   // Codex uses this to resume its thread across host restarts; the claude pipe
   // and tmux drivers ignore it (claude resumes via `--continue` at argv level,
-  // tmux via the worqload session id it already encodes).
+  // tmux via the worqload session id it already encodes). The claude pipe
+  // driver still reports its id through onAgentSessionId so a fork can
+  // `--resume` it.
   priorAgentSessionId?: string;
   // Fired when the driver captures (or rotates) the agent-side session
   // identifier the next host should restore from. runHost persists it on the
@@ -131,9 +133,17 @@ export const claudePipeDriver: SessionDriverFactory = async (opts) => {
     stderr: "pipe",
   });
 
-  const stdoutTask = readLines(claude.stdout, (line) =>
-    emitAgentLine(parseAgentLine(line), CLAUDE_PIPE_FORMAT, opts.onEvent),
-  );
+  // claude assigns its own conversation id, distinct from the worqload
+  // session id; a fork must `--resume` this id to find the transcript.
+  let conversationId: string | null = null;
+  const stdoutTask = readLines(claude.stdout, (line) => {
+    const parsed = parseAgentLine(line);
+    if (typeof parsed.session_id === "string" && parsed.session_id !== conversationId) {
+      conversationId = parsed.session_id;
+      opts.onAgentSessionId?.(conversationId);
+    }
+    return emitAgentLine(parsed, CLAUDE_PIPE_FORMAT, opts.onEvent);
+  });
 
   const stderrTask = readLines(claude.stderr, (line) => emitStderrLine(line, opts.onEvent));
 
