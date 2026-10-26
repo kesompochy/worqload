@@ -45,6 +45,7 @@ import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClau
 import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
+import reportPolishedHeader from "./prompts/report-polished-header.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -3375,7 +3376,11 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
     } else {
       await storeReport(ctx, meta, {
         slug: pending.slug,
-        content: outcome.report,
+        // A writer reading its past report back from `.worqload-reports/`
+        // learns from the first line that the human read a rewrite, not its
+        // draft. The line stays visible in the UI so file and UI line numbers,
+        // which feedback anchors rely on, stay the same.
+        content: outcome.report === pending.content ? outcome.report : `${reportPolishedHeader.trim()}\n\n${outcome.report}`,
         ...(pending.replyTo && { replyTo: pending.replyTo }),
         attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
       });
