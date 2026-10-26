@@ -46,6 +46,7 @@ import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as a
 import type { Database } from "bun:sqlite";
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
 import reportPolishedScaffold from "./prompts/report-polished-feedback.txt" with { type: "text" };
+import reportWithdrawnScaffold from "./prompts/report-withdrawn-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -1895,9 +1896,8 @@ async function postModel(req: Request, ctx: ServerContext, params: Record<string
 
 async function getFeedbackHistory(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    // A polished report delivered to the writer is not the human's feedback,
-    // and the human already reads its text as the report itself.
-    const fromHuman = (f: NumberedFile) => !f.meta?.polishedReport;
+    // Polish results delivered to the writer are not the human's feedback.
+    const fromHuman = (f: NumberedFile) => !f.meta?.polishedReport && !f.meta?.withdrawnReport;
     const inbox = (await listAllFiles(feedbackInboxDirFor(ctx, meta.id))).filter(fromHuman);
     const read = (await listAllFiles(feedbackReadDirFor(ctx, meta.id))).filter(fromHuman);
     const all = [
@@ -3367,12 +3367,18 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
   const polisher = ctx.reportPolisher;
   if (meta && polisher) {
     const pending = (await Bun.file(pendingPath).json()) as PendingReportPolish;
-    const content = await polisher({
+    const outcome = await polisher({
       spawnCommand: reportPolishSpawnCommand(ctx, meta),
       cwd: meta.worktreePath,
       draft: pending.content,
       unreadPolished: await unreadPolishedReports(ctx, sessionId),
     });
+    if ("withdrawnReason" in outcome) {
+      await withdrawReport(ctx, sessionId, pendingPath, pending, outcome.withdrawnReason);
+      await rm(pendingPath, { force: true });
+      return;
+    }
+    const content = outcome.report;
     const file = await storeReport(ctx, meta, {
       slug: pending.slug,
       content,
@@ -3390,6 +3396,28 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
     }
   }
   await rm(pendingPath, { force: true });
+}
+
+// The withdrawn draft is kept beside the session, and announced on the
+// timeline, so the human can catch a withdrawal that dropped a report they
+// needed. The writer learns of it from its inbox without being woken, the same
+// way it learns of a polished version.
+async function withdrawReport(
+  ctx: ServerContext,
+  sessionId: string,
+  pendingPath: string,
+  pending: PendingReportPolish,
+  reason: string,
+): Promise<void> {
+  await Bun.write(
+    join(ctx.sessionsDir, sessionId, "report-polish-withdrawn", basename(pendingPath)),
+    JSON.stringify({ slug: pending.slug, draft: pending.content, reason, withdrawnAt: new Date().toISOString() }),
+  );
+  await appendAndBroadcast(ctx, sessionId, { kind: "report_withdrawn", payload: { slug: pending.slug, reason } });
+  await writeNumberedFile(feedbackInboxDirFor(ctx, sessionId), "withdrawn-report", pending.content, {
+    archiveDirs: [feedbackReadDirFor(ctx, sessionId)],
+    meta: { withdrawnReport: { slug: pending.slug, reason } },
+  });
 }
 
 // The fork must run in print mode with stream-json whatever driver the writer
@@ -3545,6 +3573,12 @@ function formatFeedbackMessageForAgent(m: { content: string; filename: string; m
     content = reportPolishedScaffold
       .replaceAll("{{filename}}", m.meta.polishedReport)
       .replaceAll("{{report}}", m.content);
+  }
+  if (m.meta?.withdrawnReport) {
+    content = reportWithdrawnScaffold
+      .replaceAll("{{slug}}", m.meta.withdrawnReport.slug)
+      .replaceAll("{{reason}}", m.meta.withdrawnReport.reason)
+      .replaceAll("{{draft}}", m.content);
   }
   if (skills && skills.length > 0) {
     content = expandSkillReferences(content, skills);

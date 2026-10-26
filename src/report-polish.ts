@@ -18,6 +18,9 @@ export const REPORT_POLISH_FORK_ENV = "WORQLOAD_REPORT_POLISH_FORK";
 export const POLISHED_REPORT_BEGIN = "<<<WORQLOAD_POLISHED_REPORT";
 export const POLISHED_REPORT_END = "WORQLOAD_POLISHED_REPORT>>>";
 export const NO_VIOLATION_MARK = "<<WORQLOAD_NO_VIOLATION>>";
+// Starts the line on which the fork withdraws the report; the rest of the
+// line is its reason.
+export const REPORT_WITHDRAW_MARK = "<<WORQLOAD_WITHDRAW_REPORT>>";
 
 // Each round re-reads the whole forked conversation, so the token cost grows
 // with the number of rounds; two lets the fork check its own rewrite once.
@@ -36,9 +39,11 @@ export interface ReportPolishRequest {
   unreadPolished: string[];
 }
 
-// Resolves to the text to store: the fork's last well-formed rewrite, or the
-// draft itself when the fork failed before producing one.
-export type ReportPolisher = (request: ReportPolishRequest) => Promise<string>;
+// `report` is the text to store: the fork's last well-formed rewrite, or the
+// draft itself when the fork failed before producing one. `withdrawnReason`
+// means the fork judged the report not worth the human's reading.
+export type PolishOutcome = { report: string } | { withdrawnReason: string };
+export type ReportPolisher = (request: ReportPolishRequest) => Promise<PolishOutcome>;
 
 export function buildReportPolishInstruction(draft: string, unreadPolished: string[]): string {
   const unread = unreadPolished.length === 0
@@ -46,25 +51,28 @@ export function buildReportPolishInstruction(draft: string, unreadPolished: stri
     : unreadTemplate.replaceAll("{{reports}}", unreadPolished.map(r => `---\n\n${r}\n\n---`).join("\n\n"));
   return instructionTemplate
     .replaceAll("{{noViolation}}", NO_VIOLATION_MARK)
+    .replaceAll("{{withdraw}}", REPORT_WITHDRAW_MARK)
     .replaceAll("{{begin}}", POLISHED_REPORT_BEGIN)
     .replaceAll("{{end}}", POLISHED_REPORT_END)
     .replaceAll("{{unreadPolished}}", unread)
     .replaceAll("{{draft}}", draft);
 }
 
-interface PolishRound {
-  report: string;
-  clean: boolean;
-}
+type PolishRound = { report: string; clean: boolean } | { withdrawnReason: string };
 
+// A round that carries a report block is read as that report even when it
+// also withdraws: a wrong withdrawal loses a report the human needed, a wrong
+// store only costs the human a read.
 function parsePolishRound(output: string): PolishRound | null {
   const begin = output.lastIndexOf(POLISHED_REPORT_BEGIN);
-  if (begin < 0) return null;
-  const end = output.indexOf(POLISHED_REPORT_END, begin);
-  if (end < 0) return null;
-  const report = output.slice(begin + POLISHED_REPORT_BEGIN.length, end).trim();
-  if (report === "") return null;
-  return { report, clean: output.slice(0, begin).includes(NO_VIOLATION_MARK) };
+  const end = begin < 0 ? -1 : output.indexOf(POLISHED_REPORT_END, begin);
+  if (end >= 0) {
+    const report = output.slice(begin + POLISHED_REPORT_BEGIN.length, end).trim();
+    if (report !== "") return { report, clean: output.slice(0, begin).includes(NO_VIOLATION_MARK) };
+  }
+  const withdrawLine = output.split("\n").find(line => line.trimStart().startsWith(REPORT_WITHDRAW_MARK));
+  if (withdrawLine === undefined) return null;
+  return { withdrawnReason: withdrawLine.trimStart().slice(REPORT_WITHDRAW_MARK.length).trim() };
 }
 
 // The server's env plus the fork mark, minus the worqload session identity,
@@ -95,7 +103,7 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
     try {
       proc = Bun.spawn(spawnCommand, { cwd, env: forkEnv(), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     } catch {
-      return draft;
+      return { report: draft };
     }
     const timer = setTimeout(() => {
       try {
@@ -146,13 +154,17 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
       return finishedTurns[expected - 1] ?? null;
     };
 
-    let stored = draft;
+    let outcome: PolishOutcome = { report: draft };
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
         const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft, unreadPolished) : recheckInstruction);
         const parsed = output === null ? null : parsePolishRound(output);
         if (parsed === null) break;
-        stored = parsed.report;
+        if ("withdrawnReason" in parsed) {
+          outcome = parsed;
+          break;
+        }
+        outcome = { report: parsed.report };
         if (parsed.clean) break;
       }
     } finally {
@@ -165,6 +177,6 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
       clearTimeout(timer);
       await Promise.allSettled([stdoutTask, stderrTask]);
     }
-    return stored;
+    return outcome;
   };
 }
