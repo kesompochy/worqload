@@ -113,7 +113,7 @@ test("the fork resumes the writer's claude conversation with the writer's model"
   expect(argv[argv.indexOf("--model") + 1]).toBe("opus");
 });
 
-test("the polished version reaches the writer's inbox and stays out of the human's feedback list", async () => {
+test("a polish sends nothing to the writer's inbox", async () => {
   const gate = gatedPolisher(() => "推敲された本文");
   const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
   const session = await createClaudeSession(baseUrl, ctx);
@@ -122,26 +122,11 @@ test("the polished version reaches the writer's inbox and stays out of the human
   await gate.release(0);
   await waitFor(async () => ctx.reportPolishDrains.size === 0 && (await storedReports(baseUrl, session.id)).length === 1, "the polish to finish");
 
-  const humanList = (await fetch(`${baseUrl}/sessions/${session.id}/feedback`).then(r => r.json())).messages;
-  expect(humanList).toEqual([]);
-  const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
-  expect(fetched).toHaveLength(1);
-  expect(fetched[0].content).toContain("推敲された本文");
-});
-
-test("a polish that leaves the draft unchanged sends nothing to the writer's inbox", async () => {
-  const gate = gatedPolisher(r => r.draft);
-  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
-  const session = await createClaudeSession(baseUrl, ctx);
-
-  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "plan", content: "書き手の原稿" });
-  await gate.release(0);
-  await waitFor(async () => ctx.reportPolishDrains.size === 0 && (await storedReports(baseUrl, session.id)).length === 1, "the polish to finish");
   const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
   expect(fetched).toEqual([]);
 });
 
-test("a session's polishes run one at a time and the next fork learns the versions the writer has not fetched", async () => {
+test("a session's polishes run one at a time", async () => {
   const gate = gatedPolisher(r => `推敲版: ${r.draft}`);
   const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
   const session = await createClaudeSession(baseUrl, ctx);
@@ -156,8 +141,6 @@ test("a session's polishes run one at a time and the next fork learns the versio
   await gate.release(1);
   const reports = await waitForReports(baseUrl, session.id, 2);
   expect(reports.map(r => r.content).sort()).toEqual(["推敲版: 原稿1", "推敲版: 原稿2"]);
-  expect(gate.requests[0].unreadPolished).toEqual([]);
-  expect(gate.requests[1].unreadPolished).toEqual(["推敲版: 原稿1"]);
 });
 
 test("a codex session's report is stored as submitted without a polish", async () => {
@@ -203,7 +186,7 @@ test("a polished report keeps the images attached to its draft", async () => {
   expect(new Uint8Array(await image.arrayBuffer())).toEqual(png);
 });
 
-test("a withdrawn report is not stored, is kept for the human to inspect, and tells the writer why", async () => {
+test("a withdrawn report is not stored and is kept for the human to inspect", async () => {
   const gate = gatedPolisher(() => ({ withdrawnReason: "人間の知っていることを何も変えない" }));
   const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
   const session = await createClaudeSession(baseUrl, ctx);
@@ -220,9 +203,6 @@ test("a withdrawn report is not stored, is kept for the human to inspect, and te
   expect(JSON.parse(readFileSync(join(ctx.sessionsDir, session.id, "report-polish-withdrawn", kept[0]), "utf8")))
     .toMatchObject({ slug: "noop", draft: "取り下げられる原稿", reason: "人間の知っていることを何も変えない" });
 
-  expect((await fetch(`${baseUrl}/sessions/${session.id}/feedback`).then(r => r.json())).messages).toEqual([]);
   const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
-  expect(fetched).toHaveLength(1);
-  expect(fetched[0].content).toContain("取り下げられる原稿");
-  expect(fetched[0].content).toContain("人間の知っていることを何も変えない");
+  expect(fetched).toEqual([]);
 });

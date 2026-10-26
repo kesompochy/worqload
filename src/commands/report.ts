@@ -86,7 +86,7 @@ async function reportSubmit(rest: string[]): Promise<void> {
     if ("polishing" in result) {
       console.log(
         "report accepted: worqload is polishing it in a fork of this conversation and stores the polished " +
-          "text. When that text differs from your draft, it arrives in your feedback inbox with its filename.",
+          "text, or withdraws it when the fork judges it not worth the human's reading.",
       );
     } else {
       console.log(result.filename);

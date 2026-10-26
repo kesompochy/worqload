@@ -7,7 +7,6 @@
 import { isClaudePipeTurnEnd, readLines } from "./claude-stream";
 import { buildUserMessage } from "./session-bootstrap";
 import instructionTemplate from "./prompts/report-polish-instruction.txt" with { type: "text" };
-import unreadTemplate from "./prompts/report-polish-unread.txt" with { type: "text" };
 import recheckInstruction from "./prompts/report-polish-recheck.txt" with { type: "text" };
 
 // Set in the environment of a report-polish fork. The fork carries the
@@ -34,9 +33,6 @@ export interface ReportPolishRequest {
   spawnCommand: string[];
   cwd: string;
   draft: string;
-  // Polished versions already stored but not yet fetched from the writer's
-  // inbox: the fork's copy of the conversation does not contain them yet.
-  unreadPolished: string[];
 }
 
 // `report` is the text to store: the fork's last well-formed rewrite, or the
@@ -45,16 +41,12 @@ export interface ReportPolishRequest {
 export type PolishOutcome = { report: string } | { withdrawnReason: string };
 export type ReportPolisher = (request: ReportPolishRequest) => Promise<PolishOutcome>;
 
-export function buildReportPolishInstruction(draft: string, unreadPolished: string[]): string {
-  const unread = unreadPolished.length === 0
-    ? ""
-    : unreadTemplate.replaceAll("{{reports}}", unreadPolished.map(r => `---\n\n${r}\n\n---`).join("\n\n"));
+export function buildReportPolishInstruction(draft: string): string {
   return instructionTemplate
     .replaceAll("{{noViolation}}", NO_VIOLATION_MARK)
     .replaceAll("{{withdraw}}", REPORT_WITHDRAW_MARK)
     .replaceAll("{{begin}}", POLISHED_REPORT_BEGIN)
     .replaceAll("{{end}}", POLISHED_REPORT_END)
-    .replaceAll("{{unreadPolished}}", unread)
     .replaceAll("{{draft}}", draft);
 }
 
@@ -98,7 +90,7 @@ function collectAssistantText(parsed: { type?: string; message?: { content?: unk
 
 export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): ReportPolisher {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return async ({ spawnCommand, cwd, draft, unreadPolished }) => {
+  return async ({ spawnCommand, cwd, draft }) => {
     let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
     try {
       proc = Bun.spawn(spawnCommand, { cwd, env: forkEnv(), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
@@ -157,7 +149,7 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
     let outcome: PolishOutcome = { report: draft };
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
-        const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft, unreadPolished) : recheckInstruction);
+        const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft) : recheckInstruction);
         const parsed = output === null ? null : parsePolishRound(output);
         if (parsed === null) break;
         if ("withdrawnReason" in parsed) {

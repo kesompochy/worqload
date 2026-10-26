@@ -74,13 +74,9 @@ export interface NumberedFileMeta {
   // holds only the human's reason; the rewrite instruction is wrapped around it
   // when the agent fetches the message.
   rejectedReport?: string;
-  // For a feedback message: the report stored as the polish of the writer's
-  // draft. The body is the stored report's text; the note telling the writer
-  // what it is gets wrapped around it when the agent fetches the message.
+  // For a feedback message: the polished report or withdrawn draft once
+  // delivered to the writer. Such messages are hidden from the human's list.
   polishedReport?: string;
-  // For a feedback message: a draft the polish fork withdrew instead of
-  // storing. The body is the draft; the note and reason are wrapped around it
-  // when the agent fetches the message.
   withdrawnReport?: { slug: string; reason: string };
 }
 
