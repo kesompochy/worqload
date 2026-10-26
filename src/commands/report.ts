@@ -5,6 +5,7 @@
 
 import { basename } from "node:path";
 import { submitReport, cancelReport } from "../agent-client";
+import { REPORT_POLISH_FORK_ENV } from "../report-polish";
 import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, collectFlag, exitWithUsage } from "./cli-helpers";
 
 const SEPARATOR_LINE = /^[\s\-=*#]*$/;
@@ -58,6 +59,10 @@ export async function report(args: string[]): Promise<void> {
 }
 
 async function reportSubmit(rest: string[]): Promise<void> {
+  if (process.env[REPORT_POLISH_FORK_ENV]) {
+    console.error("report submit is disabled while polishing a report: reply with the polished report as text instead");
+    process.exit(2);
+  }
   const slug = requireFlag(rest, "--slug");
   const replyTo = optionalFlag(rest, "--re");
   const raw = rest.includes("--raw");
