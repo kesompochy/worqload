@@ -582,7 +582,7 @@ test("a rejected report keeps its replyTo in the sidecar", async () => {
   expect(sidecar.rejection.reason).toBe("r");
 });
 
-test("agent cancel of a report keeps it in the list with the reason and leaves its read state as it was", async () => {
+test("agent cancel of a report keeps it in the list with the reason and marks it read", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);
 
@@ -590,7 +590,6 @@ test("agent cancel of a report keeps it in the list with the reason and leaves i
   const sid = created.meta.id;
 
   await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "wrong", content: "wrong conclusion report" });
-  await postJson(baseUrl, `/sessions/${sid}/reports/001-wrong.md/read`, {});
   const res = await postJson(baseUrl, `/internal/sessions/${sid}/reports/001-wrong.md/cancel`, { reason: "前提が誤っていた" });
   expect(res.status).toBe(200);
 
