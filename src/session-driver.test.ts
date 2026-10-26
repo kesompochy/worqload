@@ -82,3 +82,22 @@ test("claudePipeDriver emits a normalized turn_completed event from the stream-j
   driver.kill("SIGTERM");
   await driver.exited;
 });
+
+// claude -p assigns its own conversation id, which differs from the worqload
+// session id. A fork has to `--resume` that id, so the driver must report it.
+test("claudePipeDriver reports the session_id claude announces via onAgentSessionId", async () => {
+  const reported: string[] = [];
+  const driver = await claudePipeDriver({
+    spawnCommand: ["bun", MOCK, "init"],
+    env: testEnv(),
+    onEvent: () => {},
+    log: () => {},
+    onAgentSessionId: (id) => {
+      reported.push(id);
+    },
+  });
+
+  await driver.exited;
+
+  expect(reported).toEqual(["mock"]);
+});
