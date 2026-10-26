@@ -45,7 +45,7 @@ import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClau
 import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
-import reportPolishedHeader from "./prompts/report-polished-header.txt" with { type: "text" };
+import reportPolishedMarkerText from "./prompts/report-polished-marker.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -2022,7 +2022,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
     return json({
       reports: reports.filter(r => !r.meta?.rejection).map(r => ({
         filename: r.filename,
-        content: r.content,
+        content: withoutPolishedMarker(r.content),
         read: readSet.has(r.filename),
         pinned: pinSet.has(r.filename),
         replyTo: r.meta?.replyTo,
@@ -2046,7 +2046,7 @@ async function getReport(_req: Request, ctx: ServerContext, params: Record<strin
     if (!report) return json({ error: "report not found" }, 404);
     return json({
       filename: report.filename,
-      content: report.content,
+      content: withoutPolishedMarker(report.content),
       replyTo: report.meta?.replyTo,
       attachments: report.attachments,
       rejection: report.meta?.rejection,
@@ -3376,11 +3376,7 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
     } else {
       await storeReport(ctx, meta, {
         slug: pending.slug,
-        // A writer reading its past report back from `.worqload-reports/`
-        // learns from the first line that the human read a rewrite, not its
-        // draft. The line stays visible in the UI so file and UI line numbers,
-        // which feedback anchors rely on, stay the same.
-        content: outcome.report === pending.content ? outcome.report : `${reportPolishedHeader.trim()}\n\n${outcome.report}`,
+        content: outcome.report === pending.content ? outcome.report : `${outcome.report}\n\n${REPORT_POLISHED_MARKER}`,
         ...(pending.replyTo && { replyTo: pending.replyTo }),
         attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
       });
@@ -3392,6 +3388,17 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
 // The withdrawn draft is kept beside the session, and announced on the
 // timeline, so the human can catch a withdrawal that dropped a report they
 // needed.
+// A writer reading its past report back from `.worqload-reports/` learns from
+// this last line that the human read a rewrite, not its draft. It sits at the
+// end so the UI can leave it out without shifting the line numbers feedback
+// anchors use.
+const REPORT_POLISHED_MARKER = reportPolishedMarkerText.trim();
+
+function withoutPolishedMarker(content: string): string {
+  const suffix = `\n\n${REPORT_POLISHED_MARKER}`;
+  return content.endsWith(suffix) ? content.slice(0, -suffix.length) : content;
+}
+
 async function withdrawReport(
   ctx: ServerContext,
   sessionId: string,
