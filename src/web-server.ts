@@ -2243,7 +2243,7 @@ async function postReportReject(req: Request, ctx: ServerContext, params: Record
 
 // The agent withdraws one of its own reports (`worqload report cancel`), e.g.
 // after finding its conclusion wrong. The report stays in the human's list
-// with the reason; its read/unread state is left as it was.
+// with the reason, marked read: a withdrawn report needs no attention.
 async function postInternalReportCancel(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const filename = decodeURIComponent(params.filename);
@@ -2258,6 +2258,7 @@ async function postInternalReportCancel(req: Request, ctx: ServerContext, params
     if (!report) return json({ error: "report not found" }, 404);
     if (report.meta?.cancellation) return json({ error: "report already cancelled" }, 409);
     await mergeNumberedFileMeta(dir, filename, { cancellation: { reason, cancelledAt: new Date().toISOString() } });
+    await setReadState(dir, filename, true);
     await appendAndBroadcast(ctx, meta.id, { kind: "report_cancelled", payload: { filename, reason } });
     return json({ ok: true, filename });
   });
