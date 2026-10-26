@@ -1013,7 +1013,13 @@ async function spawnAndAttachHost(
       : ctx.spawnCommandForAgent(agentName, meta.model);
     let effectiveSpawnCommand: string[];
     if (opts.resume && agentName === "claude") {
-      effectiveSpawnCommand = [...spawnCommand, "--continue"];
+      // `--continue` picks the worktree's most recent conversation, which is a
+      // report-polish fork's once one has run here, so resume names the
+      // session's own conversation whenever the pipe driver recorded it. The
+      // tmux driver strips `--continue` and resumes by the worqload id itself.
+      effectiveSpawnCommand = driverName === "pipe" && meta.agentSessionId !== undefined
+        ? [...spawnCommand, "--resume", meta.agentSessionId]
+        : [...spawnCommand, "--continue"];
     } else if (opts.fork && agentName === "claude") {
       effectiveSpawnCommand = [...spawnCommand, "--resume", opts.fork.sourceAgentSessionId, "--fork-session"];
     } else {
