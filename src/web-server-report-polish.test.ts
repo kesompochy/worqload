@@ -6,16 +6,12 @@ import type { PolishOutcome, ReportPolisher, ReportPolishRequest } from "./repor
 import { loadSessionMeta, saveSessionMeta } from "./session";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 import { startServer } from "./web-server";
-import polishedHeader from "./prompts/report-polished-header.txt" with { type: "text" };
+import polishedMarker from "./prompts/report-polished-marker.txt" with { type: "text" };
 
 afterEach(cleanupAll);
 
 const TEST_BASE = "trunk";
 const CLAUDE_CONVERSATION_ID = "5d0c8a7e-2b1f-4e3d-9c8b-7a6f5e4d3c2b";
-
-function storedPolish(report: string): string {
-  return `${polishedHeader.trim()}\n\n${report}`;
-}
 
 async function bootServer(repoDir: string, extra: Partial<Parameters<typeof startServer>[0]> = {}) {
   const started = await startServer({
@@ -100,7 +96,7 @@ test("a claude session's report is accepted at once and stored as the fork's pol
 
   await gate.release(0);
   const [stored] = await waitForReports(baseUrl, session.id, 1);
-  expect(stored.content).toBe(storedPolish("推敲された本文"));
+  expect(stored.content).toBe("推敲された本文");
   expect(gate.requests[0].draft).toBe("書き手の原稿");
   expect(gate.requests[0].cwd).toBe(session.worktreePath);
 });
@@ -145,7 +141,7 @@ test("a session's polishes run one at a time", async () => {
   await gate.release(0);
   await gate.release(1);
   const reports = await waitForReports(baseUrl, session.id, 2);
-  expect(reports.map(r => r.content).sort()).toEqual([storedPolish("推敲版: 原稿1"), storedPolish("推敲版: 原稿2")]);
+  expect(reports.map(r => r.content).sort()).toEqual(["推敲版: 原稿1", "推敲版: 原稿2"]);
 });
 
 test("a codex session's report is stored as submitted without a polish", async () => {
@@ -169,7 +165,7 @@ test("a draft accepted before a server restart is polished and stored by the nex
 
   const second = await bootServer(repoDir, { reportPolisher: async r => ({ report: `推敲版: ${r.draft}` }) });
   const [stored] = await waitForReports(second.baseUrl, session.id, 1);
-  expect(stored.content).toBe(storedPolish("推敲版: 再起動をまたぐ原稿"));
+  expect(stored.content).toBe("推敲版: 再起動をまたぐ原稿");
 });
 
 test("a polished report keeps the images attached to its draft", async () => {
@@ -212,13 +208,29 @@ test("a withdrawn report is not stored and is kept for the human to inspect", as
   expect(fetched).toEqual([]);
 });
 
-test("a polish that leaves the draft unchanged is stored without the polished header", async () => {
+test("a changed polish ends its file with the polished marker, which the UI's report list leaves out", async () => {
+  const gate = gatedPolisher(() => "推敲された本文\n2 行目");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "plan", content: "書き手の原稿" });
+  await gate.release(0);
+  const [listed] = await waitForReports(baseUrl, session.id, 1);
+
+  const onDisk = readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8");
+  expect(onDisk).toBe(`推敲された本文\n2 行目\n\n${polishedMarker.trim()}`);
+  expect(listed.content).toBe("推敲された本文\n2 行目");
+  const single = await fetch(`${baseUrl}/sessions/${session.id}/reports/${listed.filename}`).then(r => r.json());
+  expect(single.content).toBe("推敲された本文\n2 行目");
+});
+
+test("a polish that leaves the draft unchanged is stored without the polished marker", async () => {
   const gate = gatedPolisher(r => r.draft);
   const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
   const session = await createClaudeSession(baseUrl, ctx);
 
   await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "plan", content: "書き手の原稿" });
   await gate.release(0);
-  const [stored] = await waitForReports(baseUrl, session.id, 1);
-  expect(stored.content).toBe("書き手の原稿");
+  const [listed] = await waitForReports(baseUrl, session.id, 1);
+  expect(readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8")).toBe("書き手の原稿");
 });
