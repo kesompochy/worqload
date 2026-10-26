@@ -33,7 +33,6 @@ function polishWith(replies: string[], overrides: { draft?: string } = {}) {
     spawnCommand: ["bun", MOCK, "replies", ...replies],
     cwd: process.cwd(),
     draft: overrides.draft ?? "原稿",
-    unreadPolished: [],
   }).then(describeOutcome);
 }
 
@@ -57,14 +56,13 @@ test("the second round's text is stored even when it still reports violations", 
     .toBe("推敲版その2");
 });
 
-test("the draft and the polished versions the writer has not fetched reach the fork's instruction", () => {
-  const instruction = buildReportPolishInstruction("提出された原稿", ["未取得の推敲版A", "未取得の推敲版B"]);
+test("the draft and the marks reach the fork's instruction", () => {
+  const instruction = buildReportPolishInstruction("提出された原稿");
   expect(instruction).toContain("提出された原稿");
-  expect(instruction).toContain("未取得の推敲版A");
-  expect(instruction).toContain("未取得の推敲版B");
   expect(instruction).toContain(POLISHED_REPORT_BEGIN);
   expect(instruction).toContain(POLISHED_REPORT_END);
   expect(instruction).toContain(NO_VIOLATION_MARK);
+  expect(instruction).toContain(REPORT_WITHDRAW_MARK);
 });
 
 test("the fork runs with the polish mark and without the session identity", async () => {
@@ -84,13 +82,13 @@ test("a second round without the report markers keeps the first round's text", a
 
 test("a fork that exits non-zero falls back to the draft", async () => {
   const polish = makeClaudeReportPolisher();
-  const out = await polish({ spawnCommand: ["bun", MOCK, "crash"], cwd: process.cwd(), draft: "原稿", unreadPolished: [] });
+  const out = await polish({ spawnCommand: ["bun", MOCK, "crash"], cwd: process.cwd(), draft: "原稿" });
   expect(out).toEqual({ report: "原稿" });
 });
 
 test("a fork that never answers is killed at the timeout and the draft is stored", async () => {
   const polish = makeClaudeReportPolisher({ timeoutMs: 300 });
-  const out = await polish({ spawnCommand: ["bun", MOCK, "hang"], cwd: process.cwd(), draft: "原稿", unreadPolished: [] });
+  const out = await polish({ spawnCommand: ["bun", MOCK, "hang"], cwd: process.cwd(), draft: "原稿" });
   expect(out).toEqual({ report: "原稿" });
 });
 
@@ -106,8 +104,4 @@ test("a round that both withdraws and writes a report is read as the report", as
   // Storing is the safe reading of a contradictory answer: a wrong withdrawal
   // loses a report, a wrong store only costs the human a read.
   expect(await polishWith([`${withdrawReply("不要")}\n${polishedReply("推敲版", { clean: true })}`])).toBe("推敲版");
-});
-
-test("the withdraw mark reaches the fork's instruction", () => {
-  expect(buildReportPolishInstruction("原稿", [])).toContain(REPORT_WITHDRAW_MARK);
 });

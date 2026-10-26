@@ -1,9 +1,0 @@
-Your report `{{slug}}` was withdrawn in a fork of this conversation and not stored: the fork judged it does not change what the human knows or must decide. The human has not read it. If it does carry something the human needs, submit it again with that made explicit.
-
-## Reason given by the fork
-
-{{reason}}
-
-## Your draft
-
-{{draft}}

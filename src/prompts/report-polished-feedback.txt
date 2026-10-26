@@ -1,3 +1,0 @@
-Your report was polished in a fork of this conversation and stored as `{{filename}}`. The human reads the stored text below, not the draft you submitted. Continue from what the human has read: when a later report or answer relies on the report, rely on this text.
-
-{{report}}

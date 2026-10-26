@@ -45,8 +45,7 @@ import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClau
 import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
-import reportPolishedScaffold from "./prompts/report-polished-feedback.txt" with { type: "text" };
-import reportWithdrawnScaffold from "./prompts/report-withdrawn-feedback.txt" with { type: "text" };
+import reportPolishedHeader from "./prompts/report-polished-header.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -255,8 +254,7 @@ export interface ServerContext {
   attachmentMaxCount: number;
   reportPolisher: ReportPolisher | undefined;
   // Per session: the running drain of its pending report polishes. A session's
-  // forks run one at a time so each fork can be told which polished versions
-  // the writer has not fetched yet.
+  // forks run one at a time so its reports are stored in submission order.
   reportPolishDrains: Map<string, Promise<void>>;
   // Path to the YAML config (`~/.config/worqload/config.yaml`).
   configPath: string;
@@ -1896,7 +1894,8 @@ async function postModel(req: Request, ctx: ServerContext, params: Record<string
 
 async function getFeedbackHistory(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    // Polish results delivered to the writer are not the human's feedback.
+    // Polished reports were once delivered into the writer's inbox; those
+    // messages are still on disk and are not the human's feedback.
     const fromHuman = (f: NumberedFile) => !f.meta?.polishedReport && !f.meta?.withdrawnReport;
     const inbox = (await listAllFiles(feedbackInboxDirFor(ctx, meta.id))).filter(fromHuman);
     const read = (await listAllFiles(feedbackReadDirFor(ctx, meta.id))).filter(fromHuman);
@@ -3371,27 +3370,19 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
       spawnCommand: reportPolishSpawnCommand(ctx, meta),
       cwd: meta.worktreePath,
       draft: pending.content,
-      unreadPolished: await unreadPolishedReports(ctx, sessionId),
     });
     if ("withdrawnReason" in outcome) {
       await withdrawReport(ctx, sessionId, pendingPath, pending, outcome.withdrawnReason);
-      await rm(pendingPath, { force: true });
-      return;
-    }
-    const content = outcome.report;
-    const file = await storeReport(ctx, meta, {
-      slug: pending.slug,
-      content,
-      ...(pending.replyTo && { replyTo: pending.replyTo }),
-      attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
-    });
-    // Only a changed text is worth the writer's attention. The delivery does
-    // not wake the writer: it is read with the next feedback the writer
-    // fetches, and the next fork is told about it in the meantime.
-    if (content !== pending.content) {
-      await writeNumberedFile(feedbackInboxDirFor(ctx, sessionId), "polished-report", content, {
-        archiveDirs: [feedbackReadDirFor(ctx, sessionId)],
-        meta: { polishedReport: file.filename },
+    } else {
+      await storeReport(ctx, meta, {
+        slug: pending.slug,
+        // A writer reading its past report back from `.worqload-reports/`
+        // learns from the first line that the human read a rewrite, not its
+        // draft. The line stays visible in the UI so file and UI line numbers,
+        // which feedback anchors rely on, stay the same.
+        content: outcome.report === pending.content ? outcome.report : `${reportPolishedHeader.trim()}\n\n${outcome.report}`,
+        ...(pending.replyTo && { replyTo: pending.replyTo }),
+        attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
       });
     }
   }
@@ -3400,8 +3391,7 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
 
 // The withdrawn draft is kept beside the session, and announced on the
 // timeline, so the human can catch a withdrawal that dropped a report they
-// needed. The writer learns of it from its inbox without being woken, the same
-// way it learns of a polished version.
+// needed.
 async function withdrawReport(
   ctx: ServerContext,
   sessionId: string,
@@ -3414,10 +3404,6 @@ async function withdrawReport(
     JSON.stringify({ slug: pending.slug, draft: pending.content, reason, withdrawnAt: new Date().toISOString() }),
   );
   await appendAndBroadcast(ctx, sessionId, { kind: "report_withdrawn", payload: { slug: pending.slug, reason } });
-  await writeNumberedFile(feedbackInboxDirFor(ctx, sessionId), "withdrawn-report", pending.content, {
-    archiveDirs: [feedbackReadDirFor(ctx, sessionId)],
-    meta: { withdrawnReport: { slug: pending.slug, reason } },
-  });
 }
 
 // The fork must run in print mode with stream-json whatever driver the writer
@@ -3431,11 +3417,6 @@ function reportPolishSpawnCommand(ctx: ServerContext, meta: SessionMeta): string
       : ctx.spawnCommandForAgent("claude", meta.model))
     : buildDefaultSpawnCommand("claude", "pipe", meta.model);
   return [...base, "--resume", meta.agentSessionId ?? meta.id, "--fork-session"];
-}
-
-async function unreadPolishedReports(ctx: ServerContext, sessionId: string): Promise<string[]> {
-  const inbox = await listAllFiles(feedbackInboxDirFor(ctx, sessionId));
-  return inbox.filter(f => f.meta?.polishedReport).map(f => f.content);
 }
 
 async function resumePendingReportPolishes(ctx: ServerContext): Promise<void> {
@@ -3568,17 +3549,6 @@ function formatFeedbackMessageForAgent(m: { content: string; filename: string; m
   let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
   if (m.meta?.rejectedReport) {
     content = buildReportRejectedFeedback(m.meta.rejectedReport, m.content.trim() || undefined);
-  }
-  if (m.meta?.polishedReport) {
-    content = reportPolishedScaffold
-      .replaceAll("{{filename}}", m.meta.polishedReport)
-      .replaceAll("{{report}}", m.content);
-  }
-  if (m.meta?.withdrawnReport) {
-    content = reportWithdrawnScaffold
-      .replaceAll("{{slug}}", m.meta.withdrawnReport.slug)
-      .replaceAll("{{reason}}", m.meta.withdrawnReport.reason)
-      .replaceAll("{{draft}}", m.content);
   }
   if (skills && skills.length > 0) {
     content = expandSkillReferences(content, skills);
