@@ -20,6 +20,9 @@ export type EventKind =
   // A claude session's draft was accepted and is being polished in a fork;
   // report_submitted follows once the polished text is stored.
   | "report_polishing"
+  // The polish fork judged the draft not worth the human's reading; nothing
+  // is stored for it.
+  | "report_withdrawn"
   | "report_read"
   | "report_unread"
   | "report_deleted"

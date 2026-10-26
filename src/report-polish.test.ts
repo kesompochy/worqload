@@ -7,6 +7,8 @@ import {
   POLISHED_REPORT_END,
   NO_VIOLATION_MARK,
   REPORT_POLISH_FORK_ENV,
+  REPORT_WITHDRAW_MARK,
+  type PolishOutcome,
 } from "./report-polish";
 
 const MOCK = join(import.meta.dir, "__fixtures__", "mock-claude.ts");
@@ -21,6 +23,10 @@ function polishedReply(report: string, opts: { clean?: boolean } = {}): string {
   ].join("\n");
 }
 
+function describeOutcome(outcome: PolishOutcome): string {
+  return "report" in outcome ? outcome.report : `withdrawn: ${outcome.withdrawnReason}`;
+}
+
 function polishWith(replies: string[], overrides: { draft?: string } = {}) {
   const polish = makeClaudeReportPolisher();
   return polish({
@@ -28,7 +34,11 @@ function polishWith(replies: string[], overrides: { draft?: string } = {}) {
     cwd: process.cwd(),
     draft: overrides.draft ?? "原稿",
     unreadPolished: [],
-  });
+  }).then(describeOutcome);
+}
+
+function withdrawReply(reason: string): string {
+  return ["価値の判断", `${REPORT_WITHDRAW_MARK} ${reason}`].join("\n");
 }
 
 test("a first round that finds no violation is stored without a second round", async () => {
@@ -75,11 +85,29 @@ test("a second round without the report markers keeps the first round's text", a
 test("a fork that exits non-zero falls back to the draft", async () => {
   const polish = makeClaudeReportPolisher();
   const out = await polish({ spawnCommand: ["bun", MOCK, "crash"], cwd: process.cwd(), draft: "原稿", unreadPolished: [] });
-  expect(out).toBe("原稿");
+  expect(out).toEqual({ report: "原稿" });
 });
 
 test("a fork that never answers is killed at the timeout and the draft is stored", async () => {
   const polish = makeClaudeReportPolisher({ timeoutMs: 300 });
   const out = await polish({ spawnCommand: ["bun", MOCK, "hang"], cwd: process.cwd(), draft: "原稿", unreadPolished: [] });
-  expect(out).toBe("原稿");
+  expect(out).toEqual({ report: "原稿" });
+});
+
+test("a first round that withdraws the report ends the polish with the fork's reason", async () => {
+  expect(await polishWith([withdrawReply("人間の知っていることを何も変えない")])).toBe("withdrawn: 人間の知っていることを何も変えない");
+});
+
+test("a second round may withdraw the report the first round rewrote", async () => {
+  expect(await polishWith([polishedReply("推敲版その1"), withdrawReply("前のレポートと同じ内容")])).toBe("withdrawn: 前のレポートと同じ内容");
+});
+
+test("a round that both withdraws and writes a report is read as the report", async () => {
+  // Storing is the safe reading of a contradictory answer: a wrong withdrawal
+  // loses a report, a wrong store only costs the human a read.
+  expect(await polishWith([`${withdrawReply("不要")}\n${polishedReply("推敲版", { clean: true })}`])).toBe("推敲版");
+});
+
+test("the withdraw mark reaches the fork's instruction", () => {
+  expect(buildReportPolishInstruction("原稿", [])).toContain(REPORT_WITHDRAW_MARK);
 });

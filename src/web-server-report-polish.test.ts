@@ -1,6 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import type { ReportPolisher, ReportPolishRequest } from "./report-polish";
+import { readEvents } from "./event-log";
+import type { PolishOutcome, ReportPolisher, ReportPolishRequest } from "./report-polish";
 import { loadSessionMeta, saveSessionMeta } from "./session";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 import { startServer } from "./web-server";
@@ -35,13 +37,14 @@ async function postJson(baseUrl: string, path: string, body: unknown): Promise<R
 
 // A polisher whose every call blocks until the test releases it, so a test can
 // observe the server between accepting a draft and storing its polish.
-function gatedPolisher(polish: (request: ReportPolishRequest) => string) {
+function gatedPolisher(polish: (request: ReportPolishRequest) => string | PolishOutcome) {
   const requests: ReportPolishRequest[] = [];
   const releases: (() => void)[] = [];
   const polisher: ReportPolisher = async (request) => {
     requests.push(request);
     await new Promise<void>(resolve => releases.push(resolve));
-    return polish(request);
+    const outcome = polish(request);
+    return typeof outcome === "string" ? { report: outcome } : outcome;
   };
   return {
     polisher,
@@ -176,7 +179,7 @@ test("a draft accepted before a server restart is polished and stored by the nex
   await postJson(first.baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "plan", content: "再起動をまたぐ原稿" });
   await first.shutdown({ killHosts: true });
 
-  const second = await bootServer(repoDir, { reportPolisher: async r => `推敲版: ${r.draft}` });
+  const second = await bootServer(repoDir, { reportPolisher: async r => ({ report: `推敲版: ${r.draft}` }) });
   const [stored] = await waitForReports(second.baseUrl, session.id, 1);
   expect(stored.content).toBe("推敲版: 再起動をまたぐ原稿");
 });
@@ -198,4 +201,28 @@ test("a polished report keeps the images attached to its draft", async () => {
   expect(stored.attachments).toHaveLength(1);
   const image = await fetch(`${baseUrl}/sessions/${session.id}/reports/${stored.filename}/attachments/${stored.attachments[0]}`);
   expect(new Uint8Array(await image.arrayBuffer())).toEqual(png);
+});
+
+test("a withdrawn report is not stored, is kept for the human to inspect, and tells the writer why", async () => {
+  const gate = gatedPolisher(() => ({ withdrawnReason: "人間の知っていることを何も変えない" }));
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "noop", content: "取り下げられる原稿" });
+  await gate.release(0);
+  await waitFor(async () => (await readEvents(session.id, 1, ctx.sessionsDir)).some(e => e.kind === "report_withdrawn"), "the withdrawal");
+
+  expect(await storedReports(baseUrl, session.id)).toEqual([]);
+  const withdrawn = (await readEvents(session.id, 1, ctx.sessionsDir)).find(e => e.kind === "report_withdrawn")!;
+  expect(withdrawn.payload).toMatchObject({ slug: "noop", reason: "人間の知っていることを何も変えない" });
+  const kept = readdirSync(join(ctx.sessionsDir, session.id, "report-polish-withdrawn"));
+  expect(kept).toHaveLength(1);
+  expect(JSON.parse(readFileSync(join(ctx.sessionsDir, session.id, "report-polish-withdrawn", kept[0]), "utf8")))
+    .toMatchObject({ slug: "noop", draft: "取り下げられる原稿", reason: "人間の知っていることを何も変えない" });
+
+  expect((await fetch(`${baseUrl}/sessions/${session.id}/feedback`).then(r => r.json())).messages).toEqual([]);
+  const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
+  expect(fetched).toHaveLength(1);
+  expect(fetched[0].content).toContain("取り下げられる原稿");
+  expect(fetched[0].content).toContain("人間の知っていることを何も変えない");
 });
