@@ -10,6 +10,9 @@
 //   tool    : emit init, then an assistant turn with a tool_use block, then exit 0
 //   say     : emit init, then one assistant turn whose text is argv[3], then exit 0
 //   env     : emit init, then emit a system line carrying the worqload env vars, then hang
+//   replies : answer the k-th stdin user message with argv[3 + k] as one turn
+//             (assistant text + result line). `{{input}}` in a reply becomes the
+//             message text and `{{env:NAME}}` the value of env var NAME.
 
 const mode = process.argv[2] ?? "init";
 
@@ -81,6 +84,30 @@ if (mode === "turn") {
         },
       });
       writeLine({ type: "result", subtype: "success", session_id: "mock", cost_usd: 0, duration_ms: 0, duration_api_ms: 0, is_error: false, num_turns: 1, result: "" });
+    }
+  });
+  process.stdin.on("end", () => process.exit(0));
+}
+
+if (mode === "replies") {
+  const replies = process.argv.slice(3);
+  let answered = 0;
+  const decoder = new TextDecoder();
+  let buf = "";
+  process.stdin.on("data", (chunk: Uint8Array) => {
+    buf += decoder.decode(chunk, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx);
+      buf = buf.slice(idx + 1);
+      if (line.trim() === "") continue;
+      const content = (JSON.parse(line) as { message?: { content?: { text?: string }[] | string } }).message?.content;
+      const input = typeof content === "string" ? content : (content ?? []).map(p => p?.text ?? "").join("");
+      const reply = (replies[answered++] ?? "<<MOCK_REPLIES_EXHAUSTED>>")
+        .replaceAll("{{input}}", input)
+        .replace(/\{\{env:([A-Z_]+)\}\}/g, (_, name: string) => process.env[name] ?? "");
+      writeLine({ type: "assistant", message: { content: [{ type: "text", text: reply }] } });
+      writeLine({ type: "result", subtype: "success", session_id: "mock", is_error: false, result: reply });
     }
   });
   process.stdin.on("end", () => process.exit(0));
