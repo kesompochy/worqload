@@ -56,7 +56,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
-    // missing path means no textlint rules unless a test injects its own.
+    // missing path means no settings unless a test injects its own.
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
     archiveDbPath: null,
     ...extra,
@@ -693,24 +693,6 @@ test("GET report attachments endpoint rejects path traversal in :name", async ()
     `${baseUrl}/sessions/${sid}/reports/001-x.md/attachments/${encodeURIComponent("../../../etc/passwd")}`,
   );
   expect(res.status).toBe(400);
-});
-
-test("a report bounced for revision stores none of its attachments", async () => {
-  const repoDir = makeTmpDir("repo");
-  const { baseUrl, ctx } = await bootServer(repoDir);
-
-  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
-  const sid = created.meta.id;
-  await postJson(baseUrl, `/sessions/${sid}/revise-mode`, { enabled: true });
-
-  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-  const form = new FormData();
-  form.set("payload", JSON.stringify({ slug: "draft", content: "first draft" }));
-  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
-
-  const res = await fetch(`${baseUrl}/internal/sessions/${sid}/reports`, { method: "POST", body: form });
-  expect(await res.json()).toEqual({ revisionRequested: true });
-  expect(existsSync(join(ctx.sessionsDir, sid, "reports", "001-draft.attachments"))).toBe(false);
 });
 
 // What `git diff` actually produces (full context, merge-base resolution, ...)

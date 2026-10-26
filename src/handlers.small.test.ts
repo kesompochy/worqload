@@ -61,7 +61,7 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, toggleEventsTab, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onReportReject, onResume, onStopAndResume, onToggleReviseMode, onResolve, onResolveCommand, onPruneArchivedOlderThan, onReportDelete, resolveDialog } = await import("../web/handlers.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, toggleEventsTab, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onReportReject, onResume, onStopAndResume, onResolve, onResolveCommand, onPruneArchivedOlderThan, onReportDelete, resolveDialog } = await import("../web/handlers.js");
 const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
 
 // Handlers that need the human's go-ahead await the in-page dialog. Wait for it
@@ -1406,42 +1406,6 @@ async function withApiMock(
     }));
   }
 }
-
-test("onToggleReviseMode flips an off (absent) flag on and POSTs the new value", async () => {
-  state.selected = "sess-ra";
-  state.detail = { meta: { id: "sess-ra" }, events: [] };
-  state.sessions = [{ id: "sess-ra" }];
-  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
-
-  await withApiMock(async (method, path, body) => {
-    calls.push({ method, path, body });
-    return { meta: { id: "sess-ra", reviseModeEnabled: (body as { enabled: boolean }).enabled } };
-  }, async () => {
-    await onToggleReviseMode("sess-ra");
-  });
-
-  expect(calls).toEqual([{ method: "POST", path: "/sessions/sess-ra/revise-mode", body: { enabled: true } }]);
-  expect(state.detail.meta.reviseModeEnabled).toBe(true);
-  // Sidebar card stays in sync so a later detail reload reflects the same value.
-  expect(state.sessions[0].reviseModeEnabled).toBe(true);
-});
-
-test("onToggleReviseMode turns the flag back off when it was explicitly on", async () => {
-  state.selected = "sess-rb";
-  state.detail = { meta: { id: "sess-rb", reviseModeEnabled: true }, events: [] };
-  state.sessions = [];
-  const bodies: unknown[] = [];
-
-  await withApiMock(async (_method, _path, body) => {
-    bodies.push(body);
-    return { meta: { id: "sess-rb", reviseModeEnabled: (body as { enabled: boolean }).enabled } };
-  }, async () => {
-    await onToggleReviseMode("sess-rb");
-  });
-
-  expect(bodies).toEqual([{ enabled: false }]);
-  expect(state.detail.meta.reviseModeEnabled).toBe(false);
-});
 
 test("onResume clears the textarea before the await, so a re-render mid-flight can't strand the prompt", async () => {
   state.selected = "session-r";

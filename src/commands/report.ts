@@ -83,14 +83,7 @@ async function reportSubmit(rest: string[]): Promise<void> {
   const endpoint = resolveAgentEndpoint();
   try {
     const result = await submitReport(endpoint, sessionId, slug, content, replyTo, images);
-    if ("revisionRequested" in result) {
-      console.log(
-        "report held for a revision pass and not yet stored: revise mode is on for this session. worqload " +
-          "saved your draft to a scratch file and queued the instruction in your feedback inbox — run " +
-          "`worqload feedback fetch` for the draft path, edit it in place, and resubmit it. The next " +
-          "submission is stored.",
-      );
-    } else if ("polishing" in result) {
+    if ("polishing" in result) {
       console.log(
         "report accepted: worqload is polishing it in a fork of this conversation and stores the polished " +
           "text. When that text differs from your draft, it arrives in your feedback inbox with its filename.",

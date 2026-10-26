@@ -12,7 +12,6 @@ import {
   listSessionMetas,
   reorderSessions,
   isTerminal,
-  isReviseModeEnabled,
   validateTransition,
   type AgentName,
   type DriverName,
@@ -38,15 +37,13 @@ import { extractUrls } from "./link-extraction";
 import { defaultLinkLabelGenerator, makeLinkLabelGenerator, type LinkLabelGenerator } from "./link-label";
 import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
-import type { IpadicFeatures, Tokenizer } from "kuromoji";
-import { defaultConfigPath, getTextlintTokenizer, lintReport, loadReviseFeedbackGuidance, loadTextlintRules, type TextlintRule, type TextlintViolation } from "./textlint";
+import { defaultConfigPath } from "./config";
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
 import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClaudeCommandWithKb } from "./kb";
 import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
-import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
 import reportPolishedScaffold from "./prompts/report-polished-feedback.txt" with { type: "text" };
 
@@ -260,24 +257,8 @@ export interface ServerContext {
   // forks run one at a time so each fork can be told which polished versions
   // the writer has not fetched yet.
   reportPolishDrains: Map<string, Promise<void>>;
-  // Path to the YAML config (`~/.config/worqload/config.yaml`) holding the
-  // revise-mode settings: the textlint rules and the reviseFeedback override.
+  // Path to the YAML config (`~/.config/worqload/config.yaml`).
   configPath: string;
-  // The last successfully loaded revise-mode textlint rules. Seeded at startup
-  // and refreshed from configPath on each report submission so config edits
-  // take effect without a restart; a parse that fails leaves this value
-  // unchanged. Empty when no config exists. Only consulted while a session has
-  // revise mode on (see postInternalReports).
-  textlintRules: TextlintRule[];
-  // The last successfully loaded `reviseFeedback:` guidance, or null when none
-  // is configured (the bounce then carries no guidance). Seeded and refreshed
-  // alongside textlintRules with the same keep-previous-on-parse-failure
-  // behavior.
-  reviseFeedbackGuidance: string | null;
-  // The morphological tokenizer the lint gate uses for inflected matches, built
-  // lazily on the first revise-mode submission (see currentTextlintTokenizer).
-  // undefined = not yet built; null = build failed (gate runs literal-only).
-  textlintTokenizer?: Tokenizer<IpadicFeatures> | null;
   archiveDb: Database | null;
   repoIdentifier: string;
   linkLabelGenerator: LinkLabelGenerator;
@@ -317,10 +298,9 @@ export interface StartServerOptions {
   // assertions cheap.
   attachmentMaxBytes?: number;
   attachmentMaxCount?: number;
-  // Path to the YAML config holding the revise-mode settings (textlint rules
-  // and the reviseFeedback override). Defaults to
-  // `~/.config/worqload/config.yaml`; tests point it at a temp file to inject
-  // settings. A missing file means no rules and the default feedback wording.
+  // Path to the YAML config. Defaults to `~/.config/worqload/config.yaml`;
+  // tests point it at a temp file to inject settings. A missing file means no
+  // settings.
   configPath?: string;
   archiveDbPath: string | null;
   // Model to use for short-lived utility calls (branch naming, link labelling).
@@ -453,70 +433,6 @@ function formatRejectedCommandFeedback(escalationFilename: string, command: stri
   return parts.join("\n\n") + "\n";
 }
 
-// Relative path (from the worktree root, i.e. the agent's CWD) of the scratch
-// file the first submission is saved to for the session to edit in place.
-// `.worqload-draft/` is the session-private scratch dir pre-created with the
-// worktree and hidden from the explorer / dirty-check / auto-commit.
-const REVISION_DRAFT_RELPATH = ".worqload-draft/revision-draft.md";
-
-// Delivered into the feedback inbox when revise mode holds a report's first
-// submission. The bounce can't rely on the `worqload report submit` stdout
-// alone: a session that just submitted a report has, from its own point of
-// view, finished and likely ended its turn — so it routes through the inbox,
-// which wakes the session and is drained exactly once. The first submission is
-// saved to a scratch file the session edits in place, rather than re-typed from
-// this message, so nothing is dropped in the round trip. The scaffold (status
-// line, draft path, resubmit command) is the fixed template; the editorial
-// guidance is supplied entirely by the human via `reviseFeedback:` in the
-// config and is absent otherwise. The scaffold sentence ends before the
-// `{{guidance}}` slot, so the configured guidance follows as natural prose: it
-// is appended as a space-separated continuation when present, and the slot
-// collapses to nothing when no guidance is configured.
-function buildRevisionRequestFeedback(slug: string, guidance?: string): string {
-  const guidanceText = guidance?.trim();
-  return revisionRequestScaffold
-    .replaceAll("{{guidance}}", guidanceText ? ` ${guidanceText}` : "")
-    .replaceAll("{{draftPath}}", REVISION_DRAFT_RELPATH)
-    .replaceAll("{{slug}}", slug);
-}
-
-// Delivered when a report submitted under revise mode trips the textlint rules.
-// Lists each forbidden string with its configured comment, then explains the
-// `\` escape so the session can legitimately keep a flagged word — e.g. when it
-// must quote the word itself — by prefixing a backslash; the backslash exempts
-// that one occurrence and is left in the stored report. Routes through the same
-// scratch-draft + resubmit loop as buildRevisionRequestFeedback.
-function buildTextlintBounceFeedback(slug: string, violations: TextlintViolation[]): string {
-  const findings = violations.map(v => `- \`${v.string}\`: ${v.comment}`).join("\n");
-  const escapeExample = violations[0]?.string ?? "";
-  return [
-    "A report you submitted was held: it tripped this session's textlint rules and was not stored.",
-    `Your draft was saved to \`${REVISION_DRAFT_RELPATH}\`. Remove or rephrase the following in that file:`,
-    findings,
-    `To keep a flagged word on purpose — for instance when quoting it — prefix it with a backslash (\`\\${escapeExample}\`). The backslash exempts that occurrence from the lint and stays in the stored report.`,
-    `Then resubmit the corrected draft: \`worqload report submit --slug ${slug} < ${REVISION_DRAFT_RELPATH}\`.`,
-  ].join("\n\n") + "\n";
-}
-
-// Holds a report submission instead of storing it: saves the body to the
-// session's scratch draft so it can edit in place, queues `feedbackContent`
-// into the inbox, and wakes the session to revise and resubmit. Bouncing
-// through the feedback inbox (not the CLI stdout alone) is what wakes the
-// session: one that just submitted a report has, from its own point of view,
-// finished and likely ended its turn. Shared by the generic revise-mode bounce
-// and the textlint bounce.
-async function bounceReportForRevision(
-  ctx: ServerContext,
-  meta: SessionMeta,
-  body: NumberedBody,
-  feedbackContent: string,
-  reason: string,
-): Promise<Response> {
-  await Bun.write(join(meta.worktreePath, REVISION_DRAFT_RELPATH), body.content);
-  await queueFeedbackAndWake(ctx, meta, "revision-requested", feedbackContent, reason);
-  return json({ revisionRequested: true });
-}
-
 // Queues a message into the feedback inbox and wakes the session to drain it,
 // respawning the host when the session is live but has no attachment (the wake
 // would otherwise be dropped).
@@ -560,51 +476,6 @@ function buildReportRejectedFeedback(filename: string, reason: string | undefine
     .replaceAll("{{reason}}", reason ? `\n\n## Reason given by the human\n\n${reason}` : "")
     .replaceAll("{{filename}}", filename)
     .replaceAll("{{slug}}", filename.replace(/^\d+-/, "").replace(/\.md$/, ""));
-}
-
-// Re-reads the textlint config so edits take effect without a server restart.
-// Reports are human-paced, so re-reading the small YAML per submission is cheap,
-// and reading here rather than via a file watcher sidesteps the atomic-rename
-// gotcha that makes single-file watches stop firing after an editor saves. A
-// config that fails to parse keeps the last good rules and is logged, so a typo
-// mid-edit can't wedge report submission.
-async function currentTextlintRules(ctx: ServerContext): Promise<TextlintRule[]> {
-  try {
-    ctx.textlintRules = await loadTextlintRules(ctx.configPath);
-  } catch (err) {
-    console.error(`[textlint] config reload failed, keeping previous rules: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  return ctx.textlintRules;
-}
-
-// Resolves the morphological tokenizer the lint gate uses for inflected matches,
-// building it once on first use (memoized in textlint and cached on ctx) rather
-// than at startup, so servers that never enter revise mode never pay the
-// dictionary load. A build failure is logged once and degrades the gate to
-// literal-only matching instead of blocking submission.
-async function currentTextlintTokenizer(ctx: ServerContext): Promise<Tokenizer<IpadicFeatures> | undefined> {
-  if (ctx.textlintTokenizer === undefined) {
-    try {
-      ctx.textlintTokenizer = await getTextlintTokenizer();
-    } catch (err) {
-      ctx.textlintTokenizer = null;
-      console.error(`[textlint] tokenizer build failed, using literal matching only: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  return ctx.textlintTokenizer ?? undefined;
-}
-
-// The current `reviseFeedback:` guidance, reloaded from the same config on each
-// submission so wording edits take effect without a restart. A parse failure
-// keeps the previous value, matching currentTextlintRules. Null means the
-// bounce carries no guidance.
-async function currentReviseFeedbackGuidance(ctx: ServerContext): Promise<string | null> {
-  try {
-    ctx.reviseFeedbackGuidance = await loadReviseFeedbackGuidance(ctx.configPath);
-  } catch (err) {
-    console.error(`[reviseFeedback] config reload failed, keeping previous guidance: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  return ctx.reviseFeedbackGuidance;
 }
 
 async function currentSkillButtons(ctx: ServerContext): Promise<SkillButton[]> {
@@ -1199,8 +1070,6 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
   }));
 
   const configPath = opts.configPath ?? defaultConfigPath();
-  const textlintRules = await loadTextlintRules(configPath);
-  const reviseFeedbackGuidance = await loadReviseFeedbackGuidance(configPath);
 
   ctx = {
     repoDir,
@@ -1230,8 +1099,6 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     attachmentMaxBytes: opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
     attachmentMaxCount: opts.attachmentMaxCount ?? DEFAULT_ATTACHMENT_MAX_COUNT,
     configPath,
-    textlintRules,
-    reviseFeedbackGuidance,
     archiveDb,
     repoIdentifier,
     linkLabelGenerator,
@@ -1312,7 +1179,6 @@ const ROUTES: Route[] = [
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/model", postModel),
-  defineRoute("POST", "/sessions/:id/revise-mode", postReviseMode),
   defineRoute("POST", "/sessions/:id/links", postLink),
   defineRoute("DELETE", "/sessions/:id/links", deleteLink),
   defineRoute("POST", "/sessions/:id/feedback/batch", postFeedbackBatch),
@@ -1931,27 +1797,6 @@ async function postTitle(req: Request, ctx: ServerContext, params: Record<string
     const trimmed = body.title.trim();
     const { title: _previous, ...rest } = meta;
     const updated: SessionMeta = trimmed === "" ? rest : { ...rest, title: trimmed };
-    await saveSessionMeta(updated, ctx.sessionsDir);
-    return json({ meta: updated });
-  });
-}
-
-interface ReviseModeBody {
-  enabled?: unknown;
-}
-
-// The UI toggle for revise mode. Stored on meta so it rides along in every
-// session listing/detail response without extra decoration (isReviseModeEnabled
-// reads it; absent means off). Toggling either way clears any pending revision
-// so the next submission starts a fresh first-submit/resubmit cycle.
-async function postReviseMode(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
-  return withSession(ctx, params.id, async meta => {
-    const body = (await req.json().catch(() => ({}))) as ReviseModeBody;
-    if (typeof body.enabled !== "boolean") {
-      return json({ error: "enabled must be a boolean" }, 400);
-    }
-    const { revisionPending: _reset, ...rest } = meta;
-    const updated: SessionMeta = { ...rest, reviseModeEnabled: body.enabled };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
   });
@@ -3414,33 +3259,6 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
     if (ctx.reportPolisher && (meta.agentName ?? ctx.agentName) === "claude") {
       await acceptReportForPolish(ctx, meta, { slug: body.slug, content: body.content, replyTo, attachments });
       return json({ polishing: true });
-    }
-    // Revise mode (opt-in per session): hold the first submission of each
-    // report and bounce it back asking the session to tighten it, so the 推敲
-    // is done by the session — which holds the full context the report
-    // describes — rather than a context-blind rewriter. The resubmission
-    // passes through. revisionPending marks which half of the cycle we are in.
-    if (isReviseModeEnabled(meta)) {
-      // textlint runs on every submission under revise mode and gates storage,
-      // so the stored report is guaranteed clean. A violation bounces without
-      // touching revisionPending — it is orthogonal to the general one-shot
-      // revision cycle below and may fire on the first or a later submission.
-      const violations = lintReport(body.content, await currentTextlintRules(ctx), await currentTextlintTokenizer(ctx));
-      if (violations.length > 0) {
-        return bounceReportForRevision(ctx, meta, body, buildTextlintBounceFeedback(body.slug, violations), "report_textlint_rejected");
-      }
-      // First submission of each report (textlint-clean): hold it for one
-      // general tightening pass. The resubmission passes through. revisionPending
-      // marks which half of the cycle we are in.
-      if (meta.revisionPending !== true) {
-        await saveSessionMeta({ ...meta, revisionPending: true }, ctx.sessionsDir);
-        const guidance = (await currentReviseFeedbackGuidance(ctx)) ?? undefined;
-        return bounceReportForRevision(ctx, meta, body, buildRevisionRequestFeedback(body.slug, guidance), "report_revision_requested");
-      }
-    }
-    // The resubmission, or revise mode off: clear any pending flag and store.
-    if (meta.revisionPending === true) {
-      await saveSessionMeta({ ...meta, revisionPending: false }, ctx.sessionsDir);
     }
     const file = await storeReport(ctx, meta, { slug: body.slug, content: body.content, replyTo, attachments });
     return json({ filename: file.filename, seq: file.seq });

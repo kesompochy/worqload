@@ -57,7 +57,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
-    // missing path means no textlint rules unless a test injects its own.
+    // missing path means no settings unless a test injects its own.
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
     archiveDbPath: null,
     ...extra,

@@ -180,3 +180,22 @@ test("a draft accepted before a server restart is polished and stored by the nex
   const [stored] = await waitForReports(second.baseUrl, session.id, 1);
   expect(stored.content).toBe("推敲版: 再起動をまたぐ原稿");
 });
+
+test("a polished report keeps the images attached to its draft", async () => {
+  const gate = gatedPolisher(() => "推敲された本文");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ slug: "shot", content: "画像付きの原稿" }));
+  form.append("attachment", new File([png], "shot.png", { type: "image/png" }));
+  await fetch(`${baseUrl}/internal/sessions/${session.id}/reports`, { method: "POST", body: form });
+  await gate.release(0);
+  await waitForReports(baseUrl, session.id, 1);
+
+  const [stored] = (await fetch(`${baseUrl}/sessions/${session.id}/reports`).then(r => r.json())).reports;
+  expect(stored.attachments).toHaveLength(1);
+  const image = await fetch(`${baseUrl}/sessions/${session.id}/reports/${stored.filename}/attachments/${stored.attachments[0]}`);
+  expect(new Uint8Array(await image.arrayBuffer())).toEqual(png);
+});

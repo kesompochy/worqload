@@ -7,7 +7,6 @@ import {
   loadSessionMeta,
   listSessionMetas,
   reorderSessions,
-  isReviseModeEnabled,
 } from "./session";
 import type { SessionStatus, SessionMeta } from "./session";
 import { makeTmpDir, cleanupAll } from "./test-helpers";
@@ -92,21 +91,6 @@ test("createSession omits model when not provided", () => {
 test("createSession omits driverName when not provided", () => {
   const meta = createSession(baseParams);
   expect(meta.driverName).toBeUndefined();
-});
-
-test("isReviseModeEnabled defaults OFF so reports are stored on first submission unless opted in", () => {
-  const meta = createSession(baseParams);
-  // A new session leaves the flag absent; absent means off, so reports are
-  // stored on first submission until the human explicitly turns revise mode on.
-  expect(meta.reviseModeEnabled).toBeUndefined();
-  expect(isReviseModeEnabled(meta)).toBe(false);
-});
-
-test("isReviseModeEnabled is true only when the human explicitly turned it on", () => {
-  const off: SessionMeta = { ...createSession(baseParams), reviseModeEnabled: false };
-  const on: SessionMeta = { ...createSession(baseParams), reviseModeEnabled: true };
-  expect(isReviseModeEnabled(off)).toBe(false);
-  expect(isReviseModeEnabled(on)).toBe(true);
 });
 
 test("validateTransition allows valid transitions", () => {

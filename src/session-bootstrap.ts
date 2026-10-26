@@ -3,7 +3,7 @@ import protocolPrefixTemplate from "./prompts/protocol-prefix.txt" with { type: 
 import resumeKickoff from "./prompts/resume-kickoff.txt" with { type: "text" };
 import forkKickoff from "./prompts/fork-kickoff.txt" with { type: "text" };
 import turnWithoutReportNudge from "./prompts/turn-without-report-nudge.txt" with { type: "text" };
-import { defaultConfigPath, loadProtocolPrefix } from "./textlint";
+import { defaultConfigPath, loadProtocolPrefix } from "./config";
 
 const defaultWqIssueCommentPath = join(import.meta.dir, "..", "bin", "wq-issue-comment");
 
