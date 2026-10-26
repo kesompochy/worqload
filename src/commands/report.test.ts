@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { REPORT_POLISH_FORK_ENV } from "../report-polish";
 
 const CLI = join(import.meta.dir, "..", "cli.ts");
 
@@ -37,6 +38,23 @@ describe("worqload report submit body validation", () => {
     const stderr = await new Response(proc.stderr).text();
     expect(stderr).not.toContain("write the actual content");
   });
+});
+
+// A report-polish fork inherits the writer's protocol instructions, so a
+// submit from inside it would start another polish of its own output.
+test("report submit refuses inside a report-polish fork", async () => {
+  const proc = Bun.spawn(["bun", CLI, "report", "submit", "--slug", "test"], {
+    stdin: new Blob(["a report body that is long enough to pass validation"]),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      WORQLOAD_ENDPOINT: "http://localhost:0",
+      WORQLOAD_SESSION_ID: "test-session",
+      [REPORT_POLISH_FORK_ENV]: "1",
+    },
+  });
+  expect(await proc.exited).toBe(2);
 });
 
 describe("worqload report cancel argument validation", () => {

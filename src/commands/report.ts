@@ -5,6 +5,7 @@
 
 import { basename } from "node:path";
 import { submitReport, cancelReport } from "../agent-client";
+import { REPORT_POLISH_FORK_ENV } from "../report-polish";
 import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, collectFlag, exitWithUsage } from "./cli-helpers";
 
 const SEPARATOR_LINE = /^[\s\-=*#]*$/;
@@ -58,6 +59,10 @@ export async function report(args: string[]): Promise<void> {
 }
 
 async function reportSubmit(rest: string[]): Promise<void> {
+  if (process.env[REPORT_POLISH_FORK_ENV]) {
+    console.error("report submit is disabled while polishing a report: reply with the polished report as text instead");
+    process.exit(2);
+  }
   const slug = requireFlag(rest, "--slug");
   const replyTo = optionalFlag(rest, "--re");
   const raw = rest.includes("--raw");
@@ -78,12 +83,10 @@ async function reportSubmit(rest: string[]): Promise<void> {
   const endpoint = resolveAgentEndpoint();
   try {
     const result = await submitReport(endpoint, sessionId, slug, content, replyTo, images);
-    if ("revisionRequested" in result) {
+    if ("polishing" in result) {
       console.log(
-        "report held for a revision pass and not yet stored: revise mode is on for this session. worqload " +
-          "saved your draft to a scratch file and queued the instruction in your feedback inbox — run " +
-          "`worqload feedback fetch` for the draft path, edit it in place, and resubmit it. The next " +
-          "submission is stored.",
+        "report accepted: worqload is polishing it in a fork of this conversation and stores the polished " +
+          "text. When that text differs from your draft, it arrives in your feedback inbox with its filename.",
       );
     } else {
       console.log(result.filename);

@@ -1,0 +1,170 @@
+// Polishes a submitted report in a fork of the writer's own claude
+// conversation before it is stored. The fork holds everything the writer was
+// told about how to write reports and everything it investigated, so it can
+// rewrite against those norms without the meaning drift of a context-blind
+// rewriter, and without the rewrite rounds landing in the writer's context.
+
+import { isClaudePipeTurnEnd, readLines } from "./claude-stream";
+import { buildUserMessage } from "./session-bootstrap";
+import instructionTemplate from "./prompts/report-polish-instruction.txt" with { type: "text" };
+import unreadTemplate from "./prompts/report-polish-unread.txt" with { type: "text" };
+import recheckInstruction from "./prompts/report-polish-recheck.txt" with { type: "text" };
+
+// Set in the environment of a report-polish fork. The fork carries the
+// writer's whole conversation, protocol instructions included, so the CLI
+// refuses `report submit` under this mark to keep a polish from recursing.
+export const REPORT_POLISH_FORK_ENV = "WORQLOAD_REPORT_POLISH_FORK";
+
+export const POLISHED_REPORT_BEGIN = "<<<WORQLOAD_POLISHED_REPORT";
+export const POLISHED_REPORT_END = "WORQLOAD_POLISHED_REPORT>>>";
+export const NO_VIOLATION_MARK = "<<WORQLOAD_NO_VIOLATION>>";
+
+// Each round re-reads the whole forked conversation, so the token cost grows
+// with the number of rounds; two lets the fork check its own rewrite once.
+const MAX_ROUNDS = 2;
+
+const DEFAULT_TIMEOUT_MS = 300_000;
+
+export interface ReportPolishRequest {
+  // argv that resumes the writer's conversation as a fork
+  // (`... --resume <id> --fork-session`), with the writer's model.
+  spawnCommand: string[];
+  cwd: string;
+  draft: string;
+  // Polished versions already stored but not yet fetched from the writer's
+  // inbox: the fork's copy of the conversation does not contain them yet.
+  unreadPolished: string[];
+}
+
+// Resolves to the text to store: the fork's last well-formed rewrite, or the
+// draft itself when the fork failed before producing one.
+export type ReportPolisher = (request: ReportPolishRequest) => Promise<string>;
+
+export function buildReportPolishInstruction(draft: string, unreadPolished: string[]): string {
+  const unread = unreadPolished.length === 0
+    ? ""
+    : unreadTemplate.replaceAll("{{reports}}", unreadPolished.map(r => `---\n\n${r}\n\n---`).join("\n\n"));
+  return instructionTemplate
+    .replaceAll("{{noViolation}}", NO_VIOLATION_MARK)
+    .replaceAll("{{begin}}", POLISHED_REPORT_BEGIN)
+    .replaceAll("{{end}}", POLISHED_REPORT_END)
+    .replaceAll("{{unreadPolished}}", unread)
+    .replaceAll("{{draft}}", draft);
+}
+
+interface PolishRound {
+  report: string;
+  clean: boolean;
+}
+
+function parsePolishRound(output: string): PolishRound | null {
+  const begin = output.lastIndexOf(POLISHED_REPORT_BEGIN);
+  if (begin < 0) return null;
+  const end = output.indexOf(POLISHED_REPORT_END, begin);
+  if (end < 0) return null;
+  const report = output.slice(begin + POLISHED_REPORT_BEGIN.length, end).trim();
+  if (report === "") return null;
+  return { report, clean: output.slice(0, begin).includes(NO_VIOLATION_MARK) };
+}
+
+// The server's env plus the fork mark, minus the worqload session identity,
+// so the fork cannot reach serve's /internal routes as the writer (fetching
+// the writer's feedback would drain it from the writer's inbox).
+function forkEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v !== "string") continue;
+    if (k === "WORQLOAD_SESSION_ID" || k === "WORQLOAD_ENDPOINT" || k === "WORQLOAD_ENDPOINT_FILE") continue;
+    env[k] = v;
+  }
+  env[REPORT_POLISH_FORK_ENV] = "1";
+  return env;
+}
+
+function collectAssistantText(parsed: { type?: string; message?: { content?: unknown } }, sink: string[]): void {
+  if (parsed.type !== "assistant" || !Array.isArray(parsed.message?.content)) return;
+  for (const block of parsed.message.content as { type?: string; text?: unknown }[]) {
+    if (block?.type === "text" && typeof block.text === "string") sink.push(block.text);
+  }
+}
+
+export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): ReportPolisher {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  return async ({ spawnCommand, cwd, draft, unreadPolished }) => {
+    let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
+    try {
+      proc = Bun.spawn(spawnCommand, { cwd, env: forkEnv(), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    } catch {
+      return draft;
+    }
+    const timer = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // already dead
+      }
+    }, timeoutMs);
+
+    // Each `result` line closes the turn whose assistant text accumulated
+    // since the previous one.
+    let turnText: string[] = [];
+    const finishedTurns: string[] = [];
+    let wakeTurnWaiter: (() => void) | null = null;
+    const stdoutTask = readLines(proc.stdout, (line) => {
+      let parsed: { type?: string; message?: { content?: unknown } };
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        return;
+      }
+      collectAssistantText(parsed, turnText);
+      if (isClaudePipeTurnEnd(parsed)) {
+        finishedTurns.push(turnText.join(""));
+        turnText = [];
+        wakeTurnWaiter?.();
+      }
+    });
+    const stderrTask = readLines(proc.stderr, () => {});
+    let exited = false;
+    const exitTask = proc.exited.then(() => {
+      exited = true;
+      wakeTurnWaiter?.();
+    });
+
+    const runTurn = async (message: string): Promise<string | null> => {
+      const expected = finishedTurns.length + 1;
+      try {
+        proc.stdin.write(`${JSON.stringify(buildUserMessage(message))}\n`);
+        await proc.stdin.flush();
+      } catch {
+        return null;
+      }
+      while (finishedTurns.length < expected && !exited) {
+        await new Promise<void>(resolve => { wakeTurnWaiter = resolve; });
+        wakeTurnWaiter = null;
+      }
+      return finishedTurns[expected - 1] ?? null;
+    };
+
+    let stored = draft;
+    try {
+      for (let round = 0; round < MAX_ROUNDS; round++) {
+        const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft, unreadPolished) : recheckInstruction);
+        const parsed = output === null ? null : parsePolishRound(output);
+        if (parsed === null) break;
+        stored = parsed.report;
+        if (parsed.clean) break;
+      }
+    } finally {
+      try {
+        proc.stdin.end();
+      } catch {
+        // already closed
+      }
+      await exitTask;
+      clearTimeout(timer);
+      await Promise.allSettled([stdoutTask, stderrTask]);
+    }
+    return stored;
+  };
+}

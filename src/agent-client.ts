@@ -8,11 +8,10 @@ export interface SubmitResult {
   seq: number;
 }
 
-// A report held by revise mode on its first submission: not yet stored. The
-// session is asked (via a queued feedback message) to revise and resubmit;
-// `worqload report submit` reports this verdict back to the agent.
-export interface ReportRevisionRequested {
-  revisionRequested: true;
+// A claude session's report accepted for a polish in a fork of its
+// conversation: stored once the polish finishes, not yet when this returns.
+export interface ReportPolishing {
+  polishing: true;
 }
 
 export interface FeedbackMessage {
@@ -57,10 +56,10 @@ export async function submitReport(
   content: string,
   replyTo?: string,
   images: File[] = [],
-): Promise<SubmitResult | ReportRevisionRequested> {
+): Promise<SubmitResult | ReportPolishing> {
   const url = `${endpoint}/internal/sessions/${sessionId}/reports`;
   const body = replyTo ? { slug, content, replyTo } : { slug, content };
-  type Result = SubmitResult | ReportRevisionRequested;
+  type Result = SubmitResult | ReportPolishing;
   return images.length > 0 ? postReportForm<Result>(url, body, images) : postJson<Result>(url, body);
 }
 

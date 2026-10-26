@@ -15,7 +15,7 @@
   import { formatRelative, eventAgeIsStale, eventCountLevel, toast } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReviseMode, onSwitchModel, toggleEventsTab } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onSwitchModel, toggleEventsTab } from "../handlers.js";
   import { addLink, removeLink } from "../api.js";
   import ActionBar from "./ActionBar.svelte";
 
@@ -118,9 +118,7 @@
             <button class="btn-action" class:open={appState.openActionId === a.id} disabled={a.id === "create-pr" && prUrl !== null} title={a.id === "create-pr" && prUrl !== null ? "このブランチには既に PR があります" : (a.description || "")} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
           {/if}
         {/each}
-        <span class="action-group-sep" aria-hidden="true"></span>
       {/if}
-      <label class="revise-mode-toggle" title="On: worqload bounces the first submission of each report back to the session asking it to 推敲 (revise), then stores the resubmission. Off: the report is stored on first submission."><input type="checkbox" checked={m.reviseModeEnabled === true} onchange={() => onToggleReviseMode(m.id)} /><span>推敲モード</span></label>
     </div>
   </div>
   <div class="detail-original-prompt">

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { watchWebFrontend } from "../web-build";
+import { makeClaudeReportPolisher } from "../report-polish";
 import { startServer } from "../web-server";
 import { defaultArchiveDbPath } from "../archive-store";
 import { resolveUtilityModel } from "../utility-model";
@@ -199,6 +200,7 @@ export async function serve(args: string[]): Promise<void> {
     ...(agentName && { agentName }),
     utilityModel: resolveUtilityModel(),
     archiveDbPath: defaultArchiveDbPath(),
+    reportPolisher: makeClaudeReportPolisher(),
   });
   if (requestedPort !== 0 && ctx.port !== requestedPort) {
     console.log(`port ${requestedPort} was in use; using ${ctx.port} instead`);

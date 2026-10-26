@@ -7,11 +7,7 @@ afterEach(cleanupAll);
 
 const TEST_BASE = "trunk";
 
-async function bootAndCreateSession(
-  // Revise mode is off by default; a test that needs the first submission
-  // bounced must opt the session in.
-  { enableReviseMode = false }: { enableReviseMode?: boolean } = {},
-): Promise<{ endpoint: string; sessionId: string }> {
+async function bootAndCreateSession(): Promise<{ endpoint: string; sessionId: string }> {
   const repoDir = makeTmpDir("repo");
   const started = await startServer({
     port: 0,
@@ -29,13 +25,6 @@ async function bootAndCreateSession(
     body: JSON.stringify({ prompt: "x", baseBranch: TEST_BASE }),
   }).then(r => r.json());
   const sessionId = created.meta.id;
-  if (enableReviseMode) {
-    await fetch(`${endpoint}/sessions/${sessionId}/revise-mode`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: true }),
-    });
-  }
   return { endpoint, sessionId };
 }
 
@@ -46,19 +35,6 @@ test("submitReport posts a numbered report", async () => {
   if (!("filename" in r)) throw new Error("report unexpectedly not stored");
   expect(r.filename).toBe("001-plan.md");
   expect(r.seq).toBe(1);
-});
-
-test("submitReport reports a revision-requested verdict instead of a filename on the first submission", async () => {
-  // Revise mode holds the first submission and asks the session to revise it;
-  // the server stores nothing and the agent is told to resubmit.
-  const { endpoint, sessionId } = await bootAndCreateSession({ enableReviseMode: true });
-  const r = await submitReport(endpoint, sessionId, "draft", "初稿");
-  expect(r).toEqual({ revisionRequested: true });
-
-  // The resubmission goes through and is stored.
-  const resubmitted = await submitReport(endpoint, sessionId, "draft", "推敲した本文");
-  if (!("filename" in resubmitted)) throw new Error("resubmission must be stored");
-  expect(resubmitted.filename).toBe("001-draft.md");
 });
 
 test("submitReport --re links the report to a feedback message", async () => {
@@ -146,7 +122,7 @@ test("cancelReport marks a submitted report cancelled with the reason", async ()
   const { endpoint, sessionId } = await bootAndCreateSession();
 
   const submitted = await submitReport(endpoint, sessionId, "wrong", "wrong conclusion report");
-  if ("revisionRequested" in submitted) throw new Error("unexpected revision request");
+  if (!("filename" in submitted)) throw new Error("report unexpectedly not stored");
   await cancelReport(endpoint, sessionId, submitted.filename, "premise was wrong");
 
   const list = await fetch(`${endpoint}/sessions/${sessionId}/reports`).then(r => r.json());

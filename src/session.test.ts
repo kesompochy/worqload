@@ -7,7 +7,6 @@ import {
   loadSessionMeta,
   listSessionMetas,
   reorderSessions,
-  isReviseModeEnabled,
 } from "./session";
 import type { SessionStatus, SessionMeta } from "./session";
 import { makeTmpDir, cleanupAll } from "./test-helpers";

@@ -57,7 +57,7 @@ async function bootServer(repoDir: string, extra: Partial<Parameters<typeof star
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
     // Keep tests off the developer's real ~/.config/worqload/config.yaml; a
-    // missing path means no textlint rules unless a test injects its own.
+    // missing path means no settings unless a test injects its own.
     configPath: join(repoDir, "no-such-worqload-config.yaml"),
     archiveDbPath: null,
     ...extra,
@@ -859,4 +859,40 @@ test("fork of a claude session resumes the source's recorded agentSessionId", as
 
   expect(spawnCommands.at(-1)!.slice(-3)).toEqual(["--resume", claudeConversationId, "--fork-session"]);
   expect(existsSync(join(forkProjectDir, `${claudeConversationId}.jsonl`))).toBe(true);
+});
+
+// `--continue` reopens the most recent conversation in the worktree, which is
+// not the session's own once a report-polish fork has run there. A resume must
+// name the recorded claude conversation; `--continue` remains only for sessions
+// that never recorded one.
+test("resume of a claude pipe session resumes its recorded agentSessionId", async () => {
+  const repoDir = makeTmpDir("repo");
+  const spawnCommands: string[][] = [];
+  const captureLauncher: HostLauncher = async ({ meta, sessionsDir, spawnCommand, resume, onEvent }) => {
+    spawnCommands.push(spawnCommand);
+    const event = await appendEvent(meta.id, { kind: resume ? "session_resumed" : "session_started", payload: { prompt: meta.prompt } }, sessionsDir);
+    onEvent(event);
+    return {
+      client: {
+        async send() {},
+        async kill() {},
+        async close() {},
+        replayCompleted: Promise.resolve({ lastSeq: event.seq }),
+        exited: new Promise<number | null>(() => {}),
+      },
+    };
+  };
+  const { baseUrl, ctx } = await bootServer(repoDir, { hostLauncher: captureLauncher });
+
+  const recorded = (await postJson(baseUrl, "/sessions", { prompt: "a", baseBranch: TEST_BASE }).then((r) => r.json())).meta;
+  const claudeConversationId = "0b6f1d2e-5a4c-4f3b-9e8d-7c6b5a4f3e2d";
+  await saveSessionMeta({ ...(await loadSessionMeta(recorded.id, ctx.sessionsDir))!, agentSessionId: claudeConversationId, status: "stopped" }, ctx.sessionsDir);
+  await postJson(baseUrl, `/sessions/${recorded.id}/resume`, {});
+  expect(spawnCommands.at(-1)!.slice(-2)).toEqual(["--resume", claudeConversationId]);
+  expect(spawnCommands.at(-1)).not.toContain("--continue");
+
+  const unrecorded = (await postJson(baseUrl, "/sessions", { prompt: "b", baseBranch: TEST_BASE }).then((r) => r.json())).meta;
+  await saveSessionMeta({ ...(await loadSessionMeta(unrecorded.id, ctx.sessionsDir))!, status: "stopped" }, ctx.sessionsDir);
+  await postJson(baseUrl, `/sessions/${unrecorded.id}/resume`, {});
+  expect(spawnCommands.at(-1)!.at(-1)).toBe("--continue");
 });
