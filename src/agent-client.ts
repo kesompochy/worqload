@@ -15,6 +15,12 @@ export interface ReportRevisionRequested {
   revisionRequested: true;
 }
 
+// A claude session's report accepted for a polish in a fork of its
+// conversation: stored once the polish finishes, not yet when this returns.
+export interface ReportPolishing {
+  polishing: true;
+}
+
 export interface FeedbackMessage {
   filename: string;
   content: string;
@@ -57,10 +63,10 @@ export async function submitReport(
   content: string,
   replyTo?: string,
   images: File[] = [],
-): Promise<SubmitResult | ReportRevisionRequested> {
+): Promise<SubmitResult | ReportRevisionRequested | ReportPolishing> {
   const url = `${endpoint}/internal/sessions/${sessionId}/reports`;
   const body = replyTo ? { slug, content, replyTo } : { slug, content };
-  type Result = SubmitResult | ReportRevisionRequested;
+  type Result = SubmitResult | ReportRevisionRequested | ReportPolishing;
   return images.length > 0 ? postReportForm<Result>(url, body, images) : postJson<Result>(url, body);
 }
 

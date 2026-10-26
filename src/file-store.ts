@@ -74,6 +74,10 @@ export interface NumberedFileMeta {
   // holds only the human's reason; the rewrite instruction is wrapped around it
   // when the agent fetches the message.
   rejectedReport?: string;
+  // For a feedback message: the report stored as the polish of the writer's
+  // draft. The body is the stored report's text; the note telling the writer
+  // what it is gets wrapped around it when the agent fetches the message.
+  polishedReport?: string;
 }
 
 export function metaFilenameFor(mdFilename: string): string {

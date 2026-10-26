@@ -90,6 +90,11 @@ async function reportSubmit(rest: string[]): Promise<void> {
           "`worqload feedback fetch` for the draft path, edit it in place, and resubmit it. The next " +
           "submission is stored.",
       );
+    } else if ("polishing" in result) {
+      console.log(
+        "report accepted: worqload is polishing it in a fork of this conversation and stores the polished " +
+          "text. When that text differs from your draft, it arrives in your feedback inbox with its filename.",
+      );
     } else {
       console.log(result.filename);
     }

@@ -108,6 +108,8 @@ export function describeEvent(event) {
 
     case "report_submitted":
       return { summary: `📄 ${payload?.filename ?? "report"}`, sections: [payloadSection(payload)] };
+    case "report_polishing":
+      return { summary: `✎ polishing ${payload?.slug ?? "report"}`, sections: [payloadSection(payload)] };
     case "report_read": {
       const names = Array.isArray(payload?.filenames) ? payload.filenames : [];
       if (names.length > 0) {

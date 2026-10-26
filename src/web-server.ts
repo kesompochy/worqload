@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess } from "bun";
 import { appendFileSync, existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import {
@@ -19,7 +19,7 @@ import {
   type SessionMeta,
   type SessionStatus,
 } from "./session";
-import { makeClaudeReportRewriter, makeCodexReportRewriter, makeCursorReportRewriter, type ReportRewriter } from "./report-rewriter";
+import type { ReportPolisher } from "./report-polish";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { emptyWorktreeTrash, realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
@@ -48,6 +48,7 @@ import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as a
 import type { Database } from "bun:sqlite";
 import revisionRequestScaffold from "./prompts/revision-request-feedback.txt" with { type: "text" };
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
+import reportPolishedScaffold from "./prompts/report-polished-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -254,6 +255,11 @@ export interface ServerContext {
   // rejected with 400 at the POST.
   attachmentMaxBytes: number;
   attachmentMaxCount: number;
+  reportPolisher: ReportPolisher | undefined;
+  // Per session: the running drain of its pending report polishes. A session's
+  // forks run one at a time so each fork can be told which polished versions
+  // the writer has not fetched yet.
+  reportPolishDrains: Map<string, Promise<void>>;
   // Path to the YAML config (`~/.config/worqload/config.yaml`) holding the
   // revise-mode settings: the textlint rules and the reviseFeedback override.
   configPath: string;
@@ -321,6 +327,9 @@ export interface StartServerOptions {
   // Passed through to `claude -p --model <value>`. Unset means claude's default.
   utilityModel?: string;
   linkLabelGenerator?: LinkLabelGenerator;
+  // Polishes claude sessions' reports in a fork of the writer's conversation
+  // before they are stored. Unset stores every report as submitted.
+  reportPolisher?: ReportPolisher;
 }
 
 export interface ShutdownOptions {
@@ -680,7 +689,7 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
 // report_submitted) before claude emits the turn's result line.
 function trackAutoNudge(ctx: ServerContext, sessionId: string, event: Event): void {
   if (ctx.maxAutoNudges <= 0) return;
-  if (event.kind === "report_submitted") {
+  if (event.kind === "report_submitted" || event.kind === "report_polishing") {
     ctx.reportedThisTurn.set(sessionId, true);
     ctx.autoNudgeCount.set(sessionId, 0);
     return;
@@ -1093,15 +1102,6 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     ?? (opts.utilityModel ? makeBranchNameGenerator({ model: opts.utilityModel }) : defaultBranchNameGenerator);
   const hostCommand = opts.hostCommand ?? buildDefaultHostCommand();
   const hostLauncher = opts.hostLauncher ?? makeSpawnHostLauncher({ hostCommand });
-  const overriddenReportRewriter = opts.reportRewriter;
-  const reportRewriterForAgent: (name: AgentName) => ReportRewriter = overriddenReportRewriter !== undefined
-    ? () => overriddenReportRewriter
-    : (name) => name === "codex"
-      ? makeCodexReportRewriter({ spawnCommand: spawnCommandForAgent(name) })
-      : name === "cursor"
-        ? makeCursorReportRewriter({ spawnCommand: spawnCommandForAgent(name) })
-        : makeClaudeReportRewriter({ spawnCommand: spawnCommandForAgent(name) });
-  const reportRewriter = reportRewriterForAgent(agentName);
   const worktreeOps = opts.worktreeOps ?? realWorktreeOps;
   // Cache wraps whatever resolver is in play (the gh one in production, a fake
   // in tests) so the sidebar's background prefetch doesn't respawn `gh` per
@@ -1235,9 +1235,12 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     archiveDb,
     repoIdentifier,
     linkLabelGenerator,
+    reportPolisher: opts.reportPolisher,
+    reportPolishDrains: new Map(),
   };
 
   await reconcileNonTerminalSessions(ctx);
+  await resumePendingReportPolishes(ctx);
   emptyWorktreeTrash(worktreesDir).catch(() => { /* retried on the next start */ });
 
   async function shutdown(opts: ShutdownOptions = {}): Promise<void> {
@@ -2047,8 +2050,11 @@ async function postModel(req: Request, ctx: ServerContext, params: Record<string
 
 async function getFeedbackHistory(_req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
-    const inbox = await listAllFiles(feedbackInboxDirFor(ctx, meta.id));
-    const read = await listAllFiles(feedbackReadDirFor(ctx, meta.id));
+    // A polished report delivered to the writer is not the human's feedback,
+    // and the human already reads its text as the report itself.
+    const fromHuman = (f: NumberedFile) => !f.meta?.polishedReport;
+    const inbox = (await listAllFiles(feedbackInboxDirFor(ctx, meta.id))).filter(fromHuman);
+    const read = (await listAllFiles(feedbackReadDirFor(ctx, meta.id))).filter(fromHuman);
     const all = [
       ...inbox.map(f => ({ filename: f.filename, content: f.content, status: "unread" as const, anchor: f.meta?.anchor, rejectedReport: f.meta?.rejectedReport, attachments: f.attachments })),
       ...read.map(f => ({ filename: f.filename, content: f.content, status: "read" as const, anchor: f.meta?.anchor, rejectedReport: f.meta?.rejectedReport, attachments: f.attachments })),
@@ -3405,6 +3411,10 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
         return json({ error: `no such feedback message: ${replyTo}` }, 400);
       }
     }
+    if (ctx.reportPolisher && (meta.agentName ?? ctx.agentName) === "claude") {
+      await acceptReportForPolish(ctx, meta, { slug: body.slug, content: body.content, replyTo, attachments });
+      return json({ polishing: true });
+    }
     // Revise mode (opt-in per session): hold the first submission of each
     // report and bounce it back asking the session to tighten it, so the 推敲
     // is done by the session — which holds the full context the report
@@ -3432,38 +3442,161 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
     if (meta.revisionPending === true) {
       await saveSessionMeta({ ...meta, revisionPending: false }, ctx.sessionsDir);
     }
-    const dir = reportsDirFor(ctx, meta.id);
-    // Reports bounced for revision returned above, so attachments are written
-    // only alongside a report that is actually stored.
-    const writeOpts: WriteNumberedFileOptions = {};
-    if (replyTo) writeOpts.meta = { replyTo };
-    if (attachments.length > 0) writeOpts.attachments = attachments;
-    const file = await writeNumberedFile(dir, body.slug, body.content, writeOpts);
-    if (ctx.archiveDb) {
-      try {
-        archiveUpsertSession(ctx.archiveDb, {
-          sessionId: meta.id,
-          repo: ctx.repoIdentifier,
-          initialPrompt: meta.prompt,
-          createdAt: meta.createdAt,
-        });
-        archiveInsertReport(ctx.archiveDb, {
-          repo: ctx.repoIdentifier,
-          sessionId: meta.id,
-          filename: file.filename,
-          slug: body.slug,
-          body: body.content,
-          replyTo: replyTo ?? null,
-          anchorPath: null,
-          anchorLineStart: null,
-          anchorLineEnd: null,
-          createdAt: new Date().toISOString(),
-        });
-      } catch { /* archive is best-effort */ }
-    }
-    await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
+    const file = await storeReport(ctx, meta, { slug: body.slug, content: body.content, replyTo, attachments });
     return json({ filename: file.filename, seq: file.seq });
   });
+}
+
+interface SubmittedReport {
+  slug: string;
+  content: string;
+  replyTo?: string;
+  attachments: { name: string; bytes: Uint8Array }[];
+}
+
+async function storeReport(ctx: ServerContext, meta: SessionMeta, report: SubmittedReport): Promise<NumberedFile> {
+  const writeOpts: WriteNumberedFileOptions = {};
+  if (report.replyTo) writeOpts.meta = { replyTo: report.replyTo };
+  if (report.attachments.length > 0) writeOpts.attachments = report.attachments;
+  const file = await writeNumberedFile(reportsDirFor(ctx, meta.id), report.slug, report.content, writeOpts);
+  if (ctx.archiveDb) {
+    try {
+      archiveUpsertSession(ctx.archiveDb, {
+        sessionId: meta.id,
+        repo: ctx.repoIdentifier,
+        initialPrompt: meta.prompt,
+        createdAt: meta.createdAt,
+      });
+      archiveInsertReport(ctx.archiveDb, {
+        repo: ctx.repoIdentifier,
+        sessionId: meta.id,
+        filename: file.filename,
+        slug: report.slug,
+        body: report.content,
+        replyTo: report.replyTo ?? null,
+        anchorPath: null,
+        anchorLineStart: null,
+        anchorLineEnd: null,
+        createdAt: new Date().toISOString(),
+      });
+    } catch { /* archive is best-effort */ }
+  }
+  await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
+  return file;
+}
+
+// Drafts waiting for their polish, one JSON file each, named so that a
+// lexical sort is submission order. Keeping them on disk lets a server restart
+// (e.g. `serve --watch`) finish a polish the writer was already told was
+// accepted instead of losing the report.
+function reportPolishPendingDirFor(ctx: ServerContext, sessionId: string): string {
+  return join(ctx.sessionsDir, sessionId, "report-polish-pending");
+}
+
+interface PendingReportPolish {
+  slug: string;
+  content: string;
+  replyTo?: string;
+  attachments: { name: string; base64: string }[];
+}
+
+let pendingReportPolishCounter = 0;
+
+async function acceptReportForPolish(ctx: ServerContext, meta: SessionMeta, report: SubmittedReport): Promise<void> {
+  const pending: PendingReportPolish = {
+    slug: report.slug,
+    content: report.content,
+    ...(report.replyTo && { replyTo: report.replyTo }),
+    attachments: report.attachments.map(a => ({ name: a.name, base64: Buffer.from(a.bytes).toString("base64") })),
+  };
+  const key = `${String(Date.now()).padStart(15, "0")}-${String(pendingReportPolishCounter++).padStart(6, "0")}`;
+  await Bun.write(join(reportPolishPendingDirFor(ctx, meta.id), `${key}.json`), JSON.stringify(pending));
+  // Counts as the turn's report for the auto-nudge: the writer did report,
+  // the stored version just arrives later.
+  await appendAndBroadcast(ctx, meta.id, { kind: "report_polishing", payload: { slug: report.slug } });
+  drainReportPolishes(ctx, meta.id);
+}
+
+function drainReportPolishes(ctx: ServerContext, sessionId: string): void {
+  if (ctx.reportPolishDrains.has(sessionId)) {
+    // The running drain re-lists the pending dir after each polish, so it
+    // picks up the draft just written.
+    return;
+  }
+  const drain = (async () => {
+    try {
+      for (;;) {
+        const next = (await listPendingReportPolishes(ctx, sessionId))[0];
+        if (next === undefined) return;
+        await polishAndStoreReport(ctx, sessionId, next);
+      }
+    } catch (err) {
+      console.error(`[report-polish] ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      ctx.reportPolishDrains.delete(sessionId);
+    }
+  })();
+  ctx.reportPolishDrains.set(sessionId, drain);
+}
+
+async function listPendingReportPolishes(ctx: ServerContext, sessionId: string): Promise<string[]> {
+  const names = await readdir(reportPolishPendingDirFor(ctx, sessionId)).catch(() => [] as string[]);
+  return names.filter(n => n.endsWith(".json")).sort().map(n => join(reportPolishPendingDirFor(ctx, sessionId), n));
+}
+
+async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendingPath: string): Promise<void> {
+  const meta = await loadSessionMeta(sessionId, ctx.sessionsDir);
+  const polisher = ctx.reportPolisher;
+  if (meta && polisher) {
+    const pending = (await Bun.file(pendingPath).json()) as PendingReportPolish;
+    const content = await polisher({
+      spawnCommand: reportPolishSpawnCommand(ctx, meta),
+      cwd: meta.worktreePath,
+      draft: pending.content,
+      unreadPolished: await unreadPolishedReports(ctx, sessionId),
+    });
+    const file = await storeReport(ctx, meta, {
+      slug: pending.slug,
+      content,
+      ...(pending.replyTo && { replyTo: pending.replyTo }),
+      attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
+    });
+    // Only a changed text is worth the writer's attention. The delivery does
+    // not wake the writer: it is read with the next feedback the writer
+    // fetches, and the next fork is told about it in the meantime.
+    if (content !== pending.content) {
+      await writeNumberedFile(feedbackInboxDirFor(ctx, sessionId), "polished-report", content, {
+        archiveDirs: [feedbackReadDirFor(ctx, sessionId)],
+        meta: { polishedReport: file.filename },
+      });
+    }
+  }
+  await rm(pendingPath, { force: true });
+}
+
+// The fork must run in print mode with stream-json whatever driver the writer
+// uses. For the pipe driver it reuses the writer's exact argv, so the forked
+// request matches the writer's cached prompt prefix.
+function reportPolishSpawnCommand(ctx: ServerContext, meta: SessionMeta): string[] {
+  const driverName = meta.driverName ?? ctx.driverName;
+  const base = driverName === "pipe"
+    ? (meta.kb
+      ? wrapClaudeCommandWithKb(ctx.spawnCommandForAgent("claude", meta.model), meta.kb)
+      : ctx.spawnCommandForAgent("claude", meta.model))
+    : buildDefaultSpawnCommand("claude", "pipe", meta.model);
+  return [...base, "--resume", meta.agentSessionId ?? meta.id, "--fork-session"];
+}
+
+async function unreadPolishedReports(ctx: ServerContext, sessionId: string): Promise<string[]> {
+  const inbox = await listAllFiles(feedbackInboxDirFor(ctx, sessionId));
+  return inbox.filter(f => f.meta?.polishedReport).map(f => f.content);
+}
+
+async function resumePendingReportPolishes(ctx: ServerContext): Promise<void> {
+  if (!ctx.reportPolisher) return;
+  for (const meta of await listSessionMetas(ctx.sessionsDir)) {
+    if ((await listPendingReportPolishes(ctx, meta.id)).length > 0) drainReportPolishes(ctx, meta.id);
+  }
 }
 
 async function postInternalEscalations(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
@@ -3589,6 +3722,11 @@ function formatFeedbackMessageForAgent(m: { content: string; filename: string; m
   let content = m.meta?.anchor ? `${formatAnchorRefLine(m.meta.anchor)}\n\n${m.content}` : m.content;
   if (m.meta?.rejectedReport) {
     content = buildReportRejectedFeedback(m.meta.rejectedReport, m.content.trim() || undefined);
+  }
+  if (m.meta?.polishedReport) {
+    content = reportPolishedScaffold
+      .replaceAll("{{filename}}", m.meta.polishedReport)
+      .replaceAll("{{report}}", m.content);
   }
   if (skills && skills.length > 0) {
     content = expandSkillReferences(content, skills);

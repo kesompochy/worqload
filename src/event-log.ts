@@ -17,6 +17,9 @@ export type EventKind =
   // agent event holds the detail. Drives the report-less auto-nudge.
   | "turn_completed"
   | "report_submitted"
+  // A claude session's draft was accepted and is being polished in a fork;
+  // report_submitted follows once the polished text is stored.
+  | "report_polishing"
   | "report_read"
   | "report_unread"
   | "report_deleted"

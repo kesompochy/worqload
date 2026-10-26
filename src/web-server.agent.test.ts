@@ -202,7 +202,6 @@ test("startServer with agentName=cursor defaults spawnCommand to the cursor agen
     branchNameGenerator: async () => null,
     hostLauncher: inProcessHostLauncher(),
     worktreeOps: fakeWorktreeOps(),
-    reportRewriter: async (raw) => raw,
     archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
@@ -226,7 +225,6 @@ test("POST /sessions persists cursor agentName and passes driver cursor to the h
     branchNameGenerator: async () => null,
     hostLauncher,
     worktreeOps: fakeWorktreeOps(),
-    reportRewriter: async (raw) => raw,
     archiveDbPath: null,
   });
   trackCleanup(() => started.shutdown({ killHosts: true }));
