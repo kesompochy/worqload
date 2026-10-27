@@ -1,1 +1,1 @@
-いま書いた全文について、手順 0 から同じ手順をもう一度行う。出力の形式も同じである。
+Do the same steps again, from step 0, on the full report you just wrote. Use the same output format.
