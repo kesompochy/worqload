@@ -403,9 +403,14 @@ test("details body is parsed as block markdown", () => {
 test("blocks inside details keep their source line numbers", () => {
   const source = "intro\n\n<details>\n<summary>T</summary>\n\ninside\n\n</details>\n\nafter\n";
   const html = renderMarkdown(source, { anchorPath: "./r.md" });
-  expect(html).toMatch(/<summary [^>]*data-anchor-line="3"[^>]*data-anchor-line-end="4"[^>]*>T<\/summary>/);
+  expect(html).toMatch(/<p [^>]*data-anchor-line="1"[^>]*>intro<\/p>/);
   expect(html).toMatch(/<p [^>]*data-anchor-line="6"[^>]*data-anchor-line-end="6"[^>]*>inside<\/p>/);
   expect(html).toMatch(/<p [^>]*data-anchor-line="10"[^>]*>after<\/p>/);
+});
+
+test("details summary carries no line anchor so toggling it does not open the feedback composer", () => {
+  const html = renderMarkdown("<details>\n<summary>T</summary>\nbody\n</details>\n", { anchorPath: "./r.md" });
+  expect(html).toContain("<details><summary>T</summary>");
 });
 
 test("nested details close at their matching tag", () => {

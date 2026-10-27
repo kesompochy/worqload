@@ -248,7 +248,6 @@ function consumeDetails(lines, start, out) {
     summary = lines[i].match(SUMMARY_RE)[1];
     i++;
   }
-  const summaryEndLine = i;
   const bodyStart = i;
   // Find the matching close tag, counting nested <details> and ignoring tags
   // inside fenced code.
@@ -271,7 +270,6 @@ function consumeDetails(lines, start, out) {
     kind: "details",
     open: openAttr !== undefined,
     summary,
-    summaryEndLine,
     children: parseLines(bodyLines),
     startLine: start + 1,
     endLine,
@@ -438,11 +436,12 @@ function renderBlockquote(block, ctx) {
 }
 
 function renderDetails(block, ctx) {
-  const attrs = anchorAttrs(block.startLine, block.summaryEndLine, ctx);
+  // The summary is left without line anchors: a click on it toggles the
+  // section, and an anchor would also open the feedback composer.
   // "Details" is the label browsers show for a <details> without a <summary>.
   const summary = block.summary === null ? "Details" : renderInline(block.summary, ctx);
   const body = block.children.map(b => renderBlock(b, ctx)).join("");
-  return `<details${block.open ? " open" : ""}><summary${attrs}>${summary}</summary>${body}</details>`;
+  return `<details${block.open ? " open" : ""}><summary>${summary}</summary>${body}</details>`;
 }
 
 function renderList(tag, block, ctx) {
