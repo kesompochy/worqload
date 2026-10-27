@@ -3376,7 +3376,7 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
     } else {
       await storeReport(ctx, meta, {
         slug: pending.slug,
-        content: outcome.report === pending.content ? outcome.report : `${outcome.report}\n\n${REPORT_POLISHED_MARKER}`,
+        content: outcome.report.trim() === pending.content.trim() ? pending.content : `${outcome.report}\n\n${REPORT_POLISHED_MARKER}`,
         ...(pending.replyTo && { replyTo: pending.replyTo }),
         attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
       });
