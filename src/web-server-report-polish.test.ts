@@ -234,3 +234,27 @@ test("a polish that leaves the draft unchanged is stored without the polished ma
   const [listed] = await waitForReports(baseUrl, session.id, 1);
   expect(readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8")).toBe("書き手の原稿");
 });
+
+test("a polish that only trims the draft's surrounding whitespace is stored as the draft, without the marker", async () => {
+  // The fork's report block is read trimmed, while drafts written from a file
+  // end with a newline.
+  const gate = gatedPolisher(r => r.draft.trim());
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "plan", content: "書き手の原稿\n" });
+  await gate.release(0);
+  const [listed] = await waitForReports(baseUrl, session.id, 1);
+  expect(readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8")).toBe("書き手の原稿\n");
+});
+
+test("a failed polish of a draft ending with a newline is stored as the draft, without the marker", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "plan", content: "書き手の原稿\n" });
+  await gate.release(0);
+  const [listed] = await waitForReports(baseUrl, session.id, 1);
+  expect(readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8")).toBe("書き手の原稿\n");
+});
