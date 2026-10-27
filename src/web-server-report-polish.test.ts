@@ -1,17 +1,21 @@
 import { afterEach, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { readEvents } from "./event-log";
 import type { PolishOutcome, ReportPolisher, ReportPolishRequest } from "./report-polish";
 import { loadSessionMeta, saveSessionMeta } from "./session";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 import { startServer } from "./web-server";
-import polishedMarker from "./prompts/report-polished-marker.txt" with { type: "text" };
 
 afterEach(cleanupAll);
 
 const TEST_BASE = "trunk";
 const CLAUDE_CONVERSATION_ID = "5d0c8a7e-2b1f-4e3d-9c8b-7a6f5e4d3c2b";
+
+function polishedFlag(sessionsDir: string, sessionId: string, filename: string): unknown {
+  const metaPath = join(sessionsDir, sessionId, "reports", filename.replace(/\.md$/, ".meta.json"));
+  return existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, "utf8")).polished : undefined;
+}
 
 async function bootServer(repoDir: string, extra: Partial<Parameters<typeof startServer>[0]> = {}) {
   const started = await startServer({
@@ -208,7 +212,7 @@ test("a withdrawn report is not stored and is kept for the human to inspect", as
   expect(fetched).toEqual([]);
 });
 
-test("a changed polish ends its file with the polished marker, which the UI's report list leaves out", async () => {
+test("a changed polish is stored as the polished text alone and marked polished in its meta", async () => {
   const gate = gatedPolisher(() => "推敲された本文\n2 行目");
   const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
   const session = await createClaudeSession(baseUrl, ctx);
@@ -217,14 +221,12 @@ test("a changed polish ends its file with the polished marker, which the UI's re
   await gate.release(0);
   const [listed] = await waitForReports(baseUrl, session.id, 1);
 
-  const onDisk = readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8");
-  expect(onDisk).toBe(`推敲された本文\n2 行目\n\n${polishedMarker.trim()}`);
-  expect(listed.content).toBe("推敲された本文\n2 行目");
-  const single = await fetch(`${baseUrl}/sessions/${session.id}/reports/${listed.filename}`).then(r => r.json());
-  expect(single.content).toBe("推敲された本文\n2 行目");
+  const reportsDir = join(ctx.sessionsDir, session.id, "reports");
+  expect(readFileSync(join(reportsDir, listed.filename), "utf8")).toBe("推敲された本文\n2 行目");
+  expect(JSON.parse(readFileSync(join(reportsDir, listed.filename.replace(/\.md$/, ".meta.json")), "utf8")).polished).toBe(true);
 });
 
-test("a polish that leaves the draft unchanged is stored without the polished marker", async () => {
+test("a polish that leaves the draft unchanged is not marked polished", async () => {
   const gate = gatedPolisher(r => r.draft);
   const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
   const session = await createClaudeSession(baseUrl, ctx);
@@ -233,9 +235,10 @@ test("a polish that leaves the draft unchanged is stored without the polished ma
   await gate.release(0);
   const [listed] = await waitForReports(baseUrl, session.id, 1);
   expect(readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8")).toBe("書き手の原稿");
+  expect(polishedFlag(ctx.sessionsDir, session.id, listed.filename)).toBeUndefined();
 });
 
-test("a polish that only trims the draft's surrounding whitespace is stored as the draft, without the marker", async () => {
+test("a polish that only trims the draft's surrounding whitespace is stored as the draft, not marked polished", async () => {
   // The fork's report block is read trimmed, while drafts written from a file
   // end with a newline.
   const gate = gatedPolisher(r => r.draft.trim());
@@ -246,9 +249,10 @@ test("a polish that only trims the draft's surrounding whitespace is stored as t
   await gate.release(0);
   const [listed] = await waitForReports(baseUrl, session.id, 1);
   expect(readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8")).toBe("書き手の原稿\n");
+  expect(polishedFlag(ctx.sessionsDir, session.id, listed.filename)).toBeUndefined();
 });
 
-test("a failed polish of a draft ending with a newline is stored as the draft, without the marker", async () => {
+test("a failed polish of a draft ending with a newline is stored as the draft, not marked polished", async () => {
   const gate = gatedPolisher(r => r.draft);
   const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
   const session = await createClaudeSession(baseUrl, ctx);
@@ -257,4 +261,5 @@ test("a failed polish of a draft ending with a newline is stored as the draft, w
   await gate.release(0);
   const [listed] = await waitForReports(baseUrl, session.id, 1);
   expect(readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8")).toBe("書き手の原稿\n");
+  expect(polishedFlag(ctx.sessionsDir, session.id, listed.filename)).toBeUndefined();
 });

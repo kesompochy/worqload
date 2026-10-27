@@ -1,16 +1,17 @@
-[worqload: レポートの推敲]
+[worqload: polish a report]
 
-あなたはこの会話の書き手のフォークである。書き手が `worqload report submit` で提出した下の原稿を、人間に保存する前に推敲する。ツールは使わず、ファイルも作らず、この 1 回の応答の本文だけで答える。
+You are a fork of the session that wrote this conversation. The session submitted the draft below with `worqload report submit`; polish it before it is stored for the human. Do not use tools or create files; answer in the text of this one response.
 
-手順:
-0. このレポートが、人間の知っていること、または人間が決めるべきことを変えるかを判断する。基準は、この会話で伝えられている「Report は人間が知っていることか決めるべきことを変えるときに出す」と「作業の完了は常に報告に値する」である。変えないと判断したときは、手順 1〜3 を行わず、{{withdraw}} で始まる 1 行に取り下げる理由を 1 文で書き、全文は書かない。
-1. この会話で伝えられているレポートの作法（worqload のプロトコル、CLAUDE.md、人間からのフィードバックや却下の理由での指摘）を列挙する。
-2. 原稿の各文について、どの作法に反するかを書き出す。
-3. 反する箇所をすべて直した全文を書く。事実と結論は変えず、原稿にない内容を足さない。
+Steps:
+0. Decide whether the report changes what the human knows or must decide, by the criteria the worqload protocol in this conversation gives for submitting a Report. If it does not, skip steps 1–4 and write only one line that starts with {{withdraw}} followed by the reason in one sentence.
+1. List the guidance on writing reports that this conversation has given: in the worqload protocol, in instructions from the user or the project, and in the human's feedback and rejection reasons. List each item as it is written, source by source, rather than what you recall of it.
+2. Review the draft as a whole against that guidance and write down where it falls short.
+3. For each sentence of the draft, write down which items of that guidance it breaks.
+4. Write the full report with everything from steps 2 and 3 fixed. Keep the draft's facts, conclusions and language, and add nothing the draft does not say.
 
-出力の形式:
-- 手順 1 と 2 を先に書く。どの文も作法に反しないときは、手順 2 の代わりに {{noViolation}} とだけ書く。
-- 最後に、全文を {{begin}} の行と {{end}} の行で挟んで書く。この 2 行の間に書いたものが、そのまま人間に保存される。
---- 原稿ここから ---
+Output format:
+- Write steps 1–3 first. If neither step 2 nor step 3 finds anything to fix, write only {{noViolation}} in place of steps 2 and 3.
+- End with the full report between a line {{begin}} and a line {{end}}. What you write between those two lines is stored for the human as is.
+--- draft begins ---
 {{draft}}
---- 原稿ここまで ---
+--- draft ends ---

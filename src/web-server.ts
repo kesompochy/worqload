@@ -45,7 +45,6 @@ import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClau
 import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
-import reportPolishedMarkerText from "./prompts/report-polished-marker.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -2022,7 +2021,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
     return json({
       reports: reports.filter(r => !r.meta?.rejection).map(r => ({
         filename: r.filename,
-        content: withoutPolishedMarker(r.content),
+        content: r.content,
         read: readSet.has(r.filename),
         pinned: pinSet.has(r.filename),
         replyTo: r.meta?.replyTo,
@@ -2046,7 +2045,7 @@ async function getReport(_req: Request, ctx: ServerContext, params: Record<strin
     if (!report) return json({ error: "report not found" }, 404);
     return json({
       filename: report.filename,
-      content: withoutPolishedMarker(report.content),
+      content: report.content,
       replyTo: report.meta?.replyTo,
       attachments: report.attachments,
       rejection: report.meta?.rejection,
@@ -3268,12 +3267,18 @@ interface SubmittedReport {
   slug: string;
   content: string;
   replyTo?: string;
+  polished?: true;
   attachments: { name: string; bytes: Uint8Array }[];
 }
 
 async function storeReport(ctx: ServerContext, meta: SessionMeta, report: SubmittedReport): Promise<NumberedFile> {
   const writeOpts: WriteNumberedFileOptions = {};
-  if (report.replyTo) writeOpts.meta = { replyTo: report.replyTo };
+  if (report.replyTo || report.polished) {
+    writeOpts.meta = {
+      ...(report.replyTo && { replyTo: report.replyTo }),
+      ...(report.polished && { polished: true as const }),
+    };
+  }
   if (report.attachments.length > 0) writeOpts.attachments = report.attachments;
   const file = await writeNumberedFile(reportsDirFor(ctx, meta.id), report.slug, report.content, writeOpts);
   if (ctx.archiveDb) {
@@ -3376,7 +3381,9 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
     } else {
       await storeReport(ctx, meta, {
         slug: pending.slug,
-        content: outcome.report.trim() === pending.content.trim() ? pending.content : `${outcome.report}\n\n${REPORT_POLISHED_MARKER}`,
+        ...(outcome.report.trim() === pending.content.trim()
+          ? { content: pending.content }
+          : { content: outcome.report, polished: true as const }),
         ...(pending.replyTo && { replyTo: pending.replyTo }),
         attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
       });
@@ -3388,17 +3395,6 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
 // The withdrawn draft is kept beside the session, and announced on the
 // timeline, so the human can catch a withdrawal that dropped a report they
 // needed.
-// A writer reading its past report back from `.worqload-reports/` learns from
-// this last line that the human read a rewrite, not its draft. It sits at the
-// end so the UI can leave it out without shifting the line numbers feedback
-// anchors use.
-const REPORT_POLISHED_MARKER = reportPolishedMarkerText.trim();
-
-function withoutPolishedMarker(content: string): string {
-  const suffix = `\n\n${REPORT_POLISHED_MARKER}`;
-  return content.endsWith(suffix) ? content.slice(0, -suffix.length) : content;
-}
-
 async function withdrawReport(
   ctx: ServerContext,
   sessionId: string,
