@@ -373,3 +373,74 @@ test("footnote IDs have no prefix when footnotePrefix is omitted", () => {
   expect(html).toContain(`id="fn-1"`);
   expect(html).toContain(`href="#fnref-1"`);
 });
+
+test("details block renders a collapsible section with its summary", () => {
+  const html = renderMarkdown("<details>\n<summary>More **info**</summary>\n\nhidden\n\n</details>\n");
+  expect(html).toMatch(/^<details><summary>More <strong>info<\/strong><\/summary><p>hidden<\/p><\/details>$/);
+});
+
+test("details summary may sit on the same line as the opening tag", () => {
+  const html = renderMarkdown("<details><summary>Title</summary>\n\nbody\n</details>\n");
+  expect(html).toContain("<summary>Title</summary><p>body</p></details>");
+});
+
+test("details without a summary falls back to the browser's default label", () => {
+  const html = renderMarkdown("<details>\nbody\n</details>\n");
+  expect(html).toContain("<summary>Details</summary><p>body</p>");
+});
+
+test("details open attribute is preserved", () => {
+  const html = renderMarkdown("<details open>\n<summary>T</summary>\nbody\n</details>\n");
+  expect(html).toContain("<details open>");
+});
+
+test("details body is parsed as block markdown", () => {
+  const html = renderMarkdown("<details>\n<summary>T</summary>\n\n- a\n- b\n\n```\ncode\n```\n</details>\n");
+  expect(html).toContain("<ul><li>a</li><li>b</li></ul>");
+  expect(html).toContain("<code>code</code>");
+});
+
+test("blocks inside details keep their source line numbers", () => {
+  const source = "intro\n\n<details>\n<summary>T</summary>\n\ninside\n\n</details>\n\nafter\n";
+  const html = renderMarkdown(source, { anchorPath: "./r.md" });
+  expect(html).toMatch(/<summary [^>]*data-anchor-line="3"[^>]*data-anchor-line-end="4"[^>]*>T<\/summary>/);
+  expect(html).toMatch(/<p [^>]*data-anchor-line="6"[^>]*data-anchor-line-end="6"[^>]*>inside<\/p>/);
+  expect(html).toMatch(/<p [^>]*data-anchor-line="10"[^>]*>after<\/p>/);
+});
+
+test("nested details close at their matching tag", () => {
+  const html = renderMarkdown("<details>\n<summary>Outer</summary>\n<details>\n<summary>Inner</summary>\nx\n</details>\ny\n</details>\nz\n");
+  expect(html).toBe(
+    "<details><summary>Outer</summary>"
+    + "<details><summary>Inner</summary><p>x</p></details>"
+    + "<p>y</p></details><p>z</p>",
+  );
+});
+
+test("a closing details tag inside a fenced code block does not close the details", () => {
+  const html = renderMarkdown("<details>\n<summary>T</summary>\n```\n</details>\n```\n</details>\nafter\n");
+  expect(html).toContain("<code>&lt;/details&gt;</code>");
+  expect(html).toMatch(/<\/div><\/details><p>after<\/p>$/);
+});
+
+test("unclosed details runs to the end of the document", () => {
+  const html = renderMarkdown("<details>\n<summary>T</summary>\nbody\n");
+  expect(html).toBe("<details><summary>T</summary><p>body</p></details>");
+});
+
+test("footnote defined inside details resolves", () => {
+  const html = renderMarkdown("ref[^1]\n\n<details>\n<summary>T</summary>\n\n[^1]: note\n</details>\n");
+  expect(html).toContain(`<a href="#fn-1" id="fnref-1">1</a>`);
+  expect(html).toContain("note");
+});
+
+test("extractHeadings skips headings inside details", () => {
+  expect(extractHeadings("# Top\n<details>\n<summary>T</summary>\n\n## Hidden\n</details>\n")).toEqual([
+    { level: 1, text: "Top", line: 1 },
+  ]);
+});
+
+test("details opening line ends a preceding table", () => {
+  const html = renderMarkdown("| a |\n|---|\n| 1 |\n<details>\n<summary>T</summary>\nbody\n</details>\n");
+  expect(html).toContain("</table><details>");
+});

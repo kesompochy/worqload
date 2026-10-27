@@ -9,6 +9,8 @@
 //   - GFM tables (| a | b | + a |---|---| delimiter row, with :--: alignment)
 //   - Horizontal rules (---, ***, ___)
 //   - Footnote definitions ([^id]: ...)
+//   - Collapsible sections (<details> / <summary> / </details>, each tag on its
+//     own line; the body is parsed as block markdown)
 //   - Paragraphs
 //
 // Supported inline syntax:
@@ -35,9 +37,7 @@ const CODE_SENTINEL = "";
 export function renderMarkdown(source, options = {}) {
   const blocks = parseBlocks(source);
   const footnoteDefs = new Map();
-  for (const b of blocks) {
-    if (b.kind === "footnote-def") footnoteDefs.set(b.id, b);
-  }
+  collectFootnoteDefs(blocks, footnoteDefs);
   const footnoteOrder = [];
   const footnoteNumberById = new Map();
   const fnPrefix = options.footnotePrefix ? `${options.footnotePrefix}-` : "";
@@ -60,12 +60,21 @@ export function renderMarkdown(source, options = {}) {
   return body + `<section class="md-footnotes"><ol>${items.join("")}</ol></section>`;
 }
 
+function collectFootnoteDefs(blocks, out) {
+  for (const b of blocks) {
+    if (b.kind === "footnote-def") out.set(b.id, b);
+    if (b.kind === "details") collectFootnoteDefs(b.children, out);
+  }
+}
+
 // The ATX headings of `source`, in document order, for building a table of
 // contents. `line` is the 1-based source line of the heading — the same value
 // `renderMarkdown` puts on the rendered `<h*>`'s data-anchor-line, so a TOC
 // entry can drive the existing line-anchor scroll. `text` is the heading with
 // inline markdown reduced to its visible text. Headings inside fenced code
 // blocks are excluded because parseBlocks consumes those fences first.
+// Headings inside <details> are excluded too: a TOC entry cannot scroll to a
+// heading hidden in a collapsed section.
 export function extractHeadings(source) {
   return parseBlocks(source)
     .filter(b => b.kind === "heading")
@@ -90,7 +99,10 @@ function stripInlineMarkdown(text) {
 // ---------- block-level parsing ----------
 
 function parseBlocks(source) {
-  const lines = source.split("\n");
+  return parseLines(source.split("\n"));
+}
+
+function parseLines(lines) {
   const blocks = [];
   let i = 0;
   while (i < lines.length) {
@@ -101,6 +113,7 @@ function parseBlocks(source) {
     if (isHeadingLine(line)) { i = consumeHeading(lines, i, blocks); continue; }
     if (isHrLine(line)) { i = consumeHr(lines, i, blocks); continue; }
     if (isFootnoteDef(line)) { i = consumeFootnoteDef(lines, i, blocks); continue; }
+    if (isDetailsOpenLine(line)) { i = consumeDetails(lines, i, blocks); continue; }
     if (isBlockquoteLine(line)) { i = consumeBlockquote(lines, i, blocks); continue; }
     if (isUnorderedListItem(line)) { i = consumeUnorderedList(lines, i, blocks); continue; }
     if (isOrderedListItem(line)) { i = consumeOrderedList(lines, i, blocks); continue; }
@@ -123,6 +136,17 @@ function isUnorderedListItem(line) { return /^[-*+]\s+/.test(line); }
 function isOrderedListItem(line) { return /^\d+\.\s+/.test(line); }
 function isFootnoteDef(line) { return /^\[\^[^\]]+\]:\s/.test(line); }
 function isListContinuation(line) { return /^\s{2,}\S/.test(line); }
+
+const DETAILS_OPEN_RE = /^\s*<details(\s+open)?\s*>(.*)$/i;
+const DETAILS_CLOSE_RE = /^\s*<\/details>\s*$/i;
+const SUMMARY_RE = /^\s*<summary>(.*)<\/summary>\s*$/i;
+
+// The opening tag may be followed on the same line only by its <summary>, so
+// an inline `<details>...</details>` in prose stays paragraph text.
+function isDetailsOpenLine(line) {
+  const m = line.match(DETAILS_OPEN_RE);
+  return m !== null && (isBlankLine(m[2]) || SUMMARY_RE.test(m[2]));
+}
 
 // A GFM table starts where a header row (which must contain at least one pipe,
 // so a lone "---" stays a horizontal rule) is immediately followed by a
@@ -147,6 +171,7 @@ function isTableBodyRow(line) {
   return !isFenceLine(line)
       && !isHeadingLine(line)
       && !isHrLine(line)
+      && !isDetailsOpenLine(line)
       && !isBlockquoteLine(line)
       && !isUnorderedListItem(line)
       && !isOrderedListItem(line);
@@ -211,6 +236,47 @@ function consumeFootnoteDef(lines, start, out) {
     endLine: start + 1,
   });
   return start + 1;
+}
+
+function consumeDetails(lines, start, out) {
+  const [, openAttr, rest] = lines[start].match(DETAILS_OPEN_RE);
+  let i = start + 1;
+  let summary = null;
+  if (SUMMARY_RE.test(rest)) {
+    summary = rest.match(SUMMARY_RE)[1];
+  } else if (i < lines.length && SUMMARY_RE.test(lines[i])) {
+    summary = lines[i].match(SUMMARY_RE)[1];
+    i++;
+  }
+  const summaryEndLine = i;
+  const bodyStart = i;
+  // Find the matching close tag, counting nested <details> and ignoring tags
+  // inside fenced code.
+  let depth = 1;
+  let inFence = false;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (isFenceLine(line)) inFence = !inFence;
+    else if (!inFence && isDetailsOpenLine(line)) depth++;
+    else if (!inFence && DETAILS_CLOSE_RE.test(line) && --depth === 0) break;
+    i++;
+  }
+  const bodyEnd = i;
+  const endLine = i < lines.length ? i + 1 : i;  // include the closing tag if present
+  if (i < lines.length) i++;                     // skip closing tag
+  // Blanking the lines before the body (instead of slicing them off) lets the
+  // nested parse number its blocks by their lines in the original source.
+  const bodyLines = lines.slice(0, bodyEnd).map((line, n) => (n < bodyStart ? "" : line));
+  out.push({
+    kind: "details",
+    open: openAttr !== undefined,
+    summary,
+    summaryEndLine,
+    children: parseLines(bodyLines),
+    startLine: start + 1,
+    endLine,
+  });
+  return i;
 }
 
 function consumeUnorderedList(lines, start, out) {
@@ -310,6 +376,7 @@ function paragraphEnds(lines, i) {
       || isHeadingLine(line)
       || isHrLine(line)
       || isFootnoteDef(line)
+      || isDetailsOpenLine(line)
       || isBlockquoteLine(line)
       || isUnorderedListItem(line)
       || isOrderedListItem(line)
@@ -328,6 +395,7 @@ function renderBlock(block, ctx) {
     case "ul":         return renderList("ul", block, ctx);
     case "ol":         return renderList("ol", block, ctx);
     case "table":        return renderTable(block, ctx);
+    case "details":      return renderDetails(block, ctx);
     case "footnote-def": return "";
     default:             return "";
   }
@@ -367,6 +435,14 @@ function renderBlockquote(block, ctx) {
   // We do not recurse into the quote body; rendering it as a single paragraph
   // keeps the renderer simple and covers the typical agent-report use.
   return `<blockquote${attrs}><p>${renderInline(block.content, ctx)}</p></blockquote>`;
+}
+
+function renderDetails(block, ctx) {
+  const attrs = anchorAttrs(block.startLine, block.summaryEndLine, ctx);
+  // "Details" is the label browsers show for a <details> without a <summary>.
+  const summary = block.summary === null ? "Details" : renderInline(block.summary, ctx);
+  const body = block.children.map(b => renderBlock(b, ctx)).join("");
+  return `<details${block.open ? " open" : ""}><summary${attrs}>${summary}</summary>${body}</details>`;
 }
 
 function renderList(tag, block, ctx) {
