@@ -23,6 +23,9 @@ export type EventKind =
   // The polish fork judged the draft not worth the human's reading; nothing
   // is stored for it.
   | "report_withdrawn"
+  // The polish fork found the draft's claims unsupported by the writer's
+  // conversation; nothing is stored, and the writer is asked to investigate.
+  | "report_returned"
   | "report_read"
   | "report_unread"
   | "report_deleted"

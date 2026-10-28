@@ -247,6 +247,48 @@ test("a withdrawn report is not stored and is kept for the human to inspect", as
   expect(fetched).toEqual([]);
 });
 
+test("a returned report is not stored, is kept for the human, and reaches the writer with what is missing", async () => {
+  const gate = gatedPolisher(() => ({ returnedReason: "原因の断定に、ログを確かめた跡がない" }));
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "cause", content: "差し戻される原稿" });
+  await gate.release(0);
+  await waitFor(async () => (await readEvents(session.id, 1, ctx.sessionsDir)).some(e => e.kind === "report_returned"), "the return");
+
+  expect(gate.requests[0].allowReturn).toBe(true);
+  expect(await storedReports(baseUrl, session.id)).toEqual([]);
+  const returned = (await readEvents(session.id, 1, ctx.sessionsDir)).find(e => e.kind === "report_returned")!;
+  expect(returned.payload).toMatchObject({ slug: "cause", reason: "原因の断定に、ログを確かめた跡がない" });
+  const kept = readdirSync(join(ctx.sessionsDir, session.id, "report-polish-returned"));
+  expect(kept).toHaveLength(1);
+  expect(JSON.parse(readFileSync(join(ctx.sessionsDir, session.id, "report-polish-returned", kept[0]), "utf8")))
+    .toMatchObject({ slug: "cause", draft: "差し戻される原稿", reason: "原因の断定に、ログを確かめた跡がない" });
+
+  const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
+  expect(fetched).toHaveLength(1);
+  expect(fetched[0].content).toContain("原因の断定に、ログを確かめた跡がない");
+  expect(fetched[0].content).toContain("差し戻される原稿");
+  expect(fetched[0].content).toContain("--slug cause");
+  expect(fetched[0].content).not.toContain("{{");
+});
+
+test("a report resubmitted after a return may not be returned again", async () => {
+  const gate = gatedPolisher(r => r.allowReturn ? { returnedReason: "調査がない" } : r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "cause", content: "最初の原稿" });
+  await gate.release(0);
+  await waitFor(async () => (await readEvents(session.id, 1, ctx.sessionsDir)).some(e => e.kind === "report_returned"), "the return");
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "cause", content: "調べ直した原稿" });
+  await gate.release(1);
+
+  const [stored] = await waitForReports(baseUrl, session.id, 1);
+  expect(stored.content).toBe("調べ直した原稿");
+  expect(gate.requests[1].allowReturn).toBe(false);
+});
+
 test("a changed polish is stored as the polished text alone and marked polished in its meta", async () => {
   const gate = gatedPolisher(() => "推敲された本文\n2 行目");
   const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });

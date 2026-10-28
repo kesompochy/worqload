@@ -8,6 +8,7 @@ import { isClaudePipeTurnEnd, readLines } from "./claude-stream";
 import { buildUserMessage } from "./session-bootstrap";
 import instructionTemplate from "./prompts/report-polish-instruction.txt" with { type: "text" };
 import recheckInstruction from "./prompts/report-polish-recheck.txt" with { type: "text" };
+import returnStepTemplate from "./prompts/report-polish-return-step.txt" with { type: "text" };
 
 // Set in the environment of a report-polish fork. The fork carries the
 // writer's whole conversation, protocol instructions included, so the CLI
@@ -20,6 +21,9 @@ export const NO_VIOLATION_MARK = "<<WORQLOAD_NO_VIOLATION>>";
 // Starts the line on which the fork withdraws the report; the rest of the
 // line is its reason.
 export const REPORT_WITHDRAW_MARK = "<<WORQLOAD_WITHDRAW_REPORT>>";
+// Starts the line on which the fork returns the report to the writer for more
+// investigation; the rest of the line is what the fork found missing.
+export const REPORT_RETURN_MARK = "<<WORQLOAD_RETURN_REPORT>>";
 
 // Each round re-reads the whole forked conversation, so the token cost grows
 // with the number of rounds; two lets the fork check its own rewrite once.
@@ -33,16 +37,22 @@ export interface ReportPolishRequest {
   spawnCommand: string[];
   cwd: string;
   draft: string;
+  // False for a draft resubmitted after a return, so a writer and its fork
+  // cannot bounce the same report back and forth.
+  allowReturn: boolean;
 }
 
 // `report` is the text to store: the fork's last well-formed rewrite, or the
 // draft itself when the fork failed before producing one. `withdrawnReason`
-// means the fork judged the report not worth the human's reading.
-export type PolishOutcome = { report: string } | { withdrawnReason: string };
+// means the fork judged the report not worth the human's reading;
+// `returnedReason` means its claims do not follow from what the conversation
+// established, and the writer has to investigate before submitting again.
+export type PolishOutcome = { report: string } | { withdrawnReason: string } | { returnedReason: string };
 export type ReportPolisher = (request: ReportPolishRequest) => Promise<PolishOutcome>;
 
-export function buildReportPolishInstruction(draft: string): string {
+export function buildReportPolishInstruction(draft: string, opts: { allowReturn: boolean }): string {
   return instructionTemplate
+    .replaceAll("{{returnStep}}", opts.allowReturn ? returnStepTemplate.trimEnd().replaceAll("{{return}}", REPORT_RETURN_MARK) : "")
     .replaceAll("{{noViolation}}", NO_VIOLATION_MARK)
     .replaceAll("{{withdraw}}", REPORT_WITHDRAW_MARK)
     .replaceAll("{{begin}}", POLISHED_REPORT_BEGIN)
@@ -50,21 +60,25 @@ export function buildReportPolishInstruction(draft: string): string {
     .replaceAll("{{draft}}", draft);
 }
 
-type PolishRound = { report: string; clean: boolean } | { withdrawnReason: string };
+type PolishRound = { report: string; clean: boolean } | { withdrawnReason: string } | { returnedReason: string };
 
 // A round that carries a report block is read as that report even when it
-// also withdraws: a wrong withdrawal loses a report the human needed, a wrong
-// store only costs the human a read.
-function parsePolishRound(output: string): PolishRound | null {
+// also withdraws or returns: a wrong withdrawal loses a report the human
+// needed, a wrong store only costs the human a read. A return beats a
+// withdrawal because it reaches the writer, who can still submit nothing.
+function parsePolishRound(output: string, allowReturn: boolean): PolishRound | null {
   const begin = output.lastIndexOf(POLISHED_REPORT_BEGIN);
   const end = begin < 0 ? -1 : output.indexOf(POLISHED_REPORT_END, begin);
   if (end >= 0) {
     const report = output.slice(begin + POLISHED_REPORT_BEGIN.length, end).trim();
     if (report !== "") return { report, clean: output.slice(0, begin).includes(NO_VIOLATION_MARK) };
   }
-  const withdrawLine = output.split("\n").find(line => line.trimStart().startsWith(REPORT_WITHDRAW_MARK));
+  const lines = output.split("\n").map(line => line.trimStart());
+  const returnLine = allowReturn ? lines.find(line => line.startsWith(REPORT_RETURN_MARK)) : undefined;
+  if (returnLine !== undefined) return { returnedReason: returnLine.slice(REPORT_RETURN_MARK.length).trim() };
+  const withdrawLine = lines.find(line => line.startsWith(REPORT_WITHDRAW_MARK));
   if (withdrawLine === undefined) return null;
-  return { withdrawnReason: withdrawLine.trimStart().slice(REPORT_WITHDRAW_MARK.length).trim() };
+  return { withdrawnReason: withdrawLine.slice(REPORT_WITHDRAW_MARK.length).trim() };
 }
 
 // The server's env plus the fork mark, minus the worqload session identity,
@@ -90,7 +104,7 @@ function collectAssistantText(parsed: { type?: string; message?: { content?: unk
 
 export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): ReportPolisher {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return async ({ spawnCommand, cwd, draft }) => {
+  return async ({ spawnCommand, cwd, draft, allowReturn }) => {
     let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
     try {
       proc = Bun.spawn(spawnCommand, { cwd, env: forkEnv(), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
@@ -149,10 +163,10 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
     let outcome: PolishOutcome = { report: draft };
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
-        const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft) : recheckInstruction);
-        const parsed = output === null ? null : parsePolishRound(output);
+        const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft, { allowReturn }) : recheckInstruction);
+        const parsed = output === null ? null : parsePolishRound(output, allowReturn);
         if (parsed === null) break;
-        if ("withdrawnReason" in parsed) {
+        if (!("report" in parsed)) {
           outcome = parsed;
           break;
         }
