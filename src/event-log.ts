@@ -34,6 +34,11 @@ export type EventKind =
   | "report_rejected"
   | "report_cancelled"
   | "escalation_requested"
+  // A claude session's escalation was accepted and is being polished in a
+  // fork; escalation_requested follows once the polished text is stored.
+  | "escalation_polishing"
+  // The writer cancelled an escalation before its polish stored it.
+  | "escalation_polish_cancelled"
   | "escalation_resolved"
   | "feedback_received"
   | "feedback_fetched"

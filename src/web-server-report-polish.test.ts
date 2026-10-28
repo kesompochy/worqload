@@ -340,3 +340,107 @@ test("a failed polish of a draft ending with a newline is stored as the draft, n
   expect(readFileSync(join(ctx.sessionsDir, session.id, "reports", listed.filename), "utf8")).toBe("書き手の原稿\n");
   expect(polishedFlag(ctx.sessionsDir, session.id, listed.filename)).toBeUndefined();
 });
+
+async function pendingEscalations(baseUrl: string, sessionId: string): Promise<{ filename: string; content: string }[]> {
+  return (await fetch(`${baseUrl}/sessions/${sessionId}/asking`).then(r => r.json())).asking;
+}
+
+test("a claude session's escalation is shown to the human as the fork's polished text", async () => {
+  const gate = gatedPolisher(r => r.kind === "escalation" ? "推敲された問い" : r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  const res = await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "q", content: "問いの原稿" });
+  expect(await res.json()).toEqual({ polishing: true });
+  expect(await pendingEscalations(baseUrl, session.id)).toEqual([]);
+  expect((await loadSessionMeta(session.id, ctx.sessionsDir))!.status).not.toBe("waiting_human");
+
+  await gate.release(0);
+  await waitFor(async () => (await pendingEscalations(baseUrl, session.id)).length === 1, "the escalation to be stored");
+  expect((await pendingEscalations(baseUrl, session.id))[0].content).toBe("推敲された問い");
+  expect(gate.requests[0]).toMatchObject({ kind: "escalation", draft: "問いの原稿", allowReturn: true });
+  expect((await loadSessionMeta(session.id, ctx.sessionsDir))!.status).toBe("waiting_human");
+  expect(await storedReports(baseUrl, session.id)).toEqual([]);
+});
+
+test("a returned escalation is not shown to the human and reaches the writer with its resubmit command", async () => {
+  const gate = gatedPolisher(() => ({ returnedReason: "取り消せる操作なので自分で決められる" }));
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "q", content: "問いの原稿" });
+  await gate.release(0);
+  await waitFor(async () => (await readEvents(session.id, 1, ctx.sessionsDir)).some(e => e.kind === "report_returned"), "the return");
+
+  expect(await pendingEscalations(baseUrl, session.id)).toEqual([]);
+  const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
+  expect(fetched).toHaveLength(1);
+  expect(fetched[0].content).toContain("取り消せる操作なので自分で決められる");
+  expect(fetched[0].content).toContain("問いの原稿");
+  expect(fetched[0].content).toContain("worqload escalate submit --slug q");
+  expect(fetched[0].content).not.toContain("{{");
+});
+
+test("a report and an escalation sharing a slug are each returned at most once on their own", async () => {
+  const gate = gatedPolisher(() => ({ returnedReason: "調査がない" }));
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "same", content: "レポート" });
+  await gate.release(0);
+  await waitFor(async () => (await readEvents(session.id, 1, ctx.sessionsDir)).some(e => e.kind === "report_returned"), "the return");
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "same", content: "問い" });
+  await waitFor(() => gate.requests.length === 2, "the escalation's polish to start");
+  expect(gate.requests[1].allowReturn).toBe(true);
+});
+
+test("a session with 推敲モード off shows its escalation as submitted at once", async () => {
+  const gate = gatedPolisher(() => "使われないはずの推敲");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+  await postJson(baseUrl, `/sessions/${session.id}/report-polish`, { enabled: false });
+
+  const res = await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "q", content: "問いの原稿" });
+  expect((await res.json()).filename).toBeDefined();
+  expect((await pendingEscalations(baseUrl, session.id)).map(e => e.content)).toEqual(["問いの原稿"]);
+  expect(gate.requests).toEqual([]);
+});
+
+test("cancelling an escalation by slug while it is polished keeps it from being shown", async () => {
+  const gate = gatedPolisher(() => "推敲された問い");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "q", content: "問いの原稿" });
+  await waitFor(() => gate.requests.length === 1, "the polish to start");
+  const cancelled = await postJson(baseUrl, `/internal/sessions/${session.id}/escalations/by-slug/q/cancel`, { reason: "自分で解決した" });
+  expect(cancelled.status).toBe(200);
+  await gate.release(0);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the polish to finish");
+
+  expect(await pendingEscalations(baseUrl, session.id)).toEqual([]);
+  expect((await loadSessionMeta(session.id, ctx.sessionsDir))!.status).not.toBe("waiting_human");
+});
+
+test("cancelling an escalation by slug after it is shown resolves it as cancelled", async () => {
+  const gate = gatedPolisher(() => "推敲された問い");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "q", content: "問いの原稿" });
+  await gate.release(0);
+  await waitFor(async () => (await pendingEscalations(baseUrl, session.id)).length === 1, "the escalation to be stored");
+
+  const cancelled = await postJson(baseUrl, `/internal/sessions/${session.id}/escalations/by-slug/q/cancel`, { reason: "自分で解決した" });
+  expect(cancelled.status).toBe(200);
+  expect(await pendingEscalations(baseUrl, session.id)).toEqual([]);
+  const resolved = (await readEvents(session.id, 1, ctx.sessionsDir)).find(e => e.kind === "escalation_resolved")!;
+  expect(resolved.payload).toMatchObject({ cancelled: true, reason: "自分で解決した" });
+});
+
+test("cancelling a slug with no escalation is a 404", async () => {
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"));
+  const session = await createClaudeSession(baseUrl, ctx);
+  const res = await postJson(baseUrl, `/internal/sessions/${session.id}/escalations/by-slug/none/cancel`, {});
+  expect(res.status).toBe(404);
+});

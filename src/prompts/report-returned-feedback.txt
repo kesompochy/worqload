@@ -1,6 +1,6 @@
-Your report `{{slug}}` was not stored. A fork of this conversation that polishes reports returned it, because its claims do not follow from what this conversation has established.
+Your {{kind}} `{{slug}}` was not shown to the human. A fork of this conversation that polishes reports and escalations returned it to you.
 
-## What is missing
+## Why it was returned
 
 {{reason}}
 
@@ -10,4 +10,4 @@ Your report `{{slug}}` was not stored. A fork of this conversation that polishes
 {{draft}}
 --- draft ends ---
 
-Do the missing investigation, then decide whether the human needs the report. If they do, write it from what you found and submit it: `worqload report submit --slug {{slug}}`. This resubmission is polished but not returned again. If they do not, submit nothing.
+Act on the reason above, then decide whether the human still needs this {{kind}}. If they do, write it from what you found and submit it: `{{submitCommand}}`. This resubmission is polished but not returned again. If they do not, submit nothing.

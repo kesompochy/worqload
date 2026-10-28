@@ -9,6 +9,8 @@ import { buildUserMessage } from "./session-bootstrap";
 import instructionTemplate from "./prompts/report-polish-instruction.txt" with { type: "text" };
 import recheckInstruction from "./prompts/report-polish-recheck.txt" with { type: "text" };
 import returnStepTemplate from "./prompts/report-polish-return-step.txt" with { type: "text" };
+import escalationInstructionTemplate from "./prompts/escalation-polish-instruction.txt" with { type: "text" };
+import escalationReturnStepTemplate from "./prompts/escalation-polish-return-step.txt" with { type: "text" };
 
 // Set in the environment of a report-polish fork. The fork carries the
 // writer's whole conversation, protocol instructions included, so the CLI
@@ -31,12 +33,18 @@ const MAX_ROUNDS = 2;
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 
+// Escalations pass through the same fork as reports, but are never withdrawn:
+// their writer waits for an answer that a silently dropped escalation never
+// gets. The fork returns them to the writer instead.
+export type PolishedKind = "report" | "escalation";
+
 export interface ReportPolishRequest {
   // argv that resumes the writer's conversation as a fork
   // (`... --resume <id> --fork-session`), with the writer's model.
   spawnCommand: string[];
   cwd: string;
   draft: string;
+  kind: PolishedKind;
   // False for a draft resubmitted after a return, so a writer and its fork
   // cannot bounce the same report back and forth.
   allowReturn: boolean;
@@ -50,9 +58,12 @@ export interface ReportPolishRequest {
 export type PolishOutcome = { report: string } | { withdrawnReason: string } | { returnedReason: string };
 export type ReportPolisher = (request: ReportPolishRequest) => Promise<PolishOutcome>;
 
-export function buildReportPolishInstruction(draft: string, opts: { allowReturn: boolean }): string {
-  return instructionTemplate
-    .replaceAll("{{returnStep}}", opts.allowReturn ? returnStepTemplate.trimEnd().replaceAll("{{return}}", REPORT_RETURN_MARK) : "")
+export function buildReportPolishInstruction(draft: string, opts: { allowReturn: boolean; kind: PolishedKind }): string {
+  const [template, returnStep] = opts.kind === "escalation"
+    ? [escalationInstructionTemplate, escalationReturnStepTemplate]
+    : [instructionTemplate, returnStepTemplate];
+  return template
+    .replaceAll("{{returnStep}}", opts.allowReturn ? returnStep.replaceAll("{{return}}", REPORT_RETURN_MARK) : "")
     .replaceAll("{{noViolation}}", NO_VIOLATION_MARK)
     .replaceAll("{{withdraw}}", REPORT_WITHDRAW_MARK)
     .replaceAll("{{begin}}", POLISHED_REPORT_BEGIN)
@@ -66,7 +77,7 @@ type PolishRound = { report: string; clean: boolean } | { withdrawnReason: strin
 // also withdraws or returns: a wrong withdrawal loses a report the human
 // needed, a wrong store only costs the human a read. A return beats a
 // withdrawal because it reaches the writer, who can still submit nothing.
-function parsePolishRound(output: string, allowReturn: boolean): PolishRound | null {
+function parsePolishRound(output: string, opts: { allowReturn: boolean; kind: PolishedKind }): PolishRound | null {
   const begin = output.lastIndexOf(POLISHED_REPORT_BEGIN);
   const end = begin < 0 ? -1 : output.indexOf(POLISHED_REPORT_END, begin);
   if (end >= 0) {
@@ -74,9 +85,9 @@ function parsePolishRound(output: string, allowReturn: boolean): PolishRound | n
     if (report !== "") return { report, clean: output.slice(0, begin).includes(NO_VIOLATION_MARK) };
   }
   const lines = output.split("\n").map(line => line.trimStart());
-  const returnLine = allowReturn ? lines.find(line => line.startsWith(REPORT_RETURN_MARK)) : undefined;
+  const returnLine = opts.allowReturn ? lines.find(line => line.startsWith(REPORT_RETURN_MARK)) : undefined;
   if (returnLine !== undefined) return { returnedReason: returnLine.slice(REPORT_RETURN_MARK.length).trim() };
-  const withdrawLine = lines.find(line => line.startsWith(REPORT_WITHDRAW_MARK));
+  const withdrawLine = opts.kind === "report" ? lines.find(line => line.startsWith(REPORT_WITHDRAW_MARK)) : undefined;
   if (withdrawLine === undefined) return null;
   return { withdrawnReason: withdrawLine.slice(REPORT_WITHDRAW_MARK.length).trim() };
 }
@@ -104,7 +115,7 @@ function collectAssistantText(parsed: { type?: string; message?: { content?: unk
 
 export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): ReportPolisher {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return async ({ spawnCommand, cwd, draft, allowReturn }) => {
+  return async ({ spawnCommand, cwd, draft, kind, allowReturn }) => {
     let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
     try {
       proc = Bun.spawn(spawnCommand, { cwd, env: forkEnv(), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
@@ -163,8 +174,8 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
     let outcome: PolishOutcome = { report: draft };
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
-        const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft, { allowReturn }) : recheckInstruction);
-        const parsed = output === null ? null : parsePolishRound(output, allowReturn);
+        const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft, { allowReturn, kind }) : recheckInstruction);
+        const parsed = output === null ? null : parsePolishRound(output, { allowReturn, kind });
         if (parsed === null) break;
         if (!("report" in parsed)) {
           outcome = parsed;

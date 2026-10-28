@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { startServer } from "./web-server";
-import { submitReport, submitEscalation, cancelEscalation, cancelReport, requestCommandApproval, fetchFeedback, listFeedbackHistory, fetchFeedbackByFilename } from "./agent-client";
+import { submitReport, submitEscalation, cancelEscalation, cancelEscalationBySlug, cancelReport, requestCommandApproval, fetchFeedback, listFeedbackHistory, fetchFeedbackByFilename } from "./agent-client";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 
 afterEach(cleanupAll);
@@ -116,6 +116,17 @@ test("cancelEscalation withdraws a pending escalation", async () => {
   const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
   expect(asking.asking).toEqual([]);
   await expect(cancelEscalation(endpoint, sessionId, submitted.filename)).rejects.toThrow("404");
+});
+
+test("cancelEscalationBySlug withdraws the pending escalation with that slug", async () => {
+  const { endpoint, sessionId } = await bootAndCreateSession();
+
+  await submitEscalation(endpoint, sessionId, "lib", "X or Y?");
+  await cancelEscalationBySlug(endpoint, sessionId, "lib", "decided on X myself");
+
+  const asking = await fetch(`${endpoint}/sessions/${sessionId}/asking`).then(r => r.json());
+  expect(asking.asking).toEqual([]);
+  await expect(cancelEscalationBySlug(endpoint, sessionId, "lib")).rejects.toThrow("404");
 });
 
 test("cancelReport marks a submitted report cancelled with the reason", async () => {
