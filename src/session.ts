@@ -44,6 +44,10 @@ export interface SessionMeta {
   agentSessionId?: string;
   links?: Array<{ url: string; label?: string }>;
   forkedFrom?: { sessionId: string; commitSha: string };
+  // Set when the human turns 推敲モード off for this session: its reports are
+  // stored as submitted instead of being polished in a fork of the writer's
+  // conversation. Absent means on, so new sessions are polished by default.
+  reportPolishDisabled?: true;
 }
 
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {

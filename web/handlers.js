@@ -1800,6 +1800,22 @@ export async function onRenameCommit(id, rawValue) {
   }
 }
 
+// The detail-header 推敲モード toggle. Only an explicit reportPolishDisabled
+// on the meta means off, so the inverse sent here is read from that flag.
+export async function onToggleReportPolish(id) {
+  if (!id) return;
+  const meta = state.detail && state.detail.meta && state.detail.meta.id === id ? state.detail.meta : null;
+  if (!meta) return;
+  try {
+    const res = await api("POST", `/sessions/${id}/report-polish`, { enabled: meta.reportPolishDisabled === true });
+    state.detail.meta = res.meta;
+    const card = state.sessions.find(s => s.id === id);
+    if (card) card.reportPolishDisabled = res.meta.reportPolishDisabled;
+  } catch (e) {
+    toast(`failed: ${e.message}`);
+  }
+}
+
 export async function onSwitchModel(id, model) {
   if (!id || typeof model !== "string") return;
   try {

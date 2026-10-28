@@ -15,7 +15,7 @@
   import { formatRelative, eventAgeIsStale, eventCountLevel, toast } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
-  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onSwitchModel, toggleEventsTab } from "../handlers.js";
+  import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReportPolish, onSwitchModel, toggleEventsTab } from "../handlers.js";
   import { addLink, removeLink } from "../api.js";
   import ActionBar from "./ActionBar.svelte";
 
@@ -118,7 +118,9 @@
             <button class="btn-action" class:open={appState.openActionId === a.id} disabled={a.id === "create-pr" && prUrl !== null} title={a.id === "create-pr" && prUrl !== null ? "このブランチには既に PR があります" : (a.description || "")} onclick={() => toggleActionPanel(a.id)}>{a.label}</button>
           {/if}
         {/each}
+        <span class="action-group-sep" aria-hidden="true"></span>
       {/if}
+      <label class="report-polish-toggle" title="On: worqload polishes each report in a fork of this session's conversation before storing it. Off: the report is stored as submitted."><input type="checkbox" checked={m.reportPolishDisabled !== true} onchange={() => onToggleReportPolish(m.id)} /><span>推敲モード</span></label>
     </div>
   </div>
   <div class="detail-original-prompt">

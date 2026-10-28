@@ -1177,6 +1177,7 @@ const ROUTES: Route[] = [
   defineRoute("DELETE", "/sessions/:id", deleteSession),
   defineRoute("POST", "/sessions/:id/title", postTitle),
   defineRoute("POST", "/sessions/:id/model", postModel),
+  defineRoute("POST", "/sessions/:id/report-polish", postReportPolish),
   defineRoute("POST", "/sessions/:id/links", postLink),
   defineRoute("DELETE", "/sessions/:id/links", deleteLink),
   defineRoute("POST", "/sessions/:id/feedback/batch", postFeedbackBatch),
@@ -1795,6 +1796,25 @@ async function postTitle(req: Request, ctx: ServerContext, params: Record<string
     const trimmed = body.title.trim();
     const { title: _previous, ...rest } = meta;
     const updated: SessionMeta = trimmed === "" ? rest : { ...rest, title: trimmed };
+    await saveSessionMeta(updated, ctx.sessionsDir);
+    return json({ meta: updated });
+  });
+}
+
+interface ReportPolishBody {
+  enabled?: unknown;
+}
+
+// The 推敲モード toggle. Drafts already accepted for a polish are polished
+// either way; the flag decides only for reports submitted afterwards.
+async function postReportPolish(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json().catch(() => ({}))) as ReportPolishBody;
+    if (typeof body.enabled !== "boolean") {
+      return json({ error: "enabled must be a boolean" }, 400);
+    }
+    const { reportPolishDisabled: _previous, ...rest } = meta;
+    const updated: SessionMeta = body.enabled ? rest : { ...rest, reportPolishDisabled: true };
     await saveSessionMeta(updated, ctx.sessionsDir);
     return json({ meta: updated });
   });
@@ -3254,7 +3274,7 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
         return json({ error: `no such feedback message: ${replyTo}` }, 400);
       }
     }
-    if (ctx.reportPolisher && (meta.agentName ?? ctx.agentName) === "claude") {
+    if (ctx.reportPolisher && (meta.agentName ?? ctx.agentName) === "claude" && !meta.reportPolishDisabled) {
       await acceptReportForPolish(ctx, meta, { slug: body.slug, content: body.content, replyTo, attachments });
       return json({ polishing: true });
     }
