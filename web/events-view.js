@@ -136,6 +136,10 @@ export function describeEvent(event) {
         return { summary: `🙋 approval: $ ${firstLine(payload.command)}`, sections: [payloadSection(payload)] };
       }
       return { summary: `🙋 ${payload?.filename ?? "needs input"}`, sections: [payloadSection(payload)] };
+    case "escalation_polishing":
+      return { summary: `✎ polishing escalation ${payload?.slug ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
+    case "escalation_polish_cancelled":
+      return { summary: `⊘ cancelled escalation ${payload?.slug ?? ""}`.trimEnd(), sections: [payloadSection(payload)] };
     case "escalation_resolved":
       if (isNonEmptyString(payload?.decision)) return describeCommandApprovalResolved(payload);
       if (payload?.cancelled === true) {

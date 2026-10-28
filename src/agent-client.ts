@@ -80,8 +80,8 @@ export async function submitEscalation(
   sessionId: string,
   slug: string,
   content: string,
-): Promise<SubmitResult> {
-  return postJson<SubmitResult>(
+): Promise<SubmitResult | ReportPolishing> {
+  return postJson<SubmitResult | ReportPolishing>(
     `${endpoint}/internal/sessions/${sessionId}/escalations`,
     { slug, content },
   );
@@ -95,6 +95,18 @@ export async function cancelEscalation(
 ): Promise<void> {
   await postJson<unknown>(
     `${endpoint}/internal/sessions/${sessionId}/escalations/${encodeURIComponent(filename)}/cancel`,
+    reason ? { reason } : {},
+  );
+}
+
+export async function cancelEscalationBySlug(
+  endpoint: string,
+  sessionId: string,
+  slug: string,
+  reason?: string,
+): Promise<void> {
+  await postJson<unknown>(
+    `${endpoint}/internal/sessions/${sessionId}/escalations/by-slug/${encodeURIComponent(slug)}/cancel`,
     reason ? { reason } : {},
   );
 }

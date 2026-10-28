@@ -18,7 +18,7 @@ import {
   type SessionMeta,
   type SessionStatus,
 } from "./session";
-import type { ReportPolisher } from "./report-polish";
+import type { PolishedKind, ReportPolisher } from "./report-polish";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { emptyWorktreeTrash, realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
@@ -559,7 +559,7 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
 // report_submitted) before claude emits the turn's result line.
 function trackAutoNudge(ctx: ServerContext, sessionId: string, event: Event): void {
   if (ctx.maxAutoNudges <= 0) return;
-  if (event.kind === "report_submitted" || event.kind === "report_polishing") {
+  if (event.kind === "report_submitted" || event.kind === "report_polishing" || event.kind === "escalation_polishing") {
     ctx.reportedThisTurn.set(sessionId, true);
     ctx.autoNudgeCount.set(sessionId, 0);
     return;
@@ -1220,6 +1220,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/internal/sessions/:id/reports/:filename/cancel", postInternalReportCancel),
   defineRoute("POST", "/internal/sessions/:id/escalations", postInternalEscalations),
   defineRoute("POST", "/internal/sessions/:id/escalations/:filename/cancel", postInternalEscalationCancel),
+  defineRoute("POST", "/internal/sessions/:id/escalations/by-slug/:slug/cancel", postInternalEscalationCancelBySlug),
   defineRoute("POST", "/internal/sessions/:id/command-approvals", postInternalCommandApprovals),
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
   defineRoute("GET",  "/internal/sessions/:id/feedback/history", getInternalFeedbackHistory),
@@ -3275,7 +3276,7 @@ async function postInternalReports(req: Request, ctx: ServerContext, params: Rec
         return json({ error: `no such feedback message: ${replyTo}` }, 400);
       }
     }
-    if (ctx.reportPolisher && (meta.agentName ?? ctx.agentName) === "claude" && !meta.reportPolishDisabled) {
+    if (polishesSubmissions(ctx, meta)) {
       await acceptReportForPolish(ctx, meta, { slug: body.slug, content: body.content, replyTo, attachments });
       return json({ polishing: true });
     }
@@ -3337,6 +3338,8 @@ function reportPolishPendingDirFor(ctx: ServerContext, sessionId: string): strin
 }
 
 interface PendingReportPolish {
+  // Absent on drafts queued before escalations were polished: those are reports.
+  kind?: PolishedKind;
   slug: string;
   content: string;
   replyTo?: string;
@@ -3345,18 +3348,27 @@ interface PendingReportPolish {
 
 let pendingReportPolishCounter = 0;
 
+function polishesSubmissions(ctx: ServerContext, meta: SessionMeta): boolean {
+  return ctx.reportPolisher !== undefined && (meta.agentName ?? ctx.agentName) === "claude" && !meta.reportPolishDisabled;
+}
+
 async function acceptReportForPolish(ctx: ServerContext, meta: SessionMeta, report: SubmittedReport): Promise<void> {
-  const pending: PendingReportPolish = {
+  await queueSubmissionForPolish(ctx, meta, {
+    kind: "report",
     slug: report.slug,
     content: report.content,
     ...(report.replyTo && { replyTo: report.replyTo }),
     attachments: report.attachments.map(a => ({ name: a.name, base64: Buffer.from(a.bytes).toString("base64") })),
-  };
+  });
+}
+
+async function queueSubmissionForPolish(ctx: ServerContext, meta: SessionMeta, pending: PendingReportPolish): Promise<void> {
   const key = `${String(Date.now()).padStart(15, "0")}-${String(pendingReportPolishCounter++).padStart(6, "0")}`;
   await Bun.write(join(reportPolishPendingDirFor(ctx, meta.id), `${key}.json`), JSON.stringify(pending));
-  // Counts as the turn's report for the auto-nudge: the writer did report,
-  // the stored version just arrives later.
-  await appendAndBroadcast(ctx, meta.id, { kind: "report_polishing", payload: { slug: report.slug } });
+  // Counts as the turn's report or escalation for the auto-nudge: the writer
+  // did submit, the stored version just arrives later.
+  const kind = pending.kind === "escalation" ? "escalation_polishing" : "report_polishing";
+  await appendAndBroadcast(ctx, meta.id, { kind, payload: { slug: pending.slug } });
   drainReportPolishes(ctx, meta.id);
 }
 
@@ -3392,16 +3404,26 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
   const polisher = ctx.reportPolisher;
   if (meta && polisher) {
     const pending = (await Bun.file(pendingPath).json()) as PendingReportPolish;
+    const kind = pending.kind ?? "report";
     const outcome = await polisher({
       spawnCommand: reportPolishSpawnCommand(ctx, meta),
       cwd: meta.worktreePath,
       draft: pending.content,
-      allowReturn: !(await wasReportReturned(ctx, sessionId, pending.slug)),
+      kind,
+      allowReturn: !(await wasReturned(ctx, sessionId, kind, pending.slug)),
     });
+    if (!(await Bun.file(pendingPath).exists())) {
+      // The writer cancelled the escalation while it was being polished.
+      return;
+    }
+    // Reloaded because the session's status may have changed while the fork ran.
+    const current = (await loadSessionMeta(sessionId, ctx.sessionsDir)) ?? meta;
     if ("withdrawnReason" in outcome) {
       await withdrawReport(ctx, sessionId, pendingPath, pending, outcome.withdrawnReason);
     } else if ("returnedReason" in outcome) {
-      await returnReport(ctx, meta, pendingPath, pending, outcome.returnedReason);
+      await returnReport(ctx, current, pendingPath, pending, outcome.returnedReason);
+    } else if (kind === "escalation") {
+      await storeEscalation(ctx, current, pending.slug, outcome.report);
     } else {
       await storeReport(ctx, meta, {
         slug: pending.slug,
@@ -3437,11 +3459,11 @@ function reportPolishReturnedDirFor(ctx: ServerContext, sessionId: string): stri
   return join(ctx.sessionsDir, sessionId, "report-polish-returned");
 }
 
-async function wasReportReturned(ctx: ServerContext, sessionId: string, slug: string): Promise<boolean> {
+async function wasReturned(ctx: ServerContext, sessionId: string, kind: PolishedKind, slug: string): Promise<boolean> {
   const dir = reportPolishReturnedDirFor(ctx, sessionId);
   for (const name of await readdir(dir).catch(() => [] as string[])) {
-    const record = (await Bun.file(join(dir, name)).json().catch(() => null)) as { slug?: unknown } | null;
-    if (record?.slug === slug) return true;
+    const record = (await Bun.file(join(dir, name)).json().catch(() => null)) as { kind?: unknown; slug?: unknown } | null;
+    if ((record?.kind ?? "report") === kind && record?.slug === slug) return true;
   }
   return false;
 }
@@ -3456,12 +3478,16 @@ async function returnReport(
   pending: PendingReportPolish,
   reason: string,
 ): Promise<void> {
+  const kind = pending.kind ?? "report";
   await Bun.write(
     join(reportPolishReturnedDirFor(ctx, meta.id), basename(pendingPath)),
-    JSON.stringify({ slug: pending.slug, draft: pending.content, reason, returnedAt: new Date().toISOString() }),
+    JSON.stringify({ kind, slug: pending.slug, draft: pending.content, reason, returnedAt: new Date().toISOString() }),
   );
-  await appendAndBroadcast(ctx, meta.id, { kind: "report_returned", payload: { slug: pending.slug, reason } });
+  await appendAndBroadcast(ctx, meta.id, { kind: "report_returned", payload: { kind, slug: pending.slug, reason } });
+  const submitCommand = kind === "escalation" ? `worqload escalate submit --slug ${pending.slug}` : `worqload report submit --slug ${pending.slug}`;
   const feedback = reportReturnedScaffold
+    .replaceAll("{{kind}}", kind)
+    .replaceAll("{{submitCommand}}", submitCommand)
     .replaceAll("{{slug}}", pending.slug)
     .replaceAll("{{reason}}", reason)
     .replaceAll("{{draft}}", pending.content);
@@ -3494,16 +3520,25 @@ async function postInternalEscalations(req: Request, ctx: ServerContext, params:
     if (!body?.slug || typeof body.content !== "string") {
       return json({ error: "slug and content required" }, 400);
     }
-    const dir = askingDirFor(ctx, meta.id);
-    const file = await writeNumberedFile(dir, body.slug, body.content, {
-      archiveDirs: [join(dir, "resolved")],
-    });
-    if (!isTerminal(meta.status) && meta.status !== "waiting_human") {
-      await transitionStatus(ctx, meta, "waiting_human");
+    if (polishesSubmissions(ctx, meta)) {
+      await queueSubmissionForPolish(ctx, meta, { kind: "escalation", slug: body.slug, content: body.content, attachments: [] });
+      return json({ polishing: true });
     }
-    await appendAndBroadcast(ctx, meta.id, { kind: "escalation_requested", payload: { filename: file.filename } });
+    const file = await storeEscalation(ctx, meta, body.slug, body.content);
     return json({ filename: file.filename, seq: file.seq });
   });
+}
+
+async function storeEscalation(ctx: ServerContext, meta: SessionMeta, slug: string, content: string): Promise<NumberedFile> {
+  const dir = askingDirFor(ctx, meta.id);
+  const file = await writeNumberedFile(dir, slug, content, {
+    archiveDirs: [join(dir, "resolved")],
+  });
+  if (!isTerminal(meta.status) && meta.status !== "waiting_human") {
+    await transitionStatus(ctx, meta, "waiting_human");
+  }
+  await appendAndBroadcast(ctx, meta.id, { kind: "escalation_requested", payload: { filename: file.filename } });
+  return file;
 }
 
 // The agent withdraws its own unanswered escalation (`worqload escalate cancel`),
@@ -3515,26 +3550,61 @@ async function postInternalEscalationCancel(req: Request, ctx: ServerContext, pa
     if (!NUMBERED_FILENAME_RE.test(filename)) {
       return json({ error: `escalation filename must look like 003-question.md, got: ${filename}` }, 400);
     }
-    const askingDir = askingDirFor(ctx, meta.id);
-    const askingFilePath = join(askingDir, filename);
-    if (!(await Bun.file(askingFilePath).exists())) {
+    if (!(await Bun.file(join(askingDirFor(ctx, meta.id), filename)).exists())) {
       return json({ error: `no pending escalation: ${filename}` }, 404);
     }
-    const body = (await req.json().catch(() => ({}))) as { reason?: unknown };
-    const reason = typeof body.reason === "string" && body.reason.trim() !== "" ? body.reason.trim() : undefined;
-    const resolvedDir = join(askingDir, "resolved");
-    await moveFile(askingFilePath, join(resolvedDir, filename));
-    const sidecarPath = join(askingDir, commandSidecarFilename(filename));
-    if (await Bun.file(sidecarPath).exists()) {
-      await moveFile(sidecarPath, join(resolvedDir, commandSidecarFilename(filename)));
-    }
-    await appendAndBroadcast(ctx, meta.id, {
-      kind: "escalation_resolved",
-      payload: { filename, cancelled: true, ...(reason ? { reason } : {}) },
-    });
-    const updatedMeta = await resumeIfNoEscalationsPending(ctx, meta);
-    return json({ ok: true, filename, meta: updatedMeta });
+    return cancelStoredEscalation(ctx, meta, filename, await cancelReasonOf(req));
   });
+}
+
+// `worqload escalate cancel --slug`: a polished escalation's filename is
+// decided only when the polish stores it, after `escalate submit` returned,
+// so the writer names it by slug. A draft still waiting for its polish is
+// dropped; otherwise the newest unanswered escalation with the slug is
+// cancelled.
+async function postInternalEscalationCancelBySlug(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const slug = decodeURIComponent(params.slug);
+    const reason = await cancelReasonOf(req);
+    let droppedDraft = false;
+    for (const pendingPath of await listPendingReportPolishes(ctx, meta.id)) {
+      const pending = (await Bun.file(pendingPath).json()) as PendingReportPolish;
+      if (pending.kind !== "escalation" || pending.slug !== slug) continue;
+      await rm(pendingPath, { force: true });
+      droppedDraft = true;
+    }
+    if (droppedDraft) {
+      await appendAndBroadcast(ctx, meta.id, { kind: "escalation_polish_cancelled", payload: { slug, ...(reason ? { reason } : {}) } });
+      return json({ ok: true, slug });
+    }
+    const stored = (await listAllFiles(askingDirFor(ctx, meta.id)))
+      .filter(entry => entry.filename.replace(/^\d+-/, "").replace(/\.md$/, "") === slug)
+      .at(-1);
+    if (!stored) return json({ error: `no pending escalation with slug: ${slug}` }, 404);
+    return cancelStoredEscalation(ctx, meta, stored.filename, reason);
+  });
+}
+
+async function cancelReasonOf(req: Request): Promise<string | undefined> {
+  const body = (await req.json().catch(() => ({}))) as { reason?: unknown };
+  return typeof body.reason === "string" && body.reason.trim() !== "" ? body.reason.trim() : undefined;
+}
+
+async function cancelStoredEscalation(ctx: ServerContext, meta: SessionMeta, filename: string, reason: string | undefined): Promise<Response> {
+  const askingDir = askingDirFor(ctx, meta.id);
+  const askingFilePath = join(askingDir, filename);
+  const resolvedDir = join(askingDir, "resolved");
+  await moveFile(askingFilePath, join(resolvedDir, filename));
+  const sidecarPath = join(askingDir, commandSidecarFilename(filename));
+  if (await Bun.file(sidecarPath).exists()) {
+    await moveFile(sidecarPath, join(resolvedDir, commandSidecarFilename(filename)));
+  }
+  await appendAndBroadcast(ctx, meta.id, {
+    kind: "escalation_resolved",
+    payload: { filename, cancelled: true, ...(reason ? { reason } : {}) },
+  });
+  const updatedMeta = await resumeIfNoEscalationsPending(ctx, meta);
+  return json({ ok: true, filename, meta: updatedMeta });
 }
 
 interface CommandApprovalBody {

@@ -29,13 +29,14 @@ function describeOutcome(outcome: PolishOutcome): string {
   return "returnedReason" in outcome ? `returned: ${outcome.returnedReason}` : `withdrawn: ${outcome.withdrawnReason}`;
 }
 
-function polishWith(replies: string[], overrides: { draft?: string; allowReturn?: boolean } = {}) {
+function polishWith(replies: string[], overrides: { draft?: string; allowReturn?: boolean; kind?: "report" | "escalation" } = {}) {
   const polish = makeClaudeReportPolisher();
   return polish({
     spawnCommand: ["bun", MOCK, "replies", ...replies],
     cwd: process.cwd(),
     draft: overrides.draft ?? "原稿",
     allowReturn: overrides.allowReturn ?? true,
+    kind: overrides.kind ?? "report",
   }).then(describeOutcome);
 }
 
@@ -64,7 +65,7 @@ test("the second round's text is stored even when it still reports violations", 
 });
 
 test("the draft and the marks reach the fork's instruction", () => {
-  const instruction = buildReportPolishInstruction("提出された原稿", { allowReturn: true });
+  const instruction = buildReportPolishInstruction("提出された原稿", { allowReturn: true, kind: "report" });
   expect(instruction).toContain("提出された原稿");
   expect(instruction).toContain(POLISHED_REPORT_BEGIN);
   expect(instruction).toContain(POLISHED_REPORT_END);
@@ -74,7 +75,7 @@ test("the draft and the marks reach the fork's instruction", () => {
 });
 
 test("an instruction for a draft that may not be returned again leaves out the return mark", () => {
-  expect(buildReportPolishInstruction("提出された原稿", { allowReturn: false })).not.toContain(REPORT_RETURN_MARK);
+  expect(buildReportPolishInstruction("提出された原稿", { allowReturn: false, kind: "report" })).not.toContain(REPORT_RETURN_MARK);
 });
 
 test("the fork runs with the polish mark and without the session identity", async () => {
@@ -94,13 +95,13 @@ test("a second round without the report markers keeps the first round's text", a
 
 test("a fork that exits non-zero falls back to the draft", async () => {
   const polish = makeClaudeReportPolisher();
-  const out = await polish({ spawnCommand: ["bun", MOCK, "crash"], cwd: process.cwd(), draft: "原稿", allowReturn: true });
+  const out = await polish({ spawnCommand: ["bun", MOCK, "crash"], cwd: process.cwd(), draft: "原稿", allowReturn: true, kind: "report" });
   expect(out).toEqual({ report: "原稿" });
 });
 
 test("a fork that never answers is killed at the timeout and the draft is stored", async () => {
   const polish = makeClaudeReportPolisher({ timeoutMs: 300 });
-  const out = await polish({ spawnCommand: ["bun", MOCK, "hang"], cwd: process.cwd(), draft: "原稿", allowReturn: true });
+  const out = await polish({ spawnCommand: ["bun", MOCK, "hang"], cwd: process.cwd(), draft: "原稿", allowReturn: true, kind: "report" });
   expect(out).toEqual({ report: "原稿" });
 });
 
@@ -130,4 +131,25 @@ test("a round that both returns and withdraws the report is read as the return",
   // A return reaches the writer, who can still decide to submit nothing; a
   // withdrawal drops the report without the writer knowing.
   expect(await polishWith([`${withdrawReply("不要")}\n${returnReply("調査がない")}`])).toBe("returned: 調査がない");
+});
+
+test("an escalation's instruction carries the draft and the return mark but not the withdraw mark", () => {
+  const instruction = buildReportPolishInstruction("提出された問い", { allowReturn: true, kind: "escalation" });
+  expect(instruction).toContain("提出された問い");
+  expect(instruction).toContain(POLISHED_REPORT_BEGIN);
+  expect(instruction).toContain(REPORT_RETURN_MARK);
+  expect(instruction).not.toContain(REPORT_WITHDRAW_MARK);
+  expect(instruction).not.toContain("{{");
+});
+
+test("an escalation may not be returned again once returned", () => {
+  expect(buildReportPolishInstruction("提出された問い", { allowReturn: false, kind: "escalation" })).not.toContain(REPORT_RETURN_MARK);
+});
+
+test("an escalation is never withdrawn, since its writer waits for the answer", async () => {
+  expect(await polishWith([withdrawReply("不要")], { draft: "問いの原稿", kind: "escalation" })).toBe("問いの原稿");
+});
+
+test("an escalation may be returned to its writer", async () => {
+  expect(await polishWith([returnReply("自分で決められる")], { kind: "escalation" })).toBe("returned: 自分で決められる");
 });
