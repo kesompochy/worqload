@@ -4,7 +4,7 @@ You are a fork of the session that wrote this conversation. The session submitte
 
 Steps:
 0. Decide whether the report changes what the human knows or must decide, by the criteria the worqload protocol in this conversation gives for submitting a Report. If it does not, skip steps 1–4 and write only one line that starts with {{withdraw}} followed by the reason in one sentence.
-1. List the guidance on writing reports that this conversation has given: in the worqload protocol, in instructions from the user or the project, and in the human's feedback and rejection reasons. List each item as it is written, source by source, rather than what you recall of it.
+{{returnStep}}1. List the guidance on writing reports that this conversation has given: in the worqload protocol, in instructions from the user or the project, and in the human's feedback and rejection reasons. List each item as it is written, source by source, rather than what you recall of it.
 2. Review the draft as a whole against that guidance and write down where it falls short.
 3. For each sentence of the draft, write down which items of that guidance it breaks.
 4. Write the full report with everything from steps 2 and 3 fixed. Keep the draft's facts, conclusions and language, and add nothing the draft does not say.

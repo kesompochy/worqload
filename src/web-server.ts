@@ -45,6 +45,7 @@ import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClau
 import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
+import reportReturnedScaffold from "./prompts/report-returned-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -3395,9 +3396,12 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
       spawnCommand: reportPolishSpawnCommand(ctx, meta),
       cwd: meta.worktreePath,
       draft: pending.content,
+      allowReturn: !(await wasReportReturned(ctx, sessionId, pending.slug)),
     });
     if ("withdrawnReason" in outcome) {
       await withdrawReport(ctx, sessionId, pendingPath, pending, outcome.withdrawnReason);
+    } else if ("returnedReason" in outcome) {
+      await returnReport(ctx, meta, pendingPath, pending, outcome.returnedReason);
     } else {
       await storeReport(ctx, meta, {
         slug: pending.slug,
@@ -3427,6 +3431,41 @@ async function withdrawReport(
     JSON.stringify({ slug: pending.slug, draft: pending.content, reason, withdrawnAt: new Date().toISOString() }),
   );
   await appendAndBroadcast(ctx, sessionId, { kind: "report_withdrawn", payload: { slug: pending.slug, reason } });
+}
+
+function reportPolishReturnedDirFor(ctx: ServerContext, sessionId: string): string {
+  return join(ctx.sessionsDir, sessionId, "report-polish-returned");
+}
+
+async function wasReportReturned(ctx: ServerContext, sessionId: string, slug: string): Promise<boolean> {
+  const dir = reportPolishReturnedDirFor(ctx, sessionId);
+  for (const name of await readdir(dir).catch(() => [] as string[])) {
+    const record = (await Bun.file(join(dir, name)).json().catch(() => null)) as { slug?: unknown } | null;
+    if (record?.slug === slug) return true;
+  }
+  return false;
+}
+
+// Kept and announced like a withdrawal, and also sent to the writer: unlike a
+// withdrawal, the fork judged that the human may need the report once the
+// writer has done the investigation it lacks.
+async function returnReport(
+  ctx: ServerContext,
+  meta: SessionMeta,
+  pendingPath: string,
+  pending: PendingReportPolish,
+  reason: string,
+): Promise<void> {
+  await Bun.write(
+    join(reportPolishReturnedDirFor(ctx, meta.id), basename(pendingPath)),
+    JSON.stringify({ slug: pending.slug, draft: pending.content, reason, returnedAt: new Date().toISOString() }),
+  );
+  await appendAndBroadcast(ctx, meta.id, { kind: "report_returned", payload: { slug: pending.slug, reason } });
+  const feedback = reportReturnedScaffold
+    .replaceAll("{{slug}}", pending.slug)
+    .replaceAll("{{reason}}", reason)
+    .replaceAll("{{draft}}", pending.content);
+  await queueFeedbackAndWake(ctx, meta, "report-returned", feedback, "report_returned");
 }
 
 // The fork must run in print mode with stream-json whatever driver the writer

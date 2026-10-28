@@ -112,6 +112,8 @@ export function describeEvent(event) {
       return { summary: `✎ polishing ${payload?.slug ?? "report"}`, sections: [payloadSection(payload)] };
     case "report_withdrawn":
       return { summary: `⊘ withdrawn ${payload?.slug ?? "report"}: ${oneLine(payload?.reason ?? "")}`.trimEnd(), sections: [payloadSection(payload)] };
+    case "report_returned":
+      return { summary: `↩ returned ${payload?.slug ?? "report"}: ${oneLine(payload?.reason ?? "")}`.trimEnd(), sections: [payloadSection(payload)] };
     case "report_read": {
       const names = Array.isArray(payload?.filenames) ? payload.filenames : [];
       if (names.length > 0) {
