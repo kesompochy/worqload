@@ -159,6 +159,41 @@ test("a codex session's report is stored as submitted without a polish", async (
   expect(gate.requests).toEqual([]);
 });
 
+test("a claude session whose 推敲モード is turned off stores its report as submitted without a polish", async () => {
+  const gate = gatedPolisher(() => "使われないはずの推敲");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  const toggled = await postJson(baseUrl, `/sessions/${session.id}/report-polish`, { enabled: false });
+  expect((await toggled.json()).meta.reportPolishDisabled).toBe(true);
+
+  const res = await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "plan", content: "書き手の原稿" });
+  expect((await res.json()).filename).toBeDefined();
+  expect((await storedReports(baseUrl, session.id)).map(r => r.content)).toEqual(["書き手の原稿"]);
+  expect(gate.requests).toEqual([]);
+});
+
+test("turning 推敲モード back on polishes the session's next report", async () => {
+  const gate = gatedPolisher(() => "推敲された本文");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/sessions/${session.id}/report-polish`, { enabled: false });
+  const toggled = await postJson(baseUrl, `/sessions/${session.id}/report-polish`, { enabled: true });
+  expect((await toggled.json()).meta.reportPolishDisabled).toBeUndefined();
+
+  const res = await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "plan", content: "書き手の原稿" });
+  expect(await res.json()).toEqual({ polishing: true });
+});
+
+test("the 推敲モード toggle rejects a body without a boolean", async () => {
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"));
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  const res = await postJson(baseUrl, `/sessions/${session.id}/report-polish`, { enabled: "no" });
+  expect(res.status).toBe(400);
+});
+
 test("a draft accepted before a server restart is polished and stored by the next server", async () => {
   const repoDir = makeTmpDir("repo");
   const never: ReportPolisher = () => new Promise(() => {});
