@@ -56,5 +56,5 @@ rm /tmp/worqload-archive.db
 ## Prompts
 
 - Prompts sent to agents are authored as plain `.txt` files under `src/prompts/`, with `{{placeholder}}` tokens for dynamic values. Add new prompts there rather than inlining them in code.
-- worqload is OSS used by people with different tastes. Keep in its prompts only what every user needs: procedures (how to polish, how to submit) and the protocol worqload itself runs on. What makes a report good — which sentences to cut, tone, wording norms — is one user's taste: leave it to what the user and project give (their CLAUDE.md, the `protocolPrefix` and other config, feedback), and when worqload must act on it, make it pluggable through config rather than writing it into `src/prompts/`.
+- Prompts hold procedures only. Writing norms are the user's taste: make them pluggable through config, not text in `src/prompts/`.
 - Asserting that a prompt contains a specific string is out of scope for automated tests. Prompt wording is tuned constantly; substring assertions only break on every reword without catching real regressions. Test the wiring (does the prompt reach the agent, is the placeholder substituted) — never the wording.
