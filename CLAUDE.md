@@ -56,5 +56,5 @@ rm /tmp/worqload-archive.db
 ## Prompts
 
 - Prompts sent to agents are authored as plain `.txt` files under `src/prompts/`, with `{{placeholder}}` tokens for dynamic values. Add new prompts there rather than inlining them in code.
-- Prompts hold procedures only. Writing norms are the user's taste: make them pluggable through config, not text in `src/prompts/`.
+- Prompts hold procedures only. Writing norms are the user's taste: make them pluggable through config.
 - Asserting that a prompt contains a specific string is out of scope for automated tests. Prompt wording is tuned constantly; substring assertions only break on every reword without catching real regressions. Test the wiring (does the prompt reach the agent, is the placeholder substituted) — never the wording.
