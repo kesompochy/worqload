@@ -1,3 +1,6 @@
 The human rejected your report `{{filename}}`. It is hidden from the human's timeline and was not read as a report.{{reason}}
 
-The rejected text is still readable at `.worqload-reports/{{filename}}`. Rewrite it as a complete report the human can read on its own, then submit it again: `worqload report submit --slug {{slug}}`.
+The rejected text is still readable at `.worqload-reports/{{filename}}`. Decide whether the human needs what it says, and do one of the following:
+
+- If they do, rewrite it as a complete report the human can read on its own and submit it again: `worqload report submit --slug {{slug}}`.
+- If they do not, submit nothing.
