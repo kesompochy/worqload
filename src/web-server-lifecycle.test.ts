@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { listAllFeedback } from "./archive-store";
 import { appendEvent, readEvents } from "./event-log";
 import { agentEndpointPath, hostLogPath, loadSessionMeta, saveSessionMeta } from "./session";
 import {
@@ -1333,4 +1334,21 @@ test("GET /sessions/:id/asking returns pending escalations", async () => {
   const res = await fetch(`${baseUrl}/sessions/${sid}/asking`).then((r) => r.json());
   expect(res.asking).toHaveLength(1);
   expect(res.asking[0].content).toBe("X or Y?");
+});
+
+test("an escalation's answer and a command decision with its human note are archived as the feedback the agent received", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, { archiveDbPath: join(repoDir, "archive.db") });
+  const sid = (await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json())).meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "lib", content: "X or Y?" });
+  await postJson(baseUrl, `/sessions/${sid}/escalations/001-lib.md/resolve`, { content: "go with X" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "npm publish", reason: "release" });
+  await postJson(baseUrl, `/sessions/${sid}/escalations/002-command-approval.md/resolve`, { decision: "reject", content: "まだ出さない" });
+
+  const rows = listAllFeedback(ctx.archiveDb!).filter((r) => r.sessionId === sid);
+  const answer = rows.find((r) => r.body.includes("go with X"));
+  expect(answer?.body).toContain("X or Y?");
+  const rejection = rows.find((r) => r.body.includes("まだ出さない"));
+  expect(rejection?.body).toContain("npm publish");
 });
