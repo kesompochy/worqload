@@ -337,3 +337,37 @@ test("openArchiveDb creates parent directories", async () => {
     db.close();
   }
 });
+
+test("insertPolish stores a polish with its draft, rounds and outcome", async () => {
+  const { openArchiveDb, insertPolish, listPolishes } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    insertPolish(db, {
+      repo: "github.com/foo/bar",
+      sessionId: "abc-123",
+      kind: "report",
+      slug: "plan",
+      draft: "原稿",
+      rounds: ["1回目の出力", "2回目の出力"],
+      outcome: "stored",
+      result: "推敲版",
+      storedFilename: "001-plan.md",
+      createdAt: "2026-10-29T00:00:00Z",
+    });
+    expect(listPolishes(db, "abc-123")).toEqual([{
+      repo: "github.com/foo/bar",
+      sessionId: "abc-123",
+      kind: "report",
+      slug: "plan",
+      draft: "原稿",
+      rounds: ["1回目の出力", "2回目の出力"],
+      outcome: "stored",
+      result: "推敲版",
+      storedFilename: "001-plan.md",
+      createdAt: "2026-10-29T00:00:00Z",
+    }]);
+    expect(listPolishes(db, "other")).toEqual([]);
+  } finally {
+    db.close();
+  }
+});

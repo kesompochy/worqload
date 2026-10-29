@@ -37,6 +37,23 @@ CREATE TABLE IF NOT EXISTS feedback (
   UNIQUE(session_id, filename)
 );
 
+-- One row per draft that went through the polish fork. rounds is a JSON
+-- array of the fork's output per round. result is the stored text for
+-- stored and cancelled, and the fork's reason for withdrawn and returned.
+CREATE TABLE IF NOT EXISTS polishes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  draft TEXT NOT NULL,
+  rounds TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  result TEXT NOT NULL,
+  stored_filename TEXT,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   session_id TEXT PRIMARY KEY,
   repo TEXT NOT NULL,
@@ -113,6 +130,67 @@ export function insertFeedback(db: Database, row: FeedbackRow): void {
     $anchorLineEnd: row.anchorLineEnd,
     $createdAt: row.createdAt,
   });
+}
+
+export interface PolishRow {
+  repo: string;
+  sessionId: string;
+  kind: "report" | "escalation";
+  slug: string;
+  draft: string;
+  rounds: string[];
+  // cancelled: the writer cancelled the escalation while the fork ran.
+  outcome: "stored" | "withdrawn" | "returned" | "cancelled";
+  result: string;
+  storedFilename: string | null;
+  createdAt: string;
+}
+
+export function insertPolish(db: Database, row: PolishRow): void {
+  db.query(`
+    INSERT INTO polishes
+      (repo, session_id, kind, slug, draft, rounds, outcome, result, stored_filename, created_at)
+    VALUES
+      ($repo, $sessionId, $kind, $slug, $draft, $rounds, $outcome, $result, $storedFilename, $createdAt)
+  `).run({
+    $repo: row.repo,
+    $sessionId: row.sessionId,
+    $kind: row.kind,
+    $slug: row.slug,
+    $draft: row.draft,
+    $rounds: JSON.stringify(row.rounds),
+    $outcome: row.outcome,
+    $result: row.result,
+    $storedFilename: row.storedFilename,
+    $createdAt: row.createdAt,
+  });
+}
+
+export function listPolishes(db: Database, sessionId: string): PolishRow[] {
+  const rows = db.query("SELECT * FROM polishes WHERE session_id = $sessionId ORDER BY id").all({ $sessionId: sessionId }) as {
+    repo: string;
+    session_id: string;
+    kind: PolishRow["kind"];
+    slug: string;
+    draft: string;
+    rounds: string;
+    outcome: PolishRow["outcome"];
+    result: string;
+    stored_filename: string | null;
+    created_at: string;
+  }[];
+  return rows.map(r => ({
+    repo: r.repo,
+    sessionId: r.session_id,
+    kind: r.kind,
+    slug: r.slug,
+    draft: r.draft,
+    rounds: JSON.parse(r.rounds) as string[],
+    outcome: r.outcome,
+    result: r.result,
+    storedFilename: r.stored_filename,
+    createdAt: r.created_at,
+  }));
 }
 
 export interface SessionRow {

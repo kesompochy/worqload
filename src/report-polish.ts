@@ -56,7 +56,9 @@ export interface ReportPolishRequest {
 // `returnedReason` means its claims do not follow from what the conversation
 // established, and the writer has to investigate before submitting again.
 export type PolishOutcome = { report: string } | { withdrawnReason: string } | { returnedReason: string };
-export type ReportPolisher = (request: ReportPolishRequest) => Promise<PolishOutcome>;
+// `rounds` is the fork's output of each round, kept for the archive.
+export type PolishResult = PolishOutcome & { rounds?: string[] };
+export type ReportPolisher = (request: ReportPolishRequest) => Promise<PolishResult>;
 
 export function buildReportPolishInstruction(draft: string, opts: { allowReturn: boolean; kind: PolishedKind }): string {
   const [template, returnStep] = opts.kind === "escalation"
@@ -172,9 +174,11 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
     };
 
     let outcome: PolishOutcome = { report: draft };
+    const rounds: string[] = [];
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
         const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft, { allowReturn, kind }) : recheckInstruction);
+        if (output !== null) rounds.push(output);
         const parsed = output === null ? null : parsePolishRound(output, { allowReturn, kind });
         if (parsed === null) break;
         if (!("report" in parsed)) {
@@ -194,6 +198,6 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
       clearTimeout(timer);
       await Promise.allSettled([stdoutTask, stderrTask]);
     }
-    return outcome;
+    return { ...outcome, rounds };
   };
 }

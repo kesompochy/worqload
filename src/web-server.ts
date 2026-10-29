@@ -42,7 +42,7 @@ import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./ski
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
 import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClaudeCommandWithKb } from "./kb";
-import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, upsertSession as archiveUpsertSession } from "./archive-store";
+import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, insertPolish as archiveInsertPolish, upsertSession as archiveUpsertSession, type PolishRow } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
 import reportReturnedScaffold from "./prompts/report-returned-feedback.txt" with { type: "text" };
@@ -3412,30 +3412,50 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
       kind,
       allowReturn: !(await wasReturned(ctx, sessionId, kind, pending.slug)),
     });
+    const archive = (outcomeName: PolishRow["outcome"], result: string, storedFilename: string | null) =>
+      archivePolish(ctx, meta, { kind, slug: pending.slug, draft: pending.content, rounds: outcome.rounds ?? [], outcome: outcomeName, result, storedFilename });
     if (!(await Bun.file(pendingPath).exists())) {
       // The writer cancelled the escalation while it was being polished.
+      archive("cancelled", "report" in outcome ? outcome.report : "", null);
       return;
     }
     // Reloaded because the session's status may have changed while the fork ran.
     const current = (await loadSessionMeta(sessionId, ctx.sessionsDir)) ?? meta;
     if ("withdrawnReason" in outcome) {
       await withdrawReport(ctx, sessionId, pendingPath, pending, outcome.withdrawnReason);
+      archive("withdrawn", outcome.withdrawnReason, null);
     } else if ("returnedReason" in outcome) {
       await returnReport(ctx, current, pendingPath, pending, outcome.returnedReason);
+      archive("returned", outcome.returnedReason, null);
     } else if (kind === "escalation") {
-      await storeEscalation(ctx, current, pending.slug, outcome.report);
+      const file = await storeEscalation(ctx, current, pending.slug, outcome.report);
+      archive("stored", outcome.report, file.filename);
     } else {
-      await storeReport(ctx, meta, {
+      const content = outcome.report.trim() === pending.content.trim() ? pending.content : outcome.report;
+      const file = await storeReport(ctx, meta, {
         slug: pending.slug,
-        ...(outcome.report.trim() === pending.content.trim()
-          ? { content: pending.content }
-          : { content: outcome.report, polished: true as const }),
+        content,
+        ...(content !== pending.content && { polished: true as const }),
         ...(pending.replyTo && { replyTo: pending.replyTo }),
         attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
       });
+      archive("stored", content, file.filename);
     }
   }
   await rm(pendingPath, { force: true });
+}
+
+function archivePolish(ctx: ServerContext, meta: SessionMeta, polish: Omit<PolishRow, "repo" | "sessionId" | "createdAt">): void {
+  if (!ctx.archiveDb) return;
+  try {
+    archiveUpsertSession(ctx.archiveDb, {
+      sessionId: meta.id,
+      repo: ctx.repoIdentifier,
+      initialPrompt: meta.prompt,
+      createdAt: meta.createdAt,
+    });
+    archiveInsertPolish(ctx.archiveDb, { ...polish, repo: ctx.repoIdentifier, sessionId: meta.id, createdAt: new Date().toISOString() });
+  } catch { /* archive is best-effort */ }
 }
 
 // The withdrawn draft is kept beside the session, and announced on the
