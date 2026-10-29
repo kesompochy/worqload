@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import type { Socket } from "bun";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { readEvents } from "../event-log";
 import { createSession, loadSessionMeta, saveSessionMeta } from "../session";
 import {
   encodeMessage,
@@ -367,4 +368,60 @@ test("when the driver factory throws, runHost keeps the listener up so a late-co
 
   const code = await hostExit;
   expect(code).toBe(1);
+});
+
+test("runHost records a user_message_sent event before handing a send_user message to the driver", async () => {
+  const sessionsDir = makeTmpDir("driver-test");
+  const worktree = makeTmpDir("driver-test-wt");
+  const meta = createSession({
+    prompt: "do thing",
+    baseBranch: "main",
+    baseCommit: "abc123",
+    worktreePath: worktree,
+    branchName: "driver-test",
+  });
+  await saveSessionMeta(meta, sessionsDir);
+  mkdirSync(join(sessionsDir, meta.id), { recursive: true });
+  const socketPath = join(makeTmpDir("driver-test-sock"), `${meta.id.slice(0, 8)}.sock`);
+
+  const fake = makeFakeDriver();
+  const recordedAtSend: string[][] = [];
+  const factory: SessionDriverFactory = async (opts) => {
+    const driver = await fake.factory(opts);
+    return {
+      ...driver,
+      async sendUserMessage(text, source) {
+        recordedAtSend.push((await readEvents(meta.id, 1, sessionsDir)).map((e) => e.kind));
+        await driver.sendUserMessage(text, source);
+      },
+    };
+  };
+  const hostExit = runHost({
+    sessionId: meta.id,
+    sessionsDir,
+    socketPath,
+    agentEndpoint: "http://127.0.0.1:0",
+    spawnCommand: ["this-should-not-be-executed"],
+    driver: factory,
+  });
+
+  const client = await connectClient(socketPath);
+  client.send({ type: "hello", sinceSeq: 0 });
+  await client.next((m) => m.type === "replay_done");
+  const bootstrapDeadline = Date.now() + 2000;
+  while (fake.sent.length < 1 && Date.now() < bootstrapDeadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  client.send({ type: "send_user", text: "ping" });
+  const deadline = Date.now() + 2000;
+  while (fake.sent.length < 2 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  expect(recordedAtSend[1]?.at(-1)).toBe("user_message_sent");
+
+  client.send({ type: "kill", signal: "SIGTERM" });
+  fake.exit(0);
+  await hostExit;
 });

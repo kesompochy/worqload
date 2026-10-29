@@ -16,6 +16,11 @@ export type EventKind =
   // instead of sniffing per-driver shapes. Carries no payload; the preceding
   // agent event holds the detail. Drives the report-less auto-nudge.
   | "turn_completed"
+  // The host handed the agent a message after its first one. With the agent
+  // events and turn_completed, it lets the server tell a session whose agent
+  // is working from one whose agent has finished its turn, before the agent's
+  // first reply to that message arrives.
+  | "user_message_sent"
   | "report_submitted"
   // A claude session's draft was accepted and is being polished in a fork;
   // report_submitted follows once the polished text is stored.
