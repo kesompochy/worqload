@@ -120,13 +120,25 @@ export async function requestCommandApproval(
   command: string,
   reason: string,
   timeoutSeconds?: number,
-): Promise<CommandApprovalResult> {
+): Promise<CommandApprovalResult | ReportPolishing> {
   const timeoutMs = typeof timeoutSeconds === "number" && timeoutSeconds > 0
     ? timeoutSeconds * 1000
     : undefined;
-  return postJson<CommandApprovalResult>(
+  return postJson<CommandApprovalResult | ReportPolishing>(
     `${endpoint}/internal/sessions/${sessionId}/command-approvals`,
     { command, ...(reason ? { reason } : {}), ...(timeoutMs ? { timeoutMs } : {}) },
+  );
+}
+
+export async function cancelCommandApproval(
+  endpoint: string,
+  sessionId: string,
+  command: string,
+  reason?: string,
+): Promise<void> {
+  await postJson<unknown>(
+    `${endpoint}/internal/sessions/${sessionId}/command-approvals/cancel`,
+    { command, ...(reason ? { reason } : {}) },
   );
 }
 

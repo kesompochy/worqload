@@ -160,7 +160,7 @@ export function insertFeedback(db: Database, row: FeedbackRow): void {
 export interface PolishRow {
   repo: string;
   sessionId: string;
-  kind: "report" | "escalation";
+  kind: "report" | "escalation" | "command";
   slug: string;
   draft: string;
   rounds: string[];

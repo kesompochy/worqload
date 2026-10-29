@@ -3,15 +3,17 @@
 //   `worqload escalate command --command "<cmd>"`   (reason via stdin, required)
 //   `worqload escalate cancel <filename> [--reason <text>]`
 //   `worqload escalate cancel --slug <slug> [--reason <text>]`
+//   `worqload escalate cancel --command <cmd> [--reason <text>]`
 
-import { submitEscalation, cancelEscalation, cancelEscalationBySlug, requestCommandApproval } from "../agent-client";
+import { submitEscalation, cancelEscalation, cancelEscalationBySlug, cancelCommandApproval, requestCommandApproval } from "../agent-client";
 import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, exitWithUsage } from "./cli-helpers";
 
 const USAGE =
   "worqload escalate submit --slug <slug>          (question body via stdin)\n" +
   "       worqload escalate command --command <cmd> [--timeout <seconds>]  (reason via stdin, required)\n" +
   "       worqload escalate cancel <filename> [--reason <text>]\n" +
-  "       worqload escalate cancel --slug <slug> [--reason <text>]";
+  "       worqload escalate cancel --slug <slug> [--reason <text>]\n" +
+  "       worqload escalate cancel --command <cmd> [--reason <text>]";
 
 export async function escalate(args: string[]): Promise<void> {
   switch (args[0]) {
@@ -76,7 +78,15 @@ async function escalateCommand(args: string[]): Promise<void> {
   const endpoint = resolveAgentEndpoint();
   try {
     const result = await requestCommandApproval(endpoint, sessionId, command, reason, timeoutSeconds);
-    console.log(result.filename);
+    if ("polishing" in result) {
+      console.log(
+        "command approval request accepted: worqload is polishing its reason in a fork of this conversation and shows " +
+          "the polished request to the human, or returns it to your feedback inbox with the reason. Its filename is " +
+          "decided when it is shown, so cancel it with `worqload escalate cancel --command <the same command>`.",
+      );
+    } else {
+      console.log(result.filename);
+    }
   } catch (err) {
     console.error(`escalate command failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
@@ -85,8 +95,9 @@ async function escalateCommand(args: string[]): Promise<void> {
 
 async function escalateCancel(args: string[]): Promise<void> {
   const slug = optionalFlag(args, "--slug");
+  const command = optionalFlag(args, "--command");
   const filename = args[0];
-  if (slug === undefined && (filename === undefined || filename.startsWith("--"))) exitWithUsage(USAGE);
+  if (slug === undefined && command === undefined && (filename === undefined || filename.startsWith("--"))) exitWithUsage(USAGE);
   const reason = optionalFlag(args, "--reason");
   const sessionId = requireEnv("WORQLOAD_SESSION_ID");
   const endpoint = resolveAgentEndpoint();
@@ -94,6 +105,9 @@ async function escalateCancel(args: string[]): Promise<void> {
     if (slug !== undefined) {
       await cancelEscalationBySlug(endpoint, sessionId, slug, reason);
       console.log(`cancelled ${slug}`);
+    } else if (command !== undefined) {
+      await cancelCommandApproval(endpoint, sessionId, command, reason);
+      console.log(`cancelled the approval request for ${command}`);
     } else {
       await cancelEscalation(endpoint, sessionId, filename!, reason);
       console.log(`cancelled ${filename}`);

@@ -29,7 +29,7 @@ function describeOutcome(outcome: PolishOutcome): string {
   return "returnedReason" in outcome ? `returned: ${outcome.returnedReason}` : `withdrawn: ${outcome.withdrawnReason}`;
 }
 
-function polishWith(replies: string[], overrides: { draft?: string; allowReturn?: boolean; kind?: "report" | "escalation" } = {}) {
+function polishWith(replies: string[], overrides: { draft?: string; allowReturn?: boolean; kind?: "report" | "escalation" | "command"; command?: string } = {}) {
   const polish = makeClaudeReportPolisher();
   return polish({
     spawnCommand: ["bun", MOCK, "replies", ...replies],
@@ -37,6 +37,7 @@ function polishWith(replies: string[], overrides: { draft?: string; allowReturn?
     draft: overrides.draft ?? "原稿",
     allowReturn: overrides.allowReturn ?? true,
     kind: overrides.kind ?? "report",
+    ...(overrides.command !== undefined && { command: overrides.command }),
   }).then(describeOutcome);
 }
 
@@ -164,4 +165,17 @@ test("the polish carries each round's fork output", async () => {
     kind: "report",
   });
   expect(out.rounds).toEqual([polishedReply("推敲版その1"), polishedReply("推敲版その2")]);
+});
+
+test("a command approval's instruction carries the reason, the command it must not change, and the return mark but not the withdraw mark", () => {
+  const instruction = buildReportPolishInstruction("承認依頼の理由", { allowReturn: true, kind: "command", command: "gh pr create --body-file pr.md" });
+  expect(instruction).toContain("承認依頼の理由");
+  expect(instruction).toContain("gh pr create --body-file pr.md");
+  expect(instruction).toContain(REPORT_RETURN_MARK);
+  expect(instruction).not.toContain(REPORT_WITHDRAW_MARK);
+  expect(instruction).not.toContain("{{");
+});
+
+test("a command approval is never withdrawn, since its writer waits for the decision", async () => {
+  expect(await polishWith([withdrawReply("不要")], { draft: "理由の原稿", kind: "command", command: "npm publish" })).toBe("理由の原稿");
 });
