@@ -503,3 +503,122 @@ test("a return and a cancellation of a polishing escalation are archived", async
   expect(listCancellations(ctx.archiveDb!, session.id)).toMatchObject([{ kind: "escalation", target: "q", reason: "解決した" }]);
   await gate.release(1);
 });
+
+async function requestApproval(baseUrl: string, sessionId: string, command: string, reason: string): Promise<Response> {
+  return postJson(baseUrl, `/internal/sessions/${sessionId}/command-approvals`, { command, reason });
+}
+
+test("a claude session's command approval is shown with the fork's polished reason and the command as submitted", async () => {
+  const gate = gatedPolisher(r => r.kind === "command" ? "推敲された理由" : r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  const res = await requestApproval(baseUrl, session.id, "gh pr create --body-file pr.md", "理由の原稿");
+  expect(await res.json()).toEqual({ polishing: true });
+  expect(await pendingEscalations(baseUrl, session.id)).toEqual([]);
+
+  await gate.release(0);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the approval to be stored");
+  const [shown] = (await pendingEscalations(baseUrl, session.id)) as { filename: string; content: string; command?: string }[];
+  expect(shown.command).toBe("gh pr create --body-file pr.md");
+  expect(shown.content).toContain("推敲された理由");
+  expect(shown.content).not.toContain("理由の原稿");
+  expect(gate.requests[0]).toMatchObject({ kind: "command", draft: "理由の原稿", command: "gh pr create --body-file pr.md", allowReturn: true });
+  expect((await loadSessionMeta(session.id, ctx.sessionsDir))!.status).toBe("waiting_human");
+
+  const sidecar = JSON.parse(readFileSync(join(ctx.sessionsDir, session.id, "asking", shown.filename.replace(/\.md$/, ".command.json")), "utf8"));
+  expect(sidecar).toMatchObject({ command: "gh pr create --body-file pr.md", reason: "推敲された理由" });
+});
+
+test("a returned command approval reaches the writer with its resubmit command, and the same command is not returned again", async () => {
+  const gate = gatedPolisher(() => ({ returnedReason: "本文に留保がある" }));
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await requestApproval(baseUrl, session.id, "gh issue comment 1 --body-file c.md", "理由の原稿");
+  await gate.release(0);
+  await waitFor(async () => (await readEvents(session.id, 1, ctx.sessionsDir)).some(e => e.kind === "report_returned"), "the return");
+
+  expect(await pendingEscalations(baseUrl, session.id)).toEqual([]);
+  const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
+  expect(fetched).toHaveLength(1);
+  expect(fetched[0].content).toContain("本文に留保がある");
+  expect(fetched[0].content).toContain("理由の原稿");
+  expect(fetched[0].content).toContain("worqload escalate command --command");
+  expect(fetched[0].content).not.toContain("{{");
+
+  await requestApproval(baseUrl, session.id, "gh issue comment 1 --body-file c.md", "直した理由");
+  await requestApproval(baseUrl, session.id, "gh issue comment 2 --body-file c.md", "別のコマンド");
+  await waitFor(() => gate.requests.length === 2, "the resubmission's polish to start");
+  expect(gate.requests[1].allowReturn).toBe(false);
+  await gate.release(1);
+  await waitFor(() => gate.requests.length === 3, "the other command's polish to start");
+  expect(gate.requests[2].allowReturn).toBe(true);
+  await gate.release(2);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the polishes to finish");
+});
+
+test("a command approval waiting for its polish absorbs a duplicate request for the same command", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await requestApproval(baseUrl, session.id, "npm publish", "一回目");
+  const second = await requestApproval(baseUrl, session.id, "npm publish", "二回目");
+  expect(await second.json()).toEqual({ polishing: true });
+  await gate.release(0);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the polish to finish");
+
+  expect(gate.requests).toHaveLength(1);
+  expect(await pendingEscalations(baseUrl, session.id)).toHaveLength(1);
+});
+
+test("cancelling a command approval by its command while it is polished keeps it from being shown", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await requestApproval(baseUrl, session.id, "npm publish", "公開する");
+  await waitFor(() => gate.requests.length === 1, "the polish to start");
+  const cancelled = await postJson(baseUrl, `/internal/sessions/${session.id}/command-approvals/cancel`, { command: "npm publish", reason: "不要になった" });
+  expect(cancelled.status).toBe(200);
+  await gate.release(0);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the polish to finish");
+
+  expect(await pendingEscalations(baseUrl, session.id)).toEqual([]);
+  expect((await loadSessionMeta(session.id, ctx.sessionsDir))!.status).not.toBe("waiting_human");
+});
+
+test("cancelling a command approval by its command after it is shown resolves it as cancelled", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await requestApproval(baseUrl, session.id, "npm publish", "公開する");
+  await gate.release(0);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the approval to be stored");
+
+  const cancelled = await postJson(baseUrl, `/internal/sessions/${session.id}/command-approvals/cancel`, { command: "npm publish" });
+  expect(cancelled.status).toBe(200);
+  expect(await pendingEscalations(baseUrl, session.id)).toEqual([]);
+  expect((await readEvents(session.id, 1, ctx.sessionsDir)).find(e => e.kind === "escalation_resolved")!.payload).toMatchObject({ cancelled: true });
+});
+
+test("cancelling a command with no approval is a 404", async () => {
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"));
+  const session = await createClaudeSession(baseUrl, ctx);
+  const res = await postJson(baseUrl, `/internal/sessions/${session.id}/command-approvals/cancel`, { command: "npm publish" });
+  expect(res.status).toBe(404);
+});
+
+test("a session with 推敲モード off shows its command approval as submitted at once", async () => {
+  const gate = gatedPolisher(() => "使われないはずの推敲");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+  await postJson(baseUrl, `/sessions/${session.id}/report-polish`, { enabled: false });
+
+  const res = await requestApproval(baseUrl, session.id, "npm publish", "公開する");
+  expect((await res.json()).filename).toBeDefined();
+  expect((await pendingEscalations(baseUrl, session.id))[0].content).toContain("公開する");
+  expect(gate.requests).toEqual([]);
+});

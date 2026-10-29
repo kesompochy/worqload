@@ -214,7 +214,7 @@ function nextPasteBufferName(sessionName: string): string {
 // single quotes everywhere we construct shell commands to avoid metachar
 // interpretation; the only escape needed is closing the quote, slipping in a
 // backslash-escaped single quote, and reopening.
-function shellSingleQuote(s: string): string {
+export function shellSingleQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 

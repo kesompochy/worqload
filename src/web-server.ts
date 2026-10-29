@@ -37,6 +37,7 @@ import { extractUrls } from "./link-extraction";
 import { defaultLinkLabelGenerator, makeLinkLabelGenerator, type LinkLabelGenerator } from "./link-label";
 import { isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
+import { shellSingleQuote } from "./session-driver-tmux";
 import { defaultConfigPath } from "./config";
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
@@ -1223,6 +1224,7 @@ const ROUTES: Route[] = [
   defineRoute("POST", "/internal/sessions/:id/escalations/:filename/cancel", postInternalEscalationCancel),
   defineRoute("POST", "/internal/sessions/:id/escalations/by-slug/:slug/cancel", postInternalEscalationCancelBySlug),
   defineRoute("POST", "/internal/sessions/:id/command-approvals", postInternalCommandApprovals),
+  defineRoute("POST", "/internal/sessions/:id/command-approvals/cancel", postInternalCommandApprovalCancel),
   defineRoute("GET",  "/internal/sessions/:id/feedback", getInternalFeedback),
   defineRoute("GET",  "/internal/sessions/:id/feedback/history", getInternalFeedbackHistory),
   defineRoute("GET",  "/internal/sessions/:id/feedback/by-filename/:filename", getInternalFeedbackByFilename),
@@ -3327,6 +3329,9 @@ interface PendingReportPolish {
   // Absent on drafts queued before escalations were polished: those are reports.
   kind?: PolishedKind;
   slug: string;
+  // For a `command` draft, whose content is the reason: what it asks to run.
+  command?: string;
+  timeoutMs?: number;
   content: string;
   replyTo?: string;
   attachments: { name: string; base64: string }[];
@@ -3396,7 +3401,8 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
       cwd: meta.worktreePath,
       draft: pending.content,
       kind,
-      allowReturn: !(await wasReturned(ctx, sessionId, kind, pending.slug)),
+      ...(pending.command !== undefined && { command: pending.command }),
+      allowReturn: !(await wasReturned(ctx, sessionId, pending)),
     });
     const archive = (outcomeName: PolishRow["outcome"], result: string, storedFilename: string | null) =>
       archivePolish(ctx, meta, { kind, slug: pending.slug, draft: pending.content, rounds: outcome.rounds ?? [], outcome: outcomeName, result, storedFilename });
@@ -3415,6 +3421,9 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
       archive("returned", outcome.returnedReason, null);
     } else if (kind === "escalation") {
       const file = await storeEscalation(ctx, current, pending.slug, outcome.report);
+      archive("stored", outcome.report, file.filename);
+    } else if (kind === "command") {
+      const file = await storeCommandApproval(ctx, current, { command: pending.command ?? "", reason: outcome.report, timeoutMs: pending.timeoutMs });
       archive("stored", outcome.report, file.filename);
     } else {
       const content = outcome.report.trim() === pending.content.trim() ? pending.content : outcome.report;
@@ -3483,11 +3492,15 @@ function reportPolishReturnedDirFor(ctx: ServerContext, sessionId: string): stri
   return join(ctx.sessionsDir, sessionId, "report-polish-returned");
 }
 
-async function wasReturned(ctx: ServerContext, sessionId: string, kind: PolishedKind, slug: string): Promise<boolean> {
+// Every command approval shares the slug `command-approval`, so a command
+// draft is matched by the command it asks to run instead.
+async function wasReturned(ctx: ServerContext, sessionId: string, pending: PendingReportPolish): Promise<boolean> {
+  const kind = pending.kind ?? "report";
   const dir = reportPolishReturnedDirFor(ctx, sessionId);
   for (const name of await readdir(dir).catch(() => [] as string[])) {
-    const record = (await Bun.file(join(dir, name)).json().catch(() => null)) as { kind?: unknown; slug?: unknown } | null;
-    if ((record?.kind ?? "report") === kind && record?.slug === slug) return true;
+    const record = (await Bun.file(join(dir, name)).json().catch(() => null)) as { kind?: unknown; slug?: unknown; command?: unknown } | null;
+    if ((record?.kind ?? "report") !== kind) continue;
+    if (kind === "command" ? record?.command === pending.command : record?.slug === pending.slug) return true;
   }
   return false;
 }
@@ -3505,14 +3518,17 @@ async function returnReport(
   const kind = pending.kind ?? "report";
   await Bun.write(
     join(reportPolishReturnedDirFor(ctx, meta.id), basename(pendingPath)),
-    JSON.stringify({ kind, slug: pending.slug, draft: pending.content, reason, returnedAt: new Date().toISOString() }),
+    JSON.stringify({ kind, slug: pending.slug, ...(pending.command !== undefined && { command: pending.command }), draft: pending.content, reason, returnedAt: new Date().toISOString() }),
   );
   await appendAndBroadcast(ctx, meta.id, { kind: "report_returned", payload: { kind, slug: pending.slug, reason } });
-  const submitCommand = kind === "escalation" ? `worqload escalate submit --slug ${pending.slug}` : `worqload report submit --slug ${pending.slug}`;
+  const command = pending.command ?? "";
+  const submitCommand = kind === "command" ? `worqload escalate command --command ${shellSingleQuote(command)}`
+    : kind === "escalation" ? `worqload escalate submit --slug ${pending.slug}`
+    : `worqload report submit --slug ${pending.slug}`;
   const feedback = reportReturnedScaffold
-    .replaceAll("{{kind}}", kind)
+    .replaceAll("{{kind}}", kind === "command" ? "command approval request" : kind)
     .replaceAll("{{submitCommand}}", submitCommand)
-    .replaceAll("{{slug}}", pending.slug)
+    .replaceAll("{{slug}}", kind === "command" ? command : pending.slug)
     .replaceAll("{{reason}}", reason)
     .replaceAll("{{draft}}", pending.content);
   await queueFeedbackAndWake(ctx, meta, "report-returned", feedback, "report_returned");
@@ -3678,21 +3694,73 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
       return json({ filename: existingFilename, seq: 0, deduplicated: true });
     }
 
-    const approvalMarkdown = buildCommandApprovalMarkdown(body.command, reason);
-    const file = await writeNumberedFile(dir, "command-approval", approvalMarkdown, {
-      archiveDirs: [join(dir, "resolved")],
-    });
-    archiveEscalation(ctx, meta, file.filename, approvalMarkdown, body.command);
     const timeoutMs = typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? body.timeoutMs : undefined;
-    await Bun.write(join(dir, commandSidecarFilename(file.filename)), JSON.stringify({ command: body.command, ...(reason ? { reason } : {}), ...(timeoutMs ? { timeoutMs } : {}) }, null, 2));
-    if (!isTerminal(meta.status) && meta.status !== "waiting_human") {
-      await transitionStatus(ctx, meta, "waiting_human");
+    if (reason !== "" && polishesSubmissions(ctx, meta)) {
+      if ((await pendingCommandDrafts(ctx, meta.id, body.command)).length === 0) {
+        await queueSubmissionForPolish(ctx, meta, {
+          kind: "command",
+          slug: "command-approval",
+          command: body.command,
+          ...(timeoutMs && { timeoutMs }),
+          content: reason,
+          attachments: [],
+        });
+      }
+      return json({ polishing: true });
     }
-    await appendAndBroadcast(ctx, meta.id, {
-      kind: "escalation_requested",
-      payload: { filename: file.filename, command: body.command },
-    });
+    const file = await storeCommandApproval(ctx, meta, { command: body.command, reason, timeoutMs });
     return json({ filename: file.filename, seq: file.seq });
+  });
+}
+
+async function storeCommandApproval(ctx: ServerContext, meta: SessionMeta, approval: { command: string; reason: string; timeoutMs?: number }): Promise<NumberedFile> {
+  const { command, reason, timeoutMs } = approval;
+  const dir = askingDirFor(ctx, meta.id);
+  const approvalMarkdown = buildCommandApprovalMarkdown(command, reason);
+  const file = await writeNumberedFile(dir, "command-approval", approvalMarkdown, {
+    archiveDirs: [join(dir, "resolved")],
+  });
+  archiveEscalation(ctx, meta, file.filename, approvalMarkdown, command);
+  await Bun.write(join(dir, commandSidecarFilename(file.filename)), JSON.stringify({ command, ...(reason ? { reason } : {}), ...(timeoutMs ? { timeoutMs } : {}) }, null, 2));
+  if (!isTerminal(meta.status) && meta.status !== "waiting_human") {
+    await transitionStatus(ctx, meta, "waiting_human");
+  }
+  await appendAndBroadcast(ctx, meta.id, {
+    kind: "escalation_requested",
+    payload: { filename: file.filename, command },
+  });
+  return file;
+}
+
+async function pendingCommandDrafts(ctx: ServerContext, sessionId: string, command: string): Promise<string[]> {
+  const matching: string[] = [];
+  for (const pendingPath of await listPendingReportPolishes(ctx, sessionId)) {
+    const pending = (await Bun.file(pendingPath).json()) as PendingReportPolish;
+    if (pending.kind === "command" && pending.command === command) matching.push(pendingPath);
+  }
+  return matching;
+}
+
+// `worqload escalate cancel --command`: a polished command approval's filename
+// is decided only when the polish stores it, so the writer names it by the
+// command it asked to run.
+async function postInternalCommandApprovalCancel(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
+  return withSession(ctx, params.id, async meta => {
+    const body = (await req.json().catch(() => ({}))) as { command?: unknown; reason?: unknown };
+    if (typeof body.command !== "string" || body.command.trim() === "") {
+      return json({ error: "command is required" }, 400);
+    }
+    const reason = typeof body.reason === "string" && body.reason.trim() !== "" ? body.reason.trim() : undefined;
+    const drafts = await pendingCommandDrafts(ctx, meta.id, body.command);
+    if (drafts.length > 0) {
+      for (const pendingPath of drafts) await rm(pendingPath, { force: true });
+      archiveCancellation(ctx, meta, "escalation", body.command, reason);
+      await appendAndBroadcast(ctx, meta.id, { kind: "escalation_polish_cancelled", payload: { slug: "command-approval", command: body.command, ...(reason ? { reason } : {}) } });
+      return json({ ok: true, command: body.command });
+    }
+    const stored = await findPendingCommandApproval(askingDirFor(ctx, meta.id), body.command);
+    if (!stored) return json({ error: `no pending command approval for: ${body.command}` }, 404);
+    return cancelStoredEscalation(ctx, meta, stored, reason);
   });
 }
 
