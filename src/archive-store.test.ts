@@ -371,3 +371,28 @@ test("insertPolish stores a polish with its draft, rounds and outcome", async ()
     db.close();
   }
 });
+
+test("insertEscalation stores an escalation once per session and filename", async () => {
+  const { openArchiveDb, insertEscalation, listEscalations } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    const row = { repo: "github.com/foo/bar", sessionId: "abc-123", filename: "001-command-approval.md", body: "理由", command: "npm publish", createdAt: "2026-10-29T00:00:00Z" };
+    insertEscalation(db, row);
+    insertEscalation(db, row);
+    expect(listEscalations(db, "abc-123")).toEqual([row]);
+  } finally {
+    db.close();
+  }
+});
+
+test("insertCancellation stores what was cancelled and why", async () => {
+  const { openArchiveDb, insertCancellation, listCancellations } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    const row = { repo: "github.com/foo/bar", sessionId: "abc-123", kind: "escalation" as const, target: "001-lib.md", reason: null, createdAt: "2026-10-29T00:00:00Z" };
+    insertCancellation(db, row);
+    expect(listCancellations(db, "abc-123")).toEqual([row]);
+  } finally {
+    db.close();
+  }
+});

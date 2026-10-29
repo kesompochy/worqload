@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { listPolishes } from "./archive-store";
+import { listAllFeedback, listCancellations, listPolishes } from "./archive-store";
 import { readEvents } from "./event-log";
 import type { PolishResult, ReportPolisher, ReportPolishRequest } from "./report-polish";
 import { loadSessionMeta, saveSessionMeta } from "./session";
@@ -484,4 +484,22 @@ test("an escalation cancelled while it is polished is archived as cancelled", as
   await waitFor(() => listPolishes(ctx.archiveDb!, session.id).length === 1, "the archived polish");
 
   expect(listPolishes(ctx.archiveDb!, session.id)[0]).toMatchObject({ kind: "escalation", outcome: "cancelled", result: "推敲された問い", storedFilename: null });
+});
+
+test("a return and a cancellation of a polishing escalation are archived", async () => {
+  const gate = gatedPolisher(r => r.kind === "report" ? { returnedReason: "調査がない" } : "推敲された問い");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, { reportPolisher: gate.polisher, archiveDbPath: join(repoDir, "archive.db") });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "cause", content: "差し戻される原稿" });
+  await gate.release(0);
+  await waitFor(() => listAllFeedback(ctx.archiveDb!).some(r => r.sessionId === session.id), "the archived return");
+  expect(listAllFeedback(ctx.archiveDb!).find(r => r.sessionId === session.id)!.body).toContain("差し戻される原稿");
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "q", content: "問い" });
+  await waitFor(() => gate.requests.length === 2, "the escalation's polish to start");
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations/by-slug/q/cancel`, { reason: "解決した" });
+  expect(listCancellations(ctx.archiveDb!, session.id)).toMatchObject([{ kind: "escalation", target: "q", reason: "解決した" }]);
+  await gate.release(1);
 });
