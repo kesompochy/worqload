@@ -7,7 +7,6 @@
 import { isClaudePipeTurnEnd, readLines } from "./claude-stream";
 import { buildUserMessage } from "./session-bootstrap";
 import instructionTemplate from "./prompts/report-polish-instruction.txt" with { type: "text" };
-import recheckInstruction from "./prompts/report-polish-recheck.txt" with { type: "text" };
 import returnStepTemplate from "./prompts/report-polish-return-step.txt" with { type: "text" };
 import continueStepTemplate from "./prompts/report-polish-continue-step.txt" with { type: "text" };
 import escalationInstructionTemplate from "./prompts/escalation-polish-instruction.txt" with { type: "text" };
@@ -33,10 +32,6 @@ export const REPORT_RETURN_MARK = "<<WORQLOAD_RETURN_REPORT>>";
 // writer should keep working instead of ending its turn; the rest of the line
 // is what is left. The report is still stored for the human.
 export const WRITER_CONTINUE_MARK = "<<WORQLOAD_CONTINUE_WRITER>>";
-
-// Each round re-reads the whole forked conversation, so the token cost grows
-// with the number of rounds; two lets the fork check its own rewrite once.
-const MAX_ROUNDS = 2;
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 
@@ -92,7 +87,7 @@ export function buildReportPolishInstruction(draft: string, opts: { allowReturn:
     .replaceAll("{{draft}}", draft);
 }
 
-type PolishRound = { report: string; clean: boolean; continueReason?: string } | { withdrawnReason: string } | { returnedReason: string };
+type PolishRound = { report: string; continueReason?: string } | { withdrawnReason: string } | { returnedReason: string };
 
 // A round that carries a report block is read as that report even when it
 // also withdraws or returns: a wrong withdrawal loses a report the human
@@ -104,12 +99,11 @@ function parsePolishRound(output: string, opts: { allowReturn: boolean; kind: Po
   if (end >= 0) {
     const report = output.slice(begin + POLISHED_REPORT_BEGIN.length, end).trim();
     if (report !== "") {
-      const clean = output.slice(0, begin).includes(NO_VIOLATION_MARK);
       const continueLine = opts.kind === "report"
         ? output.slice(end + POLISHED_REPORT_END.length).split("\n").map(line => line.trimStart()).find(line => line.startsWith(WRITER_CONTINUE_MARK))
         : undefined;
       const continueReason = continueLine?.slice(WRITER_CONTINUE_MARK.length).trim();
-      return { report, clean, ...(continueReason && { continueReason }) };
+      return { report, ...(continueReason && { continueReason }) };
     }
   }
   const lines = output.split("\n").map(line => line.trimStart());
@@ -199,23 +193,15 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
       return finishedTurns[expected - 1] ?? null;
     };
 
+    // One round only: a second round that rechecked the rewrite cost about a
+    // third of the fork's spend and changed the text in 5 of 27 polishes.
     let outcome: PolishOutcome = { report: draft };
     const rounds: string[] = [];
     try {
-      for (let round = 0; round < MAX_ROUNDS; round++) {
-        const output = await runTurn(round === 0 ? buildReportPolishInstruction(draft, { allowReturn, kind, command }) : recheckInstruction);
-        if (output !== null) rounds.push(output);
-        const parsed = output === null ? null : parsePolishRound(output, { allowReturn, kind });
-        if (parsed === null) break;
-        if (!("report" in parsed)) {
-          outcome = parsed;
-          break;
-        }
-        // The recheck round may drop a continue line the first round wrote;
-        // the judgment of either round is kept.
-        const continueReason = parsed.continueReason ?? ("report" in outcome ? outcome.continueReason : undefined);
-        outcome = { report: parsed.report, ...(continueReason && { continueReason }) };
-        if (parsed.clean) break;
+      const output = await runTurn(buildReportPolishInstruction(draft, { allowReturn, kind, command }));
+      if (output !== null) {
+        rounds.push(output);
+        outcome = parsePolishRound(output, { allowReturn, kind }) ?? outcome;
       }
     } finally {
       try {

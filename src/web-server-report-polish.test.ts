@@ -689,3 +689,19 @@ test("a report after which the fork judges the writer should not stop is shown a
   expect(fetched[0].content).toContain("人間の質問に答えていない");
   expect(fetched[0].content).not.toContain("{{");
 });
+
+test("a report the writer followed with another submission does not wake the writer, since the fork could not see it", async () => {
+  const gate = gatedPolisher(r => r.draft === "最初の原稿" ? { report: "推敲された本文", continueReason: "完了を報告していない" } : r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "first", content: "最初の原稿" });
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "done", content: "完了の報告" });
+  await gate.release(0);
+  await gate.release(1);
+  await waitForReports(baseUrl, session.id, 2);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the polishes to finish");
+
+  const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
+  expect(fetched).toEqual([]);
+});
