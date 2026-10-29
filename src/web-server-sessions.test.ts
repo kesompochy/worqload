@@ -434,6 +434,40 @@ test("GET /sessions exposes whether the agent is mid-turn or has finished its tu
   expect(await agentTurn()).toBe("idle");
 });
 
+
+// Collects the sidebar-wide activity stream's messages.
+async function openActivityStream(baseUrl: string) {
+  const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/activity/stream`);
+  const messages: { sessionId: string; agentTurn: string; polishing: { kind: string; slug: string; since: string }[] }[] = [];
+  ws.addEventListener("message", (e) => messages.push(JSON.parse(String(e.data))));
+  await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }));
+  trackCleanup(() => ws.close());
+  return messages;
+}
+
+test("the activity stream announces each session's turn opening and closing", async () => {
+  const repoDir = makeTmpDir("repo");
+  const base = inProcessHostLauncher();
+  let onEvent: ((event: Awaited<ReturnType<typeof appendEvent>>) => void) | undefined;
+  const hostLauncher: HostLauncher = async (req) => {
+    onEvent = req.onEvent;
+    return base(req);
+  };
+  const { baseUrl } = await bootServer(repoDir, { hostLauncher });
+  const messages = await openActivityStream(baseUrl);
+
+  const sid = (await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json())).meta.id;
+  const turns = () => messages.filter((m) => m.sessionId === sid).map((m) => m.agentTurn);
+  for (let i = 0; i < 200 && turns().length < 1; i++) await Bun.sleep(10);
+  expect(turns()).toEqual(["working"]);
+
+  // Steps within the open turn change nothing, so they are not announced.
+  onEvent?.({ seq: 0, kind: "claude_tool_use", timestamp: "", payload: {} });
+  onEvent?.({ seq: 0, kind: "turn_completed", timestamp: "", payload: {} });
+  for (let i = 0; i < 200 && turns().length < 2; i++) await Bun.sleep(10);
+  expect(turns()).toEqual(["working", "idle"]);
+});
+
 test("GET /sessions/:id/reports exposes each report's submitted time from its report_submitted event", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

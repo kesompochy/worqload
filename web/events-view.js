@@ -45,14 +45,21 @@ const TURN_OPENING_EVENT_KINDS = new Set([
 ]);
 const TURN_CLOSING_EVENT_KINDS = new Set(["turn_completed", "session_stopped", "session_crashed"]);
 
+// The agent turn an event leaves the session in, or null when the event says
+// nothing about the turn.
+export function agentTurnAfterEvent(event) {
+  if (TURN_CLOSING_EVENT_KINDS.has(event?.kind)) return "idle";
+  if (TURN_OPENING_EVENT_KINDS.has(event?.kind)) return "working";
+  return null;
+}
+
 // "working" while the agent's latest turn is open, "idle" once it has
 // completed (or the run ended). Built on the driver contract that every
 // driver emits turn_completed when its agent finishes responding.
 export function agentTurnFromEvents(events) {
   for (let i = events.length - 1; i >= 0; i--) {
-    const kind = events[i]?.kind;
-    if (TURN_CLOSING_EVENT_KINDS.has(kind)) return "idle";
-    if (TURN_OPENING_EVENT_KINDS.has(kind)) return "working";
+    const turn = agentTurnAfterEvent(events[i]);
+    if (turn) return turn;
   }
   return "idle";
 }

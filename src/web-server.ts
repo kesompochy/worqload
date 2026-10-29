@@ -35,7 +35,7 @@ import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, makeBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { extractUrls } from "./link-extraction";
 import { defaultLinkLabelGenerator, makeLinkLabelGenerator, type LinkLabelGenerator } from "./link-label";
-import { agentTurnFromEvents, isAgentWorkEvent } from "../web/events-view.js";
+import { agentTurnAfterEvent, agentTurnFromEvents, isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import { defaultConfigPath } from "./config";
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
@@ -138,6 +138,9 @@ function hostSocketPathFor(sessionId: string): string {
 }
 
 interface WsClientData {
+  // "activity" sockets carry every session's turn and polish state for the
+  // sidebar; "session" sockets stream one session's events.
+  stream: "session" | "activity";
   sessionId: string;
   // Subscribe is racey by construction: the handler does `await readEvents`
   // (disk) before sending the replay, and `appendAndBroadcast` can fire
@@ -217,6 +220,10 @@ export interface ServerContext {
   hostSpawnLocks: Map<string, Promise<unknown>>;
   baseUrlForAgent: string;
   wsClients: Set<ServerWebSocket<WsClientData>>;
+  activityClients: Set<ServerWebSocket<WsClientData>>;
+  // The agent turn last announced on the activity stream, per session.
+  announcedAgentTurns: Map<string, "working" | "idle">;
+  activityAnnouncements: Map<string, Promise<void>>;
   // Wall-clock of the latest claude_* event observed per session. Used by the
   // wake watchdog only as a liveness signal for a manual wake with an empty
   // inbox; queued-feedback delivery is judged by the inbox itself, not this.
@@ -535,6 +542,7 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
     ctx.lastClaudeActivityAt.set(sessionId, Date.now());
   }
   trackAutoNudge(ctx, sessionId, event);
+  trackAgentActivity(ctx, sessionId, event);
   const payload = JSON.stringify({ sessionId, event });
   for (const ws of ctx.wsClients) {
     if (ws.data.sessionId !== sessionId) continue;
@@ -547,6 +555,37 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
       try { ws.send(payload); } catch { /* dead socket */ }
     }
   }
+}
+
+// Announces on the activity stream when an event opens or closes the agent's
+// turn, or adds or removes a draft waiting for its polish. A polish leaving
+// the queue has no event of its own (its stored report is broadcast before
+// the draft is removed), so polishAndStoreReport announces that itself.
+function trackAgentActivity(ctx: ServerContext, sessionId: string, event: Event): void {
+  const turn = agentTurnAfterEvent(event);
+  const turnChanged = turn !== null && ctx.announcedAgentTurns.get(sessionId) !== turn;
+  if (turn !== null) ctx.announcedAgentTurns.set(sessionId, turn);
+  const polishQueueChanged = event.kind === "report_polishing" || event.kind === "escalation_polishing" || event.kind === "escalation_polish_cancelled";
+  if (turnChanged || polishQueueChanged) announceAgentActivity(ctx, sessionId);
+}
+
+// Chained per session so a slower disk read cannot deliver an older polish
+// queue after a newer one.
+function announceAgentActivity(ctx: ServerContext, sessionId: string): void {
+  if (ctx.activityClients.size === 0) return;
+  const previous = ctx.activityAnnouncements.get(sessionId) ?? Promise.resolve();
+  const next = previous.then(async () => {
+    const agentTurn = ctx.announcedAgentTurns.get(sessionId) ?? agentTurnFromEvents(await readEvents(sessionId, 1, ctx.sessionsDir));
+    const polishing = await listPolishingSubmissions(ctx, sessionId);
+    const payload = JSON.stringify({ sessionId, agentTurn, polishing });
+    for (const ws of ctx.activityClients) {
+      try { ws.send(payload); } catch { /* dead socket */ }
+    }
+  }).catch(err => console.error(`[activity] ${sessionId}: ${err instanceof Error ? err.message : String(err)}`));
+  ctx.activityAnnouncements.set(sessionId, next);
+  void next.then(() => {
+    if (ctx.activityAnnouncements.get(sessionId) === next) ctx.activityAnnouncements.delete(sessionId);
+  });
 }
 
 // Keeps the per-session "did this turn report?" flag and the consecutive-nudge
@@ -1015,10 +1054,16 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     idleTimeout: 180,
     fetch(req, srv) {
       const url = new URL(req.url);
+      if (url.pathname === "/activity/stream") {
+        if (srv.upgrade<WsClientData>(req, { data: { stream: "activity", sessionId: "" } })) {
+          return undefined as unknown as Response;
+        }
+        return new Response("upgrade failed", { status: 400 });
+      }
       const wsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/stream$/);
       if (wsMatch) {
         const sessionId = wsMatch[1];
-        if (srv.upgrade<WsClientData>(req, { data: { sessionId } })) {
+        if (srv.upgrade<WsClientData>(req, { data: { stream: "session", sessionId } })) {
           // The client sends a {type:"subscribe", lastSeq:N} message right
           // after connecting; replay happens in the message handler.
           return undefined as unknown as Response;
@@ -1029,6 +1074,10 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     },
     websocket: {
       open(ws) {
+        if (ws.data.stream === "activity") {
+          ctx.activityClients.add(ws);
+          return;
+        }
         // Until the client sends `subscribe`, queue any broadcasts that arrive
         // for this session — broadcasts arriving before subscribe completes
         // would otherwise out-pace the replay and be dropped by the client's
@@ -1038,6 +1087,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
         ctx.wsClients.add(ws);
       },
       async message(ws, raw) {
+        if (ws.data.stream === "activity") return;
         const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
         try {
           const msg = JSON.parse(text) as { type?: string; lastSeq?: number };
@@ -1064,6 +1114,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
       },
       close(ws) {
         ctx.wsClients.delete(ws);
+        ctx.activityClients.delete(ws);
       },
     },
   }));
@@ -1088,6 +1139,9 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     port: server.port,
     baseUrlForAgent: `http://127.0.0.1:${server.port}`,
     wsClients: new Set(),
+    activityClients: new Set(),
+    announcedAgentTurns: new Map(),
+    activityAnnouncements: new Map(),
     lastClaudeActivityAt: new Map(),
     lastFeedbackFetchAt: new Map(),
     wakeWatchdogMs: opts.wakeWatchdogMs ?? DEFAULT_WAKE_WATCHDOG_MS,
@@ -3440,6 +3494,7 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
     }
   }
   await rm(pendingPath, { force: true });
+  announceAgentActivity(ctx, sessionId);
 }
 
 function archiveFeedback(ctx: ServerContext, meta: SessionMeta, filename: string, body: string): void {

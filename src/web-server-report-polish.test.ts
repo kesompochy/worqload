@@ -129,6 +129,33 @@ test("GET /sessions lists the drafts waiting for their polish until each is stor
   expect((await polishing())[0].slug).toBe("ask");
 });
 
+
+// Collects the sidebar-wide activity stream's messages.
+async function openActivityStream(baseUrl: string) {
+  const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/activity/stream`);
+  const messages: { sessionId: string; agentTurn: string; polishing: { kind: string; slug: string; since: string }[] }[] = [];
+  ws.addEventListener("message", (e) => messages.push(JSON.parse(String(e.data))));
+  await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }));
+  trackCleanup(() => ws.close());
+  return messages;
+}
+
+test("the activity stream announces a draft entering and leaving its polish", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+  const messages = await openActivityStream(baseUrl);
+  const slugs = () => messages.filter(m => m.sessionId === session.id).map(m => m.polishing.map(p => p.slug));
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "plan", content: "原稿" });
+  await waitFor(() => slugs().length >= 1, "the polish to be announced");
+  expect(slugs()).toEqual([["plan"]]);
+
+  await gate.release(0);
+  await waitFor(() => slugs().length >= 2, "the stored polish to be announced");
+  expect(slugs()).toEqual([["plan"], []]);
+});
+
 test("the fork resumes the writer's claude conversation with the writer's model", async () => {
   const gate = gatedPolisher(r => r.draft);
   const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
