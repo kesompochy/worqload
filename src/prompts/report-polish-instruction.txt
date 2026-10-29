@@ -12,6 +12,6 @@ Steps:
 Output format:
 - Write steps 1–3 first. If neither step 2 nor step 3 finds anything to fix, write only {{noViolation}} in place of steps 2 and 3.
 - End with the full report between a line {{begin}} and a line {{end}}. What you write between those two lines is stored for the human as is.
---- draft begins ---
+{{continueStep}}--- draft begins ---
 {{draft}}
 --- draft ends ---
