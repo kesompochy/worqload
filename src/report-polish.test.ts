@@ -50,20 +50,8 @@ function returnReply(reason: string): string {
   return ["論理と調査の判断", `${REPORT_RETURN_MARK} ${reason}`].join("\n");
 }
 
-test("a first round that finds no violation is stored without a second round", async () => {
-  // The mock answers a second message with a placeholder, so a stray second
-  // round would surface as that placeholder instead of the first round's text.
-  expect(await polishWith([polishedReply("推敲版その1", { clean: true })])).toBe("推敲版その1");
-});
-
-test("a first round that rewrote the draft is checked once more and the second round's text is stored", async () => {
-  expect(await polishWith([polishedReply("推敲版その1"), polishedReply("推敲版その2")])).toBe("推敲版その2");
-});
-
-test("the second round's text is stored even when it still reports violations", async () => {
-  // Two rounds is the ceiling: a third message would get the placeholder.
-  expect(await polishWith([polishedReply("推敲版その1"), polishedReply("推敲版その2"), polishedReply("推敲版その3")]))
-    .toBe("推敲版その2");
+test("a rewrite is stored without a second round, even when it reported violations", async () => {
+  expect(await polishWith([polishedReply("推敲版その1"), polishedReply("推敲版その2")])).toBe("推敲版その1");
 });
 
 test("the draft and the marks reach the fork's instruction", () => {
@@ -91,10 +79,6 @@ test("an output without the report markers falls back to the draft", async () =>
   expect(await polishWith(["全文の区切りがない応答"], { draft: "失いたくない原稿" })).toBe("失いたくない原稿");
 });
 
-test("a second round without the report markers keeps the first round's text", async () => {
-  expect(await polishWith([polishedReply("推敲版その1"), "区切りがない応答"])).toBe("推敲版その1");
-});
-
 test("a fork that exits non-zero falls back to the draft", async () => {
   const polish = makeClaudeReportPolisher();
   const out = await polish({ spawnCommand: ["bun", MOCK, "crash"], cwd: process.cwd(), draft: "原稿", allowReturn: true, kind: "report" });
@@ -109,10 +93,6 @@ test("a fork that never answers is killed at the timeout and the draft is stored
 
 test("a first round that withdraws the report ends the polish with the fork's reason", async () => {
   expect(await polishWith([withdrawReply("人間の知っていることを何も変えない")])).toBe("withdrawn: 人間の知っていることを何も変えない");
-});
-
-test("a second round may withdraw the report the first round rewrote", async () => {
-  expect(await polishWith([polishedReply("推敲版その1"), withdrawReply("前のレポートと同じ内容")])).toBe("withdrawn: 前のレポートと同じ内容");
 });
 
 test("a round that both withdraws and writes a report is read as the report", async () => {
@@ -156,7 +136,7 @@ test("an escalation may be returned to its writer", async () => {
   expect(await polishWith([returnReply("自分で決められる")], { kind: "escalation" })).toBe("returned: 自分で決められる");
 });
 
-test("the polish carries each round's fork output", async () => {
+test("the polish carries the fork's output, and only one round of it", async () => {
   const polish = makeClaudeReportPolisher();
   const out = await polish({
     spawnCommand: ["bun", MOCK, "replies", polishedReply("推敲版その1"), polishedReply("推敲版その2")],
@@ -165,7 +145,7 @@ test("the polish carries each round's fork output", async () => {
     allowReturn: true,
     kind: "report",
   });
-  expect(out.rounds).toEqual([polishedReply("推敲版その1"), polishedReply("推敲版その2")]);
+  expect(out.rounds).toEqual([polishedReply("推敲版その1")]);
 });
 
 test("a command approval's instruction carries the reason, the command it must not change, and the return mark but not the withdraw mark", () => {
@@ -191,10 +171,6 @@ test("a continue line after the report keeps the report and carries what the wri
   expect(await polishWith([reply])).toBe("推敲版 / continue: 人間の質問に答えていない");
 });
 
-test("a continue line from the first round survives a second round that writes none", async () => {
-  const first = `${polishedReply("推敲版その1")}\n${WRITER_CONTINUE_MARK} 指示された確認が残っている`;
-  expect(await polishWith([first, polishedReply("推敲版その2", { clean: true })])).toBe("推敲版その2 / continue: 指示された確認が残っている");
-});
 
 test("an escalation's continue line is ignored, since its writer waits for the answer", async () => {
   const reply = `${polishedReply("推敲された問い", { clean: true })}\n${WRITER_CONTINUE_MARK} 続けよ`;
