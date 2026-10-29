@@ -9,6 +9,7 @@ import {
   REPORT_POLISH_FORK_ENV,
   REPORT_RETURN_MARK,
   REPORT_WITHDRAW_MARK,
+  WRITER_CONTINUE_MARK,
   type PolishOutcome,
 } from "./report-polish";
 
@@ -25,7 +26,7 @@ function polishedReply(report: string, opts: { clean?: boolean } = {}): string {
 }
 
 function describeOutcome(outcome: PolishOutcome): string {
-  if ("report" in outcome) return outcome.report;
+  if ("report" in outcome) return outcome.continueReason ? `${outcome.report} / continue: ${outcome.continueReason}` : outcome.report;
   return "returnedReason" in outcome ? `returned: ${outcome.returnedReason}` : `withdrawn: ${outcome.withdrawnReason}`;
 }
 
@@ -178,4 +179,24 @@ test("a command approval's instruction carries the reason, the command it must n
 
 test("a command approval is never withdrawn, since its writer waits for the decision", async () => {
   expect(await polishWith([withdrawReply("不要")], { draft: "理由の原稿", kind: "command", command: "npm publish" })).toBe("理由の原稿");
+});
+
+test("a report's instruction carries the continue mark, an escalation's does not", () => {
+  expect(buildReportPolishInstruction("原稿", { allowReturn: true, kind: "report" })).toContain(WRITER_CONTINUE_MARK);
+  expect(buildReportPolishInstruction("原稿", { allowReturn: true, kind: "escalation" })).not.toContain(WRITER_CONTINUE_MARK);
+});
+
+test("a continue line after the report keeps the report and carries what the writer should go on with", async () => {
+  const reply = `${polishedReply("推敲版", { clean: true })}\n${WRITER_CONTINUE_MARK} 人間の質問に答えていない`;
+  expect(await polishWith([reply])).toBe("推敲版 / continue: 人間の質問に答えていない");
+});
+
+test("a continue line from the first round survives a second round that writes none", async () => {
+  const first = `${polishedReply("推敲版その1")}\n${WRITER_CONTINUE_MARK} 指示された確認が残っている`;
+  expect(await polishWith([first, polishedReply("推敲版その2", { clean: true })])).toBe("推敲版その2 / continue: 指示された確認が残っている");
+});
+
+test("an escalation's continue line is ignored, since its writer waits for the answer", async () => {
+  const reply = `${polishedReply("推敲された問い", { clean: true })}\n${WRITER_CONTINUE_MARK} 続けよ`;
+  expect(await polishWith([reply], { kind: "escalation" })).toBe("推敲された問い");
 });

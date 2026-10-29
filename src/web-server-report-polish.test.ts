@@ -622,3 +622,20 @@ test("a session with 推敲モード off shows its command approval as submitted
   expect((await pendingEscalations(baseUrl, session.id))[0].content).toContain("公開する");
   expect(gate.requests).toEqual([]);
 });
+
+test("a report after which the fork judges the writer should not stop is shown and wakes the writer with the reason", async () => {
+  const gate = gatedPolisher(() => ({ report: "推敲された本文", continueReason: "人間の質問に答えていない" }));
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "status", content: "書き手の原稿" });
+  await gate.release(0);
+  const [stored] = await waitForReports(baseUrl, session.id, 1);
+  expect(stored.content).toBe("推敲された本文");
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the polish to finish");
+
+  const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
+  expect(fetched).toHaveLength(1);
+  expect(fetched[0].content).toContain("人間の質問に答えていない");
+  expect(fetched[0].content).not.toContain("{{");
+});

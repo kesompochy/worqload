@@ -47,6 +47,7 @@ import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as a
 import type { Database } from "bun:sqlite";
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
 import reportReturnedScaffold from "./prompts/report-returned-feedback.txt" with { type: "text" };
+import reportContinueScaffold from "./prompts/report-continue-feedback.txt" with { type: "text" };
 
 // worqload protocol commands are part of the system contract; they must run
 // without permission prompts regardless of which permission mode the rest of
@@ -3435,6 +3436,10 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
         attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
       });
       archive("stored", content, file.filename);
+      if (outcome.continueReason) {
+        const feedback = reportContinueScaffold.replaceAll("{{slug}}", pending.slug).replaceAll("{{reason}}", outcome.continueReason);
+        await queueFeedbackAndWake(ctx, current, "report-continue", feedback, "report_continue");
+      }
     }
   }
   await rm(pendingPath, { force: true });

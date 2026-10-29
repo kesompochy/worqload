@@ -1,0 +1,5 @@
+Your report `{{slug}}` was shown to the human. The fork of this conversation that polished it judged that you should not end your turn after it:
+
+{{reason}}
+
+Do that now. If the fork is wrong because the human has not asked for this, end your turn without submitting anything.

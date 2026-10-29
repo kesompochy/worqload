@@ -9,6 +9,7 @@ import { buildUserMessage } from "./session-bootstrap";
 import instructionTemplate from "./prompts/report-polish-instruction.txt" with { type: "text" };
 import recheckInstruction from "./prompts/report-polish-recheck.txt" with { type: "text" };
 import returnStepTemplate from "./prompts/report-polish-return-step.txt" with { type: "text" };
+import continueStepTemplate from "./prompts/report-polish-continue-step.txt" with { type: "text" };
 import escalationInstructionTemplate from "./prompts/escalation-polish-instruction.txt" with { type: "text" };
 import escalationReturnStepTemplate from "./prompts/escalation-polish-return-step.txt" with { type: "text" };
 import commandInstructionTemplate from "./prompts/command-approval-polish-instruction.txt" with { type: "text" };
@@ -28,6 +29,10 @@ export const REPORT_WITHDRAW_MARK = "<<WORQLOAD_WITHDRAW_REPORT>>";
 // Starts the line on which the fork returns the report to the writer for more
 // investigation; the rest of the line is what the fork found missing.
 export const REPORT_RETURN_MARK = "<<WORQLOAD_RETURN_REPORT>>";
+// Starts the line, after a report's block, on which the fork judges that the
+// writer should keep working instead of ending its turn; the rest of the line
+// is what is left. The report is still stored for the human.
+export const WRITER_CONTINUE_MARK = "<<WORQLOAD_CONTINUE_WRITER>>";
 
 // Each round re-reads the whole forked conversation, so the token cost grows
 // with the number of rounds; two lets the fork check its own rewrite once.
@@ -61,7 +66,9 @@ export interface ReportPolishRequest {
 // means the fork judged the report not worth the human's reading;
 // `returnedReason` means its claims do not follow from what the conversation
 // established, and the writer has to investigate before submitting again.
-export type PolishOutcome = { report: string } | { withdrawnReason: string } | { returnedReason: string };
+// `continueReason` wakes the writer of a stored report with what it left
+// undone.
+export type PolishOutcome = { report: string; continueReason?: string } | { withdrawnReason: string } | { returnedReason: string };
 // `rounds` is the fork's output of each round, kept for the archive.
 export type PolishResult = PolishOutcome & { rounds?: string[] };
 export type ReportPolisher = (request: ReportPolishRequest) => Promise<PolishResult>;
@@ -77,6 +84,7 @@ export function buildReportPolishInstruction(draft: string, opts: { allowReturn:
   return template
     .replaceAll("{{command}}", opts.command ?? "")
     .replaceAll("{{returnStep}}", opts.allowReturn ? returnStep.replaceAll("{{return}}", REPORT_RETURN_MARK) : "")
+    .replaceAll("{{continueStep}}", opts.kind === "report" ? continueStepTemplate.replaceAll("{{continue}}", WRITER_CONTINUE_MARK) : "")
     .replaceAll("{{noViolation}}", NO_VIOLATION_MARK)
     .replaceAll("{{withdraw}}", REPORT_WITHDRAW_MARK)
     .replaceAll("{{begin}}", POLISHED_REPORT_BEGIN)
@@ -84,7 +92,7 @@ export function buildReportPolishInstruction(draft: string, opts: { allowReturn:
     .replaceAll("{{draft}}", draft);
 }
 
-type PolishRound = { report: string; clean: boolean } | { withdrawnReason: string } | { returnedReason: string };
+type PolishRound = { report: string; clean: boolean; continueReason?: string } | { withdrawnReason: string } | { returnedReason: string };
 
 // A round that carries a report block is read as that report even when it
 // also withdraws or returns: a wrong withdrawal loses a report the human
@@ -95,7 +103,14 @@ function parsePolishRound(output: string, opts: { allowReturn: boolean; kind: Po
   const end = begin < 0 ? -1 : output.indexOf(POLISHED_REPORT_END, begin);
   if (end >= 0) {
     const report = output.slice(begin + POLISHED_REPORT_BEGIN.length, end).trim();
-    if (report !== "") return { report, clean: output.slice(0, begin).includes(NO_VIOLATION_MARK) };
+    if (report !== "") {
+      const clean = output.slice(0, begin).includes(NO_VIOLATION_MARK);
+      const continueLine = opts.kind === "report"
+        ? output.slice(end + POLISHED_REPORT_END.length).split("\n").map(line => line.trimStart()).find(line => line.startsWith(WRITER_CONTINUE_MARK))
+        : undefined;
+      const continueReason = continueLine?.slice(WRITER_CONTINUE_MARK.length).trim();
+      return { report, clean, ...(continueReason && { continueReason }) };
+    }
   }
   const lines = output.split("\n").map(line => line.trimStart());
   const returnLine = opts.allowReturn ? lines.find(line => line.startsWith(REPORT_RETURN_MARK)) : undefined;
@@ -196,7 +211,10 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
           outcome = parsed;
           break;
         }
-        outcome = { report: parsed.report };
+        // The recheck round may drop a continue line the first round wrote;
+        // the judgment of either round is kept.
+        const continueReason = parsed.continueReason ?? ("report" in outcome ? outcome.continueReason : undefined);
+        outcome = { report: parsed.report, ...(continueReason && { continueReason }) };
         if (parsed.clean) break;
       }
     } finally {
