@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import { listAllFeedback } from "./archive-store";
+import { listAllFeedback, listCancellations, listEscalations } from "./archive-store";
 import { appendEvent, readEvents } from "./event-log";
 import { agentEndpointPath, hostLogPath, loadSessionMeta, saveSessionMeta } from "./session";
 import {
@@ -1351,4 +1351,30 @@ test("an escalation's answer and a command decision with its human note are arch
   expect(answer?.body).toContain("X or Y?");
   const rejection = rows.find((r) => r.body.includes("まだ出さない"));
   expect(rejection?.body).toContain("npm publish");
+});
+
+test("escalations and command approvals are archived when submitted, and cancellations with their reasons", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, { archiveDbPath: join(repoDir, "archive.db") });
+  const sid = (await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json())).meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "lib", content: "X or Y?" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "npm publish", reason: "release" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations/001-lib.md/cancel`, { reason: "自分で決めた" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations/002-command-approval.md/cancel`, {});
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "wrong", content: "誤った結論" });
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports/001-wrong.md/cancel`, { reason: "前提が誤っていた" });
+
+  const escalations = listEscalations(ctx.archiveDb!, sid);
+  expect(escalations.map((e) => ({ filename: e.filename, command: e.command }))).toEqual([
+    { filename: "001-lib.md", command: null },
+    { filename: "002-command-approval.md", command: "npm publish" },
+  ]);
+  expect(escalations[0].body).toBe("X or Y?");
+  expect(escalations[1].body).toContain("release");
+  expect(listCancellations(ctx.archiveDb!, sid).map((c) => ({ kind: c.kind, target: c.target, reason: c.reason }))).toEqual([
+    { kind: "escalation", target: "001-lib.md", reason: "自分で決めた" },
+    { kind: "escalation", target: "002-command-approval.md", reason: null },
+    { kind: "report", target: "001-wrong.md", reason: "前提が誤っていた" },
+  ]);
 });

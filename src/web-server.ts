@@ -42,7 +42,7 @@ import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./ski
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
 import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClaudeCommandWithKb } from "./kb";
-import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, insertPolish as archiveInsertPolish, upsertSession as archiveUpsertSession, type PolishRow } from "./archive-store";
+import { openArchiveDb, insertReport as archiveInsertReport, insertFeedback as archiveInsertFeedback, insertPolish as archiveInsertPolish, insertEscalation as archiveInsertEscalation, insertCancellation as archiveInsertCancellation, upsertSession as archiveUpsertSession, type CancellationRow, type PolishRow } from "./archive-store";
 import type { Database } from "bun:sqlite";
 import reportRejectedScaffold from "./prompts/report-rejected-feedback.txt" with { type: "text" };
 import reportReturnedScaffold from "./prompts/report-returned-feedback.txt" with { type: "text" };
@@ -448,6 +448,7 @@ async function queueFeedbackAndWake(
     archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
     meta: fileMeta,
   });
+  archiveFeedback(ctx, meta, file.filename, feedbackContent);
   await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
   const att = ctx.clients.get(meta.id);
   appendHostLog(ctx, meta.id, "wake_sent", {
@@ -2093,8 +2094,7 @@ async function postReportReject(req: Request, ctx: ServerContext, params: Record
     if (reason) rejection.reason = reason;
     await mergeNumberedFileMeta(dir, filename, { rejection });
     await appendAndBroadcast(ctx, meta.id, { kind: "report_rejected", payload: { filename } });
-    const feedback = await queueFeedbackAndWake(ctx, meta, "report-rejected", reason ?? "", "report_rejected", { rejectedReport: filename });
-    if (reason) archiveFeedback(ctx, meta, feedback.filename, reason);
+    await queueFeedbackAndWake(ctx, meta, "report-rejected", reason ?? "", "report_rejected", { rejectedReport: filename });
     return json({ ok: true, filename });
   });
 }
@@ -2118,6 +2118,7 @@ async function postInternalReportCancel(req: Request, ctx: ServerContext, params
     await mergeNumberedFileMeta(dir, filename, { cancellation: { reason, cancelledAt: new Date().toISOString() } });
     await setReadState(dir, filename, true);
     await appendAndBroadcast(ctx, meta.id, { kind: "report_cancelled", payload: { filename, reason } });
+    archiveCancellation(ctx, meta, "report", filename, reason);
     return json({ ok: true, filename });
   });
 }
@@ -2726,6 +2727,7 @@ async function postResume(req: Request, ctx: ServerContext, params: Record<strin
       const file = await writeNumberedFile(inbox, "feedback", prompt, {
         archiveDirs: [feedbackReadDirFor(ctx, meta.id)],
       });
+      archiveFeedback(ctx, meta, file.filename, prompt);
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
     }
 
@@ -3429,7 +3431,9 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
   await rm(pendingPath, { force: true });
 }
 
-function archiveFeedback(ctx: ServerContext, meta: SessionMeta, filename: string, body: string): void {
+type ArchiveRowBase = { repo: string; sessionId: string; createdAt: string };
+
+function archiveRow(ctx: ServerContext, meta: SessionMeta, insert: (db: Database, base: ArchiveRowBase) => void): void {
   if (!ctx.archiveDb) return;
   try {
     archiveUpsertSession(ctx.archiveDb, {
@@ -3438,30 +3442,24 @@ function archiveFeedback(ctx: ServerContext, meta: SessionMeta, filename: string
       initialPrompt: meta.prompt,
       createdAt: meta.createdAt,
     });
-    archiveInsertFeedback(ctx.archiveDb, {
-      repo: ctx.repoIdentifier,
-      sessionId: meta.id,
-      filename,
-      body,
-      anchorPath: null,
-      anchorLineStart: null,
-      anchorLineEnd: null,
-      createdAt: new Date().toISOString(),
-    });
+    insert(ctx.archiveDb, { repo: ctx.repoIdentifier, sessionId: meta.id, createdAt: new Date().toISOString() });
   } catch { /* archive is best-effort */ }
 }
 
-function archivePolish(ctx: ServerContext, meta: SessionMeta, polish: Omit<PolishRow, "repo" | "sessionId" | "createdAt">): void {
-  if (!ctx.archiveDb) return;
-  try {
-    archiveUpsertSession(ctx.archiveDb, {
-      sessionId: meta.id,
-      repo: ctx.repoIdentifier,
-      initialPrompt: meta.prompt,
-      createdAt: meta.createdAt,
-    });
-    archiveInsertPolish(ctx.archiveDb, { ...polish, repo: ctx.repoIdentifier, sessionId: meta.id, createdAt: new Date().toISOString() });
-  } catch { /* archive is best-effort */ }
+function archiveFeedback(ctx: ServerContext, meta: SessionMeta, filename: string, body: string): void {
+  archiveRow(ctx, meta, (db, base) => archiveInsertFeedback(db, { ...base, filename, body, anchorPath: null, anchorLineStart: null, anchorLineEnd: null }));
+}
+
+function archivePolish(ctx: ServerContext, meta: SessionMeta, polish: Omit<PolishRow, keyof ArchiveRowBase>): void {
+  archiveRow(ctx, meta, (db, base) => archiveInsertPolish(db, { ...polish, ...base }));
+}
+
+function archiveEscalation(ctx: ServerContext, meta: SessionMeta, filename: string, body: string, command: string | null): void {
+  archiveRow(ctx, meta, (db, base) => archiveInsertEscalation(db, { ...base, filename, body, command }));
+}
+
+function archiveCancellation(ctx: ServerContext, meta: SessionMeta, kind: CancellationRow["kind"], target: string, reason: string | undefined): void {
+  archiveRow(ctx, meta, (db, base) => archiveInsertCancellation(db, { ...base, kind, target, reason: reason ?? null }));
 }
 
 // The withdrawn draft is kept beside the session, and announced on the
@@ -3560,6 +3558,7 @@ async function storeEscalation(ctx: ServerContext, meta: SessionMeta, slug: stri
   const file = await writeNumberedFile(dir, slug, content, {
     archiveDirs: [join(dir, "resolved")],
   });
+  archiveEscalation(ctx, meta, file.filename, content, null);
   if (!isTerminal(meta.status) && meta.status !== "waiting_human") {
     await transitionStatus(ctx, meta, "waiting_human");
   }
@@ -3600,6 +3599,7 @@ async function postInternalEscalationCancelBySlug(req: Request, ctx: ServerConte
       droppedDraft = true;
     }
     if (droppedDraft) {
+      archiveCancellation(ctx, meta, "escalation", slug, reason);
       await appendAndBroadcast(ctx, meta.id, { kind: "escalation_polish_cancelled", payload: { slug, ...(reason ? { reason } : {}) } });
       return json({ ok: true, slug });
     }
@@ -3629,6 +3629,7 @@ async function cancelStoredEscalation(ctx: ServerContext, meta: SessionMeta, fil
     kind: "escalation_resolved",
     payload: { filename, cancelled: true, ...(reason ? { reason } : {}) },
   });
+  archiveCancellation(ctx, meta, "escalation", filename, reason);
   const updatedMeta = await resumeIfNoEscalationsPending(ctx, meta);
   return json({ ok: true, filename, meta: updatedMeta });
 }
@@ -3677,9 +3678,11 @@ async function postInternalCommandApprovals(req: Request, ctx: ServerContext, pa
       return json({ filename: existingFilename, seq: 0, deduplicated: true });
     }
 
-    const file = await writeNumberedFile(dir, "command-approval", buildCommandApprovalMarkdown(body.command, reason), {
+    const approvalMarkdown = buildCommandApprovalMarkdown(body.command, reason);
+    const file = await writeNumberedFile(dir, "command-approval", approvalMarkdown, {
       archiveDirs: [join(dir, "resolved")],
     });
+    archiveEscalation(ctx, meta, file.filename, approvalMarkdown, body.command);
     const timeoutMs = typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? body.timeoutMs : undefined;
     await Bun.write(join(dir, commandSidecarFilename(file.filename)), JSON.stringify({ command: body.command, ...(reason ? { reason } : {}), ...(timeoutMs ? { timeoutMs } : {}) }, null, 2));
     if (!isTerminal(meta.status) && meta.status !== "waiting_human") {

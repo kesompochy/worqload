@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { listAllFeedback } from "./archive-store";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -895,4 +896,15 @@ test("resume of a claude pipe session resumes its recorded agentSessionId", asyn
   await saveSessionMeta({ ...(await loadSessionMeta(unrecorded.id, ctx.sessionsDir))!, status: "stopped" }, ctx.sessionsDir);
   await postJson(baseUrl, `/sessions/${unrecorded.id}/resume`, {});
   expect(spawnCommands.at(-1)!.at(-1)).toBe("--continue");
+});
+
+test("POST /sessions/:id/resume archives its prompt", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, { archiveDbPath: join(repoDir, "archive.db") });
+  const sid = (await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json())).meta.id;
+  await postJson(baseUrl, `/sessions/${sid}/stop`, {});
+
+  await postJson(baseUrl, `/sessions/${sid}/resume`, { prompt: "now do the other thing" });
+
+  expect(listAllFeedback(ctx.archiveDb!).filter((r) => r.sessionId === sid).map((r) => r.body)).toEqual(["now do the other thing"]);
 });

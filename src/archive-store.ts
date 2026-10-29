@@ -54,6 +54,31 @@ CREATE TABLE IF NOT EXISTS polishes (
   created_at TEXT NOT NULL
 );
 
+-- Escalations and command-approval requests as submitted, so one cancelled
+-- before an answer is still on record. command is NULL for a plain escalation.
+CREATE TABLE IF NOT EXISTS escalations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  body TEXT NOT NULL,
+  command TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(session_id, filename)
+);
+
+-- An agent's withdrawal of its report or escalation. target is the filename,
+-- or the slug of an escalation cancelled while it was being polished.
+CREATE TABLE IF NOT EXISTS cancellations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  target TEXT NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   session_id TEXT PRIMARY KEY,
   repo TEXT NOT NULL,
@@ -189,6 +214,90 @@ export function listPolishes(db: Database, sessionId: string): PolishRow[] {
     outcome: r.outcome,
     result: r.result,
     storedFilename: r.stored_filename,
+    createdAt: r.created_at,
+  }));
+}
+
+export interface EscalationRow {
+  repo: string;
+  sessionId: string;
+  filename: string;
+  body: string;
+  command: string | null;
+  createdAt: string;
+}
+
+export function insertEscalation(db: Database, row: EscalationRow): void {
+  db.query(`
+    INSERT OR IGNORE INTO escalations (repo, session_id, filename, body, command, created_at)
+    VALUES ($repo, $sessionId, $filename, $body, $command, $createdAt)
+  `).run({
+    $repo: row.repo,
+    $sessionId: row.sessionId,
+    $filename: row.filename,
+    $body: row.body,
+    $command: row.command,
+    $createdAt: row.createdAt,
+  });
+}
+
+export function listEscalations(db: Database, sessionId: string): EscalationRow[] {
+  const rows = db.query("SELECT * FROM escalations WHERE session_id = $sessionId ORDER BY id").all({ $sessionId: sessionId }) as {
+    repo: string;
+    session_id: string;
+    filename: string;
+    body: string;
+    command: string | null;
+    created_at: string;
+  }[];
+  return rows.map(r => ({
+    repo: r.repo,
+    sessionId: r.session_id,
+    filename: r.filename,
+    body: r.body,
+    command: r.command,
+    createdAt: r.created_at,
+  }));
+}
+
+export interface CancellationRow {
+  repo: string;
+  sessionId: string;
+  kind: "report" | "escalation";
+  target: string;
+  reason: string | null;
+  createdAt: string;
+}
+
+export function insertCancellation(db: Database, row: CancellationRow): void {
+  db.query(`
+    INSERT INTO cancellations (repo, session_id, kind, target, reason, created_at)
+    VALUES ($repo, $sessionId, $kind, $target, $reason, $createdAt)
+  `).run({
+    $repo: row.repo,
+    $sessionId: row.sessionId,
+    $kind: row.kind,
+    $target: row.target,
+    $reason: row.reason,
+    $createdAt: row.createdAt,
+  });
+}
+
+export function listCancellations(db: Database, sessionId: string): CancellationRow[] {
+  const rows = db.query("SELECT * FROM cancellations WHERE session_id = $sessionId ORDER BY id").all({ $sessionId: sessionId }) as {
+    repo: string;
+    session_id: string;
+    kind: CancellationRow["kind"];
+    target: string;
+    reason: string | null;
+    created_at: string;
+  }[];
+  return rows.map(r => ({
+    repo: r.repo,
+    sessionId: r.session_id,
+    kind: r.kind,
+    target: r.target,
+    reason: r.reason,
     createdAt: r.created_at,
   }));
 }
