@@ -22,7 +22,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyClaudeLine, isClaudeTranscriptTurnEnd, normalizeClaudeLine } from "./claude-stream";
+import { classifyClaudeLine, isClaudeTranscriptInterrupt, isClaudeTranscriptTurnEnd, normalizeClaudeLine } from "./claude-stream";
 import { emitAgentLine, parseAgentLine } from "./session-driver";
 import type {
   AgentLineFormat,
@@ -343,7 +343,10 @@ export function makeTmuxClaudeDriverFactory(deps: TmuxDriverDeps): SessionDriver
         deps,
         () => exitedFlag,
         (parsed) => {
-          if (parsed.type === "user") turnEndSeen = false;
+          // An interrupt is itself a user line, and claude may write its
+          // marker twice (in the tool_result and in a text line after it);
+          // only a line that is not an interrupt opens a new turn.
+          if (parsed.type === "user" && !isClaudeTranscriptInterrupt(parsed)) turnEndSeen = false;
           const format: AgentLineFormat = turnEndSeen
             ? { ...CLAUDE_TRANSCRIPT_FORMAT, isTurnEnd: () => false }
             : CLAUDE_TRANSCRIPT_FORMAT;

@@ -523,6 +523,39 @@ test("back-to-back end_turn assistant lines without an intervening user line emi
   await driver.exited;
 });
 
+test("a user interrupt ends the turn once, even when claude writes the marker on two lines", async () => {
+  const cwd = makeTmpDir("tmux-driver-cwd");
+  const transcriptDir = makeTmpDir("tmux-driver-tx");
+  const { deps } = makeFakeTmuxDeps(transcriptDir);
+
+  const events: SessionDriverEvent[] = [];
+  const launch = await buildLaunchOptions(cwd, events);
+  const factory = makeTmuxClaudeDriverFactory(deps);
+
+  const driver = await factory(launch);
+  await driver.sendUserMessage("hi", "bootstrap");
+
+  const transcriptPath = join(transcriptDir, `${SAMPLE_SESSION_ID}.jsonl`);
+  await writeFile(
+    transcriptPath,
+    `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}],"stop_reason":"tool_use"}}\n` +
+      `{"type":"user","message":{"content":[{"type":"tool_result","content":"[Request interrupted by user for tool use]","is_error":true,"tool_use_id":"t1"}]}}\n` +
+      `{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}\n` +
+      `{"type":"user","message":{"content":[{"type":"text","text":"Continue from where you left off."}]}}\n` +
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}\n`,
+  );
+
+  const deadline = Date.now() + 2000;
+  while (events.filter((e) => e.kind === "turn_completed").length < 2 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await new Promise((r) => setTimeout(r, 100));
+  expect(events.filter((e) => e.kind === "turn_completed").length).toBe(2);
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
 test("a user line between two end_turn assistant lines correctly emits two turn_completed events", async () => {
   const cwd = makeTmpDir("tmux-driver-cwd");
   const transcriptDir = makeTmpDir("tmux-driver-tx");

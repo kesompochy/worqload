@@ -186,6 +186,7 @@ export async function runHost(opts: HostOptions): Promise<number> {
           return;
         }
         log("send_user_received", { textLen: msg.text.length, preview: previewText(msg.text) });
+        await writeEvent({ kind: "user_message_sent", payload: {} });
         await driver.sendUserMessage(msg.text, "send_user");
         return;
       }

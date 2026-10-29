@@ -6,10 +6,11 @@
 
 import { readLines } from "./claude-stream";
 import { classifyCursorLine, extractCursorSessionId } from "./cursor-stream";
-import type {
-  SessionDriver,
-  SessionDriverFactory,
-  SessionDriverLaunchOptions,
+import {
+  TURN_COMPLETED_EVENT,
+  type SessionDriver,
+  type SessionDriverFactory,
+  type SessionDriverLaunchOptions,
 } from "./session-driver";
 
 export const cursorPipeDriver: SessionDriverFactory = async (
@@ -42,6 +43,7 @@ export const cursorPipeDriver: SessionDriverFactory = async (
       });
     } catch (err) {
       opts.log("cursor_spawn_failed", { source, error: String(err) });
+      await opts.onEvent(TURN_COMPLETED_EVENT);
       return;
     }
     currentProc = proc;
@@ -68,6 +70,9 @@ export const cursorPipeDriver: SessionDriverFactory = async (
     await Promise.allSettled([stdoutTask, stderrTask]);
     opts.log("cursor_turn_complete", { source, durationMs: Date.now() - start, exitCode: code });
     if (currentProc === proc) currentProc = null;
+    // One process serves one turn, so its exit is the turn boundary whether
+    // the agent finished, failed, or crashed.
+    if (!killed) await opts.onEvent(TURN_COMPLETED_EVENT);
   };
 
   return {

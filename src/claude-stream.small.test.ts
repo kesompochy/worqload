@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isClaudePipeTurnEnd, isClaudeTranscriptTurnEnd, normalizeClaudeLine } from "./claude-stream";
+import { isClaudePipeTurnEnd, isClaudeTranscriptInterrupt, isClaudeTranscriptTurnEnd, normalizeClaudeLine } from "./claude-stream";
 
 test("normalizeClaudeLine extracts assistant text and thinking, keeping the wire line", () => {
   const wire = {
@@ -74,4 +74,24 @@ test("isClaudeTranscriptTurnEnd is false while a turn is still in progress", () 
   expect(isClaudeTranscriptTurnEnd({ type: "user", message: { content: [] } })).toBe(false);
   // The pipe-only result line is not a transcript terminator.
   expect(isClaudeTranscriptTurnEnd({ type: "result", is_error: false })).toBe(false);
+});
+
+// Shapes copied from real interactive transcripts: an interrupt during a tool
+// call lands either in the tool_result or in a text block after it, and one
+// outside a tool call is a bare text block.
+const INTERRUPTED_TOOL_RESULT = { type: "user", message: { content: [{ type: "tool_result", content: "[Request interrupted by user for tool use]", is_error: true, tool_use_id: "toolu_X" }] } };
+const INTERRUPTED_TOOL_USE_TEXT = { type: "user", message: { content: [{ type: "text", text: "[Request interrupted by user for tool use]" }] } };
+const INTERRUPTED_TEXT = { type: "user", message: { content: [{ type: "text", text: "[Request interrupted by user]" }] } };
+
+test("isClaudeTranscriptTurnEnd treats a user interrupt as the end of the turn", () => {
+  expect(isClaudeTranscriptTurnEnd(INTERRUPTED_TOOL_RESULT)).toBe(true);
+  expect(isClaudeTranscriptTurnEnd(INTERRUPTED_TOOL_USE_TEXT)).toBe(true);
+  expect(isClaudeTranscriptTurnEnd(INTERRUPTED_TEXT)).toBe(true);
+  expect(isClaudeTranscriptTurnEnd({ type: "user", message: { content: "[Request interrupted by user]" } })).toBe(true);
+});
+
+test("isClaudeTranscriptInterrupt is false for ordinary user lines", () => {
+  expect(isClaudeTranscriptInterrupt({ type: "user", message: { content: [{ type: "tool_result", content: "ok", tool_use_id: "toolu_X" }] } })).toBe(false);
+  expect(isClaudeTranscriptInterrupt({ type: "user", message: { content: [{ type: "text", text: "please quote [Request interrupted by user]" }] } })).toBe(false);
+  expect(isClaudeTranscriptInterrupt({ type: "assistant", message: { content: [{ type: "text", text: "[Request interrupted by user]" }] } })).toBe(false);
 });

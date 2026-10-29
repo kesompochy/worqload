@@ -87,3 +87,38 @@ test("cursorPipeDriver passed priorAgentSessionId resumes that session on the FI
   driver.kill("SIGTERM");
   await driver.exited;
 });
+
+test("cursorPipeDriver emits turn_completed once per message, after that turn's events", async () => {
+  const events: SessionDriverEvent[] = [];
+  const driver = await cursorPipeDriver({
+    spawnCommand: ["bun", MOCK, "echo", ...PREFIX],
+    env: testEnv(),
+    onEvent: collectorSink(events),
+    log: () => {},
+  });
+
+  await driver.sendUserMessage("first", "bootstrap");
+  expect(events.at(-1)?.kind).toBe("turn_completed");
+  await driver.sendUserMessage("second", "send_user");
+  expect(events.at(-1)?.kind).toBe("turn_completed");
+  expect(events.filter((e) => e.kind === "turn_completed").length).toBe(2);
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});
+
+test("cursorPipeDriver emits turn_completed when the agent crashes mid-turn", async () => {
+  const events: SessionDriverEvent[] = [];
+  const driver = await cursorPipeDriver({
+    spawnCommand: ["bun", MOCK, "crash", ...PREFIX],
+    env: testEnv(),
+    onEvent: collectorSink(events),
+    log: () => {},
+  });
+
+  await driver.sendUserMessage("hello", "bootstrap");
+  expect(events.at(-1)?.kind).toBe("turn_completed");
+
+  driver.kill("SIGTERM");
+  await driver.exited;
+});

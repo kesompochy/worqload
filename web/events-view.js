@@ -30,6 +30,40 @@ export function isAgentWorkEvent(event) {
   return AGENT_WORK_EVENT_KINDS.has(event?.kind);
 }
 
+// The event kinds that mean the agent has a turn open: a message handed to it,
+// or a step of its own. `claude_system` is left out because agents write
+// metadata lines (init, stderr, command changes) between turns as well.
+const TURN_OPENING_EVENT_KINDS = new Set([
+  "session_started",
+  "session_resumed",
+  "session_forked",
+  "session_auto_resumed",
+  "user_message_sent",
+  "claude_assistant_message",
+  "claude_tool_use",
+  "claude_tool_result",
+]);
+const TURN_CLOSING_EVENT_KINDS = new Set(["turn_completed", "session_stopped", "session_crashed"]);
+
+// The agent turn an event leaves the session in, or null when the event says
+// nothing about the turn.
+export function agentTurnAfterEvent(event) {
+  if (TURN_CLOSING_EVENT_KINDS.has(event?.kind)) return "idle";
+  if (TURN_OPENING_EVENT_KINDS.has(event?.kind)) return "working";
+  return null;
+}
+
+// "working" while the agent's latest turn is open, "idle" once it has
+// completed (or the run ended). Built on the driver contract that every
+// driver emits turn_completed when its agent finishes responding.
+export function agentTurnFromEvents(events) {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const turn = agentTurnAfterEvent(events[i]);
+    if (turn) return turn;
+  }
+  return "idle";
+}
+
 export function displayEventKind(event, agentName = "claude") {
   const kind = String(event?.kind ?? "event");
   if (!kind.startsWith("claude_")) return kind;

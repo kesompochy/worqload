@@ -14,7 +14,7 @@
   import { tick } from "svelte";
   import { state as appState, isReportExpanded, isReportViewRaw, isFeedbackExpanded, anchorLabel, feedbackAnchorsForPath } from "../state.svelte.js";
   import { renderMarkdown, extractHeadings } from "../markdown.js";
-  import { formatRelative } from "../dom.js";
+  import { formatRelative, polishWait } from "../dom.js";
   import { clock } from "../clock.svelte.js";
   import DiffView from "./DiffView.svelte";
   import FilesView from "./FilesView.svelte";
@@ -60,6 +60,7 @@
 
   // Reports are stored oldest-first; the pane shows newest-first.
   const reportsNewestFirst = $derived([...appState.reports].reverse());
+  const polishingDrafts = $derived(appState.sessions.find(s => s.id === appState.selected)?.polishing ?? []);
   const pinnedReports = $derived(reportsNewestFirst.filter(r => r.pinned));
   const unpinnedReports = $derived(reportsNewestFirst.filter(r => !r.pinned));
 
@@ -230,6 +231,15 @@
               </div>
             {/if}
           </article>
+        {/each}
+      </section>
+    {/if}
+
+    {#if appState.activeTab === "reports" && polishingDrafts.length > 0}
+      <section class="polishing-drafts" aria-label="推敲中の原稿">
+        {#each polishingDrafts as p (p.since + p.slug)}
+          {@const wait = polishWait([p], clock.now)}
+          <div class="polishing-draft" class:overdue={wait.overdue}>✎ 推敲中: {p.kind === "escalation" ? "エスカレーション " : ""}<code>{p.slug}</code> · {wait.seconds}s</div>
         {/each}
       </section>
     {/if}

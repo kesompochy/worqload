@@ -24,9 +24,27 @@ export function isClaudePipeTurnEnd(parsed: ParsedClaudeLine): boolean {
 // line instead; this predicate is for sources that lack a `result` line (the
 // interactive JSONL transcript the tmux driver reads).
 export function isClaudeTranscriptTurnEnd(parsed: ParsedClaudeLine): boolean {
+  if (isClaudeTranscriptInterrupt(parsed)) return true;
   if (parsed?.type !== "assistant") return false;
   const stopReason = parsed.message?.stop_reason;
   return typeof stopReason === "string" && TURN_YIELDING_STOP_REASONS.has(stopReason);
+}
+
+// An interrupted turn has no yielding assistant line; claude writes a user
+// line whose text block or tool_result begins with this marker instead. The
+// marker is claude's undocumented transcript wording, so a change to it
+// surfaces as a turn that never ends.
+const INTERRUPT_MARKER = "[Request interrupted by user";
+
+export function isClaudeTranscriptInterrupt(parsed: ParsedClaudeLine): boolean {
+  if (parsed?.type !== "user") return false;
+  const content = parsed.message?.content;
+  if (typeof content === "string") return content.startsWith(INTERRUPT_MARKER);
+  if (!Array.isArray(content)) return false;
+  return content.some((block: { type?: unknown; text?: unknown; content?: unknown }) => {
+    const text = block?.type === "text" ? block.text : block?.type === "tool_result" ? block.content : undefined;
+    return typeof text === "string" && text.startsWith(INTERRUPT_MARKER);
+  });
 }
 
 // Translate a classified claude wire line into the normalized domain payload
