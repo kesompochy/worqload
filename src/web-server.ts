@@ -35,7 +35,7 @@ import { buildWebFrontend, webFrontendBuilt } from "./web-build";
 import { defaultBranchNameGenerator, makeBranchNameGenerator, sanitizeBranchName, type BranchNameGenerator } from "./branch-name";
 import { extractUrls } from "./link-extraction";
 import { defaultLinkLabelGenerator, makeLinkLabelGenerator, type LinkLabelGenerator } from "./link-label";
-import { isAgentWorkEvent } from "../web/events-view.js";
+import { agentTurnFromEvents, isAgentWorkEvent } from "../web/events-view.js";
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import { defaultConfigPath } from "./config";
 import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
@@ -1637,11 +1637,12 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
       : sessions.filter(s => !s.archivedAt);
   const decorated = await Promise.all(filtered.map(async meta => {
     const dir = reportsDirFor(ctx, meta.id);
-    const [reports, readSet, events, asking] = await Promise.all([
+    const [reports, readSet, events, asking, polishing] = await Promise.all([
       listAllFiles(dir),
       readReadState(dir),
       readEvents(meta.id, 1, ctx.sessionsDir),
       listAllFiles(askingDirFor(ctx, meta.id)),
+      listPolishingSubmissions(ctx, meta.id),
     ]);
     const unreadReportCount = reports.reduce((n, r) => n + (r.meta?.rejection || readSet.has(r.filename) ? 0 : 1), 0);
     const unresolvedEscalationCount = asking.length;
@@ -1651,7 +1652,8 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
     const agentEvents = events.filter(isAgentWorkEvent);
     const lastAgentEventAt = agentEvents.at(-1)?.timestamp;
     const agentEventCount = agentEvents.length;
-    return { ...meta, unreadReportCount, unresolvedEscalationCount, lastAgentEventAt, agentEventCount };
+    const agentTurn = agentTurnFromEvents(events);
+    return { ...meta, unreadReportCount, unresolvedEscalationCount, lastAgentEventAt, agentEventCount, agentTurn, polishing };
   }));
   return json({ sessions: decorated });
 }
@@ -3381,6 +3383,17 @@ function drainReportPolishes(ctx: ServerContext, sessionId: string): void {
 async function listPendingReportPolishes(ctx: ServerContext, sessionId: string): Promise<string[]> {
   const names = await readdir(reportPolishPendingDirFor(ctx, sessionId)).catch(() => [] as string[]);
   return names.filter(n => n.endsWith(".json")).sort().map(n => join(reportPolishPendingDirFor(ctx, sessionId), n));
+}
+
+// What the sidebar shows while drafts wait: each one's kind, slug, and the
+// time it was queued, which its filename's key starts with.
+async function listPolishingSubmissions(ctx: ServerContext, sessionId: string): Promise<{ kind: PolishedKind; slug: string; since: string }[]> {
+  const listed = await Promise.all((await listPendingReportPolishes(ctx, sessionId)).map(async path => {
+    const pending = (await Bun.file(path).json().catch(() => null)) as PendingReportPolish | null;
+    if (!pending) return null;
+    return { kind: pending.kind ?? "report", slug: pending.slug, since: new Date(Number(basename(path).slice(0, 15))).toISOString() };
+  }));
+  return listed.filter(p => p !== null);
 }
 
 async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendingPath: string): Promise<void> {

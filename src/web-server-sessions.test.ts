@@ -419,6 +419,21 @@ test("GET /sessions exposes the last agent-work event timestamp, ignoring report
   expect(session.lastAgentEventAt).toBe(work.timestamp);
 });
 
+test("GET /sessions exposes whether the agent is mid-turn or has finished its turn", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+  const agentTurn = async () =>
+    (await fetch(`${baseUrl}/sessions`).then((r) => r.json())).sessions.find((s: { id: string }) => s.id === sid).agentTurn;
+
+  await appendEvent(sid, { kind: "claude_tool_use", payload: { name: "Read" } }, ctx.sessionsDir);
+  expect(await agentTurn()).toBe("working");
+  await appendEvent(sid, { kind: "turn_completed", payload: {} }, ctx.sessionsDir);
+  expect(await agentTurn()).toBe("idle");
+});
+
 test("GET /sessions/:id/reports exposes each report's submitted time from its report_submitted event", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir);

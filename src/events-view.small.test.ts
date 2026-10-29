@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { describeEvent, displayEventKind, isAgentWorkEvent } from "../web/events-view.js";
+import { agentTurnFromEvents, describeEvent, displayEventKind, isAgentWorkEvent } from "../web/events-view.js";
 
 test("isAgentWorkEvent: agent run and its steps count as work", () => {
   for (const kind of [
@@ -222,4 +222,30 @@ test("describeEvent renders workspace_trust_required claude_system event with ac
     payload: { type: "workspace_trust_required", sessionName: "worqload-abc12345" },
   });
   expect(d.summary).toBe("⚠ workspace trust required — open the tmux session and approve");
+});
+
+const ev = (kind: string, payload: unknown = {}) => ({ kind, payload });
+
+test("agentTurnFromEvents: the agent is working from a message or its own step until the turn completes", () => {
+  expect(agentTurnFromEvents([ev("session_started")])).toBe("working");
+  expect(agentTurnFromEvents([ev("session_started"), ev("claude_tool_use"), ev("turn_completed")])).toBe("idle");
+  expect(agentTurnFromEvents([ev("turn_completed"), ev("user_message_sent")])).toBe("working");
+  // An agent can start a turn without a message, e.g. when a background task finishes.
+  expect(agentTurnFromEvents([ev("turn_completed"), ev("claude_assistant_message")])).toBe("working");
+});
+
+test("agentTurnFromEvents: bookkeeping and agent metadata after a turn do not reopen it", () => {
+  expect(agentTurnFromEvents([
+    ev("turn_completed"),
+    ev("report_submitted"),
+    ev("report_polishing"),
+    ev("feedback_received"),
+    // claude writes system lines (init, stderr, command changes) that are not a turn's work.
+    ev("claude_system", { type: "system", subtype: "commands_changed" }),
+  ])).toBe("idle");
+});
+
+test("agentTurnFromEvents: a session with no events or an ended run is idle", () => {
+  expect(agentTurnFromEvents([])).toBe("idle");
+  expect(agentTurnFromEvents([ev("claude_tool_use"), ev("session_crashed")])).toBe("idle");
 });
