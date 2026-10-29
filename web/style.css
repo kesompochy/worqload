@@ -130,7 +130,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
 .badge-waiting_human { background: rgba(210,153,34,.18); color: var(--waiting); }
 .badge-stopped { background: rgba(139,149,163,.16); color: var(--stopped); }
 .badge-crashed { background: rgba(248,81,73,.18); color: var(--crashed); }
-.badge-idle { background: rgba(139,149,163,.16); color: var(--text); }
+.badge-idle { background: transparent; color: var(--running); box-shadow: inset 0 0 0 1px rgba(63,185,80,.55); }
 .badge-polishing { background: rgba(88,166,255,.16); color: var(--accent); }
 .detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .detail-main { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
