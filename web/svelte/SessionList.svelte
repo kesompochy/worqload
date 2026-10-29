@@ -6,7 +6,7 @@
   // (`state` is imported as `appState` because a local binding named `state`
   // would make Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { formatRelative, eventAgeIsStale, eventCountLevel } from "../dom.js";
+  import { formatRelative, eventAgeIsStale, eventCountLevel, sessionBadge, polishWait } from "../dom.js";
   import { clock } from "../clock.svelte.js";
   import {
     selectSession,
@@ -181,6 +181,8 @@
     {@const attention = unread + unresolvedEscalations}
     {@const isLast = index === visibleSessions.length - 1}
     {@const selected = archivedView && appState.archivedSelection.has(session.id)}
+    {@const badge = sessionBadge(session)}
+    {@const polishing = terminal ? null : polishWait(session.polishing, clock.now)}
     <div
       class="session-card"
       class:active
@@ -221,7 +223,7 @@
       {/if}
       <div class="session-card-main">
         {#if renaming}
-          <p class="title"><span class="badge badge-{session.status}">{statusLabel(session.status)}</span></p>
+          <p class="title"><span class="badge badge-{badge}">{statusLabel(badge)}</span></p>
           <input
             class="session-rename-input"
             type="text"
@@ -236,13 +238,13 @@
           />
         {:else}
           <div class="session-card-title-row">
-            <p class="title"><span class="badge badge-{session.status}">{statusLabel(session.status)}</span>{session.title || session.prompt.slice(0, 80)}</p>
+            <p class="title"><span class="badge badge-{badge}">{statusLabel(badge)}</span>{session.title || session.prompt.slice(0, 80)}</p>
             {#if active}
               <button class="btn-card-rename" onclick={(e) => { e.stopPropagation(); onRenameStart(session.id); }}>Rename</button>
             {/if}
           </div>
         {/if}
-        <div class="meta">{#if session.agentName}{session.agentName}{#if session.model} <span class="model-name">({session.model})</span>{/if} · {/if}{session.baseBranch} · {formatRelative(session.createdAt)}{#if session.forkedFrom} · <button type="button" class="forked-from-link" onclick={(e) => { e.stopPropagation(); selectSession(session.forkedFrom.sessionId); }}>forked</button>{/if}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}{#if eventCountLevel(session.agentEventCount)}<span class="session-event-count session-event-count-{eventCountLevel(session.agentEventCount)}">{session.agentEventCount}</span>{/if}</div>
+        <div class="meta">{#if session.agentName}{session.agentName}{#if session.model} <span class="model-name">({session.model})</span>{/if} · {/if}{session.baseBranch} · {formatRelative(session.createdAt)}{#if session.forkedFrom} · <button type="button" class="forked-from-link" onclick={(e) => { e.stopPropagation(); selectSession(session.forkedFrom.sessionId); }}>forked</button>{/if}{#if !terminal && session.lastAgentEventAt} · last event <span class="session-event-age" class:stale={eventAgeIsStale(session.lastAgentEventAt, clock.now)}>{formatRelative(session.lastAgentEventAt, clock.now)}</span>{/if}{#if polishing} · <span class="session-polishing" class:overdue={polishing.overdue} title={session.polishing.map((p) => p.slug).join(", ")}>✎ 推敲中 {session.polishing.length}件 · {polishing.seconds}s</span>{/if}{#if eventCountLevel(session.agentEventCount)}<span class="session-event-count session-event-count-{eventCountLevel(session.agentEventCount)}">{session.agentEventCount}</span>{/if}</div>
         <div class="session-card-actions">
           {#if archivedView}
             <button class="btn-card-unarchive" onclick={(e) => { e.stopPropagation(); onUnarchive(session.id); }}>Unarchive</button>

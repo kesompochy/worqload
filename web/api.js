@@ -54,8 +54,15 @@ export async function submitFeedbackBatch(sessionId, items) {
 }
 
 export async function fetchSessions() {
+  const requestedAt = Date.now();
   const { sessions } = await api("GET", "/sessions");
   const previous = state.sessions;
+  // An activity message that arrived while the request was in flight is newer
+  // than the response's snapshot.
+  for (const session of sessions) {
+    const activity = latestActivity.get(session.id);
+    if (activity && activity.receivedAt >= requestedAt) applyActivity(session, activity);
+  }
   state.sessions = sessions;
   // Reports / escalations of the selected session arrive over its websocket;
   // here we cover every other session, comparing this poll to the last one.
@@ -545,6 +552,42 @@ export async function refreshDiff() {
     state.diff = next;
     state.diffExpansions = new Map();
   }
+}
+
+// The activity stream carries every session's agent turn and polish queue as
+// they change, so a card stops showing a stale state within the 30s poll
+// interval. A reconnect refetches the list to cover changes missed while
+// disconnected.
+const latestActivity = new Map();
+
+function applyActivity(session, activity) {
+  session.agentTurn = activity.agentTurn;
+  session.polishing = activity.polishing;
+}
+
+export function openActivityStream() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  let attempts = 0;
+  const connect = () => {
+    const ws = new WebSocket(`${proto}//${location.host}/activity/stream`);
+    ws.addEventListener("open", () => {
+      if (attempts > 0) fetchSessions();
+      attempts = 0;
+    });
+    ws.addEventListener("message", e => {
+      let message; try { message = JSON.parse(e.data); } catch { return; }
+      const activity = { agentTurn: message.agentTurn, polishing: message.polishing ?? [], receivedAt: Date.now() };
+      latestActivity.set(message.sessionId, activity);
+      const card = state.sessions.find(s => s.id === message.sessionId);
+      if (card) applyActivity(card, activity);
+    });
+    ws.addEventListener("close", () => {
+      const delay = Math.min(WS_RECONNECT_BASE_MS * 2 ** attempts, WS_RECONNECT_MAX_MS);
+      attempts++;
+      setTimeout(connect, delay);
+    });
+  };
+  connect();
 }
 
 // `state.ws` is the live stream for the selected session. It silently dies on

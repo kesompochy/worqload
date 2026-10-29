@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { escapeHtml, formatBytes, formatRelative, eventAgeIsStale, EVENT_COUNT_WARNING, EVENT_COUNT_DANGER, eventCountLevel } from "../web/dom.js";
+import { escapeHtml, formatBytes, formatRelative, eventAgeIsStale, EVENT_COUNT_WARNING, EVENT_COUNT_DANGER, eventCountLevel, sessionBadge, polishWait, POLISH_OVERDUE_MS } from "../web/dom.js";
 
 test("escapeHtml escapes the five HTML-significant characters", () => {
   expect(escapeHtml(`<a href="x" data-y='z'>&</a>`)).toBe(
@@ -69,4 +69,32 @@ test("eventCountLevel returns 'warning' at and above warning threshold", () => {
 test("eventCountLevel returns 'danger' at and above danger threshold", () => {
   expect(eventCountLevel(EVENT_COUNT_DANGER)).toBe("danger");
   expect(eventCountLevel(EVENT_COUNT_DANGER + 100)).toBe("danger");
+});
+
+test("sessionBadge tells an agent mid-turn from one that has finished its turn or awaits a polish", () => {
+  expect(sessionBadge({ status: "running", agentTurn: "working", polishing: [] })).toBe("running");
+  expect(sessionBadge({ status: "running", agentTurn: "idle", polishing: [] })).toBe("idle");
+  expect(sessionBadge({ status: "running", agentTurn: "idle", polishing: [{ kind: "report", slug: "plan", since: "" }] })).toBe("polishing");
+  // A polish running beside a working agent does not hide that the agent works.
+  expect(sessionBadge({ status: "running", agentTurn: "working", polishing: [{ kind: "report", slug: "plan", since: "" }] })).toBe("running");
+  expect(sessionBadge({ status: "waiting_human", agentTurn: "idle", polishing: [] })).toBe("waiting_human");
+  expect(sessionBadge({ status: "waiting_human", agentTurn: "working", polishing: [] })).toBe("running");
+});
+
+test("sessionBadge keeps the lifecycle status for ended sessions and for sessions without turn data", () => {
+  expect(sessionBadge({ status: "stopped", agentTurn: "working", polishing: [] })).toBe("stopped");
+  expect(sessionBadge({ status: "crashed", agentTurn: "idle", polishing: [] })).toBe("crashed");
+  expect(sessionBadge({ status: "running" })).toBe("running");
+});
+
+test("polishWait measures from the oldest waiting draft and flags one waiting too long", () => {
+  const now = Date.parse("2026-10-29T00:02:00Z");
+  const polishing = [
+    { kind: "report", slug: "a", since: "2026-10-29T00:01:30Z" },
+    { kind: "report", slug: "b", since: "2026-10-29T00:01:50Z" },
+  ];
+  expect(polishWait(polishing, now)).toEqual({ seconds: 30, overdue: false });
+  expect(polishWait(polishing, Date.parse("2026-10-29T00:01:30Z") + POLISH_OVERDUE_MS)).toEqual({ seconds: 90, overdue: true });
+  expect(polishWait([], now)).toBeNull();
+  expect(polishWait(undefined, now)).toBeNull();
 });

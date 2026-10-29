@@ -57,6 +57,29 @@ export function eventAgeIsStale(iso, now = Date.now()) {
   return now - new Date(iso).getTime() >= STALE_EVENT_AGE_MS;
 }
 
+// The badge a session shows. A live session's status alone cannot tell an
+// agent mid-turn from one that has finished its turn, or from one whose report
+// is still being polished, so the badge also reads the agent's turn and the
+// polish queue the server reports.
+export function sessionBadge(session) {
+  if (session.status === "stopped" || session.status === "crashed") return session.status;
+  if (session.agentTurn === "working") return "running";
+  if ((session.polishing?.length ?? 0) > 0) return "polishing";
+  if (session.status === "waiting_human") return "waiting_human";
+  return session.agentTurn === "idle" ? "idle" : session.status;
+}
+
+// Measured polishes took up to about a minute; one waiting 1.5 times that is
+// likely stuck rather than slow.
+export const POLISH_OVERDUE_MS = 90_000;
+
+// How long the oldest draft has waited for its polish, or null when none waits.
+export function polishWait(polishing, now = Date.now()) {
+  if (!polishing || polishing.length === 0) return null;
+  const oldest = Math.min(...polishing.map(p => new Date(p.since).getTime()));
+  return { seconds: Math.floor((now - oldest) / 1000), overdue: now - oldest >= POLISH_OVERDUE_MS };
+}
+
 export const EVENT_COUNT_WARNING = 1000;
 export const EVENT_COUNT_DANGER = 2000;
 

@@ -12,7 +12,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { state as appState } from "../state.svelte.js";
-  import { formatRelative, eventAgeIsStale, eventCountLevel, toast } from "../dom.js";
+  import { formatRelative, eventAgeIsStale, eventCountLevel, sessionBadge, toast } from "../dom.js";
   import { isAgentWorkEvent } from "../events-view.js";
   import { clock } from "../clock.svelte.js";
   import { switchTab, onExpandAllDiffFiles, onCollapseAllDiffFiles, toggleActionPanel, runDirectAction, onToggleReportPolish, onSwitchModel, toggleEventsTab } from "../handlers.js";
@@ -100,10 +100,12 @@
 
 {#if appState.selected && appState.detail}
   {@const m = appState.detail.meta}
+  {@const card = appState.sessions.find((s) => s.id === m.id)}
+  {@const badge = sessionBadge({ ...m, agentTurn: card?.agentTurn, polishing: card?.polishing })}
   {@const events = (appState.detail.events ?? []).filter(isAgentWorkEvent)}
   {@const lastEvent = events.length > 0 ? events[events.length - 1] : null}
   <div class="detail-header">
-    <div class="title"><span class="badge badge-{m.status}">{m.status.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
+    <div class="title"><span class="badge badge-{badge}">{badge.replace("_", " ")}</span>{m.title || m.prompt.slice(0, 100)}</div>
     <div class="header-actions">
       {#if headerActions.length > 0}
         {#each headerActions as a, i (a.id)}

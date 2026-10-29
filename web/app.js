@@ -5,7 +5,7 @@
 import { $ } from "./dom.js";
 import { state } from "./state.svelte.js";
 import { startClock } from "./clock.svelte.js";
-import { fetchMeta, fetchSessions, fetchArchivedSessions, selectFile } from "./api.js";
+import { fetchMeta, fetchSessions, fetchArchivedSessions, openActivityStream, selectFile } from "./api.js";
 import { selectSession, switchTab, applyUrlState } from "./handlers.js";
 import { syncNotifyButton, onNotifyClick } from "./notify.js";
 import { readUrlState } from "./url-state.js";
@@ -18,6 +18,7 @@ syncNotifyButton();
 
 await fetchMeta();
 await fetchSessions();
+openActivityStream();
 // Restore the session, tab, and structure-focus stack the URL points at (see
 // web/url-state.js). A stale id falls back to the first session so a reload
 // after archiving still lands on something useful — in that case the URL is
