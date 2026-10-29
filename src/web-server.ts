@@ -3336,6 +3336,8 @@ interface PendingReportPolish {
   content: string;
   replyTo?: string;
   attachments: { name: string; base64: string }[];
+  // Seq of the polishing event announcing this draft.
+  queuedSeq?: number;
 }
 
 let pendingReportPolishCounter = 0;
@@ -3356,11 +3358,11 @@ async function acceptReportForPolish(ctx: ServerContext, meta: SessionMeta, repo
 
 async function queueSubmissionForPolish(ctx: ServerContext, meta: SessionMeta, pending: PendingReportPolish): Promise<void> {
   const key = `${String(Date.now()).padStart(15, "0")}-${String(pendingReportPolishCounter++).padStart(6, "0")}`;
-  await Bun.write(join(reportPolishPendingDirFor(ctx, meta.id), `${key}.json`), JSON.stringify(pending));
   // Counts as the turn's report or escalation for the auto-nudge: the writer
   // did submit, the stored version just arrives later.
-  const kind = pending.kind === "escalation" ? "escalation_polishing" : "report_polishing";
-  await appendAndBroadcast(ctx, meta.id, { kind, payload: { slug: pending.slug } });
+  const kind = pending.kind === "report" || pending.kind === undefined ? "report_polishing" : "escalation_polishing";
+  const event = await appendAndBroadcast(ctx, meta.id, { kind, payload: { slug: pending.slug } });
+  await Bun.write(join(reportPolishPendingDirFor(ctx, meta.id), `${key}.json`), JSON.stringify({ ...pending, queuedSeq: event.seq }));
   drainReportPolishes(ctx, meta.id);
 }
 
@@ -3436,7 +3438,7 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
         attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
       });
       archive("stored", content, file.filename);
-      if (outcome.continueReason) {
+      if (outcome.continueReason && !(await submittedSince(ctx, sessionId, pending.queuedSeq))) {
         const feedback = reportContinueScaffold.replaceAll("{{slug}}", pending.slug).replaceAll("{{reason}}", outcome.continueReason);
         await queueFeedbackAndWake(ctx, current, "report-continue", feedback, "report_continue");
       }
@@ -3495,6 +3497,15 @@ async function withdrawReport(
 
 function reportPolishReturnedDirFor(ctx: ServerContext, sessionId: string): string {
   return join(ctx.sessionsDir, sessionId, "report-polish-returned");
+}
+
+// The fork judged from the conversation as it stood when the draft was
+// submitted; a later report or escalation from the writer may already do what
+// the fork found left undone.
+async function submittedSince(ctx: ServerContext, sessionId: string, queuedSeq: number | undefined): Promise<boolean> {
+  if (queuedSeq === undefined) return false;
+  const later = await readEvents(sessionId, queuedSeq + 1, ctx.sessionsDir);
+  return later.some(e => e.kind === "report_polishing" || e.kind === "escalation_polishing");
 }
 
 // Every command approval shares the slug `command-approval`, so a command
