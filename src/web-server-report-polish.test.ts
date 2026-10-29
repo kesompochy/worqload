@@ -518,7 +518,7 @@ test("a claude session's command approval is shown with the fork's polished reas
   expect(await pendingEscalations(baseUrl, session.id)).toEqual([]);
 
   await gate.release(0);
-  await waitFor(async () => (await pendingEscalations(baseUrl, session.id)).length === 1, "the approval to be stored");
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the approval to be stored");
   const [shown] = (await pendingEscalations(baseUrl, session.id)) as { filename: string; content: string; command?: string }[];
   expect(shown.command).toBe("gh pr create --body-file pr.md");
   expect(shown.content).toContain("推敲された理由");
@@ -555,6 +555,7 @@ test("a returned command approval reaches the writer with its resubmit command, 
   await waitFor(() => gate.requests.length === 3, "the other command's polish to start");
   expect(gate.requests[2].allowReturn).toBe(true);
   await gate.release(2);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the polishes to finish");
 });
 
 test("a command approval waiting for its polish absorbs a duplicate request for the same command", async () => {
@@ -595,7 +596,7 @@ test("cancelling a command approval by its command after it is shown resolves it
 
   await requestApproval(baseUrl, session.id, "npm publish", "公開する");
   await gate.release(0);
-  await waitFor(async () => (await pendingEscalations(baseUrl, session.id)).length === 1, "the approval to be stored");
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the approval to be stored");
 
   const cancelled = await postJson(baseUrl, `/internal/sessions/${session.id}/command-approvals/cancel`, { command: "npm publish" });
   expect(cancelled.status).toBe(200);
