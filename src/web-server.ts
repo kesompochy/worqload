@@ -2094,26 +2094,7 @@ async function postReportReject(req: Request, ctx: ServerContext, params: Record
     await mergeNumberedFileMeta(dir, filename, { rejection });
     await appendAndBroadcast(ctx, meta.id, { kind: "report_rejected", payload: { filename } });
     const feedback = await queueFeedbackAndWake(ctx, meta, "report-rejected", reason ?? "", "report_rejected", { rejectedReport: filename });
-    if (ctx.archiveDb && reason) {
-      try {
-        archiveUpsertSession(ctx.archiveDb, {
-          sessionId: meta.id,
-          repo: ctx.repoIdentifier,
-          initialPrompt: meta.prompt,
-          createdAt: meta.createdAt,
-        });
-        archiveInsertFeedback(ctx.archiveDb, {
-          repo: ctx.repoIdentifier,
-          sessionId: meta.id,
-          filename: feedback.filename,
-          body: reason,
-          anchorPath: null,
-          anchorLineStart: null,
-          anchorLineEnd: null,
-          createdAt: new Date().toISOString(),
-        });
-      } catch { /* archive is best-effort */ }
-    }
+    if (reason) archiveFeedback(ctx, meta, feedback.filename, reason);
     return json({ ok: true, filename });
   });
 }
@@ -3150,6 +3131,9 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
     const writeOpts: WriteNumberedFileOptions = { archiveDirs: att ? [] : [readDir] };
     if (attachments.length > 0) writeOpts.attachments = attachments;
     const file = await writeNumberedFile(targetDir, slug, feedbackContent, writeOpts);
+    // Archived as the agent received it, so the row keeps the question or
+    // command alongside the human's answer or note.
+    archiveFeedback(ctx, meta, file.filename, feedbackContent);
     await appendAndBroadcast(ctx, meta.id, {
       kind: "escalation_resolved",
       payload: { ...resolvedPayload, answerFilename: file.filename },
@@ -3443,6 +3427,28 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
     }
   }
   await rm(pendingPath, { force: true });
+}
+
+function archiveFeedback(ctx: ServerContext, meta: SessionMeta, filename: string, body: string): void {
+  if (!ctx.archiveDb) return;
+  try {
+    archiveUpsertSession(ctx.archiveDb, {
+      sessionId: meta.id,
+      repo: ctx.repoIdentifier,
+      initialPrompt: meta.prompt,
+      createdAt: meta.createdAt,
+    });
+    archiveInsertFeedback(ctx.archiveDb, {
+      repo: ctx.repoIdentifier,
+      sessionId: meta.id,
+      filename,
+      body,
+      anchorPath: null,
+      anchorLineStart: null,
+      anchorLineEnd: null,
+      createdAt: new Date().toISOString(),
+    });
+  } catch { /* archive is best-effort */ }
 }
 
 function archivePolish(ctx: ServerContext, meta: SessionMeta, polish: Omit<PolishRow, "repo" | "sessionId" | "createdAt">): void {
