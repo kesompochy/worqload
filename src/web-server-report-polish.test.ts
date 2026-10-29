@@ -1,8 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
+import { listPolishes } from "./archive-store";
 import { readEvents } from "./event-log";
-import type { PolishOutcome, ReportPolisher, ReportPolishRequest } from "./report-polish";
+import type { PolishResult, ReportPolisher, ReportPolishRequest } from "./report-polish";
 import { loadSessionMeta, saveSessionMeta } from "./session";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 import { startServer } from "./web-server";
@@ -42,7 +43,7 @@ async function postJson(baseUrl: string, path: string, body: unknown): Promise<R
 
 // A polisher whose every call blocks until the test releases it, so a test can
 // observe the server between accepting a draft and storing its polish.
-function gatedPolisher(polish: (request: ReportPolishRequest) => string | PolishOutcome) {
+function gatedPolisher(polish: (request: ReportPolishRequest) => string | PolishResult) {
   const requests: ReportPolishRequest[] = [];
   const releases: (() => void)[] = [];
   const polisher: ReportPolisher = async (request) => {
@@ -443,4 +444,44 @@ test("cancelling a slug with no escalation is a 404", async () => {
   const session = await createClaudeSession(baseUrl, ctx);
   const res = await postJson(baseUrl, `/internal/sessions/${session.id}/escalations/by-slug/none/cancel`, {});
   expect(res.status).toBe(404);
+});
+
+test("each polish is archived with its draft, the fork's rounds and its outcome", async () => {
+  const gate = gatedPolisher(r =>
+    r.draft === "原稿1" ? { report: "推敲版", rounds: ["1回目", "2回目"] }
+    : r.draft === "原稿2" ? { withdrawnReason: "変化がない" }
+    : { returnedReason: "調査がない" });
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, { reportPolisher: gate.polisher, archiveDbPath: join(repoDir, "archive.db") });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "kept", content: "原稿1" });
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "noop", content: "原稿2" });
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "ask", content: "問い" });
+  for (let i = 0; i < 3; i++) await gate.release(i);
+  await waitFor(() => listPolishes(ctx.archiveDb!, session.id).length === 3, "three archived polishes");
+
+  const rows = listPolishes(ctx.archiveDb!, session.id);
+  expect(rows.map(r => ({ kind: r.kind, slug: r.slug, draft: r.draft, rounds: r.rounds, outcome: r.outcome, result: r.result }))).toEqual([
+    { kind: "report", slug: "kept", draft: "原稿1", rounds: ["1回目", "2回目"], outcome: "stored", result: "推敲版" },
+    { kind: "report", slug: "noop", draft: "原稿2", rounds: [], outcome: "withdrawn", result: "変化がない" },
+    { kind: "escalation", slug: "ask", draft: "問い", rounds: [], outcome: "returned", result: "調査がない" },
+  ]);
+  expect(rows[0].storedFilename).toMatch(/^\d+-kept\.md$/);
+  expect(rows[1].storedFilename).toBeNull();
+});
+
+test("an escalation cancelled while it is polished is archived as cancelled", async () => {
+  const gate = gatedPolisher(() => "推敲された問い");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, { reportPolisher: gate.polisher, archiveDbPath: join(repoDir, "archive.db") });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "q", content: "問いの原稿" });
+  await waitFor(() => gate.requests.length === 1, "the polish to start");
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations/by-slug/q/cancel`, {});
+  await gate.release(0);
+  await waitFor(() => listPolishes(ctx.archiveDb!, session.id).length === 1, "the archived polish");
+
+  expect(listPolishes(ctx.archiveDb!, session.id)[0]).toMatchObject({ kind: "escalation", outcome: "cancelled", result: "推敲された問い", storedFilename: null });
 });

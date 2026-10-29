@@ -36,7 +36,7 @@ The frontend is a Vite project under `web/` (plain ES modules + Svelte component
 
 ### Archive backup
 
-セッションのレポート・フィードバックは `~/.local/share/worqload/archive.db`（SQLite、WAL モード）に蓄積される。Google Drive へのバックアップ手順:
+セッションのレポート・フィードバック・推敲の記録は `~/.local/share/worqload/archive.db`（SQLite、WAL モード）に蓄積される。Google Drive へのバックアップ手順:
 
 ```sh
 # 前提: gcloud がインストール済みであること

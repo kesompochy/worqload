@@ -96,13 +96,13 @@ test("a second round without the report markers keeps the first round's text", a
 test("a fork that exits non-zero falls back to the draft", async () => {
   const polish = makeClaudeReportPolisher();
   const out = await polish({ spawnCommand: ["bun", MOCK, "crash"], cwd: process.cwd(), draft: "原稿", allowReturn: true, kind: "report" });
-  expect(out).toEqual({ report: "原稿" });
+  expect(out).toEqual({ report: "原稿", rounds: [] });
 });
 
 test("a fork that never answers is killed at the timeout and the draft is stored", async () => {
   const polish = makeClaudeReportPolisher({ timeoutMs: 300 });
   const out = await polish({ spawnCommand: ["bun", MOCK, "hang"], cwd: process.cwd(), draft: "原稿", allowReturn: true, kind: "report" });
-  expect(out).toEqual({ report: "原稿" });
+  expect(out).toEqual({ report: "原稿", rounds: [] });
 });
 
 test("a first round that withdraws the report ends the polish with the fork's reason", async () => {
@@ -152,4 +152,16 @@ test("an escalation is never withdrawn, since its writer waits for the answer", 
 
 test("an escalation may be returned to its writer", async () => {
   expect(await polishWith([returnReply("自分で決められる")], { kind: "escalation" })).toBe("returned: 自分で決められる");
+});
+
+test("the polish carries each round's fork output", async () => {
+  const polish = makeClaudeReportPolisher();
+  const out = await polish({
+    spawnCommand: ["bun", MOCK, "replies", polishedReply("推敲版その1"), polishedReply("推敲版その2")],
+    cwd: process.cwd(),
+    draft: "原稿",
+    allowReturn: true,
+    kind: "report",
+  });
+  expect(out.rounds).toEqual([polishedReply("推敲版その1"), polishedReply("推敲版その2")]);
 });
