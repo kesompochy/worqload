@@ -114,11 +114,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-
   box-shadow: 0 0 0 2px var(--bg);
   margin-top: 1px;
 }
-/* Hidden with visibility, not display, so a card keeps its height when the
-   pointer moves onto it; otherwise the cards below shift and a click aimed at
-   one card's Fork lands on its neighbour's. */
-.session-card-actions { display: flex; visibility: hidden; flex-wrap: wrap; gap: .3rem; margin-top: .55rem; }
-.session-card:hover .session-card-actions, .session-card.active .session-card-actions { visibility: visible; }
+.session-card-actions { display: none; flex-wrap: wrap; gap: .3rem; margin-top: .55rem; }
+.session-card:hover .session-card-actions, .session-card.active .session-card-actions { display: flex; }
 .session-card-actions button { font-size: 11px; padding: .2rem .55rem; }
 .btn-card-resume { color: var(--running); border-color: rgba(63,185,80,.5); }
 .btn-card-resume:hover { background: rgba(63,185,80,.12); }
