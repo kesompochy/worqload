@@ -112,8 +112,10 @@ export async function fetchActions(sessionId) {
   }
   try {
     const { actions } = await api("GET", `/sessions/${sessionId}/actions`);
+    if (state.selected !== sessionId) return;
     state.actions = actions;
   } catch {
+    if (state.selected !== sessionId) return;
     state.actions = [];
   }
 }
@@ -164,6 +166,7 @@ export async function refreshDetail() {
     api("GET", `/sessions/${id}/asking`),
     api("GET", `/sessions/${id}/feedback`),
   ]);
+  if (state.selected !== id) return;
   state.detail = { meta, events, agentName };
   state.reports = reportsRes.reports;
   state.asking = askingRes.asking;
@@ -244,10 +247,13 @@ export async function ensureStructureViewLoaded(force = false) {
 export async function ensureFilesLoaded(force = false) {
   if (!state.selected) return;
   if (state.filesLoaded && !force) return;
+  const id = state.selected;
   try {
-    const { paths } = await api("GET", `/sessions/${state.selected}/files`);
+    const { paths } = await api("GET", `/sessions/${id}/files`);
+    if (state.selected !== id) return;
     state.files = Array.isArray(paths) ? paths : [];
   } catch {
+    if (state.selected !== id) return;
     state.files = [];
   }
   if (!state.filesLoaded) {
@@ -540,13 +546,15 @@ export async function fetchCodeNavLocations(kind, path, language, line, characte
 
 export async function refreshDiff() {
   if (!state.selected) return;
+  const id = state.selected;
   let next = "";
   try {
-    const res = await fetch(`/sessions/${state.selected}/diff`);
+    const res = await fetch(`/sessions/${id}/diff`);
     next = res.ok ? await res.text() : "";
   } catch {
     next = "";
   }
+  if (state.selected !== id) return;
   if (next !== state.diff) {
     // Line numbers may have shifted; previously expanded ranges no longer apply.
     state.diff = next;

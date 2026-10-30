@@ -143,11 +143,15 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   state.feedbackQueue = [];
   if (!id) return;
   await refreshDetail();
+  // A click on another card while this one was loading owns the screen now;
+  // opening this session's stream would leave it running unclosed beside that one.
+  if (state.selected !== id) return;
   // Cold cache only (first boot, before the prefetch resolved). The warm case
   // already rendered from state.prLinks above with no round trip; refreshing
   // it here too would reintroduce the open-time flip the prefetch removes.
   if (state.prLinks[id] === undefined) void loadPrLink(id);
   await fetchActions(id);
+  if (state.selected !== id) return;
   openWs(id);
 }
 

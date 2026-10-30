@@ -733,6 +733,47 @@ test("onReorderSessions is a no-op when dropped onto itself", async () => {
   expect(reorderSessionsCalls).toEqual([]);
 });
 
+test("selectSession leaves the stream and actions to a session selected while it was loading", async () => {
+  const fetchedActions: string[] = [];
+  const openedStreams: string[] = [];
+  let releaseFirst = () => {};
+  await withApiMock(async () => ({}), async () => {
+    const first = selectSession("session-a");
+    await selectSession("session-b");
+    releaseFirst();
+    await first;
+  }, {
+    refreshDetail: () => state.selected === "session-a"
+      ? new Promise<void>(resolve => { releaseFirst = resolve; })
+      : Promise.resolve(),
+    fetchActions: async (sessionId: string) => { fetchedActions.push(sessionId); },
+    openWs: (id: string) => { openedStreams.push(id); },
+  });
+
+  expect(state.selected).toBe("session-b");
+  expect(fetchedActions).toEqual(["session-b"]);
+  expect(openedStreams).toEqual(["session-b"]);
+});
+
+test("selectSession leaves the stream to a session selected while its actions were loading", async () => {
+  const openedStreams: string[] = [];
+  let releaseFirst = () => {};
+  await withApiMock(async () => ({}), async () => {
+    const first = selectSession("session-a");
+    await Promise.resolve();
+    await selectSession("session-b");
+    releaseFirst();
+    await first;
+  }, {
+    fetchActions: (sessionId: string) => sessionId === "session-a"
+      ? new Promise<void>(resolve => { releaseFirst = resolve; })
+      : Promise.resolve(),
+    openWs: (id: string) => { openedStreams.push(id); },
+  });
+
+  expect(openedStreams).toEqual(["session-b"]);
+});
+
 test("selectSession writes the new session id into the URL", async () => {
   const win = installUrlWindow("");
   state.activeTab = "reports";
@@ -1340,9 +1381,13 @@ async function withApiMock(
     refreshDetail: () => Promise<void>;
     fetchSessions: () => Promise<void>;
     submitFeedback: (sessionId: string, payload: unknown, attachments: unknown) => Promise<unknown>;
+    fetchActions: (sessionId: string) => Promise<void>;
+    openWs: (id: string) => void;
   }> = {},
 ) {
   const refreshDetail = overrides.refreshDetail ?? (async () => {});
+  const fetchActions = overrides.fetchActions ?? (async () => {});
+  const openWs = overrides.openWs ?? (() => {});
   const fetchSessions = overrides.fetchSessions ?? (async () => { fetchSessionsCalls++; });
   const submitFeedback = overrides.submitFeedback ?? (async (sessionId: string, payload: unknown, attachments: unknown) => {
     submitFeedbackCalls.push({ sessionId, payload, attachments });
@@ -1357,7 +1402,7 @@ async function withApiMock(
     },
     fetchSessions,
     fetchArchivedSessions: async () => { fetchArchivedSessionsCalls++; },
-    fetchActions: async () => {},
+    fetchActions,
     reorderSessions: async (ids: string[]) => { reorderSessionsCalls.push(ids); },
     refreshDetail,
     loadPrLink: async () => {},
@@ -1371,7 +1416,7 @@ async function withApiMock(
     selectFile: async () => {},
     searchFiles: async () => ({ matches: [], truncated: false }),
     fetchCodeNavLocations: async () => ({ available: false }),
-    openWs() {},
+    openWs,
   }));
   try {
     await body();
