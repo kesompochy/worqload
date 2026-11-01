@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
-import { loadSessionMeta, type AgentName } from "./session";
+import { appendEvent } from "./event-log";
+import { loadSessionMeta, saveSessionMeta, type AgentName } from "./session";
 import { buildDefaultSpawnCommand, startServer, type HostLauncher } from "./web-server";
 
 afterEach(cleanupAll);
@@ -308,6 +309,49 @@ test("POST /sessions/:id/model updates meta and respawns the host with the new m
   expect(resumeLaunch).toBeDefined();
   expect(resumeLaunch!.spawnCommand).toContain("--model");
   expect(resumeLaunch!.spawnCommand[resumeLaunch!.spawnCommand.indexOf("--model") + 1]).toBe("opus");
+});
+
+test("POST /sessions/:id/model resumes the conversation of a forked session", async () => {
+  const launches: boolean[] = [];
+  const hostLauncher: HostLauncher = async ({ meta, sessionsDir, resume, onEvent }) => {
+    launches.push(resume);
+    const event = await appendEvent(meta.id, { kind: resume ? "session_resumed" : "session_forked", payload: { prompt: meta.prompt } }, sessionsDir);
+    onEvent(event);
+    return {
+      client: {
+        async send() {},
+        async kill() {},
+        async close() {},
+        replayCompleted: Promise.resolve({ lastSeq: event.seq }),
+        exited: new Promise<number | null>(() => {}),
+      },
+    };
+  };
+  const started = await startServer({
+    port: 0,
+    repoDir: makeTmpDir("repo"),
+    branchNameGenerator: async () => null,
+    hostLauncher,
+    worktreeOps: fakeWorktreeOps(),
+    archiveDbPath: null,
+  });
+  trackCleanup(() => started.shutdown({ killHosts: true }));
+
+  const create = await fetch(`http://127.0.0.1:${started.server.port}/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "x", baseBranch: "trunk", model: "sonnet" }),
+  });
+  const { meta } = await create.json();
+  await saveSessionMeta({ ...(await loadSessionMeta(meta.id, started.ctx.sessionsDir))!, status: "stopped" }, started.ctx.sessionsDir);
+
+  await fetch(`http://127.0.0.1:${started.server.port}/sessions/${meta.id}/model`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "opus" }),
+  });
+
+  expect(launches).toEqual([false, true]);
 });
 
 test("POST /sessions/:id/model rejects non-claude agents", async () => {
