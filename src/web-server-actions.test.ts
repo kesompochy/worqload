@@ -898,6 +898,35 @@ test("resume of a claude pipe session resumes its recorded agentSessionId", asyn
   expect(spawnCommands.at(-1)!.at(-1)).toBe("--continue");
 });
 
+// A forked session's host records session_forked instead of session_started on
+// its first launch. Resume must still treat it as started, or it launches a
+// fresh conversation from the original prompt and the agent loses its history.
+test("POST /sessions/:id/resume resumes the conversation of a forked session", async () => {
+  const repoDir = makeTmpDir("repo");
+  const launches: { resume: boolean }[] = [];
+  const forkLikeLauncher: HostLauncher = async ({ meta, sessionsDir, resume, onEvent }) => {
+    launches.push({ resume });
+    const event = await appendEvent(meta.id, { kind: resume ? "session_resumed" : "session_forked", payload: { prompt: meta.prompt } }, sessionsDir);
+    onEvent(event);
+    return {
+      client: {
+        async send() {},
+        async kill() {},
+        async close() {},
+        replayCompleted: Promise.resolve({ lastSeq: event.seq }),
+        exited: new Promise<number | null>(() => {}),
+      },
+    };
+  };
+  const { baseUrl, ctx } = await bootServer(repoDir, { hostLauncher: forkLikeLauncher });
+
+  const created = (await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json())).meta;
+  await saveSessionMeta({ ...(await loadSessionMeta(created.id, ctx.sessionsDir))!, status: "stopped" }, ctx.sessionsDir);
+  await postJson(baseUrl, `/sessions/${created.id}/resume`, { prompt: "continue" });
+
+  expect(launches.map((l) => l.resume)).toEqual([false, true]);
+});
+
 test("POST /sessions/:id/resume archives its prompt", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir, { archiveDbPath: join(repoDir, "archive.db") });

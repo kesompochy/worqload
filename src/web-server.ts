@@ -1929,6 +1929,11 @@ interface ModelBody {
   model?: unknown;
 }
 
+// A forked session's first launch records session_forked, not session_started.
+function hasSessionBeenStarted(events: Event[]): boolean {
+  return events.some(e => e.kind === "session_started" || e.kind === "session_forked");
+}
+
 async function postModel(req: Request, ctx: ServerContext, params: Record<string, string>): Promise<Response> {
   return withSession(ctx, params.id, async meta => {
     const body = (await req.json().catch(() => ({}))) as ModelBody;
@@ -1960,7 +1965,7 @@ async function postModel(req: Request, ctx: ServerContext, params: Record<string
     }
 
     const events = await readEvents(meta.id, 1, ctx.sessionsDir);
-    const hasBeenStarted = events.some(e => e.kind === "session_started");
+    const hasBeenStarted = hasSessionBeenStarted(events);
 
     const stopped = await loadSessionMeta(meta.id, ctx.sessionsDir);
     const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = stopped ?? meta;
@@ -2791,7 +2796,7 @@ async function postResume(req: Request, ctx: ServerContext, params: Record<strin
     }
 
     const events = await readEvents(meta.id, 1, ctx.sessionsDir);
-    const hasBeenStarted = events.some(e => e.kind === "session_started");
+    const hasBeenStarted = hasSessionBeenStarted(events);
 
     const { endedAt: _endedAt, archivedAt: _archivedAt, ...rest } = meta;
     const resumed: SessionMeta = { ...rest, status: "running" };
