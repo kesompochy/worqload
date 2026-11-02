@@ -561,14 +561,17 @@ function broadcastEvent(ctx: ServerContext, sessionId: string, event: import("./
 }
 
 // Announces on the activity stream when an event opens or closes the agent's
-// turn, or adds or removes a draft waiting for its polish. A polish leaving
-// the queue has no event of its own (its stored report is broadcast before
-// the draft is removed), so polishAndStoreReport announces that itself.
+// turn, or a cancellation removes a draft waiting for its polish. A draft
+// entering the queue is announced by queueSubmissionForPolish once its file is
+// written, since its polishing event is broadcast before the file exists. A
+// polish leaving the queue has no event of its own (its stored report is
+// broadcast before the draft is removed), so polishAndStoreReport announces
+// that itself.
 function trackAgentActivity(ctx: ServerContext, sessionId: string, event: Event): void {
   const turn = agentTurnAfterEvent(event);
   const turnChanged = turn !== null && ctx.announcedAgentTurns.get(sessionId) !== turn;
   if (turn !== null) ctx.announcedAgentTurns.set(sessionId, turn);
-  const polishQueueChanged = event.kind === "report_polishing" || event.kind === "escalation_polishing" || event.kind === "escalation_polish_cancelled";
+  const polishQueueChanged = event.kind === "escalation_polish_cancelled";
   if (turnChanged || polishQueueChanged) announceAgentActivity(ctx, sessionId);
 }
 
@@ -3424,6 +3427,7 @@ async function queueSubmissionForPolish(ctx: ServerContext, meta: SessionMeta, p
   const kind = pending.kind === "report" || pending.kind === undefined ? "report_polishing" : "escalation_polishing";
   const event = await appendAndBroadcast(ctx, meta.id, { kind, payload: { slug: pending.slug } });
   await Bun.write(join(reportPolishPendingDirFor(ctx, meta.id), `${key}.json`), JSON.stringify({ ...pending, queuedSeq: event.seq }));
+  announceAgentActivity(ctx, meta.id);
   drainReportPolishes(ctx, meta.id);
 }
 
