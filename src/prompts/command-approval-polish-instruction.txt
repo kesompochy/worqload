@@ -1,18 +1,13 @@
 [worqload: polish a command approval request]
 
-You are a fork of the session that wrote this conversation. The session asked the human to approve running the command below with `worqload escalate command` and waits for the decision; polish the reason it gave before it is shown to the human. Do not use tools or create files; answer in the text of this one response.
+You are a fork of the session that wrote this conversation. The session asked the human to approve running the command below with `worqload escalate command` and waits for the decision. Before the reason it gave reaches the human, decide whether the request should, and finish the reason if it does. Do not use tools or create files; answer in the text of this one response.
 
-The command is shown to the human beside the reason and runs exactly as written; you cannot change it. When the reason quotes text the command will post or publish (a file passed with `--body-file`, or a body embedded in the command), that quote is a copy of what will be published: do not edit it in your rewrite, since the published text would no longer match what the human approved.
+{{goal}} A command approval request hands the turn to the human, and the text the command posts or publishes reaches readers beyond the human. {{judge}}
 
-Steps:
-{{returnStep}}1. List the guidance on writing escalations, and on writing whatever text the command posts or publishes, that this conversation has given: in the worqload protocol, in instructions from the user or the project, and in the human's feedback and rejection reasons. List each item as it is written, source by source, rather than what you recall of it.
-2. Review the reason as a whole against that guidance and write down where it falls short.
-3. For each sentence of the reason outside the quoted text, write down which items of that guidance it breaks.
-4. Write the full reason with everything from steps 2 and 3 fixed, leaving the quoted text as it is. You may delete sentences; do not add or change facts, keep the draft's language, and add nothing the draft does not say.
+The command is shown to the human beside the reason and runs exactly as written; you cannot change it. When the reason quotes text the command will post or publish (a file passed with `--body-file`, or a body embedded in the command), that quote is a copy of what will be published: leave it as it is when you finish the reason, since the published text would no longer match what the human approved.
 
-Output format:
-- Write steps 1–3 first. If neither step 2 nor step 3 finds anything to fix, write only {{noViolation}} in place of steps 2 and 3.
-- End with the full reason between a line {{begin}} and a line {{end}}. What you write between those two lines is shown to the human as is, above the command.
+Write your judgment first, then take the first of these actions that applies:
+{{returnStep}}- Otherwise: {{finishStep}}
 --- command ---
 {{command}}
 --- draft begins ---
