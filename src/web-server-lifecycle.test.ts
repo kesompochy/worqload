@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { listAllFeedback, listCancellations, listEscalations } from "./archive-store";
@@ -1377,4 +1377,29 @@ test("escalations and command approvals are archived when submitted, and cancell
     { kind: "escalation", target: "002-command-approval.md", reason: null },
     { kind: "report", target: "001-wrong.md", reason: "前提が誤っていた" },
   ]);
+});
+
+test("an archive db that cannot be opened is reported on stderr", async () => {
+  const repoDir = makeTmpDir("repo");
+  const unopenable = join(repoDir, "archive-is-a-directory");
+  mkdirSync(unopenable);
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  trackCleanup(() => errors.mockRestore());
+
+  await bootServer(repoDir, { archiveDbPath: unopenable });
+
+  expect(errors.mock.calls.some((args) => String(args[0]).includes(unopenable))).toBe(true);
+});
+
+test("a failed archive write is reported on stderr", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, { archiveDbPath: join(repoDir, "archive.db") });
+  const sid = (await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json())).meta.id;
+  ctx.archiveDb!.exec("DROP TABLE reports");
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  trackCleanup(() => errors.mockRestore());
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "原稿" });
+
+  expect(errors.mock.calls.some((args) => String(args[0]).includes(sid))).toBe(true);
 });

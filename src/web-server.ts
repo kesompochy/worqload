@@ -1029,8 +1029,9 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
   if (opts.archiveDbPath !== null) {
     try {
       archiveDb = openArchiveDb(opts.archiveDbPath);
-    } catch {
-      // archive DB is best-effort; failure should not block the server
+    } catch (err) {
+      // The server runs without the archive rather than refusing to start.
+      console.error(`[archive] cannot open ${opts.archiveDbPath}; nothing will be archived until restart: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   const repoIdentifier = (await worktreeOps.gitRemoteUrl(repoDir).catch(() => null)) ?? repoDir;
@@ -2971,26 +2972,14 @@ async function postFeedback(req: Request, ctx: ServerContext, params: Record<str
     if (attachments.length > 0) writeOpts.attachments = attachments;
     const inbox = feedbackInboxDirFor(ctx, meta.id);
     const file = await writeNumberedFile(inbox, slug, body.content, writeOpts);
-    if (ctx.archiveDb) {
-      try {
-        archiveUpsertSession(ctx.archiveDb, {
-          sessionId: meta.id,
-          repo: ctx.repoIdentifier,
-          initialPrompt: meta.prompt,
-          createdAt: meta.createdAt,
-        });
-        archiveInsertFeedback(ctx.archiveDb, {
-          repo: ctx.repoIdentifier,
-          sessionId: meta.id,
-          filename: file.filename,
-          body: body.content,
-          anchorPath: body.anchor?.path ?? null,
-          anchorLineStart: body.anchor?.lineStart ?? null,
-          anchorLineEnd: body.anchor?.lineEnd ?? null,
-          createdAt: new Date().toISOString(),
-        });
-      } catch { /* archive is best-effort */ }
-    }
+    archiveRow(ctx, meta, (db, base) => archiveInsertFeedback(db, {
+      ...base,
+      filename: file.filename,
+      body: body.content,
+      anchorPath: body.anchor?.path ?? null,
+      anchorLineStart: body.anchor?.lineStart ?? null,
+      anchorLineEnd: body.anchor?.lineEnd ?? null,
+    }));
     await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
 
     // Wake the host's claude child if idle (fire-and-forget). The log entry
@@ -3046,26 +3035,14 @@ async function postFeedbackBatch(req: Request, ctx: ServerContext, params: Recor
         writeOpts.meta = { anchor: anchorMeta };
       }
       const file = await writeNumberedFile(inbox, slug, item.content, writeOpts);
-      if (ctx.archiveDb) {
-        try {
-          archiveUpsertSession(ctx.archiveDb, {
-            sessionId: meta.id,
-            repo: ctx.repoIdentifier,
-            initialPrompt: meta.prompt,
-            createdAt: meta.createdAt,
-          });
-          archiveInsertFeedback(ctx.archiveDb, {
-            repo: ctx.repoIdentifier,
-            sessionId: meta.id,
-            filename: file.filename,
-            body: item.content,
-            anchorPath: item.anchor?.path ?? null,
-            anchorLineStart: item.anchor?.lineStart ?? null,
-            anchorLineEnd: item.anchor?.lineEnd ?? null,
-            createdAt: new Date().toISOString(),
-          });
-        } catch { /* archive is best-effort */ }
-      }
+      archiveRow(ctx, meta, (db, base) => archiveInsertFeedback(db, {
+        ...base,
+        filename: file.filename,
+        body: item.content,
+        anchorPath: item.anchor?.path ?? null,
+        anchorLineStart: item.anchor?.lineStart ?? null,
+        anchorLineEnd: item.anchor?.lineEnd ?? null,
+      }));
       await appendAndBroadcast(ctx, meta.id, { kind: "feedback_received", payload: { filename: file.filename } });
       results.push({ filename: file.filename, seq: file.seq });
     }
@@ -3356,28 +3333,16 @@ async function storeReport(ctx: ServerContext, meta: SessionMeta, report: Submit
   }
   if (report.attachments.length > 0) writeOpts.attachments = report.attachments;
   const file = await writeNumberedFile(reportsDirFor(ctx, meta.id), report.slug, report.content, writeOpts);
-  if (ctx.archiveDb) {
-    try {
-      archiveUpsertSession(ctx.archiveDb, {
-        sessionId: meta.id,
-        repo: ctx.repoIdentifier,
-        initialPrompt: meta.prompt,
-        createdAt: meta.createdAt,
-      });
-      archiveInsertReport(ctx.archiveDb, {
-        repo: ctx.repoIdentifier,
-        sessionId: meta.id,
-        filename: file.filename,
-        slug: report.slug,
-        body: report.content,
-        replyTo: report.replyTo ?? null,
-        anchorPath: null,
-        anchorLineStart: null,
-        anchorLineEnd: null,
-        createdAt: new Date().toISOString(),
-      });
-    } catch { /* archive is best-effort */ }
-  }
+  archiveRow(ctx, meta, (db, base) => archiveInsertReport(db, {
+    ...base,
+    filename: file.filename,
+    slug: report.slug,
+    body: report.content,
+    replyTo: report.replyTo ?? null,
+    anchorPath: null,
+    anchorLineStart: null,
+    anchorLineEnd: null,
+  }));
   await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
   return file;
 }
@@ -3536,7 +3501,10 @@ function archiveRow(ctx: ServerContext, meta: SessionMeta, insert: (db: Database
       createdAt: meta.createdAt,
     });
     insert(ctx.archiveDb, { repo: ctx.repoIdentifier, sessionId: meta.id, createdAt: new Date().toISOString() });
-  } catch { /* archive is best-effort */ }
+  } catch (err) {
+    // The exchange itself already happened; only its record is lost.
+    console.error(`[archive] ${meta.id}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 function archiveFeedback(ctx: ServerContext, meta: SessionMeta, filename: string, body: string): void {
