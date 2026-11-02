@@ -90,6 +90,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 export function openArchiveDb(path: string): Database {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
+  // Several serve processes share this file and reload together when main
+  // changes; without a timeout, one that opens while another holds the write
+  // lock fails at once with "database is locked".
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA journal_mode=WAL");
   db.exec(SCHEMA);
   return db;

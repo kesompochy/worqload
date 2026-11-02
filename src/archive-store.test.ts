@@ -396,3 +396,28 @@ test("insertCancellation stores what was cancelled and why", async () => {
     db.close();
   }
 });
+
+test("openArchiveDb waits for another process's write lock instead of skipping the schema", async () => {
+  const { openArchiveDb } = await loadModule();
+  // Another serve process holding the write lock, as when several reload together.
+  const holder = Bun.spawn(["bun", "-e", `
+    import { Database } from "bun:sqlite";
+    const db = new Database(${JSON.stringify(dbPath)});
+    db.exec("PRAGMA journal_mode=WAL");
+    db.exec("BEGIN IMMEDIATE");
+    db.exec("CREATE TABLE holder (x)");
+    console.log("locked");
+    await Bun.sleep(500);
+    db.exec("COMMIT");
+  `], { stdout: "pipe" });
+  await holder.stdout.getReader().read();
+
+  const db = openArchiveDb(dbPath);
+  try {
+    const names = (db.query("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(t => t.name);
+    expect(names).toContain("polishes");
+  } finally {
+    db.close();
+    await holder.exited;
+  }
+});
