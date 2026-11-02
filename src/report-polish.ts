@@ -13,6 +13,10 @@ import escalationInstructionTemplate from "./prompts/escalation-polish-instructi
 import escalationReturnStepTemplate from "./prompts/escalation-polish-return-step.txt" with { type: "text" };
 import commandInstructionTemplate from "./prompts/command-approval-polish-instruction.txt" with { type: "text" };
 import commandReturnStepTemplate from "./prompts/command-approval-polish-return-step.txt" with { type: "text" };
+import goalTemplate from "./prompts/polish-goal.txt" with { type: "text" };
+import judgeTemplate from "./prompts/polish-judge.txt" with { type: "text" };
+import returnStepFrame from "./prompts/polish-return-step.txt" with { type: "text" };
+import finishStepTemplate from "./prompts/polish-finish-step.txt" with { type: "text" };
 
 // Set in the environment of a report-polish fork. The fork carries the
 // writer's whole conversation, protocol instructions included, so the CLI
@@ -68,17 +72,21 @@ export type PolishOutcome = { report: string; continueReason?: string } | { with
 export type PolishResult = PolishOutcome & { rounds?: string[] };
 export type ReportPolisher = (request: ReportPolishRequest) => Promise<PolishResult>;
 
-const INSTRUCTION_TEMPLATES: Record<PolishedKind, [instruction: string, returnStep: string]> = {
+const INSTRUCTION_TEMPLATES: Record<PolishedKind, [instruction: string, returnCondition: string]> = {
   report: [instructionTemplate, returnStepTemplate],
   escalation: [escalationInstructionTemplate, escalationReturnStepTemplate],
   command: [commandInstructionTemplate, commandReturnStepTemplate],
 };
 
 export function buildReportPolishInstruction(draft: string, opts: { allowReturn: boolean; kind: PolishedKind; command?: string }): string {
-  const [template, returnStep] = INSTRUCTION_TEMPLATES[opts.kind];
+  const [template, returnCondition] = INSTRUCTION_TEMPLATES[opts.kind];
+  const returnStep = returnStepFrame.replaceAll("{{returnCondition}}", returnCondition.trim()).replaceAll("{{return}}", REPORT_RETURN_MARK);
   return template
+    .replaceAll("{{goal}}", goalTemplate.trim())
+    .replaceAll("{{judge}}", judgeTemplate.trim())
+    .replaceAll("{{finishStep}}", finishStepTemplate.trim())
     .replaceAll("{{command}}", opts.command ?? "")
-    .replaceAll("{{returnStep}}", opts.allowReturn ? returnStep.replaceAll("{{return}}", REPORT_RETURN_MARK) : "")
+    .replaceAll("{{returnStep}}", opts.allowReturn ? returnStep : "")
     .replaceAll("{{continueStep}}", opts.kind === "report" ? continueStepTemplate.replaceAll("{{continue}}", WRITER_CONTINUE_MARK) : "")
     .replaceAll("{{noViolation}}", NO_VIOLATION_MARK)
     .replaceAll("{{withdraw}}", REPORT_WITHDRAW_MARK)

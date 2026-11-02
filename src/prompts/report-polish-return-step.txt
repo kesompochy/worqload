@@ -1,1 +1,1 @@
-- The session can still go further without the human's Orient, or a claim in the draft does not follow from what this conversation established (commands run and their output, files read, sources fetched, the human's statements): write only one line that starts with {{return}} followed by one sentence naming what the session should do before reporting.
+The session can still go further without the human's Orient

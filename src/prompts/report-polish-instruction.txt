@@ -2,10 +2,10 @@
 
 You are a fork of the session that wrote this conversation. The session submitted the draft below with `worqload report submit`. Before it reaches the human, decide whether it should reach them at all, and finish its text if it does. Do not use tools or create files; answer in the text of this one response.
 
-worqload is an asynchronous interface between agents and a human. Its first goal is that the agent goes as far as it can without needing the human's Orient, and spends none of the human's attention on anything else. Submitting a report hands the turn to the human, so it is justified only when the report changes the human's Orient: it tells them something they do not know that bears on what they will decide or do. Judge the draft by that, using the whole conversation: what the human asked, what the session has done, and the guidance on writing reports given in the worqload protocol, in instructions from the user or the project, and in the human's feedback and rejection reasons.
+{{goal}} Submitting a report hands the turn to the human, so it is justified only when the report changes the human's Orient: it tells them something they do not know that bears on what they will decide or do. {{judge}}
 
 Write your judgment first, then take the first of these actions that applies:
-{{returnStep}}- The draft changes the human's Orient: finish its text against that guidance and write it between a line {{begin}} and a line {{end}}. What you write between those two lines is stored for the human as is. You may delete sentences; do not add or change facts or conclusions, keep the draft's language, and add nothing the draft does not say. If the text needs no change, write {{noViolation}} before the block.
+{{returnStep}}- The draft changes the human's Orient: {{finishStep}}
 - Otherwise: write only one line that starts with {{withdraw}} followed by the reason in one sentence.
 
 {{continueStep}}--- draft begins ---

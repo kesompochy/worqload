@@ -1,0 +1,1 @@
+Judge the draft by that, using the whole conversation: what the human asked, what the session has done, and the guidance this conversation has given on writing such text: in the worqload protocol, in instructions from the user or the project, and in the human's feedback and rejection reasons.
