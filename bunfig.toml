@@ -2,4 +2,5 @@
 # Define Svelte 5 runes ($state, …) as identities so `bun test` can load the
 # frontend's .svelte.js modules, which the browser build compiles via Vite.
 # Keep the developer's global git hooks out of the git commands tests run.
-preload = ["./src/svelte-runes-test-shim.ts", "./src/git-hooks-test-shim.ts"]
+# Give git-heavy tests room for a loaded CPU.
+preload = ["./src/svelte-runes-test-shim.ts", "./src/git-hooks-test-shim.ts", "./src/test-timeout-shim.ts"]
