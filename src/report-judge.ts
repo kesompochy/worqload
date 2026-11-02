@@ -59,7 +59,12 @@ export function parseJudgeVerdict(output: string): string | null {
 export function makeClaudeReportJudge(opts: { timeoutMs?: number } = {}): ReportJudge {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return async (request) => {
-    const command = ["claude", "-p", "--tools", "", ...(request.model ? ["--model", request.model] : [])];
+    // The judge uses no tools, so loading MCP servers and skills only delays it
+    // (12s against 6-7s for the same draft).
+    const command = [
+      "claude", "-p", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
+      ...(request.model ? ["--model", request.model] : []),
+    ];
     let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "ignore">>;
     try {
       // Outside every repository, so no project's instructions reach a judge
