@@ -1,0 +1,2 @@
+A reader given only what the human has seen, not this conversation, judged that the human would reject this draft: {{objection}} That reader cannot see what the session found, so weigh the objection against this conversation, then fix what it names by editing, or return the draft if editing cannot fix it.
+

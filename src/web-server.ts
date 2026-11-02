@@ -19,6 +19,7 @@ import {
   type SessionStatus,
 } from "./session";
 import type { PolishedKind, ReportPolisher } from "./report-polish";
+import type { ReportJudge, TimelineItem } from "./report-judge";
 import { connectToHost, type HostClient, spawnDetachedHost } from "./session-host-client";
 import { appendEvent, readEvents, type Event } from "./event-log";
 import { emptyWorktreeTrash, realWorktreeOps, searchFileContents, type WorktreeOps } from "./worktree";
@@ -262,6 +263,7 @@ export interface ServerContext {
   attachmentMaxBytes: number;
   attachmentMaxCount: number;
   reportPolisher: ReportPolisher | undefined;
+  reportJudge: ReportJudge | undefined;
   // Per session: the running drain of its pending report polishes. A session's
   // forks run one at a time so its reports are stored in submission order.
   reportPolishDrains: Map<string, Promise<void>>;
@@ -321,6 +323,8 @@ export interface StartServerOptions {
   // Polishes claude sessions' reports in a fork of the writer's conversation
   // before they are stored. Unset stores every report as submitted.
   reportPolisher?: ReportPolisher;
+  // Judges a report draft from the human's side before the polish fork runs.
+  reportJudge?: ReportJudge;
 }
 
 export interface ShutdownOptions {
@@ -1167,6 +1171,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     repoIdentifier,
     linkLabelGenerator,
     reportPolisher: opts.reportPolisher,
+    reportJudge: opts.reportJudge,
     reportPolishDrains: new Map(),
   };
 
@@ -3444,6 +3449,9 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
   if (meta && polisher) {
     const pending = (await Bun.file(pendingPath).json()) as PendingReportPolish;
     const kind = pending.kind ?? "report";
+    const readerObjection = kind === "report" && ctx.reportJudge
+      ? await ctx.reportJudge({ task: meta.prompt ?? "", timeline: await humanTimeline(ctx, sessionId), draft: pending.content, ...(meta.model && { model: meta.model }) }).catch(() => null)
+      : null;
     const outcome = await polisher({
       spawnCommand: reportPolishSpawnCommand(ctx, meta),
       cwd: meta.worktreePath,
@@ -3451,9 +3459,10 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
       kind,
       ...(pending.command !== undefined && { command: pending.command }),
       allowReturn: !(await wasReturned(ctx, sessionId, pending)),
+      ...(readerObjection && { readerObjection }),
     });
     const archive = (outcomeName: PolishRow["outcome"], result: string, storedFilename: string | null) =>
-      archivePolish(ctx, meta, { kind, slug: pending.slug, draft: pending.content, rounds: outcome.rounds ?? [], outcome: outcomeName, result, storedFilename });
+      archivePolish(ctx, meta, { kind, slug: pending.slug, draft: pending.content, rounds: outcome.rounds ?? [], outcome: outcomeName, result, storedFilename, readerObjection });
     if (!(await Bun.file(pendingPath).exists())) {
       // The writer cancelled the escalation while it was being polished.
       archive("cancelled", "report" in outcome ? outcome.report : "", null);
@@ -3491,6 +3500,35 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
   }
   await rm(pendingPath, { force: true });
   announceAgentActivity(ctx, sessionId);
+}
+
+// Feedback the human wrote, as opposed to messages worqload itself queues for
+// the agent (returned drafts, continue nudges). An answered escalation and a
+// command decision carry the question the human saw along with the answer.
+const HUMAN_FEEDBACK_SUFFIXES = ["-feedback.md", "-anchored.md", "-report-rejected.md", "-command-approve.md", "-command-reject.md"];
+
+function isHumanFeedback(filename: string): boolean {
+  return HUMAN_FEEDBACK_SUFFIXES.some(suffix => filename.endsWith(suffix)) || filename.includes("-answer-");
+}
+
+// What the human has seen in a session, in the order they saw it: their own
+// messages and the reports shown to them. Rejected reports are left out, as
+// the human's timeline hides them.
+async function humanTimeline(ctx: ServerContext, sessionId: string): Promise<TimelineItem[]> {
+  const timeline: TimelineItem[] = [];
+  for (const event of await readEvents(sessionId, 1, ctx.sessionsDir)) {
+    const filename = (event.payload as { filename?: unknown } | undefined)?.filename;
+    if (typeof filename !== "string") continue;
+    if (event.kind === "report_submitted") {
+      const report = await readNumberedFile(reportsDirFor(ctx, sessionId), filename);
+      if (report && !report.meta?.rejection) timeline.push({ kind: "report", text: report.content });
+    } else if (event.kind === "feedback_received" && isHumanFeedback(filename)) {
+      const message = (await readNumberedFile(feedbackReadDirFor(ctx, sessionId), filename))
+        ?? (await readNumberedFile(feedbackInboxDirFor(ctx, sessionId), filename));
+      if (message) timeline.push({ kind: "human", text: message.content });
+    }
+  }
+  return timeline;
 }
 
 type ArchiveRowBase = { repo: string; sessionId: string; createdAt: string };

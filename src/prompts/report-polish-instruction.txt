@@ -4,7 +4,7 @@ You are a fork of the session that wrote this conversation. The session submitte
 
 {{goal}} Submitting a report hands the turn to the human, so it is justified only when the report changes the human's Orient: it tells them something they do not know that bears on what they will decide or do. {{judge}}
 
-Write your judgment first, then take the first of these actions that applies:
+{{readerObjection}}Write your judgment first, then take the first of these actions that applies:
 {{returnStep}}- The draft changes the human's Orient: {{finishStep}}
 - Otherwise: write only one line that starts with {{withdraw}} followed by the reason in one sentence.
 
