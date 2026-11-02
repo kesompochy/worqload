@@ -1403,3 +1403,19 @@ test("a failed archive write is reported on stderr", async () => {
 
   expect(errors.mock.calls.some((args) => String(args[0]).includes(sid))).toBe(true);
 });
+
+test("an archive db that could not be opened at start is opened on the next write", async () => {
+  const repoDir = makeTmpDir("repo");
+  const archivePath = join(repoDir, "archive.db");
+  mkdirSync(archivePath);
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  trackCleanup(() => errors.mockRestore());
+  const { baseUrl, ctx } = await bootServer(repoDir, { archiveDbPath: archivePath });
+  const sid = (await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json())).meta.id;
+  rmSync(archivePath, { recursive: true });
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/reports`, { slug: "plan", content: "原稿" });
+
+  expect(ctx.archiveDb).not.toBeNull();
+  expect(ctx.archiveDb!.query("SELECT filename FROM reports WHERE session_id = ?").all(sid)).toEqual([{ filename: "001-plan.md" }]);
+});

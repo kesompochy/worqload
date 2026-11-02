@@ -268,6 +268,9 @@ export interface ServerContext {
   // Path to the YAML config (`~/.config/worqload/config.yaml`).
   configPath: string;
   archiveDb: Database | null;
+  // Kept so a failed open can be retried on the next write instead of
+  // leaving the server unarchived until it restarts.
+  archiveDbPath: string | null;
   repoIdentifier: string;
   linkLabelGenerator: LinkLabelGenerator;
 }
@@ -1031,7 +1034,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
       archiveDb = openArchiveDb(opts.archiveDbPath);
     } catch (err) {
       // The server runs without the archive rather than refusing to start.
-      console.error(`[archive] cannot open ${opts.archiveDbPath}; nothing will be archived until restart: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[archive] cannot open ${opts.archiveDbPath}; retrying on the next write: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   const repoIdentifier = (await worktreeOps.gitRemoteUrl(repoDir).catch(() => null)) ?? repoDir;
@@ -1160,6 +1163,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     attachmentMaxCount: opts.attachmentMaxCount ?? DEFAULT_ATTACHMENT_MAX_COUNT,
     configPath,
     archiveDb,
+    archiveDbPath: opts.archiveDbPath,
     repoIdentifier,
     linkLabelGenerator,
     reportPolisher: opts.reportPolisher,
@@ -3492,6 +3496,14 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
 type ArchiveRowBase = { repo: string; sessionId: string; createdAt: string };
 
 function archiveRow(ctx: ServerContext, meta: SessionMeta, insert: (db: Database, base: ArchiveRowBase) => void): void {
+  if (!ctx.archiveDb && ctx.archiveDbPath !== null) {
+    try {
+      ctx.archiveDb = openArchiveDb(ctx.archiveDbPath);
+    } catch (err) {
+      console.error(`[archive] cannot open ${ctx.archiveDbPath}; ${meta.id}'s record is lost: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+  }
   if (!ctx.archiveDb) return;
   try {
     archiveUpsertSession(ctx.archiveDb, {
