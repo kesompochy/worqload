@@ -4,6 +4,7 @@ import { join } from "path";
 import { listAllFeedback, listCancellations, listPolishes } from "./archive-store";
 import { readEvents } from "./event-log";
 import type { PolishResult, ReportPolisher, ReportPolishRequest } from "./report-polish";
+import type { ReportJudge, ReportJudgeRequest } from "./report-judge";
 import { loadSessionMeta, saveSessionMeta } from "./session";
 import { cleanupAll, fakeWorktreeOps, inProcessHostLauncher, makeTmpDir, trackCleanup } from "./test-helpers";
 import { startServer } from "./web-server";
@@ -704,4 +705,52 @@ test("a report the writer followed with another submission does not wake the wri
 
   const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
   expect(fetched).toEqual([]);
+});
+
+// A judge that objects to every draft and records what it was shown.
+function objectingJudge(objection: string) {
+  const requests: ReportJudgeRequest[] = [];
+  const judge: ReportJudge = async (request) => {
+    requests.push(request);
+    return objection;
+  };
+  return { judge, requests };
+}
+
+test("a report's draft is judged from what the human has seen, and the objection reaches the fork and the archive", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const reader = objectingJudge("冒頭が作業の記録になっている");
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, { reportPolisher: gate.polisher, reportJudge: reader.judge, archiveDbPath: join(repoDir, "archive.db") });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "first", content: "見せたレポート" });
+  await gate.release(0);
+  await waitForReports(baseUrl, session.id, 1);
+  await postJson(baseUrl, `/sessions/${session.id}/feedback`, { content: "人間の質問" });
+  await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "second", content: "判定する原稿" });
+  await gate.release(1);
+  await waitForReports(baseUrl, session.id, 2);
+
+  expect(reader.requests[1]).toMatchObject({
+    task: "x",
+    draft: "判定する原稿",
+    timeline: [{ kind: "report", text: "見せたレポート" }, { kind: "human", text: "人間の質問" }],
+  });
+  expect(gate.requests[1].readerObjection).toBe("冒頭が作業の記録になっている");
+  await waitFor(() => listPolishes(ctx.archiveDb!, session.id).length === 2, "two archived polishes");
+  expect(listPolishes(ctx.archiveDb!, session.id)[1].readerObjection).toBe("冒頭が作業の記録になっている");
+});
+
+test("an escalation is not judged by the human-side reader", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const reader = objectingJudge("不要");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher, reportJudge: reader.judge });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/internal/sessions/${session.id}/escalations`, { slug: "q", content: "問い" });
+  await gate.release(0);
+
+  expect(reader.requests).toEqual([]);
+  expect(gate.requests[0].readerObjection).toBeUndefined();
 });

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { watchWebFrontend } from "../web-build";
 import { makeClaudeReportPolisher } from "../report-polish";
+import { makeClaudeReportJudge } from "../report-judge";
 import { startServer } from "../web-server";
 import { defaultArchiveDbPath } from "../archive-store";
 import { resolveUtilityModel } from "../utility-model";
@@ -201,6 +202,7 @@ export async function serve(args: string[]): Promise<void> {
     utilityModel: resolveUtilityModel(),
     archiveDbPath: defaultArchiveDbPath(),
     reportPolisher: makeClaudeReportPolisher(),
+    reportJudge: makeClaudeReportJudge(),
   });
   if (requestedPort !== 0 && ctx.port !== requestedPort) {
     console.log(`port ${requestedPort} was in use; using ${ctx.port} instead`);

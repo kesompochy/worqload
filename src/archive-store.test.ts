@@ -353,6 +353,7 @@ test("insertPolish stores a polish with its draft, rounds and outcome", async ()
       result: "推敲版",
       storedFilename: "001-plan.md",
       createdAt: "2026-10-29T00:00:00Z",
+      readerObjection: null,
     });
     expect(listPolishes(db, "abc-123")).toEqual([{
       repo: "github.com/foo/bar",
@@ -365,6 +366,7 @@ test("insertPolish stores a polish with its draft, rounds and outcome", async ()
       result: "推敲版",
       storedFilename: "001-plan.md",
       createdAt: "2026-10-29T00:00:00Z",
+      readerObjection: null,
     }]);
     expect(listPolishes(db, "other")).toEqual([]);
   } finally {
@@ -419,5 +421,22 @@ test("openArchiveDb waits for another process's write lock instead of skipping t
   } finally {
     db.close();
     await holder.exited;
+  }
+});
+
+test("a polish keeps the reader's objection, and an archive from before the column gains it", async () => {
+  const { Database } = await import("bun:sqlite");
+  const old = new Database(dbPath);
+  old.exec(`CREATE TABLE polishes (id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, session_id TEXT NOT NULL, kind TEXT NOT NULL, slug TEXT NOT NULL, draft TEXT NOT NULL, rounds TEXT NOT NULL, outcome TEXT NOT NULL, result TEXT NOT NULL, stored_filename TEXT, created_at TEXT NOT NULL)`);
+  old.close();
+  const { openArchiveDb, insertPolish, listPolishes } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    const row = { repo: "r", sessionId: "s", kind: "report" as const, slug: "x", draft: "d", rounds: [], outcome: "stored" as const, result: "d", storedFilename: "001-x.md", createdAt: "t" };
+    insertPolish(db, { ...row, readerObjection: "冒頭が作業の記録" });
+    insertPolish(db, { ...row, readerObjection: null });
+    expect(listPolishes(db, "s").map(p => p.readerObjection)).toEqual(["冒頭が作業の記録", null]);
+  } finally {
+    db.close();
   }
 });

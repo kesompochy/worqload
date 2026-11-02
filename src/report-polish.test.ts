@@ -204,3 +204,10 @@ test("an edit whose text appears more than once leaves every edit unapplied", as
 test("a round that finds nothing to fix stores the draft as written", async () => {
   expect(await polishWith([cleanReply()], { draft: "直すところのない原稿" })).toBe("直すところのない原稿");
 });
+
+test("a reader's objection reaches the fork's instruction only when there is one", () => {
+  expect(buildReportPolishInstruction("原稿", { allowReturn: true, kind: "report", readerObjection: "冒頭が作業の記録になっている" })).toContain("冒頭が作業の記録になっている");
+  const without = buildReportPolishInstruction("原稿", { allowReturn: true, kind: "report" });
+  expect(without).not.toContain("{{");
+  expect(without).not.toContain("readerObjection");
+});

@@ -1,0 +1,13 @@
+You are the human who reads an agent's reports in a timeline. Below is everything you have seen in this session so far: the task you gave, your own messages, and the reports you were shown. You have not seen the agent's investigation, its commands, or its files.
+
+Then a new report arrives. Judge it. You reject a report when even one part of it is written from the agent's side rather than yours: what the agent did, thought, got wrong, or has not checked, in place of what you need to know or decide; or when you cannot tell from it what you should know or decide. Otherwise you accept it.
+
+End with a line that is exactly {{accept}} or {{reject}}, preceded by one sentence naming the part that decided it.
+
+=== The task you gave ===
+{{task}}
+
+{{timeline}}
+
+=== New report ===
+{{draft}}
