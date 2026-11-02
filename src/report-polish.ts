@@ -23,8 +23,13 @@ import finishStepTemplate from "./prompts/polish-finish-step.txt" with { type: "
 // refuses `report submit` under this mark to keep a polish from recursing.
 export const REPORT_POLISH_FORK_ENV = "WORQLOAD_REPORT_POLISH_FORK";
 
-export const POLISHED_REPORT_BEGIN = "<<<WORQLOAD_POLISHED_REPORT";
-export const POLISHED_REPORT_END = "WORQLOAD_POLISHED_REPORT>>>";
+// One edit block names a span of the draft, copied verbatim, and what
+// replaces it. The fork edits instead of writing the text out again so the
+// sentences it leaves alone reach the human exactly as the writer wrote them:
+// every regenerated sentence is another chance of a flaw.
+export const POLISH_EDIT_BEGIN = "<<<WORQLOAD_EDIT";
+export const POLISH_EDIT_SEPARATOR = "===";
+export const POLISH_EDIT_END = "WORQLOAD_EDIT>>>";
 export const NO_VIOLATION_MARK = "<<WORQLOAD_NO_VIOLATION>>";
 // Starts the line on which the fork withdraws the report; the rest of the
 // line is its reason.
@@ -90,31 +95,56 @@ export function buildReportPolishInstruction(draft: string, opts: { allowReturn:
     .replaceAll("{{continueStep}}", opts.kind === "report" ? continueStepTemplate.replaceAll("{{continue}}", WRITER_CONTINUE_MARK) : "")
     .replaceAll("{{noViolation}}", NO_VIOLATION_MARK)
     .replaceAll("{{withdraw}}", REPORT_WITHDRAW_MARK)
-    .replaceAll("{{begin}}", POLISHED_REPORT_BEGIN)
-    .replaceAll("{{end}}", POLISHED_REPORT_END)
+    .replaceAll("{{begin}}", POLISH_EDIT_BEGIN)
+    .replaceAll("{{separator}}", POLISH_EDIT_SEPARATOR)
+    .replaceAll("{{end}}", POLISH_EDIT_END)
     .replaceAll("{{draft}}", draft);
 }
 
 type PolishRound = { report: string; continueReason?: string } | { withdrawnReason: string } | { returnedReason: string };
 
-// A round that carries a report block is read as that report even when it
-// also withdraws or returns: a wrong withdrawal loses a report the human
+type PolishEdit = { from: string; to: string };
+
+function parseEdits(output: string): PolishEdit[] {
+  const edits: PolishEdit[] = [];
+  const pattern = new RegExp(`${escapeRegExp(POLISH_EDIT_BEGIN)}\\n([\\s\\S]*?)\\n${escapeRegExp(POLISH_EDIT_SEPARATOR)}\\n?([\\s\\S]*?)\\n?${escapeRegExp(POLISH_EDIT_END)}`, "g");
+  for (const match of output.matchAll(pattern)) edits.push({ from: match[1], to: match[2] });
+  return edits;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// All or nothing: edits often lean on each other (deleting a sentence can
+// require rewording the next one's opening), so applying only some of them
+// yields text neither the writer nor the fork meant. A span that is missing,
+// or appears more than once, cannot be placed without guessing.
+function applyEdits(draft: string, edits: PolishEdit[]): string | null {
+  let text = draft;
+  for (const { from, to } of edits) {
+    if (from === "") return null;
+    const at = text.indexOf(from);
+    if (at < 0 || text.indexOf(from, at + 1) >= 0) return null;
+    text = text.slice(0, at) + to + text.slice(at + from.length);
+  }
+  return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+// A round that edits the draft, or finds nothing to fix, stores it even when
+// it also withdraws or returns: a wrong withdrawal loses a report the human
 // needed, a wrong store only costs the human a read. A return beats a
 // withdrawal because it reaches the writer, who can still submit nothing.
-function parsePolishRound(output: string, opts: { allowReturn: boolean; kind: PolishedKind }): PolishRound | null {
-  const begin = output.lastIndexOf(POLISHED_REPORT_BEGIN);
-  const end = begin < 0 ? -1 : output.indexOf(POLISHED_REPORT_END, begin);
-  if (end >= 0) {
-    const report = output.slice(begin + POLISHED_REPORT_BEGIN.length, end).trim();
-    if (report !== "") {
-      const continueLine = opts.kind === "report"
-        ? output.slice(end + POLISHED_REPORT_END.length).split("\n").map(line => line.trimStart()).find(line => line.startsWith(WRITER_CONTINUE_MARK))
-        : undefined;
-      const continueReason = continueLine?.slice(WRITER_CONTINUE_MARK.length).trim();
-      return { report, ...(continueReason && { continueReason }) };
-    }
-  }
+// Edits that cannot be applied store the draft as written.
+function parsePolishRound(output: string, draft: string, opts: { allowReturn: boolean; kind: PolishedKind }): PolishRound | null {
   const lines = output.split("\n").map(line => line.trimStart());
+  const edits = parseEdits(output);
+  if (edits.length > 0 || output.includes(NO_VIOLATION_MARK)) {
+    const report = (edits.length > 0 ? applyEdits(draft, edits) : null) ?? draft;
+    const continueLine = opts.kind === "report" ? lines.find(line => line.startsWith(WRITER_CONTINUE_MARK)) : undefined;
+    const continueReason = continueLine?.slice(WRITER_CONTINUE_MARK.length).trim();
+    return { report, ...(continueReason && { continueReason }) };
+  }
   const returnLine = opts.allowReturn ? lines.find(line => line.startsWith(REPORT_RETURN_MARK)) : undefined;
   if (returnLine !== undefined) return { returnedReason: returnLine.slice(REPORT_RETURN_MARK.length).trim() };
   const withdrawLine = opts.kind === "report" ? lines.find(line => line.startsWith(REPORT_WITHDRAW_MARK)) : undefined;
@@ -209,7 +239,7 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
       const output = await runTurn(buildReportPolishInstruction(draft, { allowReturn, kind, command }));
       if (output !== null) {
         rounds.push(output);
-        outcome = parsePolishRound(output, { allowReturn, kind }) ?? outcome;
+        outcome = parsePolishRound(output, draft, { allowReturn, kind }) ?? outcome;
       }
     } finally {
       try {
