@@ -18,6 +18,7 @@ import judgeTemplate from "./prompts/polish-judge.txt" with { type: "text" };
 import returnStepFrame from "./prompts/polish-return-step.txt" with { type: "text" };
 import finishStepTemplate from "./prompts/polish-finish-step.txt" with { type: "text" };
 import readerObjectionTemplate from "./prompts/report-polish-reader-objection.txt" with { type: "text" };
+import mergedReportsTemplate from "./prompts/report-polish-merge.txt" with { type: "text" };
 
 // Set in the environment of a report-polish fork. The fork carries the
 // writer's whole conversation, protocol instructions included, so the CLI
@@ -67,6 +68,9 @@ export interface ReportPolishRequest {
   // Why a reader who saw only what the human saw expects the human to reject
   // the draft (see report-judge.ts).
   readerObjection?: string;
+  // How many unread reports of the session open the draft; the stored text
+  // replaces them.
+  mergedReportCount?: number;
 }
 
 // `report` is the text to store: the fork's last well-formed rewrite, or the
@@ -87,10 +91,11 @@ const INSTRUCTION_TEMPLATES: Record<PolishedKind, [instruction: string, returnCo
   command: [commandInstructionTemplate, commandReturnStepTemplate],
 };
 
-export function buildReportPolishInstruction(draft: string, opts: { allowReturn: boolean; kind: PolishedKind; command?: string; readerObjection?: string }): string {
+export function buildReportPolishInstruction(draft: string, opts: { allowReturn: boolean; kind: PolishedKind; command?: string; readerObjection?: string; mergedReportCount?: number }): string {
   const [template, returnCondition] = INSTRUCTION_TEMPLATES[opts.kind];
   const returnStep = returnStepFrame.replaceAll("{{returnCondition}}", returnCondition.trim()).replaceAll("{{return}}", REPORT_RETURN_MARK);
   return template
+    .replaceAll("{{mergedReports}}", opts.mergedReportCount ? mergedReportsTemplate.replaceAll("{{count}}", String(opts.mergedReportCount)) : "")
     .replaceAll("{{readerObjection}}", opts.readerObjection ? readerObjectionTemplate.replaceAll("{{objection}}", opts.readerObjection) : "")
     .replaceAll("{{goal}}", goalTemplate.trim())
     .replaceAll("{{judge}}", judgeTemplate.trim())
@@ -180,7 +185,7 @@ function collectAssistantText(parsed: { type?: string; message?: { content?: unk
 
 export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): ReportPolisher {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return async ({ spawnCommand, cwd, draft, kind, command, allowReturn, readerObjection }) => {
+  return async ({ spawnCommand, cwd, draft, kind, command, allowReturn, readerObjection, mergedReportCount }) => {
     let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
     try {
       proc = Bun.spawn(spawnCommand, { cwd, env: forkEnv(), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
@@ -241,7 +246,7 @@ export function makeClaudeReportPolisher(opts: { timeoutMs?: number } = {}): Rep
     let outcome: PolishOutcome = { report: draft };
     const rounds: string[] = [];
     try {
-      const output = await runTurn(buildReportPolishInstruction(draft, { allowReturn, kind, command, readerObjection }));
+      const output = await runTurn(buildReportPolishInstruction(draft, { allowReturn, kind, command, readerObjection, mergedReportCount }));
       if (output !== null) {
         rounds.push(output);
         outcome = parsePolishRound(output, draft, { allowReturn, kind }) ?? outcome;

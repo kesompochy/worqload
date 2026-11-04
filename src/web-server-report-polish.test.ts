@@ -196,8 +196,8 @@ test("a session's polishes run one at a time", async () => {
 
   await gate.release(0);
   await gate.release(1);
-  const reports = await waitForReports(baseUrl, session.id, 2);
-  expect(reports.map(r => r.content).sort()).toEqual(["推敲版: 原稿1", "推敲版: 原稿2"]);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "both polishes to finish");
+  expect(gate.requests[1].draft).toBe("推敲版: 原稿1\n\n原稿2");
 });
 
 test("a codex session's report is stored as submitted without a polish", async () => {
@@ -500,7 +500,7 @@ test("cancelling a slug with no escalation is a 404", async () => {
 test("each polish is archived with its draft, the fork's rounds and its outcome", async () => {
   const gate = gatedPolisher(r =>
     r.draft === "原稿1" ? { report: "推敲版", rounds: ["1回目", "2回目"] }
-    : r.draft === "原稿2" ? { withdrawnReason: "変化がない" }
+    : r.draft.endsWith("原稿2") ? { withdrawnReason: "変化がない" }
     : { returnedReason: "調査がない" });
   const repoDir = makeTmpDir("repo");
   const { baseUrl, ctx } = await bootServer(repoDir, { reportPolisher: gate.polisher, archiveDbPath: join(repoDir, "archive.db") });
@@ -515,7 +515,7 @@ test("each polish is archived with its draft, the fork's rounds and its outcome"
   const rows = listPolishes(ctx.archiveDb!, session.id);
   expect(rows.map(r => ({ kind: r.kind, slug: r.slug, draft: r.draft, rounds: r.rounds, outcome: r.outcome, result: r.result }))).toEqual([
     { kind: "report", slug: "kept", draft: "原稿1", rounds: ["1回目", "2回目"], outcome: "stored", result: "推敲版" },
-    { kind: "report", slug: "noop", draft: "原稿2", rounds: [], outcome: "withdrawn", result: "変化がない" },
+    { kind: "report", slug: "noop", draft: "推敲版\n\n原稿2", rounds: [], outcome: "withdrawn", result: "変化がない" },
     { kind: "escalation", slug: "ask", draft: "問い", rounds: [], outcome: "returned", result: "調査がない" },
   ]);
   expect(rows[0].storedFilename).toMatch(/^\d+-kept\.md$/);
@@ -700,7 +700,6 @@ test("a report the writer followed with another submission does not wake the wri
   await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "done", content: "完了の報告" });
   await gate.release(0);
   await gate.release(1);
-  await waitForReports(baseUrl, session.id, 2);
   await waitFor(() => ctx.reportPolishDrains.size === 0, "the polishes to finish");
 
   const fetched = (await fetch(`${baseUrl}/internal/sessions/${session.id}/feedback`).then(r => r.json())).messages;
@@ -726,7 +725,8 @@ test("a report's draft is judged from what the human has seen, and the objection
 
   await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "first", content: "見せたレポート" });
   await gate.release(0);
-  await waitForReports(baseUrl, session.id, 1);
+  const [shown] = await waitForReports(baseUrl, session.id, 1);
+  await postJson(baseUrl, `/sessions/${session.id}/reports/${shown.filename}/read`, {});
   await postJson(baseUrl, `/sessions/${session.id}/feedback`, { content: "人間の質問" });
   await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "second", content: "判定する原稿" });
   await gate.release(1);
@@ -753,4 +753,107 @@ test("an escalation is not judged by the human-side reader", async () => {
 
   expect(reader.requests).toEqual([]);
   expect(gate.requests[0].readerObjection).toBeUndefined();
+});
+
+async function postReport(baseUrl: string, sessionId: string, slug: string, content: string) {
+  await postJson(baseUrl, `/internal/sessions/${sessionId}/reports`, { slug, content });
+}
+
+function reportMeta(sessionsDir: string, sessionId: string, filename: string): Record<string, unknown> {
+  const metaPath = join(sessionsDir, sessionId, "reports", filename.replace(/\.md$/, ".meta.json"));
+  return existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, "utf8")) : {};
+}
+
+test("a draft submitted while the session's earlier reports are unread is polished together with them and shown in their place", async () => {
+  const gate = gatedPolisher(r => r.mergedReportCount ? "まとめた本文" : r.draft);
+  const reader = objectingJudge("不要");
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher, reportJudge: reader.judge });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postJson(baseUrl, `/sessions/${session.id}/report-polish`, { enabled: false });
+  await postReport(baseUrl, session.id, "first", "一本目");
+  await postReport(baseUrl, session.id, "second", "二本目");
+  await postJson(baseUrl, `/sessions/${session.id}/report-polish`, { enabled: true });
+  await postReport(baseUrl, session.id, "third", "三本目");
+  await gate.release(0);
+  await waitFor(async () => (await storedReports(baseUrl, session.id)).some(r => r.content === "まとめた本文"), "the merged report");
+
+  expect(gate.requests[0]).toMatchObject({ draft: "一本目\n\n二本目\n\n三本目", mergedReportCount: 2 });
+  expect(reader.requests[0]).toMatchObject({ draft: "一本目\n\n二本目\n\n三本目", timeline: [] });
+  const shown = await storedReports(baseUrl, session.id);
+  expect(shown.map(r => r.content)).toEqual(["まとめた本文"]);
+  const sessions = (await fetch(`${baseUrl}/sessions`).then(r => r.json())).sessions;
+  expect(sessions.find((s: { id: string }) => s.id === session.id).unreadReportCount).toBe(1);
+  const hidden = readdirSync(join(ctx.sessionsDir, session.id, "reports")).filter(n => n.endsWith(".md") && n !== shown[0].filename);
+  expect(hidden).toHaveLength(2);
+  for (const name of hidden) expect(reportMeta(ctx.sessionsDir, session.id, name).supersededBy).toBe(shown[0].filename);
+});
+
+test("a report the human has read is not merged into the next draft", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postReport(baseUrl, session.id, "first", "読んだレポート");
+  await gate.release(0);
+  const [first] = await waitForReports(baseUrl, session.id, 1);
+  await postJson(baseUrl, `/sessions/${session.id}/reports/${first.filename}/read`, {});
+  await postReport(baseUrl, session.id, "second", "次の原稿");
+  await gate.release(1);
+  await waitForReports(baseUrl, session.id, 2);
+
+  expect(gate.requests[1].draft).toBe("次の原稿");
+  expect(gate.requests[1].mergedReportCount).toBeUndefined();
+});
+
+test("an unread report with images is not merged, since the merged report would lose them", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  const form = new FormData();
+  form.set("payload", JSON.stringify({ slug: "shot", content: "画像付き" }));
+  form.append("attachment", new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "shot.png", { type: "image/png" }));
+  await fetch(`${baseUrl}/internal/sessions/${session.id}/reports`, { method: "POST", body: form });
+  await gate.release(0);
+  await waitForReports(baseUrl, session.id, 1);
+  await postReport(baseUrl, session.id, "second", "次の原稿");
+  await gate.release(1);
+  await waitForReports(baseUrl, session.id, 2);
+
+  expect(gate.requests[1].draft).toBe("次の原稿");
+});
+
+test("a withdrawn merged draft leaves the unread reports it would have replaced in place", async () => {
+  const gate = gatedPolisher(r => r.mergedReportCount ? { withdrawnReason: "不要" } : r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postReport(baseUrl, session.id, "first", "一本目");
+  await gate.release(0);
+  await waitForReports(baseUrl, session.id, 1);
+  await postReport(baseUrl, session.id, "second", "二本目");
+  await gate.release(1);
+  await waitFor(async () => (await readEvents(session.id, 1, ctx.sessionsDir)).some(e => e.kind === "report_withdrawn"), "the withdrawal");
+
+  expect((await storedReports(baseUrl, session.id)).map(r => r.content)).toEqual(["一本目"]);
+});
+
+test("a draft whose merged report was rejected during the polish is shown alone as the writer submitted it", async () => {
+  const gate = gatedPolisher(r => r.mergedReportCount ? "まとめた本文" : r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postReport(baseUrl, session.id, "first", "一本目");
+  await gate.release(0);
+  const [first] = await waitForReports(baseUrl, session.id, 1);
+  await postReport(baseUrl, session.id, "second", "二本目");
+  await waitFor(() => gate.requests.length === 2, "the merged polish to start");
+  expect(gate.requests[1].mergedReportCount).toBe(1);
+  await postJson(baseUrl, `/sessions/${session.id}/reports/${first.filename}/reject`, { reason: "いらない" });
+  await gate.release(1);
+  await waitFor(() => ctx.reportPolishDrains.size === 0, "the polish to finish");
+
+  expect((await storedReports(baseUrl, session.id)).map(r => r.content)).toEqual(["二本目"]);
+  expect(reportMeta(ctx.sessionsDir, session.id, first.filename).supersededBy).toBeUndefined();
 });

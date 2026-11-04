@@ -28,7 +28,7 @@ import { buildStructureView, parseChangedFilePaths, structureLanguageOf } from "
 import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { ghPrLinkResolver, makeCachedPrLinkResolver, type PrLinkResolver } from "./pr-link";
 import { writeNumberedFile, listAllFiles, readNumberedFile, mergeNumberedFileMeta, moveFile, moveNumberedFile, deleteNumberedFile, readReadState, setReadState, markAllRead, readPinState, setPinState, attachmentsDirNameFor } from "./file-store";
-import type { NumberedFile, NumberedFileMeta, WriteNumberedFileOptions } from "./file-store";
+import type { NumberedFile, NumberedFileMeta, ReadFile, WriteNumberedFileOptions } from "./file-store";
 import { formatAnchorRefLine } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
 import { isSessionPreviewAlive, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
@@ -1715,7 +1715,7 @@ async function getSessions(req: Request, ctx: ServerContext): Promise<Response> 
       listAllFiles(askingDirFor(ctx, meta.id)),
       listPolishingSubmissions(ctx, meta.id),
     ]);
-    const unreadReportCount = reports.reduce((n, r) => n + (r.meta?.rejection || readSet.has(r.filename) ? 0 : 1), 0);
+    const unreadReportCount = reports.reduce((n, r) => n + (hiddenFromHuman(r) || readSet.has(r.filename) ? 0 : 1), 0);
     const unresolvedEscalationCount = asking.length;
     // The sidebar's liveness signal: when the agent last did something — its run
     // or a step within it, not a report/feedback/escalation. Undefined until the
@@ -2119,7 +2119,7 @@ async function getReports(_req: Request, ctx: ServerContext, params: Record<stri
       }
     }
     return json({
-      reports: reports.filter(r => !r.meta?.rejection).map(r => ({
+      reports: reports.filter(r => !hiddenFromHuman(r)).map(r => ({
         filename: r.filename,
         content: r.content,
         read: readSet.has(r.filename),
@@ -3330,6 +3330,9 @@ interface SubmittedReport {
   replyTo?: string;
   polished?: true;
   attachments: { name: string; bytes: Uint8Array }[];
+  // Unread reports whose text this report carries; they leave the human's
+  // list as it enters.
+  supersedes?: string[];
 }
 
 async function storeReport(ctx: ServerContext, meta: SessionMeta, report: SubmittedReport): Promise<NumberedFile> {
@@ -3352,8 +3355,27 @@ async function storeReport(ctx: ServerContext, meta: SessionMeta, report: Submit
     anchorLineStart: null,
     anchorLineEnd: null,
   }));
-  await appendAndBroadcast(ctx, meta.id, { kind: "report_submitted", payload: { filename: file.filename } });
+  for (const superseded of report.supersedes ?? []) {
+    await mergeNumberedFileMeta(reportsDirFor(ctx, meta.id), superseded, { supersededBy: file.filename });
+  }
+  await appendAndBroadcast(ctx, meta.id, {
+    kind: "report_submitted",
+    payload: { filename: file.filename, ...(report.supersedes?.length && { supersedes: report.supersedes }) },
+  });
   return file;
+}
+
+function hiddenFromHuman(report: ReadFile): boolean {
+  return report.meta?.rejection !== undefined || report.meta?.supersededBy !== undefined;
+}
+
+// Reports the human has not read yet, which a new draft is polished together
+// with so that the human reads one report instead of several in a row. One
+// with images stays on its own: the merged report would not carry them.
+async function unreadReportsToMerge(ctx: ServerContext, sessionId: string): Promise<ReadFile[]> {
+  const dir = reportsDirFor(ctx, sessionId);
+  const [reports, readSet] = await Promise.all([listAllFiles(dir), readReadState(dir)]);
+  return reports.filter(r => !hiddenFromHuman(r) && !r.meta?.cancellation && !readSet.has(r.filename) && !r.attachments?.length);
 }
 
 // Drafts waiting for their polish, one JSON file each, named so that a
@@ -3449,20 +3471,28 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
   if (meta && polisher) {
     const pending = (await Bun.file(pendingPath).json()) as PendingReportPolish;
     const kind = pending.kind ?? "report";
+    const merged = kind === "report" ? await unreadReportsToMerge(ctx, sessionId) : [];
+    const draft = [...merged.map(r => r.content.trim()), pending.content].join("\n\n");
     const readerObjection = kind === "report" && ctx.reportJudge
-      ? await ctx.reportJudge({ task: meta.prompt ?? "", timeline: await humanTimeline(ctx, sessionId), draft: pending.content, ...(meta.model && { model: meta.model }) }).catch(() => null)
+      ? await ctx.reportJudge({
+        task: meta.prompt ?? "",
+        timeline: await humanTimeline(ctx, sessionId, new Set(merged.map(r => r.filename))),
+        draft,
+        ...(meta.model && { model: meta.model }),
+      }).catch(() => null)
       : null;
     const outcome = await polisher({
       spawnCommand: reportPolishSpawnCommand(ctx, meta),
       cwd: meta.worktreePath,
-      draft: pending.content,
+      draft,
       kind,
       ...(pending.command !== undefined && { command: pending.command }),
       allowReturn: !(await wasReturned(ctx, sessionId, pending)),
       ...(readerObjection && { readerObjection }),
+      ...(merged.length > 0 && { mergedReportCount: merged.length }),
     });
     const archive = (outcomeName: PolishRow["outcome"], result: string, storedFilename: string | null) =>
-      archivePolish(ctx, meta, { kind, slug: pending.slug, draft: pending.content, rounds: outcome.rounds ?? [], outcome: outcomeName, result, storedFilename, readerObjection });
+      archivePolish(ctx, meta, { kind, slug: pending.slug, draft, rounds: outcome.rounds ?? [], outcome: outcomeName, result, storedFilename, readerObjection });
     if (!(await Bun.file(pendingPath).exists())) {
       // The writer cancelled the escalation while it was being polished.
       archive("cancelled", "report" in outcome ? outcome.report : "", null);
@@ -3483,13 +3513,19 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
       const file = await storeCommandApproval(ctx, current, { command: pending.command ?? "", reason: outcome.report, timeoutMs: pending.timeoutMs });
       archive("stored", outcome.report, file.filename);
     } else {
-      const content = outcome.report.trim() === pending.content.trim() ? pending.content : outcome.report;
+      // A merged report the human rejected or the writer withdrew while the
+      // fork ran must not come back inside the merged text; the writer's draft
+      // is shown alone instead, as the fork's edits span the merged text.
+      const mergeHolds = await mergedReportsStillShown(ctx, sessionId, merged);
+      const content = !mergeHolds ? pending.content : outcome.report.trim() === draft.trim() ? draft : outcome.report;
+      const replyTo = pending.replyTo ?? (mergeHolds ? merged.findLast(r => r.meta?.replyTo)?.meta?.replyTo : undefined);
       const file = await storeReport(ctx, meta, {
         slug: pending.slug,
         content,
-        ...(content !== pending.content && { polished: true as const }),
-        ...(pending.replyTo && { replyTo: pending.replyTo }),
+        ...(mergeHolds && content !== draft && { polished: true as const }),
+        ...(replyTo && { replyTo }),
         attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
+        ...(mergeHolds && merged.length > 0 && { supersedes: merged.map(r => r.filename) }),
       });
       archive("stored", content, file.filename);
       if (outcome.continueReason && !(await submittedSince(ctx, sessionId, pending.queuedSeq))) {
@@ -3502,6 +3538,16 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
   announceAgentActivity(ctx, sessionId);
 }
 
+// Reading a merged report while the fork ran does not undo the merge: the
+// merged text still carries it.
+async function mergedReportsStillShown(ctx: ServerContext, sessionId: string, merged: ReadFile[]): Promise<boolean> {
+  for (const report of merged) {
+    const current = await readNumberedFile(reportsDirFor(ctx, sessionId), report.filename);
+    if (!current || hiddenFromHuman(current) || current.meta?.cancellation) return false;
+  }
+  return true;
+}
+
 // Feedback the human wrote, as opposed to messages worqload itself queues for
 // the agent (returned drafts, continue nudges). An answered escalation and a
 // command decision carry the question the human saw along with the answer.
@@ -3512,16 +3558,17 @@ function isHumanFeedback(filename: string): boolean {
 }
 
 // What the human has seen in a session, in the order they saw it: their own
-// messages and the reports shown to them. Rejected reports are left out, as
-// the human's timeline hides them.
-async function humanTimeline(ctx: ServerContext, sessionId: string): Promise<TimelineItem[]> {
+// messages and the reports shown to them. Rejected and merged reports are left
+// out, as the human's timeline hides them, and so are the reports a draft is
+// about to be merged with, since the draft carries their text.
+async function humanTimeline(ctx: ServerContext, sessionId: string, beingMerged: Set<string> = new Set()): Promise<TimelineItem[]> {
   const timeline: TimelineItem[] = [];
   for (const event of await readEvents(sessionId, 1, ctx.sessionsDir)) {
     const filename = (event.payload as { filename?: unknown } | undefined)?.filename;
     if (typeof filename !== "string") continue;
     if (event.kind === "report_submitted") {
       const report = await readNumberedFile(reportsDirFor(ctx, sessionId), filename);
-      if (report && !report.meta?.rejection) timeline.push({ kind: "report", text: report.content });
+      if (report && !hiddenFromHuman(report) && !beingMerged.has(filename)) timeline.push({ kind: "report", text: report.content });
     } else if (event.kind === "feedback_received" && isHumanFeedback(filename)) {
       const message = (await readNumberedFile(feedbackReadDirFor(ctx, sessionId), filename))
         ?? (await readNumberedFile(feedbackInboxDirFor(ctx, sessionId), filename));

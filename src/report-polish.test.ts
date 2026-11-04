@@ -211,3 +211,11 @@ test("a reader's objection reaches the fork's instruction only when there is one
   expect(without).not.toContain("{{");
   expect(without).not.toContain("readerObjection");
 });
+
+test("the count of unread reports merged into the draft reaches the fork's instruction only when there are some", () => {
+  const merged = buildReportPolishInstruction("原稿", { allowReturn: true, kind: "report", mergedReportCount: 2 });
+  const alone = buildReportPolishInstruction("原稿", { allowReturn: true, kind: "report" });
+  expect(merged).not.toContain("{{");
+  expect(alone).not.toContain("{{");
+  expect(merged.length).toBeGreaterThan(alone.length);
+});
