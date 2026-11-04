@@ -3502,8 +3502,8 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
       ...(readerObjection && { readerObjection }),
       ...(merged.length > 0 && { mergedReportCount: merged.length }),
     });
-    const archive = (outcomeName: PolishRow["outcome"], result: string, storedFilename: string | null) =>
-      archivePolish(ctx, meta, { kind, slug: pending.slug, draft, rounds: outcome.rounds ?? [], outcome: outcomeName, result, storedFilename, readerObjection });
+    const archive = (outcomeName: PolishRow["outcome"], result: string, storedFilename: string | null, mergedReports: string[] = []) =>
+      archivePolish(ctx, meta, { kind, slug: pending.slug, draft, rounds: outcome.rounds ?? [], outcome: outcomeName, result, storedFilename, readerObjection, mergedReports });
     if (!(await Bun.file(pendingPath).exists())) {
       // The writer cancelled the escalation while it was being polished.
       archive("cancelled", "report" in outcome ? outcome.report : "", null);
@@ -3538,7 +3538,7 @@ async function polishAndStoreReport(ctx: ServerContext, sessionId: string, pendi
         attachments: pending.attachments.map(a => ({ name: a.name, bytes: new Uint8Array(Buffer.from(a.base64, "base64")) })),
         ...(mergeHolds && merged.length > 0 && { supersedes: merged.map(r => r.filename) }),
       });
-      archive("stored", content, file.filename);
+      archive("stored", content, file.filename, mergeHolds ? merged.map(r => r.filename) : []);
       if (outcome.continueReason && !(await submittedSince(ctx, sessionId, pending.queuedSeq))) {
         const feedback = reportContinueScaffold.replaceAll("{{slug}}", pending.slug).replaceAll("{{reason}}", outcome.continueReason);
         await queueFeedbackAndWake(ctx, current, "report-continue", feedback, "report_continue");

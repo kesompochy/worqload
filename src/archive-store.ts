@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS feedback (
 -- array of the fork's output per round. result is the stored text for
 -- stored and cancelled, and the fork's reason for withdrawn and returned.
 -- reader_objection is why the human-side reader expected a rejection, NULL
--- when it expected none or did not judge.
+-- when it expected none or did not judge. merged_reports is a JSON array of
+-- the unread reports the stored report replaced, NULL on rows from before it.
 CREATE TABLE IF NOT EXISTS polishes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repo TEXT NOT NULL,
@@ -54,7 +55,8 @@ CREATE TABLE IF NOT EXISTS polishes (
   result TEXT NOT NULL,
   stored_filename TEXT,
   created_at TEXT NOT NULL,
-  reader_objection TEXT
+  reader_objection TEXT,
+  merged_reports TEXT
 );
 
 -- Escalations and command-approval requests as submitted, so one cancelled
@@ -108,6 +110,7 @@ export function openArchiveDb(path: string): Database {
 function addMissingColumns(db: Database): void {
   const columns = (db.query("PRAGMA table_info(polishes)").all() as { name: string }[]).map(c => c.name);
   if (!columns.includes("reader_objection")) db.exec("ALTER TABLE polishes ADD COLUMN reader_objection TEXT");
+  if (!columns.includes("merged_reports")) db.exec("ALTER TABLE polishes ADD COLUMN merged_reports TEXT");
 }
 
 export interface ReportRow {
@@ -185,14 +188,15 @@ export interface PolishRow {
   storedFilename: string | null;
   createdAt: string;
   readerObjection: string | null;
+  mergedReports: string[];
 }
 
 export function insertPolish(db: Database, row: PolishRow): void {
   db.query(`
     INSERT INTO polishes
-      (repo, session_id, kind, slug, draft, rounds, outcome, result, stored_filename, created_at, reader_objection)
+      (repo, session_id, kind, slug, draft, rounds, outcome, result, stored_filename, created_at, reader_objection, merged_reports)
     VALUES
-      ($repo, $sessionId, $kind, $slug, $draft, $rounds, $outcome, $result, $storedFilename, $createdAt, $readerObjection)
+      ($repo, $sessionId, $kind, $slug, $draft, $rounds, $outcome, $result, $storedFilename, $createdAt, $readerObjection, $mergedReports)
   `).run({
     $repo: row.repo,
     $sessionId: row.sessionId,
@@ -205,6 +209,7 @@ export function insertPolish(db: Database, row: PolishRow): void {
     $storedFilename: row.storedFilename,
     $createdAt: row.createdAt,
     $readerObjection: row.readerObjection,
+    $mergedReports: JSON.stringify(row.mergedReports),
   });
 }
 
@@ -221,6 +226,7 @@ export function listPolishes(db: Database, sessionId: string): PolishRow[] {
     stored_filename: string | null;
     created_at: string;
     reader_objection: string | null;
+    merged_reports: string | null;
   }[];
   return rows.map(r => ({
     repo: r.repo,
@@ -234,6 +240,7 @@ export function listPolishes(db: Database, sessionId: string): PolishRow[] {
     storedFilename: r.stored_filename,
     createdAt: r.created_at,
     readerObjection: r.reader_objection,
+    mergedReports: r.merged_reports === null ? [] : JSON.parse(r.merged_reports) as string[],
   }));
 }
 
