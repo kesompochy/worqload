@@ -725,8 +725,7 @@ test("a report's draft is judged from what the human has seen, and the objection
 
   await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "first", content: "見せたレポート" });
   await gate.release(0);
-  const [shown] = await waitForReports(baseUrl, session.id, 1);
-  await postJson(baseUrl, `/sessions/${session.id}/reports/${shown.filename}/read`, {});
+  await waitForReports(baseUrl, session.id, 1);
   await postJson(baseUrl, `/sessions/${session.id}/feedback`, { content: "人間の質問" });
   await postJson(baseUrl, `/internal/sessions/${session.id}/reports`, { slug: "second", content: "判定する原稿" });
   await gate.release(1);
@@ -856,4 +855,20 @@ test("a draft whose merged report was rejected during the polish is shown alone 
 
   expect((await storedReports(baseUrl, session.id)).map(r => r.content)).toEqual(["二本目"]);
   expect(reportMeta(ctx.sessionsDir, session.id, first.filename).supersededBy).toBeUndefined();
+});
+
+test("a report shown before the human's latest message is not merged, since the human answered after seeing it", async () => {
+  const gate = gatedPolisher(r => r.draft);
+  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher });
+  const session = await createClaudeSession(baseUrl, ctx);
+
+  await postReport(baseUrl, session.id, "first", "人間が答えたレポート");
+  await gate.release(0);
+  await waitForReports(baseUrl, session.id, 1);
+  await postJson(baseUrl, `/sessions/${session.id}/feedback`, { content: "人間の質問" });
+  await postReport(baseUrl, session.id, "answer", "質問への回答");
+  await gate.release(1);
+  await waitForReports(baseUrl, session.id, 2);
+
+  expect(gate.requests[1].draft).toBe("質問への回答");
 });

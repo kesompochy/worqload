@@ -3370,12 +3370,23 @@ function hiddenFromHuman(report: ReadFile): boolean {
 }
 
 // Reports the human has not read yet, which a new draft is polished together
-// with so that the human reads one report instead of several in a row. One
-// with images stays on its own: the merged report would not carry them.
+// with so that the human reads one report instead of several in a row. The
+// read mark is set only by hand, so a report shown before the human's latest
+// message counts as read: the human answered after seeing it, and the new
+// draft may be the answer. One with images stays on its own: the merged
+// report would not carry them.
 async function unreadReportsToMerge(ctx: ServerContext, sessionId: string): Promise<ReadFile[]> {
   const dir = reportsDirFor(ctx, sessionId);
-  const [reports, readSet] = await Promise.all([listAllFiles(dir), readReadState(dir)]);
-  return reports.filter(r => !hiddenFromHuman(r) && !r.meta?.cancellation && !readSet.has(r.filename) && !r.attachments?.length);
+  const [reports, readSet, events] = await Promise.all([listAllFiles(dir), readReadState(dir), readEvents(sessionId, 1, ctx.sessionsDir)]);
+  const shownAfterHuman = new Set<string>();
+  for (const event of events) {
+    const filename = (event.payload as { filename?: unknown } | undefined)?.filename;
+    if (typeof filename !== "string") continue;
+    if (event.kind === "feedback_received" && isHumanFeedback(filename)) shownAfterHuman.clear();
+    else if (event.kind === "report_submitted") shownAfterHuman.add(filename);
+  }
+  return reports.filter(r =>
+    shownAfterHuman.has(r.filename) && !hiddenFromHuman(r) && !r.meta?.cancellation && !readSet.has(r.filename) && !r.attachments?.length);
 }
 
 // Drafts waiting for their polish, one JSON file each, named so that a
