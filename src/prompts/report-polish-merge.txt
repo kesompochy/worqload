@@ -1,0 +1,2 @@
+The human has not yet read the latest reports this session showed them ({{count}} of them). The draft begins with their text, in the order they were shown, and ends with the new draft; whatever is stored replaces all of them, so the human reads one report instead of several. Turn it into one report the human can read on its own: delete what a later part supersedes or repeats, and keep what the human still needs from the earlier parts.
+

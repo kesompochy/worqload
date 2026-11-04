@@ -70,6 +70,10 @@ export interface NumberedFileMeta {
   // For a report: set when the agent withdrew it. Unlike a rejection, a
   // cancelled report stays in the human's list, shown with the reason.
   cancellation?: { reason: string; cancelledAt: string };
+  // For a report: the later report it was merged into while the human had not
+  // read it. Like a rejected report, it stays on disk but out of the human's
+  // list, since the later report carries what the human still needs from it.
+  supersededBy?: string;
   // For a report: stored as the polish fork's rewrite, which differs from the
   // writer's draft.
   polished?: true;
