@@ -294,16 +294,35 @@ function consumeList(lines, start, out, kind, markerRe, startNum) {
     const itemStartLine = i + 1;
     let content = lines[i].replace(markerRe, "");
     i++;
-    while (i < lines.length && isListContinuation(lines[i])) {
+    while (i < lines.length && isListContinuation(lines[i]) && !isNestedListStart(lines[i])) {
       content += "\n" + lines[i].replace(/^\s+/, "");
       i++;
     }
-    items.push({ content, startLine: itemStartLine, endLine: i });
+    const textEnd = i;
+    const nestedStart = i;
+    while (i < lines.length && isListContinuation(lines[i])) i++;
+    const item = { content, startLine: itemStartLine, endLine: textEnd };
+    if (i > nestedStart) item.children = parseNestedLines(lines, nestedStart, i);
+    items.push(item);
   }
   const block = { kind, items, startLine, endLine: i };
   if (startNum !== undefined) block.startNum = startNum;
   out.push(block);
   return i;
+}
+
+function isNestedListStart(line) {
+  const dedented = line.replace(/^\s+/, "");
+  return isUnorderedListItem(dedented) || isOrderedListItem(dedented);
+}
+
+// Parses the indented lines under a list item, dedented by the first line's
+// indent, as blocks of their own. The lines before them are blanked instead of
+// sliced off so the nested blocks are numbered by their lines in the source.
+function parseNestedLines(lines, start, end) {
+  const indent = lines[start].match(/^\s*/)[0].length;
+  const dedent = line => line.replace(new RegExp(`^\\s{0,${indent}}`), "");
+  return parseLines(lines.slice(0, end).map((line, n) => (n < start ? "" : dedent(line))));
 }
 
 function consumeTable(lines, start, out) {
@@ -447,7 +466,8 @@ function renderDetails(block, ctx) {
 function renderList(tag, block, ctx) {
   const items = block.items.map(item => {
     const attrs = anchorAttrs(item.startLine, item.endLine, ctx);
-    return `<li${attrs}>${renderInline(item.content, ctx)}</li>`;
+    const children = (item.children ?? []).map(b => renderBlock(b, ctx)).join("");
+    return `<li${attrs}>${renderInline(item.content, ctx)}${children}</li>`;
   }).join("");
   const startAttr = tag === "ol" && block.startNum > 1 ? ` start="${block.startNum}"` : "";
   return `<${tag}${startAttr}>${items}</${tag}>`;
