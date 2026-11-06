@@ -3,12 +3,17 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildProtocolPrefix } from "./session-bootstrap";
 import { makeTmpDir } from "./test-helpers";
+import goal from "./prompts/worqload-goal.txt" with { type: "text" };
 
 const installedScriptPath = join(import.meta.dir, "..", "bin", "wq-issue-comment");
 
 const NO_CONFIG = join(makeTmpDir("bootstrap-no-config"), "nonexistent.yaml");
 
 describe("buildProtocolPrefix", () => {
+  test("tells the agent the goal of worqload", async () => {
+    expect(await buildProtocolPrefix("main", undefined, NO_CONFIG)).toContain(goal.trim());
+  });
+
   test("substitutes the wq-issue-comment path with the given path", async () => {
     const prefix = await buildProtocolPrefix("main", "/opt/worqload/bin/wq-issue-comment", NO_CONFIG);
     expect(prefix).toContain("/opt/worqload/bin/wq-issue-comment");

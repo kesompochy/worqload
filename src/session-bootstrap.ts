@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import protocolPrefixTemplate from "./prompts/protocol-prefix.txt" with { type: "text" };
 import resumeKickoff from "./prompts/resume-kickoff.txt" with { type: "text" };
+import goal from "./prompts/worqload-goal.txt" with { type: "text" };
 import forkKickoff from "./prompts/fork-kickoff.txt" with { type: "text" };
 import turnWithoutReportNudge from "./prompts/turn-without-report-nudge.txt" with { type: "text" };
 import { defaultConfigPath, loadProtocolPrefix } from "./config";
@@ -16,6 +17,7 @@ export async function buildProtocolPrefix(
   const customPrefix = (await loadProtocolPrefix(configPath)) ?? "";
   return protocolPrefixTemplate
     .replaceAll("{{custom-protocol-prefix}}", customPrefix)
+    .replaceAll("{{goal}}", goal.trim())
     .replaceAll("{{baseBranch}}", baseBranch)
     .replaceAll("{{wqIssueComment}}", wqIssueCommentPath)
     .replaceAll("{{sessionId}}", session?.sessionId ?? "")

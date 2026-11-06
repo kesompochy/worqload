@@ -13,7 +13,7 @@ import escalationInstructionTemplate from "./prompts/escalation-polish-instructi
 import escalationReturnStepTemplate from "./prompts/escalation-polish-return-step.txt" with { type: "text" };
 import commandInstructionTemplate from "./prompts/command-approval-polish-instruction.txt" with { type: "text" };
 import commandReturnStepTemplate from "./prompts/command-approval-polish-return-step.txt" with { type: "text" };
-import goalTemplate from "./prompts/polish-goal.txt" with { type: "text" };
+import goalTemplate from "./prompts/worqload-goal.txt" with { type: "text" };
 import judgeTemplate from "./prompts/polish-judge.txt" with { type: "text" };
 import returnStepFrame from "./prompts/polish-return-step.txt" with { type: "text" };
 import finishStepTemplate from "./prompts/polish-finish-step.txt" with { type: "text" };

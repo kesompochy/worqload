@@ -1,0 +1,1 @@
+worqload is an asynchronous interface between agents and a human. Its first goal is that the agent goes as far as it can without needing the human's Orient, and spends none of the human's attention on anything but Orient.
