@@ -766,7 +766,8 @@ function reportMeta(sessionsDir: string, sessionId: string, filename: string): R
 test("a draft submitted while the session's earlier reports are unread is polished together with them and shown in their place", async () => {
   const gate = gatedPolisher(r => r.mergedReportCount ? "まとめた本文" : r.draft);
   const reader = objectingJudge("不要");
-  const { baseUrl, ctx } = await bootServer(makeTmpDir("repo"), { reportPolisher: gate.polisher, reportJudge: reader.judge });
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl, ctx } = await bootServer(repoDir, { reportPolisher: gate.polisher, reportJudge: reader.judge, archiveDbPath: join(repoDir, "archive.db") });
   const session = await createClaudeSession(baseUrl, ctx);
 
   await postJson(baseUrl, `/sessions/${session.id}/report-polish`, { enabled: false });
@@ -786,6 +787,8 @@ test("a draft submitted while the session's earlier reports are unread is polish
   const hidden = readdirSync(join(ctx.sessionsDir, session.id, "reports")).filter(n => n.endsWith(".md") && n !== shown[0].filename);
   expect(hidden).toHaveLength(2);
   for (const name of hidden) expect(reportMeta(ctx.sessionsDir, session.id, name).supersededBy).toBe(shown[0].filename);
+  await waitFor(() => listPolishes(ctx.archiveDb!, session.id).length === 1, "the archived polish");
+  expect(listPolishes(ctx.archiveDb!, session.id)[0]).toMatchObject({ draft: "一本目\n\n二本目\n\n三本目", storedFilename: shown[0].filename, mergedReports: hidden.sort() });
 });
 
 test("a report the human has read is not merged into the next draft", async () => {

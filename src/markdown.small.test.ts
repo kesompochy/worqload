@@ -64,6 +64,26 @@ test("unordered list anchors each item", () => {
   expect(html).toMatch(/<li [^>]*data-anchor-line="3"[^>]*>three<\/li>/);
 });
 
+test("an indented list under an item renders as a list nested in that item", () => {
+  expect(renderMarkdown("- parent\n  - child one\n  - child two\n- next\n"))
+    .toBe("<ul><li>parent<ul><li>child one</li><li>child two</li></ul></li><li>next</li></ul>");
+});
+
+test("lists nest more than one level deep, and under ordered items", () => {
+  expect(renderMarkdown("1. top\n   - mid\n     - leaf\n"))
+    .toBe("<ol><li>top<ul><li>mid<ul><li>leaf</li></ul></li></ul></li></ol>");
+});
+
+test("a nested item anchors its own source line", () => {
+  const html = renderMarkdown("- parent\n  - child\n", { anchorPath: "./r.md" });
+  expect(html).toMatch(/<li [^>]*data-anchor-line="1"[^>]*data-anchor-line-end="1"[^>]*>parent<ul>/);
+  expect(html).toMatch(/<li [^>]*data-anchor-line="2"[^>]*>child<\/li>/);
+});
+
+test("an indented line that is not a list marker still continues the item's text", () => {
+  expect(renderMarkdown("- first line\n  second line\n")).toBe("<ul><li>first line\nsecond line</li></ul>");
+});
+
 test("ordered list renders as ol with anchored items", () => {
   const html = renderMarkdown("1. first\n2. second\n", { anchorPath: "./r.md" });
   expect(html).toContain("<ol>");

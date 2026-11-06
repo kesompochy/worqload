@@ -354,6 +354,7 @@ test("insertPolish stores a polish with its draft, rounds and outcome", async ()
       storedFilename: "001-plan.md",
       createdAt: "2026-10-29T00:00:00Z",
       readerObjection: null,
+      mergedReports: [],
     });
     expect(listPolishes(db, "abc-123")).toEqual([{
       repo: "github.com/foo/bar",
@@ -367,6 +368,7 @@ test("insertPolish stores a polish with its draft, rounds and outcome", async ()
       storedFilename: "001-plan.md",
       createdAt: "2026-10-29T00:00:00Z",
       readerObjection: null,
+      mergedReports: [],
     }]);
     expect(listPolishes(db, "other")).toEqual([]);
   } finally {
@@ -432,10 +434,26 @@ test("a polish keeps the reader's objection, and an archive from before the colu
   const { openArchiveDb, insertPolish, listPolishes } = await loadModule();
   const db = openArchiveDb(dbPath);
   try {
-    const row = { repo: "r", sessionId: "s", kind: "report" as const, slug: "x", draft: "d", rounds: [], outcome: "stored" as const, result: "d", storedFilename: "001-x.md", createdAt: "t" };
+    const row = { repo: "r", sessionId: "s", kind: "report" as const, slug: "x", draft: "d", rounds: [], outcome: "stored" as const, result: "d", storedFilename: "001-x.md", createdAt: "t", mergedReports: [] };
     insertPolish(db, { ...row, readerObjection: "冒頭が作業の記録" });
     insertPolish(db, { ...row, readerObjection: null });
     expect(listPolishes(db, "s").map(p => p.readerObjection)).toEqual(["冒頭が作業の記録", null]);
+  } finally {
+    db.close();
+  }
+});
+
+test("a polish keeps the reports its stored report replaced, and an archive from before the column reads them as none", async () => {
+  const { Database } = await import("bun:sqlite");
+  const old = new Database(dbPath);
+  old.exec(`CREATE TABLE polishes (id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, session_id TEXT NOT NULL, kind TEXT NOT NULL, slug TEXT NOT NULL, draft TEXT NOT NULL, rounds TEXT NOT NULL, outcome TEXT NOT NULL, result TEXT NOT NULL, stored_filename TEXT, created_at TEXT NOT NULL, reader_objection TEXT)`);
+  old.exec(`INSERT INTO polishes (repo, session_id, kind, slug, draft, rounds, outcome, result, stored_filename, created_at) VALUES ('r', 's', 'report', 'x', 'd', '[]', 'stored', 'd', '001-x.md', 't')`);
+  old.close();
+  const { openArchiveDb, insertPolish, listPolishes } = await loadModule();
+  const db = openArchiveDb(dbPath);
+  try {
+    insertPolish(db, { repo: "r", sessionId: "s", kind: "report", slug: "y", draft: "d", rounds: [], outcome: "stored", result: "d", storedFilename: "003-y.md", createdAt: "t", readerObjection: null, mergedReports: ["001-x.md", "002-z.md"] });
+    expect(listPolishes(db, "s").map(p => p.mergedReports)).toEqual([[], ["001-x.md", "002-z.md"]]);
   } finally {
     db.close();
   }
