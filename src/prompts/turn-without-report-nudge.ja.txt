@@ -1,0 +1,1 @@
+[worqload] あなたの直前のターンは Report も Escalation もないまま終わった。人間はこのセッションを Report と Escalation で追っている。人間に伝えることに意味があるもの（進捗、発見、あなたが下した決定）があれば、`worqload report submit` で提出する。判断待ちや拒否されたコマンドで止まっているなら、代わりに `worqload escalate submit` を送る。本当に報告することがないなら、それでよい。作業を続ける。
