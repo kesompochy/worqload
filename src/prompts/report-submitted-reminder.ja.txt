@@ -1,1 +1,1 @@
-リマインダー: このレポートは、取り消して推敲し直さなくても大丈夫か？ 大丈夫でないなら、`worqload report cancel <filename> --reason <text>` で取り消し、推敲して、提出し直す。
+いま提出したレポートを、人間が読むように読み直す。そのまま人間に届けるべきでないなら、`worqload report cancel <filename> --reason <text>` で取り消し、推敲して、提出し直す。
