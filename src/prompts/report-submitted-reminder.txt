@@ -1,0 +1,1 @@
+Reminder: is this report fine as it is, without cancelling it and polishing it again? If not, cancel it with `worqload report cancel <filename> --reason <text>`, polish it, and submit it again.
