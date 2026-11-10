@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { REPORT_POLISH_FORK_ENV } from "../report-polish";
+import { runAgentCliAgainstStub } from "../test-helpers";
+import { renderSubmittedReminder } from "./cli-helpers";
 
 const CLI = join(import.meta.dir, "..", "cli.ts");
 
@@ -77,4 +79,15 @@ describe("worqload report cancel argument validation", () => {
   test("requires a reason", async () => {
     expect(await spawnCancel(["001-x.md"]).exited).toBe(2);
   });
+});
+
+test("report submit prints the submitted reminder for a report", async () => {
+  const { exitCode, stdout } = await runAgentCliAgainstStub(
+    ["report", "submit", "--slug", "test"],
+    "a report body that is long enough to pass validation",
+    { filename: "001-test.md", seq: 1 },
+  );
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain(renderSubmittedReminder("report"));
+  expect(stdout).not.toContain("{{");
 });

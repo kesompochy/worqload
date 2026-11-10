@@ -193,3 +193,36 @@ export async function cleanupAll(): Promise<void> {
   }
   tmpDirs.length = 0;
 }
+
+// Runs the agent-side CLI against a stub serve that answers every request with
+// `response`, so a test can read what the CLI prints after the server accepts a
+// submission. WORQLOAD_ENDPOINT_FILE is dropped because a suite running inside
+// a worqload session inherits one, and it would point the CLI at the real serve.
+export async function runAgentCliAgainstStub(
+  args: string[],
+  stdin: string,
+  response: unknown,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const server = Bun.serve({ port: 0, fetch: () => Response.json(response) });
+  try {
+    const proc = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), ...args], {
+      stdin: new Blob([stdin]),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        WORQLOAD_ENDPOINT: `http://127.0.0.1:${server.port}`,
+        WORQLOAD_ENDPOINT_FILE: undefined,
+        WORQLOAD_SESSION_ID: "test-session",
+      },
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    return { exitCode, stdout, stderr };
+  } finally {
+    server.stop(true);
+  }
+}

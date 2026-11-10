@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import submittedReminderTemplate from "../prompts/submitted-reminder.txt" with { type: "text" };
 
 export function requireEnv(name: string): string {
   const v = process.env[name];
@@ -75,4 +76,8 @@ export async function readAllStdin(): Promise<string> {
   }
   buf += decoder.decode();
   return buf;
+}
+
+export function renderSubmittedReminder(submission: string): string {
+  return submittedReminderTemplate.trim().replaceAll("{{submission}}", submission);
 }

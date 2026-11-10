@@ -6,7 +6,7 @@
 //   `worqload escalate cancel --command <cmd> [--reason <text>]`
 
 import { submitEscalation, cancelEscalation, cancelEscalationBySlug, cancelCommandApproval, requestCommandApproval } from "../agent-client";
-import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, exitWithUsage } from "./cli-helpers";
+import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, exitWithUsage, renderSubmittedReminder } from "./cli-helpers";
 
 const USAGE =
   "worqload escalate submit --slug <slug>          (question body via stdin)\n" +
@@ -48,6 +48,7 @@ async function escalateSubmit(args: string[]): Promise<void> {
     } else {
       console.log(result.filename);
     }
+    console.log(renderSubmittedReminder("escalation"));
   } catch (err) {
     console.error(`escalate submit failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
@@ -87,6 +88,7 @@ async function escalateCommand(args: string[]): Promise<void> {
     } else {
       console.log(result.filename);
     }
+    console.log(renderSubmittedReminder("command approval request"));
   } catch (err) {
     console.error(`escalate command failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
