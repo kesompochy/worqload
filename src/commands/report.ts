@@ -6,8 +6,7 @@
 import { basename } from "node:path";
 import { submitReport, cancelReport } from "../agent-client";
 import { REPORT_POLISH_FORK_ENV } from "../report-polish";
-import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, collectFlag, exitWithUsage } from "./cli-helpers";
-import submittedReminder from "../prompts/report-submitted-reminder.txt" with { type: "text" };
+import { readAllStdin, requireEnv, resolveAgentEndpoint, requireFlag, optionalFlag, collectFlag, exitWithUsage, renderSubmittedReminder } from "./cli-helpers";
 
 const SEPARATOR_LINE = /^[\s\-=*#]*$/;
 const KEBAB_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -92,7 +91,7 @@ async function reportSubmit(rest: string[]): Promise<void> {
     } else {
       console.log(result.filename);
     }
-    console.log(submittedReminder.trim());
+    console.log(renderSubmittedReminder("report"));
   } catch (err) {
     console.error(`report submit failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
