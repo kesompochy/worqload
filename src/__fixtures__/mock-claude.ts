@@ -7,6 +7,9 @@
 //   echo    : emit init, then for each stdin user message emit an assistant text reply
 //   hang    : emit init, then read stdin forever (used to test kill)
 //   crash   : emit init, then exit 1
+//   startup-failure : skip init, emit only an error result carrying a fresh
+//             session_id, then exit 1 — what claude does when it refuses to
+//             start (e.g. org settings not loaded yet) and writes no transcript
 //   tool    : emit init, then an assistant turn with a tool_use block, then exit 0
 //   say     : emit init, then one assistant turn whose text is argv[3], then exit 0
 //   env     : emit init, then emit a system line carrying the worqload env vars, then hang
@@ -18,6 +21,11 @@ const mode = process.argv[2] ?? "init";
 
 function writeLine(obj: unknown): void {
   process.stdout.write(`${JSON.stringify(obj)}\n`);
+}
+
+if (mode === "startup-failure") {
+  writeLine({ type: "result", subtype: "error_during_execution", session_id: "never-started", is_error: true, num_turns: 0 });
+  process.exit(1);
 }
 
 writeLine({ type: "system", subtype: "init", session_id: "mock" });
