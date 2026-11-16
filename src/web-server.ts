@@ -40,7 +40,7 @@ import { agentTurnAfterEvent, agentTurnFromEvents, isAgentWorkEvent } from "../w
 import { TURN_WITHOUT_REPORT_NUDGE } from "./session-bootstrap";
 import { shellSingleQuote } from "./session-driver-tmux";
 import { defaultConfigPath } from "./config";
-import { expandSkillReferences, loadSkillButtons, type SkillButton } from "./skill-buttons";
+import { appendSkillLoadNotices, loadSkillButtons, type SkillButton } from "./skill-buttons";
 import { DEFAULT_FEEDBACK_TEMPLATES, FEEDBACK_TEMPLATE_PREFIX, loadFeedbackTemplates, type FeedbackTemplate } from "./feedback-templates";
 import { runSessionCreateHooks } from "./hooks";
 import { type KbBinding, kbLaunchOf, loadKbBindings, matchingKbBinding, wrapClaudeCommandWithKb } from "./kb";
@@ -3949,7 +3949,7 @@ function formatFeedbackMessageForAgent(m: { content: string; filename: string; m
     content = buildReportRejectedFeedback(m.meta.rejectedReport, m.content.trim() || undefined);
   }
   if (skills && skills.length > 0) {
-    content = expandSkillReferences(content, skills);
+    content = appendSkillLoadNotices(content, skills);
   }
   if (m.attachments && m.attachments.length > 0) {
     const dir = join(attachmentsBaseDir, attachmentsDirNameFor(m.filename));

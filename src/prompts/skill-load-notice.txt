@@ -1,0 +1,1 @@
+[worqload] This feedback references the skill `{{name}}`. You must load it before acting on the feedback, whatever the context, even if the skill seems irrelevant or already known: invoke `{{name}}` with your Skill tool, or, if your Skill tool does not offer it, Read {{path}} and follow it.
