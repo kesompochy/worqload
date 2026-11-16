@@ -101,3 +101,23 @@ test("claudePipeDriver reports the session_id claude announces via onAgentSessio
 
   expect(reported).toEqual(["mock"]);
 });
+
+// When claude refuses to start, its error result carries a fresh session_id
+// that has no transcript. Recording it would make every later resume fail
+// with "No conversation found" and orphan the real conversation.
+test("claudePipeDriver does not report the session_id of a run that never started", async () => {
+  const reported: string[] = [];
+  const driver = await claudePipeDriver({
+    spawnCommand: ["bun", MOCK, "startup-failure"],
+    env: testEnv(),
+    onEvent: () => {},
+    log: () => {},
+    onAgentSessionId: (id) => {
+      reported.push(id);
+    },
+  });
+
+  await driver.exited;
+
+  expect(reported).toEqual([]);
+});

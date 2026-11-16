@@ -135,10 +135,13 @@ export const claudePipeDriver: SessionDriverFactory = async (opts) => {
 
   // claude assigns its own conversation id, distinct from the worqload
   // session id; a fork must `--resume` this id to find the transcript.
+  // Only the system init line counts: a claude that refuses to start emits a
+  // lone error result whose session_id has no transcript behind it.
   let conversationId: string | null = null;
   const stdoutTask = readLines(claude.stdout, (line) => {
     const parsed = parseAgentLine(line);
-    if (typeof parsed.session_id === "string" && parsed.session_id !== conversationId) {
+    const isInit = parsed.type === "system" && parsed.subtype === "init";
+    if (isInit && typeof parsed.session_id === "string" && parsed.session_id !== conversationId) {
       conversationId = parsed.session_id;
       opts.onAgentSessionId?.(conversationId);
     }
