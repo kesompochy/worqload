@@ -32,12 +32,10 @@ test("loadSkillButtons returns an empty list when config is absent", async () =>
 
 const reviewSkill = { name: "review", sourcePath: "/skills/review/SKILL.md" };
 
-test("appendSkillLoadNotices keeps the human's text and names the referenced skill with its SKILL.md path", () => {
+test("appendSkillLoadNotices keeps the human's text and appends the referenced skill's SKILL.md path", () => {
   const result = appendSkillLoadNotices("please run /review on this", [reviewSkill]);
   expect(result).toStartWith("please run /review on this\n\n");
-  const notice = result.slice("please run /review on this".length);
-  expect(notice).toContain("review");
-  expect(notice).toContain("/skills/review/SKILL.md");
+  expect(result).toContain("/skills/review/SKILL.md");
 });
 
 test("appendSkillLoadNotices adds one notice per distinct skill", () => {

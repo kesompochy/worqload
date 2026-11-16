@@ -78,14 +78,10 @@ function expandTilde(path: string): string {
 }
 
 export function appendSkillLoadNotices(content: string, skills: SkillButton[]): string {
-  const skillsByName = new Map(skills.map(skill => [skill.name, skill]));
-  const referenced = new Map<string, SkillButton>();
-  for (const [, name] of content.matchAll(/(?:^|(?<=\s))\/([\w-]+)/g)) {
-    const skill = name === undefined ? undefined : skillsByName.get(name);
-    if (skill) referenced.set(skill.name, skill);
-  }
-  if (referenced.size === 0) return content;
-  const notices = [...referenced.values()].map(skill =>
+  const referencedNames = new Set(Array.from(content.matchAll(/(?:^|(?<=\s))\/([\w-]+)/g), match => match[1]));
+  const referenced = skills.filter(skill => referencedNames.has(skill.name));
+  if (referenced.length === 0) return content;
+  const notices = referenced.map(skill =>
     skillLoadNoticeTemplate.trim().replaceAll("{{name}}", skill.name).replaceAll("{{path}}", skill.sourcePath),
   );
   return `${content}\n\n${notices.join("\n\n")}`;
