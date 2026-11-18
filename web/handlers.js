@@ -4,7 +4,7 @@
 // and/or calls the data layer; the Svelte components re-render reactively.
 
 import { $, toast } from "./dom.js";
-import { state, isReportExpanded, isReportViewRaw, isFeedbackExpanded, feedbackPreviewEntries, DIFF_EXPAND_CHUNK, ATTACHMENT_ALLOWED_MIMES, ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT } from "./state.svelte.js";
+import { state, isReportExpanded, isReportViewRaw, isFeedbackExpanded, feedbackPreviewEntries, DIFF_EXPAND_CHUNK, ATTACHMENT_ALLOWED_MIMES, ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT, askingFilenameOfAnchor } from "./state.svelte.js";
 import { parseDiffFiles, mergeLineRanges } from "./diff-view.js";
 import { languageForPath } from "./syntax-highlight.js";
 import { isIdentifierName, resolveDefinitions, resolveReferences } from "./code-nav.js";
@@ -141,6 +141,7 @@ export async function selectSession(id, { historyAction = "push" } = {}) {
   // blob URLs so the chips don't leak across sessions or memory.
   clearAttachments();
   state.feedbackQueue = [];
+  state.askingLineComments = new Map();
   if (!id) return;
   await refreshDetail();
   // A click on another card while this one was loading owns the screen now;
@@ -1379,11 +1380,17 @@ export async function onResolve(filename, articleEl, buttonEl) {
   if (!state.selected) return;
   const text = articleEl.querySelector(".ask-answer").value.trim();
   const attachments = state.askingAttachments.get(filename) ?? [];
-  if (text === "" && attachments.length === 0) { toast("answer is required"); return; }
+  const comments = askingLineCommentsPayload(filename);
+  if (text === "" && attachments.length === 0 && comments.length === 0) { toast("answer is required"); return; }
+  const body = {};
+  if (text !== "") body.content = text;
+  if (comments.length > 0) body.comments = comments;
+  if (!body.content && !body.comments) body.content = "(image attached)";
   const restore = lockAskingArticle(articleEl, buttonEl);
   try {
-    await resolveEscalation(state.selected, filename, { content: text || "(image attached)" }, attachments);
+    await resolveEscalation(state.selected, filename, body, attachments);
     clearAskingAttachments(filename);
+    clearAskingLineComments(filename);
     toast("answer sent");
     await refreshDetail();
     await fetchSessions();
@@ -1402,11 +1409,14 @@ export async function onResolveCommand(filename, decision, articleEl, buttonEl) 
   const body = { decision };
   const note = articleEl?.querySelector(".ask-answer")?.value.trim() ?? "";
   if (note !== "") body.content = note;
+  const comments = askingLineCommentsPayload(filename);
+  if (comments.length > 0) body.comments = comments;
   const attachments = state.askingAttachments.get(filename) ?? [];
   const restore = lockAskingArticle(articleEl, buttonEl);
   try {
     const res = await resolveEscalation(state.selected, filename, body, attachments);
     clearAskingAttachments(filename);
+    clearAskingLineComments(filename);
     toast(decision === "approve" ? `command ran (exit ${res.exitCode ?? "?"})` : "command rejected");
     await refreshDetail();
     await fetchSessions();
@@ -1424,6 +1434,7 @@ export function onQueueFeedback(inputId = "feedbackInput") {
   if (!inputEl) return;
   const text = inputEl.value.trim();
   if (text === "") return;
+  if (askingFilenameOfAnchor(state.anchor)) { addAskingLineComment(inputEl); return; }
   const item = { content: text, slug: state.anchor ? "anchored" : "feedback" };
   if (state.anchor) {
     item.anchor = {
@@ -1447,6 +1458,7 @@ export async function onFeedback(inputId = "feedbackInput") {
   const inputEl = $("#" + inputId);
   if (!inputEl) return;
   const text = inputEl.value.trim();
+  if (text !== "" && askingFilenameOfAnchor(state.anchor)) { addAskingLineComment(inputEl); return; }
   const attachments = state.pendingAttachments;
   const hasQueue = state.feedbackQueue.length > 0;
   // Plain feedback needs body text. A composer that only has attachments still
@@ -1645,6 +1657,40 @@ export function clearAskingAttachments(askingFilename) {
   const updated = new Map(state.askingAttachments);
   updated.delete(askingFilename);
   state.askingAttachments = updated;
+}
+
+let nextAskingLineCommentId = 0;
+
+function addAskingLineComment(inputEl) {
+  const askingFilename = askingFilenameOfAnchor(state.anchor);
+  const comment = { id: ++nextAskingLineCommentId, quote: state.anchor.quote ?? "", content: inputEl.value.trim() };
+  const existing = state.askingLineComments.get(askingFilename) ?? [];
+  state.askingLineComments = new Map(state.askingLineComments).set(askingFilename, [...existing, comment]);
+  if (state.pendingAttachments.length > 0) {
+    addAskingAttachmentFiles(askingFilename, state.pendingAttachments.map(att => att.file));
+    clearAttachments();
+  }
+  inputEl.value = "";
+  state.anchor = null;
+}
+
+function askingLineCommentsPayload(askingFilename) {
+  return (state.askingLineComments.get(askingFilename) ?? []).map(c => ({ quote: c.quote, content: c.content }));
+}
+
+export function removeAskingLineComment(askingFilename, id) {
+  const remaining = (state.askingLineComments.get(askingFilename) ?? []).filter(c => c.id !== id);
+  const updated = new Map(state.askingLineComments);
+  if (remaining.length === 0) updated.delete(askingFilename);
+  else updated.set(askingFilename, remaining);
+  state.askingLineComments = updated;
+}
+
+function clearAskingLineComments(askingFilename) {
+  if (!state.askingLineComments.has(askingFilename)) return;
+  const updated = new Map(state.askingLineComments);
+  updated.delete(askingFilename);
+  state.askingLineComments = updated;
 }
 
 export function onAskingPaste(askingFilename, event) {

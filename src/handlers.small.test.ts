@@ -61,8 +61,8 @@ mock.module("../web/api.js", () => ({
   fetchCodeNavLocations: async () => ({ available: false }),
   openWs() {},
 }));
-const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, toggleEventsTab, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onReportReject, onResume, onStopAndResume, onResolve, onResolveCommand, onPruneArchivedOlderThan, onReportDelete, resolveDialog } = await import("../web/handlers.js");
-const { state, isReportExpanded, isFeedbackExpanded } = await import("../web/state.svelte.js");
+const { selectSession, switchTab, extractPullRequestUrl, onDetailBodyClick, runOpenAction, onReorderSessions, onReportMark, revealReport, closeCodeNav, gotoAnchorTarget, gotoArticle, hideFeedbackPin, onDetailBodyPointerOver, onDetailBodyPointerOut, pushStructureFocus, popStructureFocus, clearStructureFocus, applyUrlState, onSidebarTab, onArchive, onDeleteArchived, onToggleArchivedSelection, onSelectAllArchived, onClearArchivedSelection, onBulkDeleteArchived, onUnarchive, toggleSidebar, toggleEventsTab, onAnchorOutsideClick, addAttachmentFiles, removeAttachment, clearAttachments, addAskingAttachmentFiles, removeAskingAttachment, clearAskingAttachments, onFeedback, onQueueFeedback, removeQueuedFeedback, onFeedbackDelete, onReportReject, onResume, onStopAndResume, onResolve, onResolveCommand, removeAskingLineComment, onPruneArchivedOlderThan, onReportDelete, resolveDialog } = await import("../web/handlers.js");
+const { state, isReportExpanded, isFeedbackExpanded, askingAnchorPath } = await import("../web/state.svelte.js");
 
 // Handlers that need the human's go-ahead await the in-page dialog. Wait for it
 // to open (some handlers reach it only after an awaited request), answer it,
@@ -96,7 +96,7 @@ afterEach(() => {
     feedbackToggle: new Map(), eventToggle: new Map(), actions: [],
     openActionId: null, actionRunInFlight: false, runningActionId: null,
     actionResults: new Map(), renamingSessionId: null, pendingScrollTo: null,
-    feedbackPinAt: null, pendingAttachments: [], askingAttachments: new Map(),
+    feedbackPinAt: null, pendingAttachments: [], askingAttachments: new Map(), askingLineComments: new Map(),
     feedbackQueue: [],
     reportRejecting: null,
     dialog: null,
@@ -1894,6 +1894,60 @@ test("onResolve allows image-only answers (no text) with a placeholder body", as
   } finally {
     globalThis.document = saved;
   }
+});
+
+function withToastDocument(inputs: Record<string, { value: string }>, run: () => Promise<void> | void) {
+  const toastEl = { textContent: "", classList: { add() {}, remove() {} } };
+  const saved = globalThis.document;
+  globalThis.document = { querySelector: (sel: string) => inputs[sel] ?? toastEl } as unknown as Document;
+  return Promise.resolve(run()).finally(() => { globalThis.document = saved; });
+}
+
+test("a comment on an escalation's lines is kept on that escalation instead of being sent as feedback", async () => {
+  state.selected = "sess-line";
+  state.anchor = { path: askingAnchorPath("001-q.md"), lineStart: 2, lineEnd: 2, quote: "ship today?" };
+  submitFeedbackCalls.length = 0;
+  const inputEl = { value: "tomorrow" };
+  await withToastDocument({ "#anchoredFeedbackInput": inputEl }, () => onFeedback("anchoredFeedbackInput"));
+  expect(submitFeedbackCalls).toHaveLength(0);
+  expect(state.askingLineComments.get("001-q.md")?.map(c => ({ quote: c.quote, content: c.content })))
+    .toEqual([{ quote: "ship today?", content: "tomorrow" }]);
+  expect(inputEl.value).toBe("");
+  expect(state.anchor).toBeNull();
+});
+
+test("onResolve sends the escalation's line comments with the answer, then clears them", async () => {
+  state.selected = "sess-line";
+  resolveEscalationCalls.length = 0;
+  state.anchor = { path: askingAnchorPath("001-q.md"), lineStart: 1, lineEnd: 1, quote: "X or Y?" };
+  await withToastDocument({ "#anchoredFeedbackInput": { value: "X" } }, () => onQueueFeedback("anchoredFeedbackInput"));
+  const textarea = { value: "" };
+  const article = { querySelector: (sel: string) => (sel === ".ask-answer" ? textarea : null), querySelectorAll: () => [] };
+  await withToastDocument({}, () => onResolve("001-q.md", article, null));
+  expect(resolveEscalationCalls).toHaveLength(1);
+  expect(resolveEscalationCalls[0].payload).toEqual({ comments: [{ quote: "X or Y?", content: "X" }] });
+  expect(state.askingLineComments.has("001-q.md")).toBe(false);
+});
+
+test("onResolveCommand sends the line comments on the command's reason", async () => {
+  state.selected = "sess-line";
+  resolveEscalationCalls.length = 0;
+  state.anchor = { path: askingAnchorPath("002-command-approval.md"), lineStart: 1, lineEnd: 1, quote: "publish now" };
+  await withToastDocument({ "#anchoredFeedbackInput": { value: "CI publishes" } }, () => onFeedback("anchoredFeedbackInput"));
+  const article = { querySelector: () => null, querySelectorAll: () => [] };
+  await withToastDocument({}, () => onResolveCommand("002-command-approval.md", "reject", article, null));
+  expect(resolveEscalationCalls[0].payload).toEqual({ decision: "reject", comments: [{ quote: "publish now", content: "CI publishes" }] });
+});
+
+test("removeAskingLineComment drops one comment from its escalation", async () => {
+  state.selected = "sess-line";
+  for (const content of ["a", "b"]) {
+    state.anchor = { path: askingAnchorPath("001-q.md"), lineStart: 1, lineEnd: 1, quote: "q" };
+    await withToastDocument({ "#anchoredFeedbackInput": { value: content } }, () => onFeedback("anchoredFeedbackInput"));
+  }
+  const [first] = state.askingLineComments.get("001-q.md")!;
+  removeAskingLineComment("001-q.md", first.id);
+  expect(state.askingLineComments.get("001-q.md")?.map(c => c.content)).toEqual(["b"]);
 });
 
 test("clicking a symbol token in the Files content pane opens the code-nav popover, then resolves it via the heuristic fallback", async () => {

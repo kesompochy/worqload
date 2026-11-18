@@ -12,7 +12,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
-  import { state as appState, isReportExpanded, isReportViewRaw, isFeedbackExpanded, anchorLabel, feedbackAnchorsForPath } from "../state.svelte.js";
+  import { state as appState, isReportExpanded, isReportViewRaw, isFeedbackExpanded, anchorLabel, feedbackAnchorsForPath, askingAnchorPath } from "../state.svelte.js";
   import { renderMarkdown, extractHeadings } from "../markdown.js";
   import { formatRelative, polishWait } from "../dom.js";
   import { clock } from "../clock.svelte.js";
@@ -20,7 +20,7 @@
   import FilesView from "./FilesView.svelte";
   import StructureView from "./StructureView.svelte";
   import EventsView from "./EventsView.svelte";
-  import { onDetailBodyClick, onTextSelectionAnchor, onResolve, onReportReject, onAskingPaste, onAskingDrop, removeAskingAttachment, onDetailBodyPointerOver, onDetailBodyPointerOut } from "../handlers.js";
+  import { onDetailBodyClick, onTextSelectionAnchor, onResolve, onReportReject, onAskingPaste, onAskingDrop, removeAskingAttachment, removeAskingLineComment, onDetailBodyPointerOver, onDetailBodyPointerOut } from "../handlers.js";
 
   // Tracked across the answer textarea's keydowns so a confirming Enter mid-IME
   // composition doesn't also submit (same guard as Composer.svelte).
@@ -203,9 +203,20 @@
         <div class="label">⚠ Waiting for you — respond below to resume</div>
         {#each appState.asking as a (a.filename)}
           {@const askAtts = appState.askingAttachments.get(a.filename) ?? []}
+          {@const lineComments = appState.askingLineComments.get(a.filename) ?? []}
           <article data-asking={a.filename} style="margin-top:.6rem">
             <div class="filename">{a.filename}</div>
-            <div class="md">{@html renderMarkdown(a.content)}</div>
+            <div class="md">{@html renderMarkdown(a.content, { anchorPath: askingAnchorPath(a.filename), anchor: appState.anchor, footnotePrefix: a.filename })}</div>
+            {#each lineComments as c (c.id)}
+              <div class="ask-line-comment">
+                <blockquote class="anchor-quote">{c.quote}</blockquote>
+                <div class="row">
+                  <span class="ask-line-comment-content">{c.content}</span>
+                  <span class="spacer"></span>
+                  <button type="button" title="このコメントを回答から外す" onclick={() => removeAskingLineComment(a.filename, c.id)}>×</button>
+                </div>
+              </div>
+            {/each}
             {#if askAtts.length > 0}
               <div class="attachment-chips">
                 {#each askAtts as att (att.id)}
