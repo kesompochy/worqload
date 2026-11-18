@@ -29,7 +29,7 @@ import { parseGitRemoteUrl, buildBlobPermalink } from "./permalink";
 import { ghPrLinkResolver, makeCachedPrLinkResolver, type PrLinkResolver } from "./pr-link";
 import { writeNumberedFile, listAllFiles, readNumberedFile, mergeNumberedFileMeta, moveFile, moveNumberedFile, deleteNumberedFile, readReadState, setReadState, markAllRead, readPinState, setPinState, attachmentsDirNameFor } from "./file-store";
 import type { NumberedFile, NumberedFileMeta, ReadFile, WriteNumberedFileOptions } from "./file-store";
-import { formatAnchorRefLine } from "./anchor-ref";
+import { formatAnchorRefLine, formatBlockquote } from "./anchor-ref";
 import { backfillFeedbackAnchors } from "./feedback-anchor-backfill";
 import { isSessionPreviewAlive, listActions, listAvailableActions, findAction, stopSessionPreview } from "./actions";
 import { buildWebFrontend, webFrontendBuilt } from "./web-build";
@@ -3074,9 +3074,25 @@ async function postFeedbackBatch(req: Request, ctx: ServerContext, params: Recor
   });
 }
 
+interface EscalationLineComment {
+  quote: string;
+  content: string;
+}
+
 interface ResolveBody {
   content?: string;
   decision?: "approve" | "reject";
+  comments?: EscalationLineComment[];
+}
+
+function composeEscalationAnswer(body: ResolveBody): string {
+  const comments = Array.isArray(body.comments)
+    ? body.comments.filter(c => typeof c?.quote === "string" && typeof c?.content === "string" && c.content.trim() !== "")
+    : [];
+  const parts = comments.map(c => `${formatBlockquote(c.quote)}\n\n${c.content.trim()}`);
+  const content = typeof body.content === "string" ? body.content.trim() : "";
+  if (content !== "") parts.push(content);
+  return parts.join("\n\n");
 }
 
 async function parseEscalationResolveRequest(req: Request, ctx: ServerContext): Promise<{ body: ResolveBody; attachments: { name: string; bytes: Uint8Array }[] } | FeedbackParseError> {
@@ -3144,7 +3160,7 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
       } catch { /* corrupt sidecar */ }
       await moveFile(askingFilePath, join(resolvedDir, params.filename));
       await moveFile(sidecarPath, join(resolvedDir, commandSidecarFilename(params.filename)));
-      const note = typeof body.content === "string" ? body.content.trim() : "";
+      const note = composeEscalationAnswer(body);
       if (decision === "approve") {
         runResult = await runApprovedCommand(command, meta.worktreePath, timeoutMs);
         feedbackContent = formatApprovedCommandFeedback(params.filename, command, agentReason, runResult, note);
@@ -3168,13 +3184,14 @@ async function postEscalationResolve(req: Request, ctx: ServerContext, params: R
           : {}),
       };
     } else {
-      if (typeof body.content !== "string" || body.content.trim() === "") {
+      const answer = composeEscalationAnswer(body);
+      if (answer === "") {
         return json({ error: "content is required" }, 400);
       }
       const question = await askingFile.text();
       await moveFile(askingFilePath, join(resolvedDir, params.filename));
       feedbackContent =
-        `Re: escalation ${params.filename}\n\n## Question\n\n${question.trim()}\n\n## Answer\n\n${body.content}`;
+        `Re: escalation ${params.filename}\n\n## Question\n\n${question.trim()}\n\n## Answer\n\n${answer}`;
       slug = `answer-${params.filename.replace(/^\d+-/, "").replace(/\.md$/, "")}`;
       resolvedPayload = { filename: params.filename };
     }

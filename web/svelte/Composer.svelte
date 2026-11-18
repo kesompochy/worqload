@@ -8,7 +8,7 @@
   // in-progress text survives without a manual save/restore.
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
-  import { state as appState, anchorLabel, TEMPLATES_STORAGE_KEY } from "../state.svelte.js";
+  import { state as appState, anchorLabel, askingFilenameOfAnchor, TEMPLATES_STORAGE_KEY } from "../state.svelte.js";
   import { onFeedback, onQueueFeedback, removeQueuedFeedback, onResume, clearAnchor, copyAnchorPermalink, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
   const skillActions = $derived(appState.actions.filter(a => a.feedbackContent));
@@ -153,7 +153,7 @@
     {#if appState.anchor && !isTerminal}
       <!-- Anchored comments target the feedback inbox; the resume composer
            (terminal sessions) sends a plain prompt, so the chip is hidden there. -->
-      <div class="anchor-chip">Re: {anchorLabel(appState.anchor)} <button type="button" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button> <button type="button" title="clear anchor" onclick={clearAnchor}>×</button></div>
+      <div class="anchor-chip">Re: {anchorLabel(appState.anchor)} {#if askingFilenameOfAnchor(appState.anchor) === null}<button type="button" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button>{/if} <button type="button" title="clear anchor" onclick={clearAnchor}>×</button></div>
       {#if appState.anchor.quote}
         <blockquote class="anchor-quote">{appState.anchor.quote}</blockquote>
       {/if}
@@ -197,6 +197,8 @@
       rows="3"
       placeholder={isTerminal
         ? "Instructions for the resumed session (optional — picked up via worqload feedback fetch). Enter で再開 / Shift+Enter で改行"
+        : askingFilenameOfAnchor(appState.anchor) !== null
+          ? "Comment on the selected lines... (Enter で回答に追加 / Shift+Enter で改行)"
         : appState.anchor
           ? "Comment on the selected lines... (Enter で送信 / Ctrl+Enter でキューに追加 / Shift+Enter で改行)"
           : "Plain feedback. Enter で送信 / Ctrl+Enter でキューに追加して一括送信 / Shift+Enter で改行"}
@@ -239,7 +241,7 @@
         </div>
       {/if}
       <span class="spacer"></span>
-      <button type="submit">{isTerminal ? "Resume session" : "Send feedback"}</button>
+      <button type="submit">{isTerminal ? "Resume session" : askingFilenameOfAnchor(appState.anchor) !== null ? "Add to answer" : "Send feedback"}</button>
     </div>
   </form>
 {/if}

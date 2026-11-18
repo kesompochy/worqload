@@ -16,7 +16,7 @@
   // (`state` is imported as `appState` — a local `state` binding would make
   // Svelte read `$state` as a store subscription, not the rune.)
   import { tick } from "svelte";
-  import { state as appState } from "../state.svelte.js";
+  import { state as appState, askingFilenameOfAnchor } from "../state.svelte.js";
   import { onAnchoredFeedback, onQueueFeedback, clearAnchor, copyAnchorPermalink, onAnchorOutsideClick, removeAttachment, onComposerPaste, onComposerDrop } from "../handlers.js";
 
   let anchorRect = $state(null);
@@ -24,6 +24,8 @@
   let composing = $state(false);
   let prevAnchorKey = null;
   let pendingFocus = false;
+
+  const commentsOnEscalation = $derived(askingFilenameOfAnchor(appState.anchor) !== null);
 
   const anchorKey = $derived(
     appState.anchor
@@ -207,7 +209,9 @@
       id="anchoredFeedbackInput"
       bind:this={textareaEl}
       rows="3"
-      placeholder="Comment on the selected lines... (Enter で送信 / Ctrl+Enter でキューに追加 / Shift+Enter で改行 / Esc で解除 / Option+ドラッグで部分引用)"
+      placeholder={commentsOnEscalation
+        ? "Comment on the selected lines... (Enter で回答に追加 / Shift+Enter で改行 / Esc で解除 / Option+ドラッグで部分引用)"
+        : "Comment on the selected lines... (Enter で送信 / Ctrl+Enter でキューに追加 / Shift+Enter で改行 / Esc で解除 / Option+ドラッグで部分引用)"}
       oncompositionstart={() => (composing = true)}
       oncompositionend={() => (composing = false)}
       onkeydown={onKeydown}
@@ -216,9 +220,11 @@
       ondrop={onComposerDrop}
     ></textarea>
     <div class="row">
-      <button type="button" class="anchored-composer-permalink" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button>
+      {#if !commentsOnEscalation}
+        <button type="button" class="anchored-composer-permalink" title="GitHub permalink をコピー" onclick={copyAnchorPermalink}>🔗</button>
+      {/if}
       <span class="spacer"></span>
-      <button type="submit">Send feedback</button>
+      <button type="submit">{commentsOnEscalation ? "Add to answer" : "Send feedback"}</button>
     </div>
   </form>
 {/if}

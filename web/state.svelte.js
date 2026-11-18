@@ -88,6 +88,9 @@ export const state = $state({
   // Each value is an array of { id, file, previewUrl } — same shape as
   // pendingAttachments entries.
   askingAttachments: new Map(),
+  // escalation filename -> [{ id, quote, content }]: comments anchored to the
+  // escalation's lines, sent with its answer.
+  askingLineComments: new Map(),
   // Batch feedback queue: items staged by Ctrl+Enter, flushed together by Enter.
   // Each entry is { content, slug, anchor? }.
   feedbackQueue: [],
@@ -118,12 +121,25 @@ export const DIFF_CONTEXT_LINES = 3;   // unchanged lines kept around each chang
 export const DIFF_EXPAND_CHUNK = 20;   // unchanged lines revealed per ↑/↓ click
 export const DIFF_MIN_COLLAPSE = 4;    // shorter unchanged runs aren't worth a placeholder
 
+const ASKING_ANCHOR_PATH_PREFIX = "worqload-escalation:";
+
+export function askingAnchorPath(askingFilename) {
+  return `${ASKING_ANCHOR_PATH_PREFIX}${askingFilename}`;
+}
+
+export function askingFilenameOfAnchor(anchor) {
+  if (!anchor?.path?.startsWith(ASKING_ANCHOR_PATH_PREFIX)) return null;
+  return anchor.path.slice(ASKING_ANCHOR_PATH_PREFIX.length);
+}
+
 // "path:lineStart" or "path:lineStart-lineEnd" — the short label used on anchor
 // chips (composer, feedback list). Mirrors the `Re:` line minus the prefix.
 export function anchorLabel(anchor) {
   if (!anchor) return "";
   const end = anchor.lineEnd ?? anchor.lineStart;
-  return `${anchor.path}:${anchor.lineStart}${end > anchor.lineStart ? `-${end}` : ""}`;
+  const askingFilename = askingFilenameOfAnchor(anchor);
+  const target = askingFilename === null ? anchor.path : `escalation ${askingFilename}`;
+  return `${target}:${anchor.lineStart}${end > anchor.lineStart ? `-${end}` : ""}`;
 }
 
 export function isAnchored(path, lineNo) {

@@ -145,6 +145,48 @@ test("escalation resolve moves asking file, writes feedback, returns to running"
   expect(msg.status).toBe("read");
 });
 
+test("escalation resolve delivers comments anchored to the question's lines alongside the answer", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/escalations`, { slug: "two", content: "1. lib X or Y?\n2. ship today?" });
+
+  const resolved = await postJson(baseUrl, `/sessions/${sid}/escalations/001-two.md/resolve`, {
+    comments: [
+      { quote: "1. lib X or Y?", content: "X" },
+      { quote: "2. ship today?", content: "tomorrow" },
+    ],
+  }).then((r) => r.json());
+  expect(resolved.ok).toBe(true);
+
+  const history = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback/history`).then((r) => r.json());
+  const msg = history.messages.find((m: { filename: string }) => m.filename === resolved.answerFilename);
+  const answer = msg.content.split("## Answer")[1];
+  expect(answer).toContain("> 1. lib X or Y?\n\nX");
+  expect(answer).toContain("> 2. ship today?\n\ntomorrow");
+});
+
+test("command approval: comments anchored to the reason reach the agent as the human note", async () => {
+  const repoDir = makeTmpDir("repo");
+  const { baseUrl } = await bootServer(repoDir);
+
+  const created = await postJson(baseUrl, "/sessions", { prompt: "x", baseBranch: TEST_BASE }).then((r) => r.json());
+  const sid = created.meta.id;
+
+  await postJson(baseUrl, `/internal/sessions/${sid}/command-approvals`, { command: "echo hi", reason: "publish now" });
+  const resolved = await postJson(baseUrl, `/sessions/${sid}/escalations/001-command-approval.md/resolve`, {
+    decision: "reject",
+    comments: [{ quote: "publish now", content: "CI publishes" }],
+  }).then((r) => r.json());
+
+  const history = await fetch(`${baseUrl}/internal/sessions/${sid}/feedback/history`).then((r) => r.json());
+  const msg = history.messages.find((m: { filename: string }) => m.filename === resolved.answerFilename);
+  expect(msg.content.split("## Human note")[1]).toContain("> publish now\n\nCI publishes");
+});
+
 test("escalation resolve returns 404 for missing file", async () => {
   const repoDir = makeTmpDir("repo");
   const { baseUrl } = await bootServer(repoDir);

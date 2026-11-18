@@ -28,6 +28,9 @@ export function formatAnchorRefLine(anchor: AnchorRef): string {
     : `${anchor.lineStart}`;
   const refLine = `Re: ${anchor.path}:${range}`;
   if (!anchor.quote) return refLine;
-  const blockquote = anchor.quote.split("\n").map(line => `> ${line}`).join("\n");
-  return `${refLine}\n${blockquote}`;
+  return `${refLine}\n${formatBlockquote(anchor.quote)}`;
+}
+
+export function formatBlockquote(text: string): string {
+  return text.split("\n").map(line => `> ${line}`).join("\n");
 }
